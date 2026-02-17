@@ -287,3 +287,34 @@ class GameState:
     @property
     def executed_phases(self):
         return self._executed_phases
+
+    def mark_member_dead(self, member_id: int) -> bool:
+        """
+        标记指定ID的人物为死亡
+
+        Args:
+            member_id: 要标记死亡的人物ID
+
+        Returns:
+            bool: 操作成功返回 True，人物不存在或已死亡返回 False
+        """
+        member = self._members.get(member_id)
+        if not member:
+            return False
+        if member.is_dead:
+            return False
+
+        # 标记死亡
+        member.is_dead = True
+
+        # 如果该人物是派系领袖，清除领袖标记
+        if member.is_faction_leader:
+            member.is_faction_leader = False
+
+        # 从回合领导者列表中移除（如果存在）
+        if self._turn and hasattr(self._turn, 'leader_ids'):
+            if member_id in self._turn.leader_ids:
+                self._turn.leader_ids.remove(member_id)
+
+        # 注意：不在这里记录事件，由调用方处理
+        return True
