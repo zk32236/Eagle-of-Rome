@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Set, Any
 from typing import TYPE_CHECKING
 
 from src.core.config import Config
+from src.core.entities.curia import Curia  # 新增导入
 
 if TYPE_CHECKING:
     from src.core.entities import Figure, Faction, GameTurn, Contract
@@ -43,7 +44,7 @@ class GameState:
         # 预留的系统引用
         self._war_system: Optional['WarSystem'] = None
         self._military_system: Optional['MilitarySystem'] = None
-        self._curia: Optional[Any] = None
+        self._curia: Optional[Curia] = None          # 将初始化为 Curia 实例
         self._contracts: List[Any] = []
 
         # 阶段执行跟踪
@@ -65,7 +66,7 @@ class GameState:
         # 重置预留系统
         self._war_system = None
         self._military_system = None
-        self._curia = None
+        self._curia = Curia()  # 改为创建新 Curia 实例
         self._contracts.clear()
         self._executed_phases.clear()
 
@@ -93,7 +94,7 @@ class GameState:
         instance._config._config = test_config  # 直接注入测试配置
         instance._war_system = None
         instance._military_system = None
-        instance._curia = None
+        instance._curia = Curia()  # 必须初始化 Curia
         instance._contracts = []
         instance._executed_phases = set()
         instance._initialize_mortality_pool()
@@ -387,6 +388,13 @@ class GameState:
         """获取合同列表"""
         return self._contracts
 
+    @property
+    def curia(self) -> Curia:
+        """获取广场等待区实例"""
+        return self._curia
+
     @contracts.setter
     def contracts(self, value):
         self._contracts = value
+
+
