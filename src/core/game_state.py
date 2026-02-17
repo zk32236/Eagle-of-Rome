@@ -1,18 +1,19 @@
 # src/core/game_state.py
 """
-游戏状态单例容器 - 已移除单例模式，支持多实例独立创建
+游戏状态容器 - 已移除单例模式，支持多实例独立创建
+集成 Config 配置管理
 """
 
-import json
 import random
-from pathlib import Path
 from typing import Dict, List, Optional, Set, Any
 from typing import TYPE_CHECKING
 
+from src.core.config import Config
+
 if TYPE_CHECKING:
-    from core.entities import Figure, Faction, GameTurn, Contract
-    from core.systems.war_system import WarSystem
-    from core.systems.military_system import MilitarySystem
+    from src.core.entities import Figure, Faction, GameTurn, Contract
+    from src.core.systems.war_system import WarSystem
+    from src.core.systems.military_system import MilitarySystem
 
 
 class GameState:
@@ -20,30 +21,30 @@ class GameState:
 
     MAX_MEMBER_ID = 300
 
-    # 已删除 _instance 和 __new__ 方法
-
     def __init__(self, config_path: Optional[str] = None):
         """
         显式实例化 - 每个调用创建独立实例
 
         Args:
-            config_path: 配置文件路径，None时使用内置默认配置（暂未实现）
+            config_path: 配置文件路径，None时使用内置默认配置
         """
+        # 创建配置实例
+        self._config = Config(config_path)
+
         # 所有状态改为实例属性，确保实例隔离
         self._members: Dict[int, 'Figure'] = {}
         self._factions: Dict[str, 'Faction'] = {}
         self._treasury: int = 0
-        self._turn: 'GameTurn' = None  # 将在 reset 中初始化
+        self._turn: 'GameTurn' = None
         self._event_log: List[str] = []
         self._used_ids: Set[int] = set()
         self._mortality_pool: List[int] = []
-        self._config: Dict[str, Any] = {}  # 暂时为空，后续指令完善配置管理
 
         # 预留的系统引用
         self._war_system: Optional['WarSystem'] = None
         self._military_system: Optional['MilitarySystem'] = None
-        self._curia: Optional[Any] = None  # 预留 Curia
-        self._contracts: List[Any] = []    # 预留合同列表
+        self._curia: Optional[Any] = None
+        self._contracts: List[Any] = []
 
         # 阶段执行跟踪
         self._executed_phases: Set[str] = set()
@@ -56,8 +57,7 @@ class GameState:
         self._members.clear()
         self._factions.clear()
         self._treasury = 0
-        # from core.entities import GameTurn  # 暂时注释，待后续完善
-        self._turn = None  # 临时占位
+        self._turn = None
         self._event_log.clear()
         self._used_ids.clear()
         self._initialize_mortality_pool()
@@ -81,7 +81,7 @@ class GameState:
 
         绕过 __init__，直接注入测试配置，避免文件依赖
         """
-        instance = cls.__new__(cls)          # 创建空实例，不调用 __init__
+        instance = cls.__new__(cls)
         instance._members = {}
         instance._factions = {}
         instance._treasury = 0
@@ -89,21 +89,22 @@ class GameState:
         instance._event_log = []
         instance._used_ids = set()
         instance._mortality_pool = []
-        instance._config = test_config        # 直接注入测试配置
+        instance._config = Config()  # 创建临时配置实例
+        instance._config._config = test_config  # 直接注入测试配置
         instance._war_system = None
         instance._military_system = None
         instance._curia = None
         instance._contracts = []
         instance._executed_phases = set()
-        instance._initialize_mortality_pool()  # 依然初始化池，便于测试
+        instance._initialize_mortality_pool()
         return instance
 
-    # ========== 以下为保留的公共方法（占位实现，后续逐步完善）==========
+    # ========== 成员管理 ==========
 
-    # ----- 成员管理 -----
     def add_member(self, member: 'Figure'):
-        """添加人物（暂未实现）"""
-        raise NotImplementedError("add_member 暂未实现")
+        """添加人物"""
+        self._used_ids.add(member.id)
+        self._members[member.id] = member
 
     def get_member(self, member_id: int) -> Optional['Figure']:
         """获取人物"""
@@ -114,87 +115,138 @@ class GameState:
         return [m for m in self._members.values() if hasattr(m, 'is_dead') and not m.is_dead]
 
     def get_living_member(self, member_id: int) -> Optional['Figure']:
-        """获取存活人物（暂未实现）"""
-        return None
+        """获取存活人物"""
+        member = self._members.get(member_id)
+        return member if (member and not member.is_dead) else None
 
-    # ----- 派系管理 -----
+    # ========== 派系管理 ==========
+
     def add_faction(self, faction: 'Faction'):
-        """添加派系（暂未实现）"""
-        raise NotImplementedError("add_faction 暂未实现")
+        """添加派系"""
+        self._factions[faction.id] = faction
 
     def get_faction(self, faction_id: str) -> Optional['Faction']:
-        """获取派系（暂未实现）"""
-        return None
+        """获取派系"""
+        return self._factions.get(faction_id)
 
     def get_active_factions(self) -> List['Faction']:
-        """获取活跃派系（暂未实现）"""
-        return []
+        """获取活跃派系"""
+        active = []
+        for faction in self._factions.values():
+            living = [m for m in faction.get_members(self) if not m.is_dead]
+            if living:
+                active.append(faction)
+        return active
 
-    # ----- 配置获取（占位）-----
+    # ========== 配置获取（通过 Config 实例）==========
+
     def get_cooldown_years(self) -> int:
-        return 10  # 默认值
+        """获取执政官冷却期"""
+        return self._config.get("political_rules.leader_cooldown_years", 10)
 
     def get_leaders_per_election(self) -> int:
-        return 2
+        """获取执政官选举人数"""
+        return self._config.get("political_rules.leaders_per_election", 2)
 
     def get_office_cooldown(self, office_type: str) -> int:
-        return 2
+        """获取指定公职的冷却期"""
+        return self._config.get(f"political_rules.office_cooldowns.{office_type}", 2)
 
     def get_offices_per_election(self, office_type: str) -> int:
-        return 1
+        """获取每次选举该公职的名额"""
+        return self._config.get(f"political_rules.offices_per_election.{office_type}", 1)
 
-    # ----- 天命机制 -----
+    def get_min_age(self, office_type: str) -> int:
+        """获取指定公职的最低年龄"""
+        return self._config.get(f"political_rules.min_ages.{office_type}", 30)
+
+    # ========== 天命机制 ==========
+
     def draw_mortality_number(self) -> int:
-        """抽取天命号码（暂未实现）"""
+        """抽取天命号码"""
         if not self._mortality_pool:
             self._initialize_mortality_pool()
         return self._mortality_pool.pop() if self._mortality_pool else 0
 
-    # ----- 回合管理 -----
+    # ========== 回合管理 ==========
+
     def advance_year(self):
-        """推进到下一年（暂未实现）"""
+        """推进到下一年"""
         if self._turn:
             self._turn.advance_year()
         self._executed_phases.clear()
 
     def is_phase_executed(self, phase_name: str) -> bool:
+        """检查阶段是否已执行"""
         return phase_name in self._executed_phases
 
     def mark_phase_executed(self, phase_name: str):
+        """标记阶段已执行"""
         self._executed_phases.add(phase_name)
 
-    # ----- 战争/军事系统（占位）-----
+    # ========== 战争/军事系统 ==========
+
     def get_war_system(self) -> Optional['WarSystem']:
+        """获取战争系统"""
         return self._war_system
 
     def get_active_wars(self) -> List[Any]:
+        """获取活跃战争列表"""
         return []
 
     def get_military_system(self) -> Optional['MilitarySystem']:
+        """获取军事系统"""
         return self._military_system
 
     def is_military_prepared(self) -> bool:
+        """检查军事准备状态"""
         return True
 
     def get_military_preparation_status(self) -> tuple:
+        """获取军事准备详细状态"""
         return True, [], []
 
-    # ----- 主持人（占位）-----
-    def get_presiding_officer(self) -> Optional['Figure']:
-        return None
+    # ========== 主持人 ==========
 
-    # ----- 日志（占位）-----
+    def get_presiding_officer(self) -> Optional['Figure']:
+        """获取主持人"""
+        candidates = [
+            m for m in self._members.values()
+            if not m.is_dead and hasattr(m, 'is_present') and m.is_present
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda m: getattr(m, 'power', 0))
+
+    # ========== 日志 ==========
+
     def log_event(self, message: str):
+        """记录事件"""
         self._event_log.append(message)
 
     def get_status_summary(self) -> str:
-        return "GameState stub"
+        """生成状态摘要"""
+        return f"GameState [国库:{self._treasury}, 人物:{len(self.get_living_members())}]"
 
-    # ----- ID 分配（占位）-----
+    # ========== ID 分配 ==========
+
     def allocate_id(self, preferred_id: Optional[int] = None) -> int:
-        return 1  # 临时
+        """分配成员ID"""
+        if preferred_id and preferred_id not in self._used_ids:
+            if 1 <= preferred_id <= self.MAX_MEMBER_ID:
+                self._used_ids.add(preferred_id)
+                return preferred_id
 
-    # ----- 属性访问（供测试使用）-----
+        available = set(range(1, self.MAX_MEMBER_ID + 1)) - self._used_ids
+        if not available:
+            raise ValueError("No available IDs!")
+
+        new_id = random.choice(list(available))
+        self._used_ids.add(new_id)
+        return new_id
+
+    # ========== 属性访问 ==========
+
     @property
     def treasury(self):
         return self._treasury
@@ -215,6 +267,10 @@ class GameState:
     def turn(self):
         return self._turn
 
+    @turn.setter
+    def turn(self, value):
+        self._turn = value
+
     @property
     def event_log(self):
         return self._event_log
@@ -225,6 +281,7 @@ class GameState:
 
     @property
     def config(self):
+        """获取配置实例"""
         return self._config
 
     @property
