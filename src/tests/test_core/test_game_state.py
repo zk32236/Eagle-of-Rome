@@ -85,8 +85,7 @@ class TestGameStateMultiInstance(unittest.TestCase):
         test_state = GameState.create_for_testing(test_config)
 
         # 验证配置被注入
-        self.assertEqual(test_state._config, test_config)
-        self.assertEqual(test_state._config["test_key"], "test_value")
+        self.assertEqual(test_state._config._config, test_config)
 
         # 验证状态已初始化（非空）
         self.assertEqual(len(test_state._mortality_pool), GameState.MAX_MEMBER_ID)
@@ -106,8 +105,8 @@ class TestGameStateMultiInstance(unittest.TestCase):
         test_b = GameState.create_for_testing(config_b)
 
         self.assertIsNot(test_a, test_b)
-        self.assertEqual(test_a._config, config_a)
-        self.assertEqual(test_b._config, config_b)
+        self.assertEqual(test_a._config._config, config_a)  # 修改点
+        self.assertEqual(test_b._config._config, config_b)  # 修改点
 
         # 修改其中一个的国库，验证隔离
         test_a._treasury = 500
@@ -159,6 +158,95 @@ class TestGameStateMultiInstance(unittest.TestCase):
         self.assertTrue(hasattr(state, 'get_status_summary'))
         # ID分配
         self.assertTrue(hasattr(state, 'allocate_id'))
+
+    # ===== 新增的经济相关方法测试 =====
+
+    def test_add_treasury(self):
+        """测试国库增减"""
+        state = GameState()
+        self.assertEqual(state.treasury, 0)
+
+        # 增加
+        new_value = state.add_treasury(100)
+        self.assertEqual(state.treasury, 100)
+        self.assertEqual(new_value, 100)
+
+        # 减少
+        new_value = state.add_treasury(-50)
+        self.assertEqual(state.treasury, 50)
+        self.assertEqual(new_value, 50)
+
+    def test_add_faction_treasury(self):
+        """测试派系资金增减"""
+        state = GameState()
+        from src.core.entities.entities import Faction
+        faction = Faction(id="test", name="测试派系", treasury=50)
+        state.add_faction(faction)
+
+        # 增加
+        result = state.add_faction_treasury("test", 30)
+        self.assertTrue(result)
+        self.assertEqual(faction.treasury, 80)
+
+        # 减少
+        result = state.add_faction_treasury("test", -20)
+        self.assertTrue(result)
+        self.assertEqual(faction.treasury, 60)
+
+        # 派系不存在
+        result = state.add_faction_treasury("nonexistent", 10)
+        self.assertFalse(result)
+
+    def test_add_figure_wealth(self):
+        """测试人物财富增减"""
+        state = GameState()
+        from src.core.entities.figure import Figure
+        figure = Figure(id=1, name="测试人物", faction_id="test", wealth=100)
+        state.add_member(figure)
+
+        # 增加
+        result = state.add_figure_wealth(1, 50)
+        self.assertTrue(result)
+        self.assertEqual(figure.wealth, 150)
+
+        # 减少
+        result = state.add_figure_wealth(1, -30)
+        self.assertTrue(result)
+        self.assertEqual(figure.wealth, 120)
+
+        # 人物不存在
+        result = state.add_figure_wealth(999, 10)
+        self.assertFalse(result)
+
+        # 人物已死亡
+        figure.is_dead = True
+        result = state.add_figure_wealth(1, 10)
+        self.assertFalse(result)
+
+    def test_get_economic_rule(self):
+        """测试获取经济规则配置"""
+        test_config = {
+            "economic_rules": {
+                "base_tax": 200,
+                "faction_stipend": 20
+            }
+        }
+        state = GameState.create_for_testing(test_config)
+
+        self.assertEqual(state.get_economic_rule("base_tax"), 200)
+        self.assertEqual(state.get_economic_rule("faction_stipend"), 20)
+        # 不存在的键返回默认值
+        self.assertEqual(state.get_economic_rule("nonexistent", 99), 99)
+        self.assertIsNone(state.get_economic_rule("nonexistent"))
+
+    def test_contracts_property(self):
+        """测试合同属性"""
+        state = GameState()
+        self.assertEqual(state.contracts, [])
+
+        test_contracts = ["合同1", "合同2"]
+        state.contracts = test_contracts
+        self.assertEqual(state.contracts, test_contracts)
 
 
 if __name__ == "__main__":

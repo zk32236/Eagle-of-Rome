@@ -119,6 +119,24 @@ class GameState:
         member = self._members.get(member_id)
         return member if (member and not member.is_dead) else None
 
+    # ========== 新增：人物财富管理 ==========
+    def add_figure_wealth(self, figure_id: int, amount: int) -> bool:
+        """
+        增加/减少人物财富
+
+        Args:
+            figure_id: 人物ID
+            amount: 增加金额（可为负）
+
+        Returns:
+            bool: 操作成功返回 True，人物不存在或已死亡返回 False
+        """
+        figure = self.get_member(figure_id)
+        if not figure or figure.is_dead:
+            return False
+        figure.wealth += amount
+        return True
+
     # ========== 派系管理 ==========
 
     def add_faction(self, faction: 'Faction'):
@@ -137,6 +155,48 @@ class GameState:
             if living:
                 active.append(faction)
         return active
+
+    # ========== 新增：派系资金管理 ==========
+    def add_faction_treasury(self, faction_id: str, amount: int) -> bool:
+        """
+        增加/减少派系资金
+
+        Args:
+            faction_id: 派系ID
+            amount: 增加金额（可为负）
+
+        Returns:
+            bool: 操作成功返回 True，派系不存在返回 False
+        """
+        faction = self.get_faction(faction_id)
+        if not faction:
+            return False
+        faction.treasury += amount
+        return True
+
+    # ========== 国库管理 ==========
+
+    @property
+    def treasury(self):
+        return self._treasury
+
+    @treasury.setter
+    def treasury(self, value):
+        self._treasury = value
+
+    # ========== 新增：国库增减方法 ==========
+    def add_treasury(self, amount: int) -> int:
+        """
+        增加/减少国库
+
+        Args:
+            amount: 增加金额（可为负）
+
+        Returns:
+            int: 修改后的国库金额
+        """
+        self._treasury += amount
+        return self._treasury
 
     # ========== 配置获取（通过 Config 实例）==========
 
@@ -159,6 +219,20 @@ class GameState:
     def get_min_age(self, office_type: str) -> int:
         """获取指定公职的最低年龄"""
         return self._config.get(f"political_rules.min_ages.{office_type}", 30)
+
+    # ========== 新增：经济规则配置获取 ==========
+    def get_economic_rule(self, key: str, default: Any = None) -> Any:
+        """
+        获取经济规则配置值
+
+        Args:
+            key: 配置键，如 "base_tax"
+            default: 默认值
+
+        Returns:
+            配置值
+        """
+        return self._config.get(f"economic_rules.{key}", default)
 
     # ========== 天命机制 ==========
 
@@ -245,15 +319,35 @@ class GameState:
         self._used_ids.add(new_id)
         return new_id
 
+    # ========== 死亡标记（之前添加）==========
+    def mark_member_dead(self, member_id: int) -> bool:
+        """
+        标记指定ID的人物为死亡
+
+        Args:
+            member_id: 要标记死亡的人物ID
+
+        Returns:
+            bool: 操作成功返回 True，人物不存在或已死亡返回 False
+        """
+        member = self._members.get(member_id)
+        if not member:
+            return False
+        if member.is_dead:
+            return False
+
+        member.is_dead = True
+
+        if member.is_faction_leader:
+            member.is_faction_leader = False
+
+        if self._turn and hasattr(self._turn, 'leader_ids'):
+            if member_id in self._turn.leader_ids:
+                self._turn.leader_ids.remove(member_id)
+
+        return True
+
     # ========== 属性访问 ==========
-
-    @property
-    def treasury(self):
-        return self._treasury
-
-    @treasury.setter
-    def treasury(self, value):
-        self._treasury = value
 
     @property
     def members(self):
@@ -288,33 +382,11 @@ class GameState:
     def executed_phases(self):
         return self._executed_phases
 
-    def mark_member_dead(self, member_id: int) -> bool:
-        """
-        标记指定ID的人物为死亡
+    @property
+    def contracts(self):
+        """获取合同列表"""
+        return self._contracts
 
-        Args:
-            member_id: 要标记死亡的人物ID
-
-        Returns:
-            bool: 操作成功返回 True，人物不存在或已死亡返回 False
-        """
-        member = self._members.get(member_id)
-        if not member:
-            return False
-        if member.is_dead:
-            return False
-
-        # 标记死亡
-        member.is_dead = True
-
-        # 如果该人物是派系领袖，清除领袖标记
-        if member.is_faction_leader:
-            member.is_faction_leader = False
-
-        # 从回合领导者列表中移除（如果存在）
-        if self._turn and hasattr(self._turn, 'leader_ids'):
-            if member_id in self._turn.leader_ids:
-                self._turn.leader_ids.remove(member_id)
-
-        # 注意：不在这里记录事件，由调用方处理
-        return True
+    @contracts.setter
+    def contracts(self, value):
+        self._contracts = value
