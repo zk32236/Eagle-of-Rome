@@ -1,9 +1,9 @@
 # src/core/phases/combat_phase.py
 
 from typing import List, Optional, Dict, Any
-from core.game_state import GameState
-from core.localization import TerminologyService, GamePhase
-from core.entities.legion import LegionStatus
+from src.core.game_state import GameState
+from src.core.localization import TerminologyService, GamePhase
+from src.core.entities.legion import LegionStatus
 
 
 class CombatPhase:

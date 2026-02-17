@@ -4,8 +4,8 @@ from typing import List, Optional, TYPE_CHECKING
 from dataclasses import dataclass, field
 
 if TYPE_CHECKING:
-    from core.game_state import GameState
-    from core.entities.figure import Figure  # 仅类型检查时导入
+    from src.core.game_state import GameState
+    from src.core.entities.figure import Figure  # 仅类型检查时导入
 
 
 @dataclass

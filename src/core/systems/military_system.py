@@ -1,9 +1,9 @@
 # src/core/systems/military_system.py
 
 from typing import List, Optional, Dict, Tuple
-from core.entities.legion import Legion, LegionStatus
-from core.game_state import GameState
-from core.localization import TerminologyService
+from src.core.entities.legion import Legion, LegionStatus
+from src.core.game_state import GameState
+from src.core.localization import TerminologyService
 
 
 class MilitarySystem:

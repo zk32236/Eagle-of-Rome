@@ -119,7 +119,7 @@ class Legion:
 
     def to_display_dict(self) -> Dict[str, Any]:
         """转换为显示字典"""
-        from core.localization import TerminologyService
+        from src.core.localization import TerminologyService
         terms = TerminologyService.get()
 
         status_emoji = {

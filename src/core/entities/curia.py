@@ -2,7 +2,8 @@
 
 from typing import List, Optional, Dict
 from dataclasses import dataclass, field
-from core.entities.figure import Figure
+# 修改导入：从绝对导入改为相对导入
+from .figure import Figure
 
 
 @dataclass

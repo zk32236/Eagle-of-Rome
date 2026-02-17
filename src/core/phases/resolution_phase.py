@@ -1,9 +1,9 @@
 # src/core/phases/resolution_phase.py
 
 from typing import List, Dict
-from core.game_state import GameState
-from core.localization import TerminologyService, GamePhase
-from core.entities.contract import ContractStatus
+from src.core.game_state import GameState
+from src.core.localization import TerminologyService, GamePhase
+from src.core.entities.contract import ContractStatus
 
 
 class ResolutionPhase:

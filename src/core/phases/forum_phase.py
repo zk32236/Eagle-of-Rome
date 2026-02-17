@@ -1,10 +1,10 @@
 # src/core/phases/forum_phase.py
 
 from typing import List, Optional
-from core.game_state import GameState
-from core.localization import TerminologyService, GamePhase
-from core.entities.figure import Figure, ClassTier
-from core.entities.contract import Contract, ContractType, ContractStatus
+from src.core.game_state import GameState
+from src.core.localization import TerminologyService, GamePhase
+from src.core.entities.figure import Figure, ClassTier
+from src.core.entities.contract import Contract, ContractType, ContractStatus
 
 
 class ForumPhase:
@@ -136,7 +136,7 @@ class ForumPhase:
     def _generate_contracts(self, state: GameState) -> List[Contract]:
         """生成合同机会（MVP 0.4.3: 记录创建回合）"""
         import random
-        from core.entities.contract import Contract, ContractType
+        from src.core.entities.contract import Contract, ContractType
 
         contracts = []
         next_id = max([c.id for c in state.contracts], default=0) + 1

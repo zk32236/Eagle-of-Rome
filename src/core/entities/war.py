@@ -114,7 +114,7 @@ class War:
 
     def apply_penalties(self, state: 'GameState') -> List[str]:
         """应用拖延惩罚，返回事件日志"""
-        from core.localization import TerminologyService
+        from src.core.localization import TerminologyService
         terms = TerminologyService.get()
 
         events = []
@@ -149,7 +149,7 @@ class War:
 
     def to_display_dict(self) -> Dict[str, Any]:
         """转换为显示用字典"""
-        from core.localization import TerminologyService
+        from src.core.localization import TerminologyService
         terms = TerminologyService.get()
 
         return {

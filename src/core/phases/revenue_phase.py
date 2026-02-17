@@ -1,8 +1,8 @@
 # src/core/phases/revenue_phase.py
 
-from core.game_state import GameState
-from core.localization import TerminologyService
-from core.entities.contract import ContractType, ContractStatus
+from src.core.game_state import GameState
+from src.core.localization import TerminologyService
+from src.core.entities.contract import ContractType, ContractStatus
 
 
 class RevenuePhase:

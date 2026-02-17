@@ -1,9 +1,12 @@
-# src/core/entities/figure.py - MVP 0.4.5 更新版
+# src/core/entities/figure.py - 修改导入部分
 
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
 from enum import Enum, auto
 import random
+
+if TYPE_CHECKING:
+    from src.core.game_state import GameState
 
 
 class ClassTier(Enum):

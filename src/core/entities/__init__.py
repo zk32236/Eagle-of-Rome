@@ -1,12 +1,16 @@
 # src/core/entities/__init__.py
-
-from core.entities.entities import Senator, Faction, GameTurn
-from core.entities.war import War, WarStatus, WarType
-from core.entities.legion import Legion, LegionStatus  # 新增
-from .figure import Figure, ClassTier
+from .entities import Senator, Faction, GameTurn
+from .figure import Figure, ClassTier, OfficeTerm
+from .contract import Contract, ContractType, ContractStatus
 from .curia import Curia
-from .contract import Contract, ContractType, ContractStatus  # 新增
+from .legion import Legion, LegionStatus
+from .war import War, WarStatus, WarType
 
-__all__ = ['Senator', 'Faction', 'GameTurn',
-           'War', 'WarStatus', 'WarType',
-           'Legion', 'LegionStatus']  # 新增
+__all__ = [
+    'Senator', 'Faction', 'GameTurn',
+    'Figure', 'ClassTier', 'OfficeTerm',
+    'Contract', 'ContractType', 'ContractStatus',
+    'Curia',
+    'Legion', 'LegionStatus',
+    'War', 'WarStatus', 'WarType'
+]

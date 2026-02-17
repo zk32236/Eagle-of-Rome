@@ -1,9 +1,9 @@
 # src/core/phases/mortality_phase.py
 
 from typing import List
-from core.game_state import GameState
-from core.entities import Senator
-from core.localization import TerminologyService, GamePhase
+from src.core.game_state import GameState
+from src.core.entities import Senator
+from src.core.localization import TerminologyService, GamePhase
 
 
 class MortalityPhase:

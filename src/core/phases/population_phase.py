@@ -1,8 +1,8 @@
 # src/core/phases/population_phase.py
 
 from typing import Dict
-from core.game_state import GameState
-from core.localization import TerminologyService, GamePhase
+from src.core.game_state import GameState
+from src.core.localization import TerminologyService, GamePhase
 
 
 class PopulationPhase:

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from core.game_state import GameState
+    from src.core.game_state import GameState
 
 
 class GamePhase(Enum):

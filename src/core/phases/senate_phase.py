@@ -2,9 +2,9 @@
 
 import random
 from typing import Dict, List, Optional, Tuple
-from core.game_state import GameState
-from core.localization import TerminologyService, GamePhase
-from core.entities.contract import ContractType, ContractStatus
+from src.core.game_state import GameState
+from src.core.localization import TerminologyService, GamePhase
+from src.core.entities.contract import ContractType, ContractStatus
 
 
 class SenatePhase:
@@ -149,7 +149,7 @@ class SenatePhase:
             print(f"        Power bonus: +{self._get_power_bonus(office_type)}")
 
             # 任命
-            from core.entities.figure import OfficeTerm
+            from src.core.entities.figure import OfficeTerm
             winner.office = office_type
             winner.office_history.append(OfficeTerm(office_type, current_turn))
 

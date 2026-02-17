@@ -6,10 +6,10 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from core.game_state import GameState
+    from src.core.game_state import GameState
 
-from core.entities.war import War, WarStatus, WarType
-from core.localization import TerminologyService
+from src.core.entities.war import War, WarStatus, WarType
+from src.core.localization import TerminologyService
 
 
 class WarSystem:
