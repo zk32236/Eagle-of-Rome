@@ -1,0 +1,55 @@
+{
+  "scenario_name": "MVP 0.4 Forum Phase",
+  "terminology_preset": "original",
+
+  "political_rules": {
+    "leader_cooldown_years": 2,
+    "leaders_per_election": 2,
+    "allow_consecutive_terms": false
+  },
+
+  "mortality_rules": {
+    "base_draw_count": 1,
+    "draw_per_members": 5,
+    "max_draws": 3
+  },
+
+  "voting_rules": {
+    "finalist_count": 2,
+    "tiebreaker": "highest_influence"
+  },
+
+  "terminology_preset": "original",
+    "political_rules": {
+        "office_cooldowns": {
+            "consul": 2,
+            "praetor": 2,
+            "quqaestor": 2,
+            "censor": 2,
+            "aedile": 2
+        },
+        "offices_per_election": {
+            "consul": 1,
+            "praetor": 1,
+            "quqaestor": 1,
+            "censor": 1,
+            "aedile": 1
+        },
+        "candidates_per_election": {
+            "consul": 2,
+            "praetor": 2,
+            "quqaestor": 2,
+            "censor": 2,
+            "aedile": 2
+        }
+    },
+    "mortality_rules": {
+        "base_draw_count": 1,
+        "draw_per_members": 5,
+        "max_draws": 3
+    },
+    "decay_rules": {
+        "veterans_annual_decay": 0.20,
+        "popularity_annual_decay": 0.50
+    }
+}

@@ -1,0 +1,105 @@
+{
+  "wars": [
+    {
+      "id": "first_punic_war",
+      "name": "First Punic War",
+      "description": "The great struggle with Carthage for control of Sicily and the Mediterranean",
+      "type": "foreign",
+      "strength": 10,
+      "naval_required": true,
+      "naval_strength": 5,
+      "land_battle": true,
+      "disaster_numbers": [2, 3],
+      "standoff_numbers": [4, 5, 6, 7, 8, 9, 10],
+      "rewards": {
+        "treasury": 100,
+        "influence": 5,
+        "unrest_reduction": 3,
+        "land_bill": true
+      },
+      "penalties": {
+        "unrest_per_turn": 2,
+        "treasury_cost": 20
+      },
+      "imminent": false
+    },
+    {
+      "id": "gallic_raiders",
+      "name": "Gallic Raiders",
+      "description": "Barbarian tribes threaten northern borders",
+      "type": "barbarian",
+      "strength": 4,
+      "naval_required": false,
+      "land_battle": true,
+      "disaster_numbers": [2],
+      "standoff_numbers": [3, 4, 5, 6, 7],
+      "rewards": {
+        "treasury": 25,
+        "influence": 1
+      },
+      "penalties": {
+        "unrest_per_turn": 1
+      }
+    },
+    {
+      "id": "illyrian_pirates",
+      "name": "Illyrian Pirates",
+      "description": "Pirate fleets plague Adriatic trade routes",
+      "type": "foreign",
+      "strength": 6,
+      "naval_required": true,
+      "naval_strength": 4,
+      "land_battle": false,
+      "disaster_numbers": [2, 3],
+      "standoff_numbers": [4, 5, 6, 7, 8],
+      "rewards": {
+        "treasury": 40,
+        "influence": 2
+      },
+      "penalties": {
+        "treasury_cost": 10
+      }
+    },
+    {
+      "id": "samnite_revolt",
+      "name": "Samnite Revolt",
+      "description": "Old allies rise against Roman rule",
+      "type": "provincial",
+      "strength": 8,
+      "naval_required": false,
+      "land_battle": true,
+      "disaster_numbers": [2, 3, 4],
+      "standoff_numbers": [5, 6, 7, 8, 9, 10],
+      "rewards": {
+        "treasury": 60,
+        "influence": 3,
+        "unrest_reduction": 2
+      },
+      "penalties": {
+        "unrest_per_turn": 2,
+        "treasury_cost": 5
+      }
+    },
+    {
+      "id": "pyrrhic_invasion",
+      "name": "Pyrrhic Invasion",
+      "description": "The Greek king brings elephants and phalanxes to Italy",
+      "type": "foreign",
+      "strength": 12,
+      "naval_required": false,
+      "land_battle": true,
+      "disaster_numbers": [2, 3, 4],
+      "standoff_numbers": [5, 6, 7, 8, 9, 10, 11],
+      "rewards": {
+        "treasury": 80,
+        "influence": 4,
+        "unrest_reduction": 4
+      },
+      "penalties": {
+        "unrest_per_turn": 3,
+        "treasury_cost": 15
+      },
+      "imminent": true
+    }
+  ]
+}
