@@ -14,7 +14,7 @@ class StatusCommand(Command):
     """显示游戏状态摘要命令"""
 
     name = "status"
-    aliases = ["s"]
+    aliases = ["sts"]
     description = "显示当前游戏状态摘要（国库、人物数等）"
 
     def __init__(self, state: "GameState"):
