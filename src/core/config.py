@@ -190,22 +190,14 @@ class Config:
             bool: 重载成功返回 True，失败返回 False（保持原配置）
         """
         if not self._config_path:
-            print("⚠️ 未指定配置文件路径，无法重载")
             return False
 
-        # 保存当前配置作为备份
         old_config = self._config.copy()
-
-        # 尝试重新加载
         success = self._load_from_file(self._config_path)
-
         if success:
-            print("✅ 配置重载成功")
             return True
         else:
-            # 重载失败，恢复原配置
             self._config = old_config
-            print("⚠️ 配置重载失败，保持原配置")
             return False
 
     def to_dict(self) -> Dict[str, Any]:

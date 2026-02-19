@@ -1,5 +1,5 @@
 {
-  "scenario_name": "MVP 0.4 Forum Phase",
+  "scenario_name": "MVP 0.4.5 Forum Phase",
   "terminology_preset": "original",
 
   "political_rules": {
@@ -29,7 +29,7 @@
             "aedile": 2
         },
         "offices_per_election": {
-            "consul": 1,
+            "consul": 2,
             "praetor": 1,
             "quqaestor": 1,
             "censor": 1,

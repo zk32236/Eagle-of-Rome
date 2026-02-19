@@ -25,7 +25,7 @@ class DebugCLI:
     def __init__(self):
         """初始化CLI"""
         self.running = True
-        self.state = GameState()  # 创建独立游戏状态实例
+        self.state = GameState("data/config/game_config.json")
 
         # 初始化命令注册器
         commands_dir = os.path.join(os.path.dirname(__file__), "commands")
