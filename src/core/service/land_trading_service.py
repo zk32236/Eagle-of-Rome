@@ -1,9 +1,9 @@
 # src/core/service/land_trading_service.py
 
 from typing import Optional, Tuple
-from core.game_state import GameState
-from core.entities.figure import Figure
-from core.localization import TerminologyService
+from src.core.game_state import GameState
+from src.core.entities.figure import Figure
+from src.core.localization import TerminologyService
 
 
 class LandTradingService:
