@@ -3,8 +3,7 @@
 回合控制命令：next、turn、step
 """
 
-import sys
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 

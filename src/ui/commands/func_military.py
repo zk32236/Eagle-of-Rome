@@ -3,7 +3,6 @@
 军事功能命令：战争状态、指派指挥官、军团状态、征召、解散
 """
 
-import sys
 from typing import List, Optional, TYPE_CHECKING
 
 from src.ui.commands.sys_base import Command
@@ -12,9 +11,6 @@ from src.core.entities.war import WarStatus
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
-    from src.core.systems.war_system import WarSystem
-    from src.core.systems.military_system import MilitarySystem
-    from src.core.entities.war import War
 
 
 class WarsCommand(Command):
