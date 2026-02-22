@@ -135,29 +135,68 @@ class ForumCommand(Command):
                 print(f"            [{power}{wealth}{pop}]{family_info}")
 
     def _generate_contracts(self) -> List[Contract]:
-        """生成合同（与原 forum_phase.py 一致）"""
+        """生成合同（基于配置和行省状态）"""
+        from src.core.entities.contract import ContractType
         contracts = []
-        next_id = max((c.id for c in self.state.contracts), default=0) + 1
+        config = self.state.config
 
-        # 包税合同
-        provinces = ["西西里", "撒丁尼亚", "科西嘉", "山南高卢", "伊利里亚"]
-        province = random.choice(provinces)
-        tax_cost = random.randint(20, 40)
-        tax_profit = random.randint(10, 25)
-        tax_contract = Contract.create_tax_farming(next_id, province, tax_cost, tax_profit)
-        tax_contract._created_turn = self.state.turn.turn_number
-        self.state.contracts.append(tax_contract)
-        contracts.append(tax_contract)
-        next_id += 1
+        # 包税合同：遍历所有行省，为未绑定的生成
+        for province in self.state.get_all_provinces():
+            if province.tax_contract_id is not None:
+                continue
+            # 根据行省名称确定基础税金（可从配置扩展）
+            if "西西里" in province.name:
+                base_cost = config.get("economic_rules.tax_base_sicily", 90)
+            elif "撒丁" in province.name:
+                base_cost = config.get("economic_rules.tax_base_sardinia", 70)
+            else:
+                base_cost = 50  # 默认
+            # 创建合同
+            contract = self.state.create_contract(
+                ContractType.TAX_FARMING,
+                province.province_id,
+                base_cost,
+                self.state.turn.turn_number
+            )
+            # 设置额外字段
+            contract.name = f"{province.name}包税权"
+            contract.description = f"{province.name}行省税收承包权"
+            profit_rate = config.get("economic_rules.tax_contract_profit_rate", 0.2)
+            contract.expected_profit = int(base_cost * profit_rate)
+            contract.duration_years = config.get("economic_rules.tax_contract_exec_turn", 10)
+            # 绑定到行省
+            province.bind_tax_contract(contract.id)
+            contracts.append(contract)
+            print(f"      📊 包税权合同生成：{province.name} 底价 {base_cost}")
 
-        # 工程合同
-        projects = ["罗马大道", "公共浴场", "水道桥", "港口扩建", "神殿修缮"]
-        project = random.choice(projects)
-        budget = random.randint(30, 60)
-        works_contract = Contract.create_public_works(next_id, project, budget)
-        works_contract._created_turn = self.state.turn.turn_number
-        self.state.contracts.append(works_contract)
-        contracts.append(works_contract)
+        # 公共工程合同：国库资金足够时生成
+        treasury = self.state.treasury
+        project_base = config.get("economic_rules.project_base_cost", 200)
+        total_needed = 0
+        candidates = []
+        for province in self.state.get_all_provinces():
+            if province.project_contract_id is None and not province.has_project:
+                total_needed += project_base
+                candidates.append(province)
+
+        if total_needed <= treasury:
+            for province in candidates:
+                contract = self.state.create_contract(
+                    ContractType.PUBLIC_WORKS,
+                    province.province_id,
+                    project_base,
+                    self.state.turn.turn_number
+                )
+                contract.name = f"{province.name}工程"
+                contract.description = f"{province.name}公共建设项目"
+                profit_rate = config.get("economic_rules.project_contract_profit_rate", 0.15)
+                contract.expected_profit = int(project_base * profit_rate)
+                contract.duration_years = config.get("economic_rules.project_contract_exec_turn", 15)
+                province.bind_project_contract(contract.id)
+                contracts.append(contract)
+                print(f"      🏗️ 公共工程合同生成：{province.name} 预算 {project_base}")
+        else:
+            print(f"      ⚠️ 国库资金不足，无法生成全部公共工程合同")
 
         return contracts
 

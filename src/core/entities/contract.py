@@ -25,8 +25,8 @@ class Contract:
     contract_type: ContractType
 
     # === MVP 0.5 新增必需字段（放在前面，无默认值）===
-    _province_id: int  # 关联的行省ID
-    _create_turn: int  # 创建时的回合数
+    _province_id: int = 0  # 行省ID
+    _create_turn: int = 0  # 创建回合
 
     status: ContractStatus = ContractStatus.PENDING
 
