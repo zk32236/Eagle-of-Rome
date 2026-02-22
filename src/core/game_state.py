@@ -10,9 +10,11 @@ from typing import TYPE_CHECKING
 
 from src.core.config import Config
 from src.core.entities.curia import Curia  # 新增导入
+from src.core.entities.contract import Contract, ContractType  # 新增导入
+from src.core.entities.entities import Province  # 新增导入
 
 if TYPE_CHECKING:
-    from src.core.entities import Figure, Faction, GameTurn, Contract
+    from src.core.entities import Figure, Faction, GameTurn
     from src.core.systems.war_system import WarSystem
     from src.core.systems.military_system import MilitarySystem
 
@@ -45,10 +47,16 @@ class GameState:
         self._war_system: Optional['WarSystem'] = None
         self._military_system: Optional['MilitarySystem'] = None
         self._curia: Optional[Curia] = None          # 将初始化为 Curia 实例
-        self._contracts: List[Any] = []
+        self._contracts: List[Any] = []               # 原有合同列表（可能为旧版，但我们将用字典替换）
 
         # 阶段执行跟踪
         self._executed_phases: Set[str] = set()
+
+        # ==================== MVP 0.5 新增字段 ====================
+        self._provinces: Dict[int, Province] = {}      # 行省注册表
+        self._contracts_dict: Dict[int, Contract] = {} # 合同注册表（字典，替代原有列表）
+        self._public_land_total: int = 0                # 全局公地总数
+        self._contract_id_counter: int = 1              # 合同ID自增计数器
 
         # 初始化时调用 reset，确保状态一致性
         self.reset()
@@ -69,6 +77,12 @@ class GameState:
         self._curia = Curia()  # 改为创建新 Curia 实例
         self._contracts.clear()
         self._executed_phases.clear()
+
+        # ==================== MVP 0.5 重置新增字段 ====================
+        self._provinces.clear()
+        self._contracts_dict.clear()
+        self._public_land_total = 0
+        self._contract_id_counter = 1
 
     def _initialize_mortality_pool(self):
         """初始化天命池"""
@@ -98,6 +112,13 @@ class GameState:
         instance._contracts = []
         instance._executed_phases = set()
         instance._initialize_mortality_pool()
+
+        # ==================== MVP 0.5 初始化新增字段 ====================
+        instance._provinces = {}
+        instance._contracts_dict = {}
+        instance._public_land_total = 0
+        instance._contract_id_counter = 1
+
         return instance
 
     # ========== 成员管理 ==========
@@ -385,8 +406,8 @@ class GameState:
 
     @property
     def contracts(self):
-        """获取合同列表"""
-        return self._contracts
+        """获取合同列表（兼容旧版，返回原有 _contracts 列表）"""
+        return self._contracts  # ⬅️ 改回原有行为
 
     @property
     def curia(self) -> Curia:
@@ -395,6 +416,94 @@ class GameState:
 
     @contracts.setter
     def contracts(self, value):
+        """兼容旧版设置"""
         self._contracts = value
 
+    # ==================== MVP 0.5 新增接口 ====================
 
+    # ---------- 行省管理 ----------
+    def add_province(self, province: Province) -> None:
+        """
+        向行省注册表添加行省对象，并更新全局公地总数。
+
+        Args:
+            province: 要添加的行省对象。
+        """
+        self._provinces[province.province_id] = province
+        self._update_global_public_land()
+
+    def get_province(self, province_id: int) -> Optional[Province]:
+        """
+        根据ID获取行省对象，不存在则返回None。
+
+        Args:
+            province_id: 行省ID。
+
+        Returns:
+            行省对象或None。
+        """
+        return self._provinces.get(province_id)
+
+    def get_all_provinces(self) -> List[Province]:
+        """
+        返回所有行省对象的列表（副本，防止外部修改）。
+
+        Returns:
+            行省列表。
+        """
+        return list(self._provinces.values())
+
+    def _update_global_public_land(self) -> None:
+        """
+        私有方法：遍历行省注册表，更新全局公地总数。
+        """
+        self._public_land_total = sum(p.land_public for p in self._provinces.values())
+
+    # ---------- 合同管理 ----------
+    def create_contract(self, contract_type: ContractType, province_id: int,
+                        base_cost: int, current_turn: int) -> Contract:
+        """
+        创建并添加合同对象，自动分配唯一ID。
+
+        Args:
+            contract_type: 合同类型（ContractType.TAX_FARMING 或 ContractType.PUBLIC_WORKS）
+            province_id: 关联的行省ID。
+            base_cost: 基础成本/预算。
+            current_turn: 当前回合数。
+
+        Returns:
+            新建的 Contract 对象。
+        """
+        contract = Contract(
+            id=self._contract_id_counter,
+            contract_type=contract_type,
+            _province_id=province_id,
+            _create_turn=current_turn,
+            base_cost=base_cost
+        )
+        self._contracts_dict[self._contract_id_counter] = contract
+        self._contract_id_counter += 1
+        return contract
+
+    def get_contract(self, contract_id: int) -> Optional[Contract]:
+        return self._contracts_dict.get(contract_id)
+
+    def get_all_contracts(self) -> List[Contract]:
+        return list(self._contracts_dict.values())
+
+    def get_province_contract(self, province_id: int, contract_type: ContractType) -> Optional[Contract]:
+        province = self.get_province(province_id)
+        if not province:
+            return None
+
+        # 使用正确的枚举成员进行比较
+        if contract_type == ContractType.TAX_FARMING:
+            contract_id = province.tax_contract_id
+        elif contract_type == ContractType.PUBLIC_WORKS:
+            contract_id = province.project_contract_id
+        else:
+            return None
+
+        if contract_id is None:
+            return None
+        return self.get_contract(contract_id)

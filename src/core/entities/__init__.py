@@ -1,5 +1,5 @@
 # src/core/entities/__init__.py
-from .entities import Senator, Faction, GameTurn
+from .entities import Senator, Faction, GameTurn, Province
 from .figure import Figure, ClassTier, OfficeTerm
 from .contract import Contract, ContractType, ContractStatus
 from .curia import Curia
@@ -12,5 +12,6 @@ __all__ = [
     'Contract', 'ContractType', 'ContractStatus',
     'Curia',
     'Legion', 'LegionStatus',
-    'War', 'WarStatus', 'WarType'
+    'War', 'WarStatus', 'WarType',
+    'Province'  # <-- 添加这一行
 ]

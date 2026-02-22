@@ -74,6 +74,11 @@ class Faction:
     is_player: bool = False
     member_ids: List[int] = field(default_factory=list)
 
+    # ==================== MVP 0.5 新增字段 ====================
+    _total_land: int = 0                     # 派系成员私地总和
+    _province_owned: List[int] = field(default_factory=list)  # 控制的行省ID列表
+    _knight_contract_count: int = 0          # 派系内骑士持有的合同总数
+
     def get_total_influence(self, state: 'GameState') -> int:
         """计算在场成员总影响力"""
         total = 0
@@ -118,6 +123,53 @@ class Faction:
     def __repr__(self) -> str:
         return f"{self.name}({self.id})[💰{self.treasury}]"
 
+    # ==================== MVP 0.5 新增方法 ====================
+
+    def update_total_land(self, members: List['Figure']) -> None:
+        """
+        根据派系成员列表更新派系总土地（成员私地之和）。
+
+        Args:
+            members: 派系存活成员列表（通常由外部通过 GameState 获取）。
+        """
+        self._total_land = sum(m.land_private for m in members)
+
+    def add_province(self, province_id: int) -> None:
+        """
+        添加行省 ID 到控制列表，避免重复。
+
+        Args:
+            province_id: 行省ID。
+        """
+        if province_id not in self._province_owned:
+            self._province_owned.append(province_id)
+
+    def update_knight_contract_count(self, knights: List['Figure']) -> None:
+        """
+        统计派系内所有骑士的合同总数。
+
+        Args:
+            knights: 派系内的骑士成员列表（通常由外部筛选后传入）。
+        """
+        self._knight_contract_count = sum(1 for k in knights if k.has_active_contract)
+
+    # ==================== MVP 0.5 新增属性访问器 ====================
+
+    @property
+    def total_land(self) -> int:
+        """获取派系成员私地总和"""
+        return self._total_land
+
+    @property
+    def province_owned(self) -> List[int]:
+        """获取派系控制的行省ID列表（返回副本，防止外部修改）"""
+        return self._province_owned.copy()
+
+    @property
+    def knight_contract_count(self) -> int:
+        """获取派系内骑士持有的合同总数"""
+        return self._knight_contract_count
+
 
 @dataclass
 class GameTurn:
@@ -138,3 +190,139 @@ class GameTurn:
 
     def __repr__(self) -> str:
         return f"Turn {self.turn_number} ({self.get_year_display()})"
+
+
+# ==================== MVP 0.5 新增：Province 类 ====================
+
+class Province:
+    """
+    行省实体 - MVP 0.5 新增
+
+    管理行省的土地、税收合同和公共工程合同。
+    """
+    def __init__(self, province_id: int, name: str, total_land: int):
+        """
+        初始化行省。
+
+        Args:
+            province_id: 行省唯一ID。
+            name: 行省名称。
+            total_land: 行省总土地面积。
+        """
+        self._province_id = province_id
+        self._name = name
+        self._total_land = total_land
+
+        # MVP 0.5 新增字段
+        self._land_public = int(total_land * 0.6)  # 公地数量，按比例初始化
+        self._land_private = int(total_land * 0.4) # 私地数量，按比例初始化
+        self._tax_base = 0                         # 包税权基础税金
+        self._grievance = 0                         # 民怨值 0-3
+        self._tax_contract_id: Optional[int] = None # 包税权合同ID
+        self._project_contract_id: Optional[int] = None # 公共工程合同ID
+        self._has_project = False                    # 是否有生效公共工程
+
+    # --- 属性访问器（只读）---
+    @property
+    def province_id(self) -> int:
+        return self._province_id
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def total_land(self) -> int:
+        return self._total_land
+
+    @property
+    def land_public(self) -> int:
+        return self._land_public
+
+    @property
+    def land_private(self) -> int:
+        return self._land_private
+
+    @property
+    def tax_base(self) -> int:
+        return self._tax_base
+
+    @property
+    def grievance(self) -> int:
+        return self._grievance
+
+    @property
+    def tax_contract_id(self) -> Optional[int]:
+        return self._tax_contract_id
+
+    @property
+    def project_contract_id(self) -> Optional[int]:
+        return self._project_contract_id
+
+    @property
+    def has_project(self) -> bool:
+        return self._has_project
+
+    # --- 公共方法 ---
+    def update_land_type(self, public_change: int, private_change: int) -> None:
+        """
+        调整公地/私地数量，保证非负。
+
+        Args:
+            public_change: 公地的变化量（可为负）。
+            private_change: 私地的变化量（可为负）。
+        """
+        self._land_public = max(0, self._land_public + public_change)
+        self._land_private = max(0, self._land_private + private_change)
+
+    def bind_tax_contract(self, contract_id: int) -> None:
+        """
+        绑定包税权合同。
+
+        Args:
+            contract_id: 要绑定的合同ID。
+
+        Raises:
+            ValueError: 如果该行省已绑定包税权合同。
+        """
+        if self._tax_contract_id is not None:
+            raise ValueError(f"Province {self._province_id} already has a tax contract (ID: {self._tax_contract_id})")
+        self._tax_contract_id = contract_id
+
+    def bind_project_contract(self, contract_id: int) -> None:
+        """
+        绑定公共工程合同。
+
+        Args:
+            contract_id: 要绑定的合同ID。
+
+        Raises:
+            ValueError: 如果该行省已绑定公共工程合同。
+        """
+        if self._project_contract_id is not None:
+            raise ValueError(f"Province {self._province_id} already has a project contract (ID: {self._project_contract_id})")
+        self._project_contract_id = contract_id
+        self._has_project = True
+
+    def unbind_tax_contract(self) -> None:
+        """解绑包税权合同。"""
+        self._tax_contract_id = None
+
+    def unbind_project_contract(self) -> None:
+        """解绑公共工程合同。"""
+        self._project_contract_id = None
+        self._has_project = False
+
+    def set_grievance(self, value: int) -> None:
+        """
+        设置民怨值。
+
+        Args:
+            value: 新的民怨值，必须在0到3之间（含）。
+
+        Raises:
+            ValueError: 如果提供的值不在有效范围内。
+        """
+        if not (0 <= value <= 3):
+            raise ValueError(f"Grievance must be between 0 and 3, got {value}")
+        self._grievance = value

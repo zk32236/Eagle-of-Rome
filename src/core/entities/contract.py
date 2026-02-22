@@ -21,46 +21,42 @@ class ContractStatus(Enum):
 
 @dataclass
 class Contract:
-    """
-    合同实体
-
-    包税合同（Tax Farming）：
-    - 骑士预付资金购买税收权
-    - 执行期：5年（MVP简化：一次性或分年）
-    - 收益：实际税收 - 预付成本
-
-    工程合同（Public Works）：
-    - 国库出资，骑士执行
-    - 成本：建设费用
-    - 利润：承包价 - 实际成本（智略影响成本）
-    """
-
     id: int
     contract_type: ContractType
+
+    # === MVP 0.5 新增必需字段（放在前面，无默认值）===
+    _province_id: int  # 关联的行省ID
+    _create_turn: int  # 创建时的回合数
+
     status: ContractStatus = ContractStatus.PENDING
 
     # 基本信息
-    name: str = ""  # 合同名称（如"西西里包税权"）
-    description: str = ""  # 描述
+    name: str = ""
+    description: str = ""
 
     # 财务参数
-    base_cost: int = 0  # 基础成本/投资额
-    expected_profit: int = 0  # 预期收益/利润
-    duration_years: int = 1  # 执行年限（MVP简化）
+    base_cost: int = 0
+    expected_profit: int = 0
+    duration_years: int = 1
 
     # 关联信息
-    target_province: Optional[str] = None  # 目标行省（包税）
-    project_type: Optional[str] = None  # 项目类型（工程）
+    target_province: Optional[str] = None
+    project_type: Optional[str] = None
 
     # 授予信息
-    awarded_to: Optional[int] = None  # 授予的人物ID
-    awarded_faction: Optional[str] = None  # 授予的派系ID
-    awarded_turn: Optional[int] = None  # 授予回合
+    awarded_to: Optional[int] = None
+    awarded_faction: Optional[str] = None
+    awarded_turn: Optional[int] = None
 
     # 执行状态
-    remaining_years: int = 0  # 剩余年限
-    total_collected: int = 0  # 已收收益（包税）
-    total_spent: int = 0  # 已支成本（工程）
+    remaining_years: int = 0
+    total_collected: int = 0
+    total_spent: int = 0
+
+    # === MVP 0.5 新增字段（私有）===
+    _profit_base: int = 0
+    _is_under_execution: bool = False
+    _complete_turn: Optional[int] = None
 
     def __repr__(self) -> str:
         type_emoji = {
@@ -109,7 +105,7 @@ class Contract:
             project_type=project
         )
 
-    # ==================== MVP 0.4.3 新增方法 ====================
+    # ==================== MVP 0.4.3 原有方法 ====================
 
     def award(self, figure_id: int, faction_id: str, turn: int) -> bool:
         """授予合同给指定人物"""
@@ -172,3 +168,44 @@ class Contract:
         elif self.contract_type == ContractType.PUBLIC_WORKS:
             return self.expected_profit // self.duration_years
         return 0
+
+    # === MVP 0.5 新增属性访问器 ===
+    @property
+    def province_id(self) -> int:
+        return self._province_id
+
+    @property
+    def create_turn(self) -> int:
+        return self._create_turn
+
+    @property
+    def profit_base(self) -> int:
+        return self._profit_base
+
+    @property
+    def is_under_execution(self) -> bool:
+        return self._is_under_execution
+
+    @property
+    def complete_turn(self) -> Optional[int]:
+        return self._complete_turn
+
+    # === MVP 0.5 新增方法 ===
+    def mark_winner(self, winner_id: int, current_turn: int, profit_base: int) -> None:
+        if self.status != ContractStatus.PENDING:
+            raise ValueError(f"Contract {self.id} cannot be awarded: status is {self.status.value}")
+        self.awarded_to = winner_id
+        self.awarded_turn = current_turn
+        self.status = ContractStatus.ACTIVE
+        self.remaining_years = self.duration_years
+        self._is_under_execution = True
+        self._profit_base = profit_base
+
+    def mark_complete(self, current_turn: int) -> None:
+        self._is_under_execution = False
+        self.status = ContractStatus.COMPLETED
+        self._complete_turn = current_turn
+
+    def terminate(self) -> None:
+        self._is_under_execution = False
+        self.status = ContractStatus.EXPIRED

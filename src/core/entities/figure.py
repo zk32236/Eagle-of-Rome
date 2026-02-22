@@ -147,6 +147,14 @@ class Figure:
     contract_history: List[Dict] = field(default_factory=list)
     land_trade_history: List[Dict] = field(default_factory=list)
 
+    # ==================== MVP 0.5 新增字段 ====================
+    _land_private: int = 0                      # 私地数量（原land字段废弃，需迁移）
+    _contract_ids: List[int] = field(default_factory=list)  # 持有的合同ID列表
+    _has_active_contract: bool = False          # 是否有执行中合同
+    _figure_type: str = "patrician"             # 人物类型：patrician/knight/plebeian
+    _tribute_profit: int = 0                    # 包税利润（回合临时）
+    _project_profit: int = 0                     # 工程利润（回合临时）
+
     # ==================== 核心方法 ====================
 
     def get_seat_share(self) -> int:
@@ -506,3 +514,73 @@ class Figure:
                 figure.strategy = max(figure.strategy, 6)
 
         return figure
+
+    # ==================== MVP 0.5 新增方法 ====================
+
+    def add_contract(self, contract_id: int) -> None:
+        """
+        添加合同ID到人物持有列表。
+
+        Args:
+            contract_id: 要添加的合同ID。
+
+        Raises:
+            ValueError: 如果合同ID已存在于列表中。
+        """
+        if contract_id in self._contract_ids:
+            raise ValueError(f"Contract ID {contract_id} already exists in figure's contract list")
+        self._contract_ids.append(contract_id)
+        self._has_active_contract = True
+
+    def remove_contract(self, contract_id: int) -> None:
+        """
+        从人物持有列表中移除合同ID。
+
+        Args:
+            contract_id: 要移除的合同ID。
+        """
+        if contract_id in self._contract_ids:
+            self._contract_ids.remove(contract_id)
+        # 如果合同ID不存在，静默忽略
+        self._has_active_contract = bool(self._contract_ids)
+
+    def settle_contract_profit(self, profit: int) -> None:
+        """
+        结算合同利润，直接增加人物财富。
+
+        Args:
+            profit: 利润金额。
+        """
+        self.wealth += profit
+
+    # ==================== MVP 0.5 新增属性访问器 ====================
+
+    @property
+    def land_private(self) -> int:
+        """获取人物私地数量"""
+        return self._land_private
+
+    @property
+    def contract_ids(self) -> List[int]:
+        """获取人物持有的合同ID列表（返回副本，防止外部修改）"""
+        return self._contract_ids.copy()
+
+    @property
+    def has_active_contract(self) -> bool:
+        """检查人物是否有执行中的合同"""
+        return self._has_active_contract
+
+    @property
+    def figure_type(self) -> str:
+        """获取人物类型（patrician/knight/plebeian）"""
+        return self._figure_type
+
+    @property
+    def tribute_profit(self) -> int:
+        """获取当前回合包税利润"""
+        return self._tribute_profit
+
+    @property
+    def project_profit(self) -> int:
+        """获取当前回合工程利润"""
+        return self._project_profit

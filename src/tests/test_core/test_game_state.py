@@ -248,6 +248,155 @@ class TestGameStateMultiInstance(unittest.TestCase):
         state.contracts = test_contracts
         self.assertEqual(state.contracts, test_contracts)
 
+# ==================== MVP 0.5 新增测试 ====================
+
+class TestGameStateMVP05(unittest.TestCase):
+    """测试 GameState MVP 0.5 新增的行省/合同管理接口"""
+
+    def setUp(self):
+        """每个测试前创建一个新的 GameState 实例"""
+        self.state = GameState.create_for_testing({})
+
+    # ---------- 行省管理测试 ----------
+    def test_add_province_and_get_province(self):
+        """测试添加行省和通过ID获取行省"""
+        from src.core.entities.entities import Province
+
+        province = Province(1, "西西里", 1000)
+        self.state.add_province(province)
+
+        retrieved = self.state.get_province(1)
+        self.assertIs(retrieved, province)
+        self.assertEqual(retrieved.name, "西西里")
+
+        # 获取不存在的ID应返回None
+        self.assertIsNone(self.state.get_province(999))
+
+    def test_add_province_updates_public_land(self):
+        """测试添加行省后全局公地总数更新正确"""
+        from src.core.entities.entities import Province
+
+        # 初始为0
+        self.assertEqual(self.state._public_land_total, 0)
+
+        province1 = Province(1, "西西里", 1000)  # 公地600
+        province2 = Province(2, "撒丁尼亚", 500)  # 公地300
+        self.state.add_province(province1)
+        self.assertEqual(self.state._public_land_total, 600)
+        self.state.add_province(province2)
+        self.assertEqual(self.state._public_land_total, 900)
+
+    def test_get_all_provinces_returns_copy(self):
+        """测试 get_all_provinces 返回副本，修改副本不影响内部"""
+        from src.core.entities.entities import Province
+
+        province1 = Province(1, "西西里", 1000)
+        province2 = Province(2, "撒丁尼亚", 500)
+        self.state.add_province(province1)
+        self.state.add_province(province2)
+
+        provinces = self.state.get_all_provinces()
+        self.assertEqual(len(provinces), 2)
+
+        # 修改返回的列表
+        provinces.clear()
+        # 内部字典应不受影响
+        self.assertEqual(len(self.state.get_all_provinces()), 2)
+
+    # ---------- 合同管理测试 ----------
+    def test_create_contract_and_get_contract(self):
+        """测试创建合同和通过ID获取合同"""
+        from src.core.entities.contract import ContractType
+
+        contract = self.state.create_contract(ContractType.TAX_FARMING, 1, 90, 5)
+        self.assertEqual(contract.id, 1)
+        self.assertEqual(contract.contract_type, ContractType.TAX_FARMING)
+        self.assertEqual(contract.province_id, 1)
+        self.assertEqual(contract.base_cost, 90)
+        self.assertEqual(contract.create_turn, 5)
+
+        retrieved = self.state.get_contract(1)
+        self.assertIs(retrieved, contract)
+        self.assertIsNone(self.state.get_contract(999))
+
+    def test_contract_id_auto_increment(self):
+        """测试合同ID自增"""
+        from src.core.entities.contract import ContractType
+
+        contract1 = self.state.create_contract(ContractType.TAX_FARMING, 1, 90, 5)
+        contract2 = self.state.create_contract(ContractType.PUBLIC_WORKS, 2, 200, 5)
+        self.assertEqual(contract1.id, 1)
+        self.assertEqual(contract2.id, 2)
+
+    def test_get_all_contracts_returns_copy(self):
+        """测试 get_all_contracts 返回副本"""
+        from src.core.entities.contract import ContractType
+
+        self.state.create_contract(ContractType.TAX_FARMING, 1, 90, 5)
+        self.state.create_contract(ContractType.PUBLIC_WORKS, 2, 200, 5)
+
+        contracts = self.state.get_all_contracts()
+        self.assertEqual(len(contracts), 2)
+
+        contracts.clear()
+        self.assertEqual(len(self.state.get_all_contracts()), 2)
+
+    # ---------- 获取行省绑定的合同测试 ----------
+    def test_get_province_contract(self):
+        """测试通过行省和类型获取绑定的合同"""
+        from src.core.entities.entities import Province
+        from src.core.entities.contract import ContractType
+
+        province = Province(1, "西西里", 1000)
+        self.state.add_province(province)
+
+        contract = self.state.create_contract(ContractType.TAX_FARMING, 1, 90, 5)
+        province.bind_tax_contract(contract.id)
+
+        retrieved = self.state.get_province_contract(1, ContractType.TAX_FARMING)
+        self.assertIs(retrieved, contract)
+
+        self.assertIsNone(self.state.get_province_contract(1, ContractType.PUBLIC_WORKS))
+        self.assertIsNone(self.state.get_province_contract(999, ContractType.TAX_FARMING))
+
+    # ---------- reset 测试 ----------
+    def test_reset_clears_new_fields(self):
+        """测试 reset 方法清空新增字段并重置计数器"""
+        from src.core.entities.entities import Province
+        from src.core.entities.contract import ContractType
+
+        province = Province(1, "西西里", 1000)
+        self.state.add_province(province)
+        self.state.create_contract(ContractType.TAX_FARMING, 1, 90, 5)
+
+        self.assertGreater(len(self.state._provinces), 0)
+        self.assertGreater(len(self.state._contracts_dict), 0)
+        self.assertGreater(self.state._public_land_total, 0)
+        self.assertEqual(self.state._contract_id_counter, 2)
+
+        self.state.reset()
+
+        self.assertEqual(len(self.state._provinces), 0)
+        self.assertEqual(len(self.state._contracts_dict), 0)
+        self.assertEqual(self.state._public_land_total, 0)
+        self.assertEqual(self.state._contract_id_counter, 1)
+
+    # ---------- contracts 属性兼容性测试 ----------
+
+    def test_contracts_property_returns_old_list(self):
+        """测试 contracts 属性返回原有的 _contracts 列表（兼容旧版）"""
+        from src.core.entities.contract import ContractType
+
+        # 使用新方法创建合同，不会影响 _contracts
+        self.state.create_contract(ContractType.TAX_FARMING, 1, 90, 5)
+
+        # _contracts 应该仍是空列表
+        self.assertEqual(self.state.contracts, [])
+
+        # 设置原有列表
+        test_list = ["合同1", "合同2"]
+        self.state.contracts = test_list
+        self.assertEqual(self.state.contracts, test_list)
 
 if __name__ == "__main__":
     unittest.main()
