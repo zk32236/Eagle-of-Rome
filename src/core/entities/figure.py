@@ -403,7 +403,7 @@ class Figure:
         )
 
     def __repr__(self) -> str:
-        """显示人物状态 - MVP 0.4.5 术语澄清版"""
+        """显示人物状态 - 增强版（ID前置，属性全称）"""
         if self.is_dead:
             status = "☠️"
         elif self.is_faction_leader:
@@ -432,8 +432,9 @@ class Figure:
         current_power = self.get_voting_power()
         seat_share = self.get_seat_share()
 
-        return (f"{status}{tier_emoji} {display_name}(ID:{self.id}){office_emoji}"
-                f"[权{current_power}财{self.wealth}人{self.popularity}地{self.land}兵{self.veterans}席{seat_share}]")
+        # 新格式：状态 阶层图标 ID:数字 姓名 权力值 财富值 人气值 地产值 老兵值 席位值
+        return (f"{status}{tier_emoji} ID:{self.id} {display_name}{office_emoji} "
+                f"权力{current_power} 财富{self.wealth} 人气{self.popularity} 地产{self.land} 老兵{self.veterans} 席位{seat_share}")
 
     # figure.py 中添加新方法
 

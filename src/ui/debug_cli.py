@@ -5,6 +5,7 @@
 
 import sys
 import os
+from typing import List, Optional
 
 # 添加项目根目录到Python路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -13,6 +14,8 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.ui.commands.sys_registry import CommandRegistry
+from src.ui.commands.sys_help import HelpCommand
+from src.ui.commands.sys_exit import ExitCommand
 from src.core.game_state import GameState
 
 
@@ -29,9 +32,36 @@ class DebugCLI:
         print(f"[DEBUG] 命令目录: {commands_dir}")
         self.registry = CommandRegistry(commands_dir)
 
-        # 打印发现的命令
+        # 打印发现的命令（美化格式：主命令 + 别名）
         cmd_names = self.registry.get_command_names()
-        print(f"[DEBUG] 发现的命令: {cmd_names}")
+        # 收集所有主命令（去重）
+        main_commands = {}
+        for name in cmd_names:
+            info = self.registry.get_command_info(name)
+            if info and info['name'] not in main_commands:
+                main_commands[info['name']] = info
+
+        print("📋 可用命令:")
+        # 按主命令名排序
+        sorted_commands = sorted(main_commands.values(), key=lambda x: x['name'])
+
+        # 生成显示字符串列表
+        display_items = []
+        for cmd in sorted_commands:
+            if cmd['aliases']:
+                display_items.append(f"{cmd['name']} ({', '.join(cmd['aliases'])})")
+            else:
+                display_items.append(cmd['name'])
+
+        # 每行显示4个命令，左对齐宽度30
+        line = ""
+        for i, item in enumerate(display_items, 1):
+            line += f"{item:<30}"
+            if i % 4 == 0:
+                print(f"   {line}")
+                line = ""
+        if line:
+            print(f"   {line}")
 
         # 为特殊命令设置回调
         self._setup_special_commands()
