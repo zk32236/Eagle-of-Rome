@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from src.core.game_state import GameState
     from src.core.entities.war import War
     from src.core.entities.figure import Figure
+    from src.ui.commands.func_status import get_progress_bar
 
 
 class CombatCommand(Command):
@@ -81,6 +82,7 @@ class CombatCommand(Command):
             self.state.turn.current_phase = "combat"
 
         self.state.mark_phase_executed("combat")
+        print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
     # ---------- 战斗解决私有方法 ----------

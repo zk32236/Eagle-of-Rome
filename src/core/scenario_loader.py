@@ -1,4 +1,4 @@
-# src/core/scenario_loader.py - 修正版（元老分别拥有不同官职，骑士平民无官职）
+# src/core/scenario_loader.py - 配置化版（支持动态派系，按权力分配历史官职，并根据官职设置初始私地）
 
 import json
 import random
@@ -9,7 +9,7 @@ from src.core.entities.entities import Faction, GameTurn
 
 
 class ScenarioLoader:
-    """场景加载器 - 支持配置化人物生成，派系数量可配置，元老各担一职，骑士平民无官职"""
+    """场景加载器 - 支持配置化人物生成，派系数量可配置，人物生成规则统一，按权力分配历史官职，并根据官职设置初始私地"""
 
     @staticmethod
     def load_scenario(state: GameState, scenario_file: str = "mvp_test.json") -> None:
@@ -70,6 +70,33 @@ class ScenarioLoader:
             state.add_faction(faction)
 
     @staticmethod
+    def _set_land_by_office(figure: Figure):
+        """根据人物的最高官职设置私地数量"""
+        if figure.class_tier == ClassTier.NOBILE:
+            # 找出最高官职（按执政官 > 大法官 > 财务官）
+            highest = None
+            for term in figure.office_history:
+                if term.office_type == "consul":
+                    highest = "consul"
+                    break
+                elif term.office_type == "praetor" and highest != "consul":
+                    highest = "praetor"
+                elif term.office_type == "quqaestor" and highest not in ("consul", "praetor"):
+                    highest = "quqaestor"
+            if highest == "consul":
+                figure._land_private = 3
+            elif highest == "praetor":
+                figure._land_private = 2
+            elif highest == "quqaestor":
+                figure._land_private = 1
+            else:
+                # 无历史，随机1-3
+                figure._land_private = random.randint(1, 3)
+        else:
+            # 骑士和平民无私地
+            figure._land_private = 0
+
+    @staticmethod
     def _load_figures(state: GameState, config: dict):
         figure_generation = config["initial_state"].get("figure_generation", {})
         per_faction = figure_generation.get("per_faction", {})
@@ -91,9 +118,9 @@ class ScenarioLoader:
             if not faction:
                 continue
 
-            nobles = []   # 元老
-            equites = []  # 骑士
-            plebs = []    # 平民
+            nobles = []
+            equites = []
+            plebs = []
 
             # 生成贵族
             for _ in range(target_nobile):
@@ -116,29 +143,35 @@ class ScenarioLoader:
                 plebs.append(fig)
                 figure_id += 1
 
-            # 为三个元老分配不同的官职历史
-            if len(nobles) >= 3:
-                # 随机打乱顺序，使官职分配随机
-                random.shuffle(nobles)
-                # 前执政官（需财务官→大法官→执政官链）
-                nobles[0].add_office_history("quqaestor", -8)
-                nobles[0].add_office_history("praetor", -5)
-                nobles[0].add_office_history("consul", -2)
-                nobles[0].charisma = max(nobles[0].charisma, 8)
+            # 为贵族中权力最高者添加执政官历史（确保有历史人物）
+            if nobles:
+                nobles_sorted = sorted(nobles, key=lambda f: f.power, reverse=True)
+                # 前执政官（权力最高）
+                ex_consul = nobles_sorted[0]
+                ex_consul.add_office_history("quqaestor", -8)
+                ex_consul.add_office_history("praetor", -5)
+                ex_consul.add_office_history("consul", -2)
+                ex_consul.charisma = max(ex_consul.charisma, 8)
 
-                # 前大法官（需财务官→大法官链）
-                nobles[1].add_office_history("quqaestor", -6)
-                nobles[1].add_office_history("praetor", -3)
-                nobles[1].management = max(nobles[1].management, 8)
+                # 前大法官（权力次高）
+                if len(nobles_sorted) >= 2:
+                    ex_praetor = nobles_sorted[1]
+                    ex_praetor.add_office_history("quqaestor", -6)
+                    ex_praetor.add_office_history("praetor", -3)
+                    ex_praetor.management = max(ex_praetor.management, 8)
 
-                # 前财务官
-                nobles[2].add_office_history("quqaestor", -4)
-                nobles[2].strategy = max(nobles[2].strategy, 7)
+                # 前财务官（权力第三高）
+                if len(nobles_sorted) >= 3:
+                    ex_quaestor = nobles_sorted[2]
+                    ex_quaestor.add_office_history("quqaestor", -4)
+                    ex_quaestor.strategy = max(ex_quaestor.strategy, 7)
 
-            # 骑士和平民不添加任何官职历史
-
-            # 合并所有人物并添加到游戏状态
+            # 设置私地：根据官职或随机
             all_figures = nobles + equites + plebs
+            for fig in all_figures:
+                ScenarioLoader._set_land_by_office(fig)
+
+            # 添加到游戏状态
             for fig in all_figures:
                 state.add_member(fig)
                 if fig.id not in faction.member_ids:

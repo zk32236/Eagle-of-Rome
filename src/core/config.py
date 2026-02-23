@@ -45,9 +45,16 @@ class Config:
             }
         },
         "mortality_rules": {
-            "base_draw_count": 1,
-            "draw_per_members": 5,
-            "max_draws": 3
+            # 新增事件卡配置
+            "event_deck": [
+                {"name": "死神来了", "type": "厄运", "effect": "death", "weight": 1},
+                {"name": "丰调雨顺", "type": "好运", "effect": "bountiful_harvest", "weight": 1},
+                {"name": "国泰民安", "type": "好运", "effect": "peace", "weight": 1},
+                {"name": "天降猛男", "type": "好运", "effect": "mighty_man", "weight": 1},
+                {"name": "无妄天灾", "type": "厄运", "effect": "disaster", "weight": 1}
+            ],
+            "event_draw_count": 1,  # 每回合抽取事件卡数量
+            "death_count": 2  # 添加这一行，每回合死2人
         },
         "economic_rules": {
             "base_tax": 100,

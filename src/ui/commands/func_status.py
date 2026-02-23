@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from src.core.game_state import GameState
 
 
+
 class StatusCommand(Command):
     """显示游戏状态摘要命令"""
 
@@ -19,6 +20,7 @@ class StatusCommand(Command):
 
     def __init__(self, state: "GameState"):
         super().__init__(state)
+
 
     def execute(self, args: List[str]) -> bool:
         """
@@ -52,3 +54,11 @@ class StatusCommand(Command):
         print("=" * 50)
 
         return True
+
+def get_progress_bar(state, width=7):
+    """生成进度条字符串，格式：[▓░░░░░░] 已执行/总数"""
+    executed = len(state.executed_phases)
+    total = 7  # 总阶段数
+    filled = "▓" * executed
+    empty = "░" * (total - executed)
+    return f"[{filled}{empty}] {executed}/{total}"

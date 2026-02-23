@@ -9,6 +9,7 @@ from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.figure import Figure, ClassTier
 from src.core.entities.contract import Contract, ContractType
+from src.ui.commands.func_status import get_progress_bar
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -84,6 +85,7 @@ class ForumCommand(Command):
 
         # 标记阶段已执行
         self.state.mark_phase_executed("forum")
+        print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
     def _generate_new_figures(self) -> List[Figure]:
@@ -164,7 +166,7 @@ class ForumCommand(Command):
             profit_rate = config.get("economic_rules.tax_contract_profit_rate", 0.2)
             contract.expected_profit = int(base_cost * profit_rate)
             contract.duration_years = config.get("economic_rules.tax_contract_exec_turn", 10)
-            # 绑定到行省
+            # 绑定行省
             province.bind_tax_contract(contract.id)
             contracts.append(contract)
             print(f"      📊 包税权合同生成：{province.name} 底价 {base_cost}")

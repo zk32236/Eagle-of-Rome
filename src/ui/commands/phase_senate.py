@@ -9,6 +9,7 @@ from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.contract import ContractType, ContractStatus
 from src.core.entities.figure import OfficeTerm
+from src.ui.commands.func_status import get_progress_bar
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -85,6 +86,7 @@ class SenateCommand(Command):
 
         # 标记阶段已执行
         self.state.mark_phase_executed("senate")
+        print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
     # ---------- 选举相关私有方法 ----------
@@ -378,6 +380,7 @@ class SenateCommand(Command):
             seat_pct = (fact_assets / total_assets) * 100
             print(f"      {faction.name}: {fact_seats} seats ({seat_pct:.1f}%) "
                   f"[Land:{fact_land} Vet:{fact_vets}]")
+
 
     # ---------- 资格检查辅助方法 ----------
 

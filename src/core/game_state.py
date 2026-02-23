@@ -38,10 +38,12 @@ class GameState:
         self._members: Dict[int, 'Figure'] = {}
         self._factions: Dict[str, 'Faction'] = {}
         self._treasury: int = 0
+        self._national_public_land = 0
         self._turn: 'GameTurn' = None
         self._event_log: List[str] = []
         self._used_ids: Set[int] = set()
         self._mortality_pool: List[int] = []
+
 
         # 预留的系统引用
         self._war_system: Optional['WarSystem'] = None
@@ -66,6 +68,7 @@ class GameState:
         self._members.clear()
         self._factions.clear()
         self._treasury = 0
+        self._national_public_land = 0
         self._turn = None
         self._event_log.clear()
         self._used_ids.clear()
@@ -220,6 +223,11 @@ class GameState:
         self._treasury += amount
         return self._treasury
 
+    # ========== 新增：公地增减方法 ==========
+    def add_national_public_land(self, amount: int) -> None:
+        """增加国家公地总量"""
+        self._national_public_land += amount
+
     # ========== 配置获取（通过 Config 实例）==========
 
     def get_cooldown_years(self) -> int:
@@ -263,6 +271,7 @@ class GameState:
         if not self._mortality_pool:
             self._initialize_mortality_pool()
         return self._mortality_pool.pop() if self._mortality_pool else 0
+
 
     # ========== 回合管理 ==========
 
@@ -342,12 +351,13 @@ class GameState:
         return new_id
 
     # ========== 死亡标记（之前添加）==========
-    def mark_member_dead(self, member_id: int) -> bool:
+    def mark_member_dead(self, member_id: int, transfer_land: bool = True) -> bool:
         """
         标记指定ID的人物为死亡
 
         Args:
             member_id: 要标记死亡的人物ID
+            transfer_land: 是否将私地转为国家公地
 
         Returns:
             bool: 操作成功返回 True，人物不存在或已死亡返回 False
@@ -357,6 +367,14 @@ class GameState:
             return False
         if member.is_dead:
             return False
+
+        # 土地回收：将私地转为国家公地
+        if transfer_land:
+            land = member._land_private  # 获取私地数量
+            if land > 0:
+                self.add_national_public_land(land)
+                member._land_private = 0  # 清零人物私地
+                # 可在此记录日志，但暂时省略
 
         member.is_dead = True
 

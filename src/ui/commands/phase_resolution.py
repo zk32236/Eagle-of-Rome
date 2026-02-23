@@ -7,6 +7,7 @@ from typing import List, Dict, Optional, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.contract import ContractStatus
+from src.ui.commands.func_status import get_progress_bar
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -57,6 +58,7 @@ class ResolutionCommand(Command):
             self.state.turn.current_phase = "resolution"
 
         self.state.mark_phase_executed("resolution")
+        print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
     # ---------- 私有方法（移植自原 resolution_phase.py）----------

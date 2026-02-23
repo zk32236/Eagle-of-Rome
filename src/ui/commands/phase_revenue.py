@@ -13,6 +13,7 @@ from typing import List, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.contract import ContractStatus, ContractType
+from src.ui.commands.func_status import get_progress_bar
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -92,6 +93,7 @@ class RevenueCommand(Command):
 
         # 9. 标记阶段已执行
         self.state.mark_phase_executed("revenue")
+        print(f"\n   Progress: {get_progress_bar(self.state)}")
 
         return True
 

@@ -1,5 +1,5 @@
 {
-  "scenario_name": "MVP 0.4.5 Forum Phase",
+  "scenario_name": "MVP 0.5 Forum Phase",
   "terminology_preset": "original",
 
   "political_rules": {
@@ -9,9 +9,15 @@
   },
 
   "mortality_rules": {
-    "base_draw_count": 1,
-    "draw_per_members": 5,
-    "max_draws": 3
+  "death_count": 1,
+    "event_deck": [
+        {"name": "死神来了", "type": "厄运", "effect": "death", "weight": 1},
+        {"name": "丰调雨顺", "type": "好运", "effect": "bountiful_harvest", "weight": 1},
+        {"name": "国泰民安", "type": "好运", "effect": "peace", "weight": 1},
+        {"name": "天降猛男", "type": "好运", "effect": "mighty_man", "weight": 1},
+        {"name": "无妄天灾", "type": "厄运", "effect": "disaster", "weight": 1}
+    ],
+    "event_draw_count": 1
   },
 
   "voting_rules": {
@@ -42,11 +48,6 @@
             "censor": 2,
             "aedile": 2
         }
-    },
-    "mortality_rules": {
-        "base_draw_count": 1,
-        "draw_per_members": 5,
-        "max_draws": 3
     },
     "decay_rules": {
         "veterans_annual_decay": 0.20,

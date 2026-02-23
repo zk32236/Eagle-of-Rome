@@ -7,6 +7,7 @@ import random
 from typing import List, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
+from src.ui.commands.func_status import get_progress_bar
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -51,6 +52,7 @@ class PopulationCommand(Command):
 
         # 标记阶段已执行
         self.state.mark_phase_executed("population")
+        print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
     def _calculate_republic_state(self, terms) -> str:
