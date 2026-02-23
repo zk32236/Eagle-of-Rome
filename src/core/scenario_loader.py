@@ -33,7 +33,8 @@ class ScenarioLoader:
         ScenarioLoader._load_factions(state, config)
         ScenarioLoader._load_figures(state, config)
         state.treasury = config.get("initial_state", {}).get("treasury", 100)
-        state._national_public_land = config.get("economic_rules", {}).get("initial_national_public_land", 1000)
+        print("DEBUG: economic_rules =", config.get("economic_rules"))
+        state._national_public_land = state.config.get("economic_rules.initial_national_public_land", 1000)
         ScenarioLoader._initialize_faction_leaders(state)
 
         # 创建行省 (调测用，未来可改为从配置读取）
