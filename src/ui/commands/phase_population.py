@@ -33,6 +33,10 @@ class PopulationCommand(Command):
         4. 触发随机人口事件
         5. 标记阶段为已执行
         """
+        if not self.state.is_phase_executed("forum"):
+            print("⚠️ 必须先执行广场阶段 (forum)")
+            return False
+
         if self.state.is_phase_executed("population"):
             print("⚠️ 人口阶段在本回合已执行过")
             return False

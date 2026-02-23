@@ -1,13 +1,13 @@
 # src/ui/commands/phase_mortality.py
 """
-天命阶段命令 - 处理事件卡和人物死亡（测试版：每回合固定死神来了，优先选元老）
+天命阶段命令 - 处理事件卡和人物死亡（固定触发死神来了）
 """
 
 import random
 from typing import List, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
-from src.core.entities.figure import ClassTier  # 新增导入
+from src.core.entities.figure import ClassTier
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -18,7 +18,7 @@ class MortalityCommand(Command):
 
     name = "mortality"
     aliases = ["m"]
-    description = "执行天命阶段 (Mortality Phase) - 当前固定触发死神来了"
+    description = "执行天命阶段 (Mortality Phase) - 固定触发死神来了"
 
     def __init__(self, state: "GameState"):
         super().__init__(state)
@@ -38,7 +38,7 @@ class MortalityCommand(Command):
         return True
 
     def _handle_death_event(self):
-        """死神来了：优先选择元老死亡（测试用），显示国库公地数量"""
+        """死神来了：随机抽取死亡人数，财产归公"""
         rules = self.state.config.get("mortality_rules", {})
         death_count = rules.get("death_count", 1)
 
@@ -47,12 +47,8 @@ class MortalityCommand(Command):
             print("   😇 无存活人物，死神空手而归")
             return
 
-        # 优先选择元老（仅测试用）
-        nobles = [f for f in living if f.class_tier == ClassTier.NOBILE]
-        if nobles:
-            victims = random.sample(nobles, min(death_count, len(nobles)))
-        else:
-            victims = random.sample(living, min(death_count, len(living)))
+        # 从所有存活人物中随机抽取
+        victims = random.sample(living, min(death_count, len(living)))
 
         for victim in victims:
             print(f"   💀 死神选中了 {victim.name} (阶级: {victim.class_tier.value})")

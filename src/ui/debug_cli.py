@@ -5,7 +5,7 @@
 
 import sys
 import os
-from typing import List, Optional
+
 
 # 添加项目根目录到Python路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -14,8 +14,6 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.ui.commands.sys_registry import CommandRegistry
-from src.ui.commands.sys_help import HelpCommand
-from src.ui.commands.sys_exit import ExitCommand
 from src.core.game_state import GameState
 
 
@@ -110,11 +108,16 @@ class DebugCLI:
 
     def run(self):
         """运行CLI主循环"""
+        # 自动加载默认场景
+        print("\n🔄 自动加载默认场景...")
+        self.registry.execute("load", self.state, [])
+
         print("\n" + "=" * 60)
         print("   Eagle of Rome - Debug CLI (整改后版本)")
         print("=" * 60)
         print("输入 'help' 查看可用命令，'exit' 退出游戏")
         print()
+
 
         while self.running:
             try:

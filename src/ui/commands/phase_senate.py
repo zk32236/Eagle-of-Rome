@@ -30,6 +30,10 @@ class SenateCommand(Command):
         """
         执行元老院阶段
         """
+        if not self.state.is_phase_executed("population"):
+            print("⚠️ 必须先执行人口阶段 (population)")
+            return False
+
         # 检查阶段是否已执行
         if self.state.is_phase_executed("senate"):
             print("⚠️ 元老院阶段在本回合已执行过")

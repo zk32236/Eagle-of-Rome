@@ -86,6 +86,12 @@ class NextCommand(Command):
         """
         force = any(arg.lower() == "force" for arg in args)
 
+        # 检查决议阶段是否已执行（除非 force 跳过）
+        if not self.state.is_phase_executed("resolution") and not force:
+            print("⛔ 必须先执行决议阶段 (resolution) 才能进入下一年")
+            print("   使用 'next force' 强制推进，或执行缺失阶段")
+            return False
+
         missing = self._get_missing_phases()
         if missing and not force:
             terms = TerminologyService.get()

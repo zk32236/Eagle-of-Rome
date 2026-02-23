@@ -32,6 +32,10 @@ class CombatCommand(Command):
         """
         执行战斗阶段
         """
+        if not self.state.is_phase_executed("senate"):
+            print("⚠️ 必须先执行元老院阶段 (senate)")
+            return False
+
         # 检查阶段是否已执行
         if self.state.is_phase_executed("combat"):
             print("⚠️ 战斗阶段在本回合已执行过")

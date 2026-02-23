@@ -42,6 +42,10 @@ class ForumCommand(Command):
         Returns:
             bool: 执行成功返回 True
         """
+        if not self.state.is_phase_executed("revenue"):
+            print("⚠️ 必须先执行税收阶段 (revenue)")
+            return False
+
         if self.state.is_phase_executed("forum"):
             print("⚠️ 广场阶段在本回合已执行过")
             return False
@@ -82,6 +86,16 @@ class ForumCommand(Command):
         # 5. 提示可用命令
         print(f"\n   💡 Use 'persuade <id>' to recruit figures into your faction.")
         print(f"   💡 Use 'contracts' to view pending contracts.")
+
+        # 6. 清理未招募的人物（新增）
+        curia = self.state.curia
+        if not curia.is_empty():
+            ids_to_remove = [fig.id for fig in curia.get_all_available()]
+            for fid in ids_to_remove:
+                if fid in self.state._members:
+                    del self.state._members[fid]
+            curia.clear()
+            print(f"      🗑️ {len(ids_to_remove)} 名未被招募的人物已从游戏中消失")
 
         # 标记阶段已执行
         self.state.mark_phase_executed("forum")
