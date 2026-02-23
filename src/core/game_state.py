@@ -439,6 +439,11 @@ class GameState:
 
     # ==================== MVP 0.5 新增接口 ====================
 
+    # ----------公地管理----------
+    def get_national_public_land(self) -> int:
+        """获取国家公地总量"""
+        return self._national_public_land
+
     # ---------- 行省管理 ----------
     def add_province(self, province: Province) -> None:
         """

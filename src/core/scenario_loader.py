@@ -33,6 +33,7 @@ class ScenarioLoader:
         ScenarioLoader._load_factions(state, config)
         ScenarioLoader._load_figures(state, config)
         state.treasury = config.get("initial_state", {}).get("treasury", 100)
+        state._national_public_land = config.get("economic_rules", {}).get("initial_national_public_land", 1000)
         ScenarioLoader._initialize_faction_leaders(state)
 
     @staticmethod

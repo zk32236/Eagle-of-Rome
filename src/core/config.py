@@ -61,7 +61,13 @@ class Config:
             "faction_stipend": 10,
             "legion_recruit_cost": 10,
             "legion_maintenance_base": 2,
-            "veteran_maintenance_bonus": 1
+            "veteran_maintenance_bonus": 1,
+            "private_land_income_per_unit": 2,
+            "public_land_rent_per_unit": 1,
+            # 新增配置
+            "land_price_per_unit": 10,  # 土地单价（塔兰特/C）
+            "national_public_land_tax_rate": 0.02,  # 国家公地税率（2%）
+            "initial_national_public_land": 1000,  # 初始国家公地数量
         },
         "combat_rules": {
             "triumph_threshold": 12,

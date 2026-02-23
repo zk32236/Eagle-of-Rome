@@ -56,16 +56,22 @@ class RevenueCommand(Command):
         terms = TerminologyService.get()
         print(f"\n--- {terms.phase_revenue} Phase (Year {abs(self.state.turn.year)} BC) ---")
 
-        # 1. 基础税收
-        base_tax = self.state.get_economic_rule("base_tax", 100)
-        self.state.add_treasury(base_tax)
-        print(f"   💰 Base tax: +{base_tax} {terms.currency}")
+        # 1. 国家公地收益（替代基础税收）
+        land_price = self.state.get_economic_rule("land_price_per_unit", 10)
+        national_tax_rate = self.state.get_economic_rule("national_public_land_tax_rate", 0.02)
+        national_land = self.state.get_national_public_land()
+        tax_income = int(national_land * land_price * national_tax_rate)
+        self.state.add_treasury(tax_income)
+        print(f"   💰 国家公地收益: +{tax_income} {terms.currency}")
 
         # 2. 派系津贴
         stipend = self.state.get_economic_rule("faction_stipend", 10)
         for faction in self.state.factions.values():
             self.state.add_faction_treasury(faction.id, stipend)
             print(f"   {faction.name}: +{stipend} {terms.currency}")
+
+
+
 
         # 3. 军团维护费
         ms = self.state.get_military_system()
@@ -96,6 +102,49 @@ class RevenueCommand(Command):
         print(f"\n   Progress: {get_progress_bar(self.state)}")
 
         return True
+    #======================公地收入进入国库==================================================
+    def _process_land_income(self):
+        """处理私地收入、行省公地租金和国家公地收益"""
+        terms = TerminologyService.get()
+        private_rate = self.state.get_economic_rule("private_land_income_per_unit", 2)
+        public_rate = self.state.get_economic_rule("public_land_rent_per_unit", 1)
+        land_price = self.state.get_economic_rule("land_price_per_unit", 10)
+        national_tax_rate = self.state.get_economic_rule("national_public_land_tax_rate", 0.02)
+
+        total_private_income = 0
+        total_public_rent = 0
+
+        # 私地收入
+        for fig in self.state.get_living_members():
+            income = fig.land_private * private_rate
+            if income > 0:
+                fig.add_wealth(income)
+                total_private_income += income
+
+        # 行省公地租金
+        for province in self.state.get_all_provinces():
+            rent = province.land_public * public_rate
+            if rent > 0:
+                self.state.add_treasury(rent)
+                total_public_rent += rent
+
+        # 国家公地收益
+        national_land = self.state.get_national_public_land()
+        national_income = int(national_land * land_price * national_tax_rate)
+        if national_income > 0:
+            self.state.add_treasury(national_income)
+
+        print(f"\n   🌾 私地收入: +{total_private_income} {terms.currency}")
+        print(f"   🏛️ 行省公地租金: +{total_public_rent} {terms.currency}")
+        print(f"   🏞️ 国家公地收益: +{national_income} {terms.currency}")
+
+        # 更新派系总土地（可选）
+        for faction in self.state.factions.values():
+            members = faction.get_members(self.state)
+            faction.update_total_land(members)
+
+        self.state.log_event(
+            f"土地收入: 私地 +{total_private_income}, 行省租金 +{total_public_rent}, 国家公地 +{national_income}")
 
     def _process_contract_revenues(self, terms):
         """
