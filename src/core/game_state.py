@@ -424,8 +424,8 @@ class GameState:
 
     @property
     def contracts(self):
-        """获取合同列表（兼容旧版，返回原有 _contracts 列表）"""
-        return self._contracts  # ⬅️ 改回原有行为
+        """获取合同列表（从 _contracts_dict 获取）"""
+        return list(self._contracts_dict.values())
 
     @property
     def curia(self) -> Curia:

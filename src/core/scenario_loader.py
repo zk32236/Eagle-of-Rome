@@ -36,6 +36,17 @@ class ScenarioLoader:
         state._national_public_land = config.get("economic_rules", {}).get("initial_national_public_land", 1000)
         ScenarioLoader._initialize_faction_leaders(state)
 
+        # 创建行省 (调测用，未来可改为从配置读取）
+        from src.core.entities.entities import Province
+        provinces_data = [
+            {"id": 1, "name": "西西里", "total_land": 1000},  # 总土地，其中公地比例在Province中自动分配
+            {"id": 2, "name": "撒丁尼亚", "total_land": 800},
+            {"id": 3, "name": "科西嘉", "total_land": 600},
+        ]
+        for p in provinces_data:
+            province = Province(p["id"], p["name"], p["total_land"])
+            state.add_province(province)
+
     @staticmethod
     def _get_default_config() -> dict:
         return {

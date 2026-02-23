@@ -68,6 +68,9 @@ class Config:
             "land_price_per_unit": 10,  # 土地单价（塔兰特/C）
             "national_public_land_tax_rate": 0.02,  # 国家公地税率（2%）
             "initial_national_public_land": 1000,  # 初始国家公地数量
+            "province_tax_rate": 0.1,  # 行省基础税率（10%）
+            "tax_auction_ratio": 0.8,  # 包税权拍卖底价占年收益的比例（80%）
+            "tax_contract_profit_rate": 0.2,  # 保留原利润比例（可沿用，但阶段3将基于实际利润）
         },
         "combat_rules": {
             "triumph_threshold": 12,

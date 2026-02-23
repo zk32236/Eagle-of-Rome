@@ -136,23 +136,34 @@ class ForumCommand(Command):
                 print(f"         ID:{fig.id} {fig.get_formal_name()}")
                 print(f"            [{power}{wealth}{pop}]{family_info}")
 
-    def _generate_contracts(self) -> List[Contract]:
-        """生成合同（基于配置和行省状态）"""
+    def _generate_contracts(self):
+        """生成包税权合同（根据行省公地）和公共工程合同（暂时不变）"""
         from src.core.entities.contract import ContractType
         contracts = []
         config = self.state.config
+        land_price = config.get("economic_rules.land_price_per_unit", 10)
+        province_tax_rate = config.get("economic_rules.province_tax_rate", 0.1)
+        auction_ratio = config.get("economic_rules.tax_auction_ratio", 0.8)
+        # 利润比例仍可保留，但实际利润计算用年收益 - 底价
+        # 但合同需要 profit_base 字段，我们可设置为年收益 - 底价
 
-        # 包税合同：遍历所有行省，为未绑定的生成
+        # 遍历所有行省，为未绑定包税合同的生成包税合同
         for province in self.state.get_all_provinces():
             if province.tax_contract_id is not None:
                 continue
-            # 根据行省名称确定基础税金（可从配置扩展）
-            if "西西里" in province.name:
-                base_cost = config.get("economic_rules.tax_base_sicily", 90)
-            elif "撒丁" in province.name:
-                base_cost = config.get("economic_rules.tax_base_sardinia", 70)
-            else:
-                base_cost = 50  # 默认
+
+            # 计算行省公地价值
+            public_land = province.land_public
+            if public_land == 0:
+                continue  # 无公地，不生成合同
+
+            # 年收益 = 公地数量 * 土地单价 * 行省税率
+            annual_revenue = int(public_land * land_price * province_tax_rate)
+            # 拍卖底价 = 年收益 * 拍卖比例
+            base_cost = int(annual_revenue * auction_ratio)
+            # 预期利润 = 年收益 - 底价
+            expected_profit = annual_revenue - base_cost
+
             # 创建合同
             contract = self.state.create_contract(
                 ContractType.TAX_FARMING,
@@ -163,15 +174,18 @@ class ForumCommand(Command):
             # 设置额外字段
             contract.name = f"{province.name}包税权"
             contract.description = f"{province.name}行省税收承包权"
-            profit_rate = config.get("economic_rules.tax_contract_profit_rate", 0.2)
-            contract.expected_profit = int(base_cost * profit_rate)
-            contract.duration_years = config.get("economic_rules.tax_contract_exec_turn", 10)
-            # 绑定行省
+            contract.expected_profit = expected_profit
+            contract._profit_base = expected_profit  # 将预期利润作为利润基础（简化）
+            contract.duration_years = 5  # 可配置，暂时固定5年
+            # 绑定到行省
             province.bind_tax_contract(contract.id)
             contracts.append(contract)
-            print(f"      📊 包税权合同生成：{province.name} 底价 {base_cost}")
+            print(f"      📊 包税权合同生成：{province.name} 底价 {base_cost}，预期利润 {expected_profit}")
 
-        # 公共工程合同：国库资金足够时生成
+        # 公共工程合同生成逻辑（保持不变，后续可再调整）
+        # ... 原有公共工程合同生成代码 ...
+        # 注意：需将原有公共工程合同生成代码移至此方法内
+        # 以下为原有公共工程合同生成代码（需合并）
         treasury = self.state.treasury
         project_base = config.get("economic_rules.project_base_cost", 200)
         total_needed = 0
