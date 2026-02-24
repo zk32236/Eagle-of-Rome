@@ -6,6 +6,7 @@ Status命令 - 显示当前游戏状态摘要
 from typing import List, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
+from src.core.entities.figure import Figure, ClassTier
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -121,6 +122,80 @@ class StatusPrivateLandCommand(Command):
         print("=" * 80)
         return True
 
+class StatusFigureCommand(Command):
+        name = "status_figure"
+        aliases = ["sf"]
+        description = "显示人物详细信息，用法: status_figure [人物ID]（不指定ID则显示所有存活人物）"
+
+        def execute(self, args: List[str]) -> bool:
+            terms = TerminologyService.get()
+
+            if args:
+                try:
+                    figure_id = int(args[0])
+                    figure = self.state.get_member(figure_id)
+                    if not figure or figure.is_dead:
+                        print(f"❌ 人物 ID {figure_id} 不存在或已死亡")
+                        return False
+                    self._print_figure_detail(figure)
+                except ValueError:
+                    print("❌ 人物ID必须为整数")
+                    return False
+            else:
+                living = self.state.get_living_members()
+                if not living:
+                    print("   无存活人物")
+                    return True
+                print("\n" + "=" * 80)
+                print("   👥 存活人物列表")
+                print("=" * 80)
+                for fig in living:
+                    self._print_figure_summary(fig)
+            return True
+
+        def _print_figure_summary(self, fig):
+            """简要显示一行人物信息"""
+            status = "👑" if fig.is_faction_leader else "🟢"
+            tier_emoji = {
+                ClassTier.NOBILE: "🏛️",
+                ClassTier.EQUES: "💰",
+                ClassTier.PLEBEIAN: "👤"
+            }.get(fig.class_tier, "❓")
+            faction = self.state.get_faction(fig.faction_id)
+            faction_name = faction.name if faction else "无"
+            print(
+                f"{status}{tier_emoji} ID:{fig.id:<3} {fig.get_formal_name():<25} 派系:{faction_name:<12} 权力:{fig.power} 财富:{fig.wealth} 人气:{fig.popularity} 私地:{fig.land_private} 老兵:{fig.veterans}")
+
+        def _print_figure_detail(self, fig):
+            """详细显示一个人物的所有属性"""
+            status = "👑" if fig.is_faction_leader else "🟢"
+            tier_emoji = {
+                ClassTier.NOBILE: "🏛️",
+                ClassTier.EQUES: "💰",
+                ClassTier.PLEBEIAN: "👤"
+            }.get(fig.class_tier, "❓")
+            faction = self.state.get_faction(fig.faction_id)
+            faction_name = faction.name if faction else "无"
+
+            print("\n" + "=" * 50)
+            print(f"   {status}{tier_emoji} 人物详细信息 (ID:{fig.id})")
+            print("=" * 50)
+            print(f"姓名: {fig.get_formal_name()}")
+            print(f"派系: {faction_name}")
+            print(f"阶层: {fig.class_tier.value}")
+            print(f"年龄: {fig.age}")
+            print(f"权力: {fig.power}")
+            print(f"财富: {fig.wealth}")
+            print(f"人气: {fig.popularity}")
+            print(f"私地: {fig.land_private} C")
+            print(f"老兵: {fig.veterans}")
+            print(f"担任公职: {fig.office if fig.office else '无'}")
+            print(
+                f"公职历史: {', '.join([f'{t.office_type}({t.start_turn})' for t in fig.office_history]) if fig.office_history else '无'}")
+            print(f"持有合同: {fig.contract_ids if fig.contract_ids else '无'}")
+            print(f"是否派系领袖: {'是' if fig.is_faction_leader else '否'}")
+            print(f"是否死亡: {'是' if fig.is_dead else '否'}")
+            print("=" * 50)
 
 def get_progress_bar(state, width=7):
     """生成进度条字符串，格式：[▓░░░░░░] 已执行/总数"""
