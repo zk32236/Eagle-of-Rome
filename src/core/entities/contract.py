@@ -1,8 +1,8 @@
 # src/core/entities/contract.py
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
-from enum import Enum, auto
+from enum import Enum
 
 
 class ContractType(Enum):
@@ -58,6 +58,11 @@ class Contract:
     _is_under_execution: bool = False
     _complete_turn: Optional[int] = None
 
+    # === 竞标功能新增字段 ===
+    _bids: List[Dict] = field(default_factory=list)      # 存储所有出价记录
+    _winning_bid: Optional[Dict] = None                   # 中标记录（含 bidder_id, amount, tax_rate）
+    _tax_rate: Optional[float] = None                     # 实际税率（中标者承诺的加价比例）
+
     def __repr__(self) -> str:
         type_emoji = {
             ContractType.TAX_FARMING: "📊",
@@ -91,17 +96,15 @@ class Contract:
     @classmethod
     def create_public_works(cls, id: int, project: str, budget: int, profit_margin: float = 0.2) -> "Contract":
         """创建工程合同"""
-        # 利润 = 预算 × 利润率（智略可提升利润率）
         expected_profit = int(budget * profit_margin)
-
         return cls(
             id=id,
             contract_type=ContractType.PUBLIC_WORKS,
             name=f"{project}工程",
             description=f"{project}建设项目，国库出资{budget}塔兰特",
-            base_cost=budget,  # 国库出资
+            base_cost=budget,
             expected_profit=expected_profit,
-            duration_years=2,  # 工程通常2年完成
+            duration_years=2,
             project_type=project
         )
 
@@ -111,7 +114,6 @@ class Contract:
         """授予合同给指定人物"""
         if self.status != ContractStatus.PENDING:
             return False
-
         self.awarded_to = figure_id
         self.awarded_faction = faction_id
         self.awarded_turn = turn
@@ -125,15 +127,11 @@ class Contract:
             return 0
         if self.contract_type != ContractType.TAX_FARMING:
             return 0
-
-        # MVP简化：每年固定收益
         annual_profit = self.expected_profit // self.duration_years
         self.total_collected += annual_profit
         self.remaining_years -= 1
-
         if self.remaining_years <= 0:
             self.status = ContractStatus.COMPLETED
-
         return annual_profit
 
     def execute_works_payment(self) -> int:
@@ -142,16 +140,12 @@ class Contract:
             return 0
         if self.contract_type != ContractType.PUBLIC_WORKS:
             return 0
-
-        # MVP简化：每年支付部分预算
         annual_payment = self.base_cost // self.duration_years
         annual_profit = self.expected_profit // self.duration_years
         self.total_spent += annual_payment
         self.remaining_years -= 1
-
         if self.remaining_years <= 0:
             self.status = ContractStatus.COMPLETED
-
         return annual_profit
 
     def expire(self):
@@ -189,6 +183,22 @@ class Contract:
     @property
     def complete_turn(self) -> Optional[int]:
         return self._complete_turn
+
+    # === 竞标功能新增属性 ===
+    @property
+    def bids(self) -> List[Dict]:
+        """返回所有出价记录的副本"""
+        return self._bids.copy()
+
+    @property
+    def winning_bid(self) -> Optional[Dict]:
+        """返回中标记录，包含 bidder_id, amount, tax_rate"""
+        return self._winning_bid
+
+    @property
+    def tax_rate(self) -> Optional[float]:
+        """返回实际税率（中标者的加价比例）"""
+        return self._tax_rate
 
     # === MVP 0.5 新增方法 ===
     def mark_winner(self, winner_id: int, current_turn: int, profit_base: int) -> None:

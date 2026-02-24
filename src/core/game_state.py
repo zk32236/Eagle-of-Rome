@@ -10,8 +10,9 @@ from typing import TYPE_CHECKING
 
 from src.core.config import Config
 from src.core.entities.curia import Curia  # 新增导入
-from src.core.entities.contract import Contract, ContractType  # 新增导入
+from src.core.entities.contract import Contract, ContractType, ContractStatus  # 新增导入
 from src.core.entities.entities import Province  # 新增导入
+
 
 if TYPE_CHECKING:
     from src.core.entities import Figure, Faction, GameTurn
@@ -530,3 +531,45 @@ class GameState:
         if contract_id is None:
             return None
         return self.get_contract(contract_id)
+
+    def place_bid(self, contract_id: int, bidder_id: int, amount: int, tax_rate: float) -> bool:
+        """
+        为指定合同记录一个出价。
+        返回是否成功（合同存在且处于 PENDING 状态）。
+        """
+        contract = self.get_contract(contract_id)
+        if not contract or contract.status != ContractStatus.PENDING:
+            return False
+        # 简单校验 bidder 是否存在且存活（可由调用层保证）
+        contract._bids.append({
+            "bidder_id": bidder_id,
+            "amount": amount,
+            "tax_rate": tax_rate
+        })
+        return True
+
+    def resolve_auction(self, contract_id: int) -> bool:
+        contract = self.get_contract(contract_id)
+        if not contract or contract.status != ContractStatus.PENDING:
+            return False
+        if not contract._bids:
+            contract.status = ContractStatus.EXPIRED
+            return False
+
+        max_bid = max(contract._bids, key=lambda b: b["amount"])
+        winner = max_bid
+
+        contract.mark_winner(winner["bidder_id"], self.turn.turn_number, 0)
+        contract._winning_bid = winner
+        contract._tax_rate = winner["tax_rate"]
+
+        figure = self.get_member(winner["bidder_id"])
+        if figure:
+            figure.add_contract(contract_id)
+            contract.awarded_faction = figure.faction_id  # 新增：记录中标者派系
+
+        province = self.get_province(contract.province_id)
+        if province:
+            province.bind_tax_contract(contract_id)
+
+        return True

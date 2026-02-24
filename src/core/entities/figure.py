@@ -1,8 +1,8 @@
-# src/core/entities/figure.py - 修改导入部分
+# src/core/entities/figure.py
 
 from typing import List, Optional, Dict, Any, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
-from enum import Enum, auto
+from enum import Enum
 import random
 
 if TYPE_CHECKING:
@@ -92,11 +92,6 @@ class OfficeTerm:
 class Figure:
     """
     人物实体 - MVP 0.4.5 术语澄清版
-
-    术语规范：
-    - is_faction_leader: 派系领袖（权力最高者，动态计算）
-    - office: 当前担任的国家公职（consul/praetor/quqaestor等）
-    - office_history: 所有公职任职历史
     """
 
     # 基础信息
@@ -118,10 +113,10 @@ class Figure:
     age: int = 30
 
     # MVP 0.4.5 激活的预留属性（资格属性）
-    zeal: int = 0  # 热忱 → Censor/Aedile资格
-    charisma: int = 0  # 魅力 → Consul资格
-    strategy: int = 0  # 军略 → Quaestor资格
-    management: int = 0  # 智略 → Praetor资格
+    zeal: int = 0
+    charisma: int = 0
+    strategy: int = 0
+    management: int = 0
 
     # 机制属性（预留）
     family: Optional[str] = None
@@ -135,7 +130,7 @@ class Figure:
     corruption: int = 0
     bribe_income: int = 0
 
-    # 状态标记（术语澄清：is_leader → is_faction_leader）
+    # 状态标记
     is_faction_leader: bool = False
     is_dead: bool = False
     is_present: bool = True
@@ -148,31 +143,24 @@ class Figure:
     land_trade_history: List[Dict] = field(default_factory=list)
 
     # ==================== MVP 0.5 新增字段 ====================
-    _land_private: int = 0                      # 私地数量（原land字段废弃，需迁移）
-    _contract_ids: List[int] = field(default_factory=list)  # 持有的合同ID列表
-    _has_active_contract: bool = False          # 是否有执行中合同
-    _figure_type: str = "patrician"             # 人物类型：patrician/knight/plebeian
-    _tribute_profit: int = 0                    # 包税利润（回合临时）
-    _project_profit: int = 0                     # 工程利润（回合临时）
+    _land_private: int = 0
+    _contract_ids: List[int] = field(default_factory=list)
+    _has_active_contract: bool = False
+    _tribute_profit: int = 0
+    _project_profit: int = 0
 
     # ==================== 核心方法 ====================
 
     def get_seat_share(self) -> int:
-        """计算席位占比 = 土地 + 效忠老兵"""
         return self.land + self.veterans
 
     def get_voting_power(self) -> int:
-        """
-        投票权 = 席位 + 公职权力加成
-        MVP 0.4.5: 人气不直接加权力，通过公职间接影响
-        """
         seat_power = self.get_seat_share()
         office_power = self.get_office_power_bonus()
         self.power = seat_power + office_power
         return self.power
 
     def get_office_power_bonus(self) -> int:
-        """获取公职权力加成"""
         bonuses = {
             "consul": 5,
             "praetor": 3,
@@ -183,7 +171,6 @@ class Figure:
         return bonuses.get(self.office, 0)
 
     def get_qualification_attribute(self, office_type: str) -> int:
-        """获取指定公职的资格属性值"""
         mapping = {
             "consul": self.charisma,
             "praetor": self.management,
@@ -194,46 +181,32 @@ class Figure:
         return mapping.get(office_type, 0)
 
     def get_office_cooldown_years(self, office_type: str, config: Dict) -> int:
-        """获取指定公职的冷却期"""
         cooldowns = config.get("political_rules", {}).get("office_cooldowns", {})
         return cooldowns.get(office_type, 2)
 
     def can_hold_office(self, office_type: str, current_turn: int, config: Dict) -> Tuple[bool, str]:
-        """检查是否可以担任指定公职"""
-        # 1. 年龄限制
         min_ages = {"consul": 40, "praetor": 35, "quqaestor": 30, "censor": 42, "aedile": 36}
         if self.age < min_ages.get(office_type, 30):
             return False, f"Age {self.age} < {min_ages.get(office_type, 30)}"
-
-        # 2. 当前是否已在任该职位
         if self.office == office_type:
             return False, "Already holding this office"
-
-        # 3. 冷却期检查
         cooldown = self.get_office_cooldown_years(office_type, config)
         for term in self.office_history:
             if term.office_type == office_type:
                 years_ago = current_turn - term.start_turn
                 if years_ago < cooldown:
                     return False, f"Cooldown: {years_ago}/{cooldown} years"
-
-        # 4. 前置公职检查（执政官需要曾任大法官）
         if office_type == "consul":
-            # 执政官需要曾任大法官
             has_praetor = any(h.office_type == "praetor" for h in self.office_history)
             if not has_praetor:
                 return False, "Requires prior Praetor service"
-
         elif office_type == "praetor":
-            # ✅ 修复：大法官需要曾任财务官
             has_quaestor = any(h.office_type == "quqaestor" for h in self.office_history)
             if not has_quaestor:
                 return False, "Requires prior Quaestor service"
-
         return True, "Eligible"
 
     def get_formal_name(self) -> str:
-        """获取正式全名"""
         parts = []
         if self.praenomen:
             parts.append(self.praenomen)
@@ -241,40 +214,27 @@ class Figure:
             parts.append(self.nomen)
         if self.cognomen:
             parts.append(self.cognomen)
-
         if parts:
             return " · ".join(parts)
         return self.name
 
     def add_wealth(self, amount: int):
-        """增加财富"""
         self.wealth += amount
 
     def add_popularity(self, amount: int):
-        """增加人气（可负，但不会低于0）"""
         self.popularity = max(0, self.popularity + amount)
 
     def apply_annual_decay(self, decay_rates: Dict[str, float]):
-        """应用年度衰减（由Resolution Phase调用）"""
-        # 私兵衰减（20%）
         if "veterans" in decay_rates and self.veterans > 0:
             self.veterans = int(self.veterans * (1 - decay_rates["veterans"]))
-
-        # 人气衰减（50%，庆典效应快速消退）
         if "popularity" in decay_rates and self.popularity > 0:
             self.popularity = int(self.popularity * (1 - decay_rates["popularity"]))
 
     def can_be_candidate(self, current_turn: int, cooldown: int = 10) -> bool:
-        """
-        检查是否可以成为候选人（用于派系领袖选举）
-        ⚠️ 注意：这是旧接口，用于兼容，新代码应使用can_hold_office
-        """
         if self.is_faction_leader:
             return False
         if self.age < 20:
             return False
-
-        # 检查office_history中的执政官任期
         for term in self.office_history:
             if term.office_type == "consul":
                 years_ago = current_turn - term.start_turn
@@ -283,13 +243,11 @@ class Figure:
         return True
 
     def years_since_last_consulship(self, current_turn: int) -> Optional[int]:
-        """距上次担任执政官的年数"""
         consul_terms = [h for h in self.office_history if h.office_type == "consul"]
         if not consul_terms:
             return None
         return current_turn - max(t.start_turn for t in consul_terms)
 
-    # 土地交易 MVP 0.4.4
     def can_sell_land(self, amount: int) -> bool:
         return self.land >= amount
 
@@ -316,9 +274,7 @@ class Figure:
     # 工厂方法 MVP 0.4.5
     @classmethod
     def create_nobile(cls, id: int, faction_id: str, age: int = 35) -> "Figure":
-        """创建贵族：高权力、有土地、高魅力"""
         praenomen, nomen, cognomen, full_name = RomanNameGenerator.generate_nobile_name()
-
         return cls(
             id=id,
             name=full_name,
@@ -336,7 +292,6 @@ class Figure:
             family=nomen,
             family_prestige=random.randint(3, 8),
             loyalty=7,
-            # MVP 0.4.5: 贵族魅力高（适合竞选执政官）
             charisma=random.randint(5, 9),
             management=random.randint(3, 7),
             strategy=random.randint(3, 7),
@@ -345,9 +300,7 @@ class Figure:
 
     @classmethod
     def create_eques(cls, id: int, faction_id: str, age: int = 30) -> "Figure":
-        """创建骑士：高财富、高智略（适合大法官/商业）"""
         praenomen, nomen, cognomen, full_name = RomanNameGenerator.generate_eques_name()
-
         return cls(
             id=id,
             name=full_name,
@@ -366,7 +319,6 @@ class Figure:
             family_prestige=0,
             loyalty=5,
             economic_exp=random.randint(1, 5),
-            # MVP 0.4.5: 骑士智略高（适合大法官）
             management=random.randint(5, 9),
             charisma=random.randint(3, 6),
             strategy=random.randint(2, 5),
@@ -375,9 +327,7 @@ class Figure:
 
     @classmethod
     def create_plebeian(cls, id: int, faction_id: str, age: int = 25) -> "Figure":
-        """创建平民：低属性、高热忱（适合监察官/市政官）"""
         praenomen, nomen, cognomen, full_name = RomanNameGenerator.generate_plebeian_name()
-
         return cls(
             id=id,
             name=full_name,
@@ -395,7 +345,6 @@ class Figure:
             family=None,
             family_prestige=0,
             loyalty=3,
-            # MVP 0.4.5: 平民热忱高（适合监察官/市政官）
             zeal=random.randint(5, 9),
             charisma=random.randint(2, 6),
             management=random.randint(1, 4),
@@ -403,7 +352,6 @@ class Figure:
         )
 
     def __repr__(self) -> str:
-        """显示人物状态 - 增强版（ID前置，属性全称）"""
         if self.is_dead:
             status = "☠️"
         elif self.is_faction_leader:
@@ -432,156 +380,97 @@ class Figure:
         current_power = self.get_voting_power()
         seat_share = self.get_seat_share()
 
-        # 新格式：状态 阶层图标 ID:数字 姓名 权力值 财富值 人气值 地产值 老兵值 席位值
         return (f"{status}{tier_emoji} ID:{self.id} {display_name}{office_emoji} "
                 f"权力{current_power} 财富{self.wealth} 人气{self.popularity} 地产{self.land} 老兵{self.veterans} 席位{seat_share}")
 
-    # figure.py 中添加新方法
-
     def add_office_history(self, office_type: str, start_turn: int, end_turn: Optional[int] = None):
-        """添加公职历史记录（用于初始配置）"""
-        from core.entities.figure import OfficeTerm
         term = OfficeTerm(
             office_type=office_type,
             start_turn=start_turn,
             end_turn=end_turn or start_turn + 1,
-            is_active=False  # 已卸任
+            is_active=False
         )
         self.office_history.append(term)
-
-        # 卸任状态
         self.office = None
-
-        # 根据公职类型设置年龄（模拟已经任职过）
         if office_type == "consul":
-            self.age = max(self.age, 42)  # 执政官至少40岁，卸任后+2
+            self.age = max(self.age, 42)
         elif office_type == "praetor":
-            self.age = max(self.age, 37)  # 大法官至少35岁，卸任后+2
+            self.age = max(self.age, 37)
         elif office_type == "quqaestor":
-            self.age = max(self.age, 32)  # 财务官至少30岁，卸任后+2
-
-    # figure.py 更新工厂方法，添加可选参数
+            self.age = max(self.age, 32)
 
     @classmethod
     def create_nobile_with_history(cls, id: int, faction_id: str,
                                    previous_office: Optional[str] = None,
                                    age: int = 40) -> "Figure":
-        """创建有公职历史的贵族"""
         figure = cls.create_nobile(id, faction_id, age)
-
         if previous_office:
-            # 模拟在-10到-3回合前担任过公职（确保冷却期已过或快过）
             start_turn = random.randint(-10, -3)
             figure.add_office_history(previous_office, start_turn)
-
-            # 根据前任公职调整资格属性
             if previous_office == "consul":
-                figure.charisma = max(figure.charisma, 7)  # 前执政官魅力高
+                figure.charisma = max(figure.charisma, 7)
             elif previous_office == "praetor":
-                figure.management = max(figure.management, 7)  # 前大法官智略高
-
+                figure.management = max(figure.management, 7)
         return figure
 
     @classmethod
     def create_eques_with_history(cls, id: int, faction_id: str,
                                   previous_office: Optional[str] = None,
                                   age: int = 35) -> "Figure":
-        """创建有公职历史的骑士"""
         figure = cls.create_eques(id, faction_id, age)
-
         if previous_office:
             start_turn = random.randint(-10, -3)
             figure.add_office_history(previous_office, start_turn)
-
             if previous_office == "praetor":
                 figure.management = max(figure.management, 8)
             elif previous_office == "quqaestor":
                 figure.strategy = max(figure.strategy, 7)
-
         return figure
 
     @classmethod
     def create_plebeian_with_history(cls, id: int, faction_id: str,
                                      previous_office: Optional[str] = None,
                                      age: int = 30) -> "Figure":
-        """创建有公职历史的平民"""
         figure = cls.create_plebeian(id, faction_id, age)
-
         if previous_office:
             start_turn = random.randint(-10, -3)
             figure.add_office_history(previous_office, start_turn)
-
             if previous_office == "quqaestor":
                 figure.strategy = max(figure.strategy, 6)
-
         return figure
 
     # ==================== MVP 0.5 新增方法 ====================
-
     def add_contract(self, contract_id: int) -> None:
-        """
-        添加合同ID到人物持有列表。
-
-        Args:
-            contract_id: 要添加的合同ID。
-
-        Raises:
-            ValueError: 如果合同ID已存在于列表中。
-        """
         if contract_id in self._contract_ids:
-            raise ValueError(f"Contract ID {contract_id} already exists in figure's contract list")
+            raise ValueError(f"Contract ID {contract_id} already exists")
         self._contract_ids.append(contract_id)
         self._has_active_contract = True
 
     def remove_contract(self, contract_id: int) -> None:
-        """
-        从人物持有列表中移除合同ID。
-
-        Args:
-            contract_id: 要移除的合同ID。
-        """
         if contract_id in self._contract_ids:
             self._contract_ids.remove(contract_id)
-        # 如果合同ID不存在，静默忽略
         self._has_active_contract = bool(self._contract_ids)
 
     def settle_contract_profit(self, profit: int) -> None:
-        """
-        结算合同利润，直接增加人物财富。
-
-        Args:
-            profit: 利润金额。
-        """
         self.wealth += profit
 
     # ==================== MVP 0.5 新增属性访问器 ====================
-
     @property
     def land_private(self) -> int:
-        """获取人物私地数量"""
         return self._land_private
 
     @property
     def contract_ids(self) -> List[int]:
-        """获取人物持有的合同ID列表（返回副本，防止外部修改）"""
         return self._contract_ids.copy()
 
     @property
     def has_active_contract(self) -> bool:
-        """检查人物是否有执行中的合同"""
         return self._has_active_contract
 
     @property
-    def figure_type(self) -> str:
-        """获取人物类型（patrician/knight/plebeian）"""
-        return self._figure_type
-
-    @property
     def tribute_profit(self) -> int:
-        """获取当前回合包税利润"""
         return self._tribute_profit
 
     @property
     def project_profit(self) -> int:
-        """获取当前回合工程利润"""
         return self._project_profit

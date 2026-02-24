@@ -8,7 +8,7 @@ from typing import List, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.figure import Figure, ClassTier
-from src.core.entities.contract import Contract, ContractType
+from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.ui.commands.func_status import get_progress_bar
 
 if TYPE_CHECKING:
@@ -28,19 +28,6 @@ class ForumCommand(Command):
     def execute(self, args: List[str]) -> bool:
         """
         执行广场阶段
-
-        1. 检查阶段是否已执行
-        2. 生成新人物并放入 Curia
-        3. 显示 Curia 中等待的人物
-        4. 生成新合同并加入合同列表
-        5. 显示合同状态
-        6. 标记阶段为已执行
-
-        Args:
-            args: 命令参数（忽略）
-
-        Returns:
-            bool: 执行成功返回 True
         """
         if not self.state.is_phase_executed("revenue"):
             print("⚠️ 必须先执行税收阶段 (revenue)")
@@ -70,8 +57,10 @@ class ForumCommand(Command):
         # 2. 显示 Curia 状态
         self._display_curia(terms)
 
-        # 3. 生成合同
+        # 3. 生成合同（仅生成，不竞标）
         new_contracts = self._generate_contracts()
+
+        # 4. 公告新合同
         if new_contracts:
             print(f"\n   📜 {len(new_contracts)} new contract(s) announced:")
             for c in new_contracts:
@@ -80,14 +69,19 @@ class ForumCommand(Command):
         else:
             print(f"\n   📭 No new contracts.")
 
-        # 4. 显示合同列表
+        # 5. 对包税合同进行竞标
+        for contract in new_contracts:
+            if contract.contract_type == ContractType.TAX_FARMING:
+                self._auto_bid_for_contract(contract)
+
+        # 6. 显示待授予合同
         self._display_contracts(terms)
 
-        # 5. 提示可用命令
+        # 7. 提示可用命令
         print(f"\n   💡 Use 'persuade <id>' to recruit figures into your faction.")
         print(f"   💡 Use 'contracts' to view pending contracts.")
 
-        # 6. 清理未招募的人物（新增）
+        # 8. 清理未招募的人物
         curia = self.state.curia
         if not curia.is_empty():
             ids_to_remove = [fig.id for fig in curia.get_all_available()]
@@ -103,11 +97,9 @@ class ForumCommand(Command):
         return True
 
     def _generate_new_figures(self) -> List[Figure]:
-        """生成新人物（逻辑与原 forum_phase.py 一致）"""
+        """生成新人物"""
         new_figures = []
         count = random.randint(1, 2)  # 每回合生成1-2人
-
-        # 获取下一个可用ID（简单递增，但需避免冲突）
         next_id = max((mid for mid in self.state.members.keys()), default=0) + 1
 
         for i in range(count):
@@ -120,9 +112,7 @@ class ForumCommand(Command):
             else:                          # 65% 平民
                 figure = Figure.create_plebeian(figure_id, None, age=random.randint(20, 35))
 
-            # 添加到全局成员列表
             self.state.add_member(figure)
-            # 放入 Curia 等待区
             self.state.curia.add_figure(figure)
             new_figures.append(figure)
 
@@ -151,55 +141,43 @@ class ForumCommand(Command):
                 print(f"            [{power}{wealth}{pop}]{family_info}")
 
     def _generate_contracts(self):
-        """生成包税权合同（根据行省公地）和公共工程合同（暂时不变）"""
+        """生成包税权合同和公共工程合同，返回合同列表（不竞标）"""
         from src.core.entities.contract import ContractType
+
         contracts = []
         config = self.state.config
         land_price = config.get("economic_rules.land_price_per_unit", 10)
         province_tax_rate = config.get("economic_rules.province_tax_rate", 0.1)
         auction_ratio = config.get("economic_rules.tax_auction_ratio", 0.8)
-        # 利润比例仍可保留，但实际利润计算用年收益 - 底价
-        # 但合同需要 profit_base 字段，我们可设置为年收益 - 底价
+        private_income_rate = config.get("economic_rules.private_land_income_rate", 0.05)
 
-        # 遍历所有行省，为未绑定包税合同的生成包税合同
+        # 包税合同
         for province in self.state.get_all_provinces():
             if province.tax_contract_id is not None:
                 continue
-
-            # 计算行省公地价值
             public_land = province.land_public
             if public_land == 0:
-                continue  # 无公地，不生成合同
+                continue
 
-            # 年收益 = 公地数量 * 土地单价 * 行省税率
-            annual_revenue = int(public_land * land_price * province_tax_rate)
-            # 拍卖底价 = 年收益 * 拍卖比例
-            base_cost = int(annual_revenue * auction_ratio)
-            # 预期利润 = 年收益 - 底价
-            expected_profit = annual_revenue - base_cost
+            land_value = public_land * land_price
+            base_income = int(land_value * private_income_rate)
+            base_tax = int(base_income * province_tax_rate)
+            base_cost = int(base_tax * auction_ratio)
 
-            # 创建合同
             contract = self.state.create_contract(
                 ContractType.TAX_FARMING,
                 province.province_id,
                 base_cost,
                 self.state.turn.turn_number
             )
-            # 设置额外字段
             contract.name = f"{province.name}包税权"
             contract.description = f"{province.name}行省税收承包权"
-            contract.expected_profit = expected_profit
-            contract._profit_base = expected_profit  # 将预期利润作为利润基础（简化）
-            contract.duration_years = 5  # 可配置，暂时固定5年
-            # 绑定到行省
-            province.bind_tax_contract(contract.id)
+            contract.expected_profit = base_tax - base_cost
+            contract.duration_years = 5
             contracts.append(contract)
-            print(f"      📊 包税权合同生成：{province.name} 底价 {base_cost}，预期利润 {expected_profit}")
+            print(f"      📊 包税权合同生成：{province.name} 底价 {base_cost}")
 
-        # 公共工程合同生成逻辑（保持不变，后续可再调整）
-        # ... 原有公共工程合同生成代码 ...
-        # 注意：需将原有公共工程合同生成代码移至此方法内
-        # 以下为原有公共工程合同生成代码（需合并）
+        # 公共工程合同
         treasury = self.state.treasury
         project_base = config.get("economic_rules.project_base_cost", 200)
         total_needed = 0
@@ -229,6 +207,39 @@ class ForumCommand(Command):
             print(f"      ⚠️ 国库资金不足，无法生成全部公共工程合同")
 
         return contracts
+
+    def _auto_bid_for_contract(self, contract):
+        """为单个包税合同自动竞标并揭标"""
+        if contract.contract_type != ContractType.TAX_FARMING:
+            return
+
+        factions = list(self.state.factions.values())
+        if not factions:
+            return
+
+        print(f"\n      🔔 开始竞标 {contract.name} 底价 {contract.base_cost}")
+        for faction in factions:
+            equites = [m for m in faction.get_members(self.state)
+                       if m.class_tier == ClassTier.EQUES and not m.is_dead]
+            if not equites:
+                continue
+            knight = max(equites, key=lambda k: k.wealth)
+            r = random.uniform(0.05, 0.20)
+            amount = int(contract.base_cost * (1 + r))
+            if knight.wealth < amount:
+                print(f"         {faction.name} 的 {knight.get_formal_name()} 财富不足 {knight.wealth} < {amount}，无法出价")
+                continue
+            self.state.place_bid(contract.id, knight.id, amount, r)
+            print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {amount} (加价 {r*100:.0f}%)")
+
+        self.state.resolve_auction(contract.id)
+
+        if contract.status == ContractStatus.ACTIVE and contract.winning_bid:
+            winner = self.state.get_member(contract.winning_bid["bidder_id"])
+            winner_name = winner.get_formal_name() if winner else "未知"
+            print(f"      ✅ 中标者: {winner_name}，中标价 {contract.winning_bid['amount']}，税率 {contract.tax_rate*100:.0f}%")
+        else:
+            print(f"      ❌ 流拍")
 
     def _display_contracts(self, terms):
         """显示待授予合同"""

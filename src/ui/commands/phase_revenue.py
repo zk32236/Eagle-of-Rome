@@ -105,29 +105,83 @@ class RevenueCommand(Command):
             print(f"\n   🌾 无私地收益")
 
     def _process_contract_revenues(self, terms):
+        """
+        处理活跃合同的年度收益
+
+        遍历所有状态为 ACTIVE 的合同：
+        - 包税合同：根据中标信息和实际税率结算
+        - 工程合同：原有逻辑（国库支付年度预算，骑士获得利润）
+        """
+        from src.core.entities.contract import ContractType, ContractStatus
+
         active_contracts = [c for c in self.state.contracts
                             if c.status == ContractStatus.ACTIVE]
+
         if not active_contracts:
             return
+
         print(f"\n   📜 Contract Revenues:")
+
         for contract in active_contracts:
-            figure = self.state.get_member(contract.awarded_to)
-            if not figure or figure.is_dead:
-                contract.expire()
-                print(f"      ⚠️  {contract.name}: Contractor deceased, contract void")
-                continue
             if contract.contract_type == ContractType.TAX_FARMING:
-                profit = contract.execute_tax_collection()
-                self.state.add_figure_wealth(contract.awarded_to, profit)
-                print(f"      📊 {contract.name}: {figure.name} +{profit} {terms.currency}")
-                if contract.status == ContractStatus.COMPLETED:
-                    print(f"         ✅ Contract completed! Total collected: {contract.total_collected}")
+                # 包税合同处理
+                winning_bid = contract.winning_bid
+                tax_rate = contract.tax_rate
+                if not winning_bid:
+                    # 无中标信息，跳过（可能是旧合同或其他异常）
+                    continue
+
+                # 获取中标者
+                figure = self.state.get_member(winning_bid["bidder_id"])
+                if not figure or figure.is_dead:
+                    # 中标者已死亡，合同终止
+                    contract.terminate()
+                    print(f"      ⚠️  {contract.name}: 中标者已死亡，合同终止")
+                    continue
+
+                # 获取行省
+                province = self.state.get_province(contract.province_id)
+                if not province:
+                    continue
+
+                # 从配置读取参数
+                land_price = self.state.get_economic_rule("land_price_per_unit", 10)
+                base_income_rate = self.state.get_economic_rule("private_land_income_rate", 0.05)
+
+                # 行省基础年收益
+                base_income = province.land_public * land_price * base_income_rate
+                # 骑士实际征收税收
+                actual_tax = int(base_income * tax_rate)
+
+                # 国库获得中标价
+                self.state.add_treasury(winning_bid["amount"])
+                # 骑士获得实际税收
+                self.state.add_figure_wealth(winning_bid["bidder_id"], actual_tax)
+
+                print(f"      📊 {contract.name}: {figure.name} 获得 {actual_tax} {terms.currency} 税收，国库 +{winning_bid['amount']}")
+
+                # 剩余年限递减
+                contract.remaining_years -= 1
+                if contract.remaining_years <= 0:
+                    contract.mark_complete(self.state.turn.turn_number)
+                    print(f"         ✅ 合同到期完成")
+
             elif contract.contract_type == ContractType.PUBLIC_WORKS:
+                # 工程合同（原有逻辑）
+                figure = self.state.get_member(contract.awarded_to)
+                if not figure or figure.is_dead:
+                    contract.expire()
+                    print(f"      ⚠️  {contract.name}: Contractor deceased, contract void")
+                    continue
+
                 annual_budget = contract.base_cost // contract.duration_years
                 profit = contract.execute_works_payment()
+
                 self.state.add_treasury(-annual_budget)
                 self.state.add_figure_wealth(contract.awarded_to, profit)
+
                 print(f"      🏗️ {contract.name}: Treasury -{annual_budget}, {figure.name} +{profit} profit")
+
                 if contract.status == ContractStatus.COMPLETED:
                     print(f"         ✅ Project completed! Total profit: {contract.total_spent}")
 
