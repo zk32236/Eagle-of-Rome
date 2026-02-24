@@ -8,6 +8,7 @@ from typing import List, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.figure import ClassTier
+from src.ui.commands.func_status import get_progress_bar
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -35,6 +36,7 @@ class MortalityCommand(Command):
         self._handle_death_event()
 
         self.state.mark_phase_executed("mortality")
+        print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
     def _handle_death_event(self):

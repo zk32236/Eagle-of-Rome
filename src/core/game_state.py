@@ -563,10 +563,26 @@ class GameState:
         contract._winning_bid = winner
         contract._tax_rate = winner["tax_rate"]
 
+        # === 新增：计算年净收入 ===
+        province = self.get_province(contract.province_id)
+        if province:
+            land_price = self.get_economic_rule("land_price_per_unit", 10)
+            private_income_rate = self.get_economic_rule("private_land_income_rate", 0.05)
+            base_tax_rate = self.get_economic_rule("province_tax_rate", 0.1)
+
+            land_value = province.land_public * land_price
+            base_income = int(land_value * private_income_rate)  # 与原生成逻辑一致（截断）
+            actual_tax_rate = base_tax_rate * (1 + winner["tax_rate"])
+            actual_tax = int(base_income * actual_tax_rate)  # 截断
+            annual_net = actual_tax - winner["amount"]
+            contract._annual_profit = annual_net
+            contract.expected_profit = annual_net * contract.duration_years
+        # ========================
+
         figure = self.get_member(winner["bidder_id"])
         if figure:
             figure.add_contract(contract_id)
-            contract.awarded_faction = figure.faction_id  # 新增：记录中标者派系
+            contract.awarded_faction = figure.faction_id
 
         province = self.get_province(contract.province_id)
         if province:

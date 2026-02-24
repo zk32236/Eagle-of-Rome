@@ -124,43 +124,27 @@ class RevenueCommand(Command):
 
         for contract in active_contracts:
             if contract.contract_type == ContractType.TAX_FARMING:
-                # 包税合同处理
                 winning_bid = contract.winning_bid
-                tax_rate = contract.tax_rate
-                if not winning_bid:
-                    # 无中标信息，跳过（可能是旧合同或其他异常）
+                annual_profit = contract.annual_profit
+                if not winning_bid or annual_profit == 0:
                     continue
 
-                # 获取中标者
                 figure = self.state.get_member(winning_bid["bidder_id"])
                 if not figure or figure.is_dead:
-                    # 中标者已死亡，合同终止
                     contract.terminate()
                     print(f"      ⚠️  {contract.name}: 中标者已死亡，合同终止")
                     continue
 
-                # 获取行省
-                province = self.state.get_province(contract.province_id)
-                if not province:
-                    continue
-
-                # 从配置读取参数
-                land_price = self.state.get_economic_rule("land_price_per_unit", 10)
-                base_income_rate = self.state.get_economic_rule("private_land_income_rate", 0.05)
-
-                # 行省基础年收益
-                base_income = province.land_public * land_price * base_income_rate
-                # 骑士实际征收税收
-                actual_tax = int(base_income * tax_rate)
-
                 # 国库获得中标价
                 self.state.add_treasury(winning_bid["amount"])
-                # 骑士获得实际税收
-                self.state.add_figure_wealth(winning_bid["bidder_id"], actual_tax)
+                # 骑士获得年净收入
+                self.state.add_figure_wealth(winning_bid["bidder_id"], annual_profit)
+                # 更新合同收益累计（用于进度显示）
+                contract.total_collected += annual_profit
 
-                print(f"      📊 {contract.name}: {figure.name} 获得 {actual_tax} {terms.currency} 税收，国库 +{winning_bid['amount']}")
+                print(
+                    f"      📊 {contract.name}: {figure.name} 获得 {annual_profit} {terms.currency} 净收入，国库 +{winning_bid['amount']}")
 
-                # 剩余年限递减
                 contract.remaining_years -= 1
                 if contract.remaining_years <= 0:
                     contract.mark_complete(self.state.turn.turn_number)

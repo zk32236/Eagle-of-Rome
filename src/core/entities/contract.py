@@ -27,6 +27,7 @@ class Contract:
     # === MVP 0.5 新增必需字段（放在前面，无默认值）===
     _province_id: int = 0  # 行省ID
     _create_turn: int = 0  # 创建回合
+    _annual_profit: int = 0  # 年净收入（中标后设置）
 
     status: ContractStatus = ContractStatus.PENDING
 
@@ -199,6 +200,10 @@ class Contract:
     def tax_rate(self) -> Optional[float]:
         """返回实际税率（中标者的加价比例）"""
         return self._tax_rate
+
+    @property
+    def annual_profit(self) -> int:
+        return self._annual_profit
 
     # === MVP 0.5 新增方法 ===
     def mark_winner(self, winner_id: int, current_turn: int, profit_base: int) -> None:
