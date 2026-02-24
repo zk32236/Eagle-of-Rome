@@ -5,7 +5,7 @@ import random
 from pathlib import Path
 from src.core.game_state import GameState
 from src.core.entities.figure import Figure, ClassTier
-from src.core.entities.entities import Faction, GameTurn
+from src.core.entities.entities import Faction, GameTurn,Province
 
 
 class ScenarioLoader:
@@ -37,10 +37,14 @@ class ScenarioLoader:
         state._national_public_land = state.config.get("economic_rules.initial_national_public_land", 1000)
         ScenarioLoader._initialize_faction_leaders(state)
 
-        # 创建行省 (调测用，未来可改为从配置读取）
-        from src.core.entities.entities import Province
+        # 意大利（国家公地） - ID 0
+        italy = Province(0, "意大利", 0)  # total_land 设为0，后续手动设置公地
+        italy._land_public = state.get_national_public_land()  # 从 state 获取当前国家公地
+        italy._land_private = 0
+        state.add_province(italy)
+
         provinces_data = [
-            {"id": 1, "name": "西西里", "total_land": 1000},  # 总土地，其中公地比例在Province中自动分配
+            {"id": 1, "name": "西西里", "total_land": 1000},
             {"id": 2, "name": "撒丁尼亚", "total_land": 800},
             {"id": 3, "name": "科西嘉", "total_land": 600},
         ]

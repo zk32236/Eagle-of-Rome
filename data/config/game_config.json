@@ -52,5 +52,35 @@
     "decay_rules": {
         "veterans_annual_decay": 0.20,
         "popularity_annual_decay": 0.50
-    }
+    },
+    "economic_rules": {
+
+    "faction_stipend": 10,
+
+
+    "legion_recruit_cost": 10,
+    "legion_maintenance_base": 2,
+    "veteran_maintenance_bonus": 1,
+
+
+    "land_price_per_unit": 10,
+    "private_land_income_rate": 0.05,
+    "national_public_land_tax_rate": 0.02,
+    "initial_national_public_land": 1000,
+
+
+    "province_tax_rate": 0.1,
+    "tax_auction_ratio": 0.8,
+    "tax_contract_duration": 5,
+    "tax_bid_increment_min": 0.05,
+    "tax_bid_increment_max": 0.20,
+
+
+    "infrastructure_cost_rate": 0.01,
+    "project_budget_margin": 0.2,
+    "project_theoretical_construction": 3,
+    "project_theoretical_warranty": 10,
+    "project_bid_discount_min": 0.05,
+    "project_bid_discount_max": 0.20
+  }
 }

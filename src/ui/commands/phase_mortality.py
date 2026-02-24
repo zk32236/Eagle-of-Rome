@@ -1,6 +1,6 @@
 # src/ui/commands/phase_mortality.py
 """
-天命阶段命令 - 处理事件卡和人物死亡（固定触发死神来了）
+天命阶段命令 - 处理事件卡和人物死亡
 """
 
 import random
@@ -19,7 +19,7 @@ class MortalityCommand(Command):
 
     name = "mortality"
     aliases = ["m"]
-    description = "执行天命阶段 (Mortality Phase) - 固定触发死神来了"
+    description = "执行天命阶段 (Mortality Phase) - 抽取事件卡"
 
     def __init__(self, state: "GameState"):
         super().__init__(state)
@@ -32,8 +32,31 @@ class MortalityCommand(Command):
         terms = TerminologyService.get()
         print(f"\n--- {terms.phase_mortality} Phase (Year {abs(self.state.turn.year)} BC) ---")
 
-        print("   🎴 事件卡: 死神来了 (厄运)")
-        self._handle_death_event()
+        # 从配置获取事件卡池
+        rules = self.state.config.get("mortality_rules", {})
+        deck = rules.get("event_deck", [])
+        draw_count = rules.get("event_draw_count", 1)
+
+        if not deck:
+            print("   ⚠️ 未配置事件卡")
+            self.state.mark_phase_executed("mortality")
+            print(f"\n   Progress: {get_progress_bar(self.state)}")
+            return True
+
+        # 抽取事件卡
+        for i in range(draw_count):
+            event = random.choice(deck)
+            event_name = event["name"]
+            effect = event["effect"]
+
+            print(f"   🎴 事件卡: {event_name}")
+
+            if effect == "death":
+                self._handle_death_event()
+            else:
+                # 其他事件暂不实现，仅打印
+                print(f"      (效果暂未实现)")
+                self.state.log_event(f"{event_name}")
 
         self.state.mark_phase_executed("mortality")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
@@ -70,20 +93,3 @@ class MortalityCommand(Command):
             print(f"      🏞️ 土地回收后国家公地: {national_land_after} C (+{land})")
 
         self.state.log_event(f"💀 死神来了：{len(victims)} 人死亡，财产归公")
-
-    # ---------- 预留事件处理接口 ----------
-    def _handle_bountiful_harvest(self):
-        print("   🌾 丰调雨顺：今年土地产出增加50%（预留）")
-        self.state.log_event("🌾 丰调雨顺")
-
-    def _handle_peace_and_stability(self):
-        print("   🕊️ 国泰民安：民变和战争威胁降低（预留）")
-        self.state.log_event("🕊️ 国泰民安")
-
-    def _handle_mighty_man(self):
-        print("   💪 天降猛男：一位强力平民将在广场阶段出现（预留）")
-        self.state.log_event("💪 天降猛男")
-
-    def _handle_natural_disaster(self):
-        print("   🌪️ 无妄天灾：随机行省遭受自然灾害（预留）")
-        self.state.log_event("🌪️ 无妄天灾")

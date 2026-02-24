@@ -26,9 +26,6 @@ class ForumCommand(Command):
         super().__init__(state)
 
     def execute(self, args: List[str]) -> bool:
-        """
-        执行广场阶段
-        """
         if not self.state.is_phase_executed("revenue"):
             print("⚠️ 必须先执行税收阶段 (revenue)")
             return False
@@ -69,19 +66,24 @@ class ForumCommand(Command):
         else:
             print(f"\n   📭 No new contracts.")
 
-        # 5. 对包税合同进行竞标
+        # 5. 对包税合同竞标
         for contract in new_contracts:
             if contract.contract_type == ContractType.TAX_FARMING:
                 self._auto_bid_for_contract(contract)
 
-        # 6. 显示待授予合同
+        # 6. 对工程合同竞标
+        for contract in new_contracts:
+            if contract.contract_type == ContractType.PUBLIC_WORKS:
+                self._auto_bid_for_works(contract)
+
+        # 7. 显示待授予合同
         self._display_contracts(terms)
 
-        # 7. 提示可用命令
+        # 8. 提示可用命令
         print(f"\n   💡 Use 'persuade <id>' to recruit figures into your faction.")
         print(f"   💡 Use 'contracts' to view pending contracts.")
 
-        # 8. 清理未招募的人物
+        # 9. 清理未招募的人物
         curia = self.state.curia
         if not curia.is_empty():
             ids_to_remove = [fig.id for fig in curia.get_all_available()]
@@ -91,7 +93,6 @@ class ForumCommand(Command):
             curia.clear()
             print(f"      🗑️ {len(ids_to_remove)} 名未被招募的人物已从游戏中消失")
 
-        # 标记阶段已执行
         self.state.mark_phase_executed("forum")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
@@ -99,17 +100,17 @@ class ForumCommand(Command):
     def _generate_new_figures(self) -> List[Figure]:
         """生成新人物"""
         new_figures = []
-        count = random.randint(1, 2)  # 每回合生成1-2人
+        count = random.randint(1, 2)
         next_id = max((mid for mid in self.state.members.keys()), default=0) + 1
 
         for i in range(count):
             figure_id = next_id + i
             tier_roll = random.random()
-            if tier_roll < 0.1:          # 10% 贵族
+            if tier_roll < 0.1:
                 figure = Figure.create_nobile(figure_id, None, age=random.randint(30, 50))
-            elif tier_roll < 0.35:        # 25% 骑士
+            elif tier_roll < 0.35:
                 figure = Figure.create_eques(figure_id, None, age=random.randint(25, 40))
-            else:                          # 65% 平民
+            else:
                 figure = Figure.create_plebeian(figure_id, None, age=random.randint(20, 35))
 
             self.state.add_member(figure)
@@ -119,7 +120,6 @@ class ForumCommand(Command):
         return new_figures
 
     def _display_curia(self, terms):
-        """显示 Curia 中等待的人物"""
         curia = self.state.curia
         if curia.is_empty():
             print(f"\n   📭 The {terms.assembly} is empty.")
@@ -147,12 +147,14 @@ class ForumCommand(Command):
         contracts = []
         config = self.state.config
         land_price = config.get("economic_rules.land_price_per_unit", 10)
+        private_income_rate = config.get("economic_rules.private_land_income_rate", 0.05)
         province_tax_rate = config.get("economic_rules.province_tax_rate", 0.1)
         auction_ratio = config.get("economic_rules.tax_auction_ratio", 0.8)
-        private_income_rate = config.get("economic_rules.private_land_income_rate", 0.05)
 
         # 包税合同
         for province in self.state.get_all_provinces():
+            if province.province_id == 0:  # 跳过意大利
+                continue
             if province.tax_contract_id is not None:
                 continue
             public_land = province.land_public
@@ -173,38 +175,36 @@ class ForumCommand(Command):
             contract.name = f"{province.name}包税权"
             contract.description = f"{province.name}行省税收承包权"
             contract.expected_profit = base_tax - base_cost
-            contract.duration_years = 5
+            # 从配置读取包税合同期限
+            contract.duration_years = config.get("economic_rules.tax_contract_duration", 5)
             contracts.append(contract)
             print(f"      📊 包税权合同生成：{province.name} 底价 {base_cost}")
 
         # 公共工程合同
-        treasury = self.state.treasury
-        project_base = config.get("economic_rules.project_base_cost", 200)
-        total_needed = 0
-        candidates = []
+        infra_rate = config.get("economic_rules.infrastructure_cost_rate", 0.001)
+        budget_margin = config.get("economic_rules.project_budget_margin", 0.2)
         for province in self.state.get_all_provinces():
-            if province.project_contract_id is None and not province.has_project:
-                total_needed += project_base
-                candidates.append(province)
+            if province.project_contract_id is not None or province.has_project:
+                continue
+            if province.land_public == 0:
+                continue
+            land_value = province.land_public * land_price
+            infra_cost = int(land_value * infra_rate)
+            budget = int(infra_cost * (1 + budget_margin))
 
-        if total_needed <= treasury:
-            for province in candidates:
-                contract = self.state.create_contract(
-                    ContractType.PUBLIC_WORKS,
-                    province.province_id,
-                    project_base,
-                    self.state.turn.turn_number
-                )
-                contract.name = f"{province.name}工程"
-                contract.description = f"{province.name}公共建设项目"
-                profit_rate = config.get("economic_rules.project_contract_profit_rate", 0.15)
-                contract.expected_profit = int(project_base * profit_rate)
-                contract.duration_years = config.get("economic_rules.project_contract_exec_turn", 15)
-                province.bind_project_contract(contract.id)
-                contracts.append(contract)
-                print(f"      🏗️ 公共工程合同生成：{province.name} 预算 {project_base}")
-        else:
-            print(f"      ⚠️ 国库资金不足，无法生成全部公共工程合同")
+            year = self.state.turn.year
+            year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
+            contract = self.state.create_contract(
+                ContractType.PUBLIC_WORKS,
+                province.province_id,
+                budget,
+                self.state.turn.turn_number
+            )
+            contract.name = f"{province.name}工程 ({year_display})"
+            contract.description = f"{province.name}公共建设项目"
+            contract._original_budget = budget
+            contracts.append(contract)
+            print(f"      🏗️ 公共工程合同生成：{province.name} 预算 {budget}")
 
         return contracts
 
@@ -212,6 +212,10 @@ class ForumCommand(Command):
         """为单个包税合同自动竞标并揭标"""
         if contract.contract_type != ContractType.TAX_FARMING:
             return
+
+        config = self.state.config
+        min_inc = config.get("economic_rules.tax_bid_increment_min", 0.05)
+        max_inc = config.get("economic_rules.tax_bid_increment_max", 0.20)
 
         factions = list(self.state.factions.values())
         if not factions:
@@ -224,12 +228,14 @@ class ForumCommand(Command):
             if not equites:
                 continue
             knight = max(equites, key=lambda k: k.wealth)
-            r = random.uniform(0.05, 0.20)
+
+            r = random.uniform(min_inc, max_inc)
             amount = int(contract.base_cost * (1 + r))
+
             if knight.wealth < amount:
                 print(f"         {faction.name} 的 {knight.get_formal_name()} 财富不足 {knight.wealth} < {amount}，无法出价")
                 continue
-            self.state.place_bid(contract.id, knight.id, amount, r)
+            self.state.place_bid(contract.id, knight.id, amount, tax_rate=r)
             print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {amount} (加价 {r*100:.0f}%)")
 
         self.state.resolve_auction(contract.id)
@@ -240,6 +246,69 @@ class ForumCommand(Command):
             print(f"      ✅ 中标者: {winner_name}，中标价 {contract.winning_bid['amount']}，税率 {contract.tax_rate*100:.0f}%")
         else:
             print(f"      ❌ 流拍")
+
+    def _auto_bid_for_works(self, contract):
+        """为单个工程合同自动竞标并揭标"""
+        if contract.contract_type != ContractType.PUBLIC_WORKS:
+            return
+
+        config = self.state.config
+        X = config.get("economic_rules.project_theoretical_construction", 5)
+        N = config.get("economic_rules.project_theoretical_warranty", 10)
+        min_discount = config.get("economic_rules.project_bid_discount_min", 0.05)
+        max_discount = config.get("economic_rules.project_bid_discount_max", 0.20)
+        land_price = config.get("economic_rules.land_price_per_unit", 10)
+        infra_rate = config.get("economic_rules.infrastructure_cost_rate", 0.001)
+
+        # 获取行省信息，用于计算实际成本
+        province = self.state.get_province(contract.province_id)
+        if not province:
+            return
+        land_value = province.land_public * land_price
+        infra_cost = int(land_value * infra_rate)
+
+        factions = list(self.state.factions.values())
+        if not factions:
+            return
+
+        print(f"\n      🔔 开始竞标 {contract.name} 预算 {contract._original_budget}")
+        original_budget = contract._original_budget
+
+        for faction in factions:
+            knights = [m for m in faction.get_members(self.state)
+                       if m.class_tier == ClassTier.EQUES and not m.is_dead]
+            if not knights:
+                continue
+            knight = max(knights, key=lambda k: k.wealth)
+
+            r = random.uniform(min_discount, max_discount)
+            bid_amount = int(original_budget * (1 - r))
+            construction = int(X * (1 + r) + 0.5)
+            if construction < 1:
+                construction = 1
+            warranty = int(N * (1 - r) + 0.5)
+            if warranty < 0:
+                warranty = 0
+            annual_income = bid_amount // construction
+
+            # 计算年支出
+            actual_cost = int(infra_cost * (1 - r))
+            annual_cost = actual_cost // construction
+
+            self.state.place_bid(
+                contract.id,
+                knight.id,
+                bid_amount,
+                r=r,
+                original_budget=original_budget,
+                construction=construction,
+                warranty=warranty,
+                annual_income=annual_income,
+                annual_cost=annual_cost
+            )
+            print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {bid_amount} (降价 {r*100:.0f}%)")
+
+        self.state.resolve_auction(contract.id)
 
     def _display_contracts(self, terms):
         """显示待授予合同"""

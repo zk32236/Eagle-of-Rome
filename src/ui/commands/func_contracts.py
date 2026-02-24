@@ -60,13 +60,26 @@ class ContractsCommand(Command):
                 print(f"      ID:{c.id} {type_name}: {c.name}")
                 print(f"         Contractor: {fname} ({fact_name})")
                 print(f"         Remaining: {c.remaining_years} years")
-                print(f"         Progress: {c.total_collected + c.total_spent}/{c.expected_profit}")
+                # 根据合同类型显示不同进度
+                if c.contract_type == ContractType.TAX_FARMING:
+                    progress = f"{c.total_collected}/{c.expected_profit}"
+                else:
+                    progress = f"{c.total_spent}/{c.base_cost}"
+                print(f"         Progress: {progress}")
 
         if completed:
             print(f"\n   ✅ COMPLETED:")
             for c in completed:
                 type_name = "📊" if c.contract_type == ContractType.TAX_FARMING else "🏗️"
-                print(f"      {type_name} {c.name} - Total: {c.total_collected + c.total_spent}")
+                total = c.total_collected + c.total_spent
+                # 为工程合同添加质保期信息
+                warranty_info = ""
+                if c.contract_type == ContractType.PUBLIC_WORKS and hasattr(c, 'warranty_remaining'):
+                    if c.warranty_remaining > 0:
+                        warranty_info = f" (质保剩余 {c.warranty_remaining} 年)"
+                    else:
+                        warranty_info = f" (已失修)"
+                print(f"      {type_name} {c.name} - Total: {total}{warranty_info}")
 
         if expired:
             print(f"\n   ❌ EXPIRED:")

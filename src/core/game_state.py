@@ -226,8 +226,8 @@ class GameState:
 
     # ========== 新增：公地增减方法 ==========
     def add_national_public_land(self, amount: int) -> None:
-        """增加国家公地总量"""
         self._national_public_land += amount
+        self.sync_italy_public_land()
 
     # ========== 配置获取（通过 Config 实例）==========
 
@@ -532,21 +532,25 @@ class GameState:
             return None
         return self.get_contract(contract_id)
 
-    def place_bid(self, contract_id: int, bidder_id: int, amount: int, tax_rate: float) -> bool:
+    def place_bid(self, contract_id: int, bidder_id: int, amount: int, **kwargs) -> bool:
         """
         为指定合同记录一个出价。
         返回是否成功（合同存在且处于 PENDING 状态）。
+        kwargs 用于存储工程合同的额外字段（如 r, construction, warranty, annual_income 等）。
         """
         contract = self.get_contract(contract_id)
         if not contract or contract.status != ContractStatus.PENDING:
             return False
-        # 简单校验 bidder 是否存在且存活（可由调用层保证）
-        contract._bids.append({
-            "bidder_id": bidder_id,
-            "amount": amount,
-            "tax_rate": tax_rate
-        })
+        bid = {"bidder_id": bidder_id, "amount": amount}
+        bid.update(kwargs)  # 合并额外参数
+        contract._bids.append(bid)
         return True
+
+    def sync_italy_public_land(self):
+        """将国家公地同步到意大利行省"""
+        italy = self.get_province(0)
+        if italy:
+            italy._land_public = self._national_public_land
 
     def resolve_auction(self, contract_id: int) -> bool:
         contract = self.get_contract(contract_id)
@@ -556,29 +560,55 @@ class GameState:
             contract.status = ContractStatus.EXPIRED
             return False
 
-        max_bid = max(contract._bids, key=lambda b: b["amount"])
-        winner = max_bid
+        # 根据合同类型选择中标者
+        if contract.contract_type == ContractType.TAX_FARMING:
+            max_bid = max(contract._bids, key=lambda b: b["amount"])
+            winner = max_bid
+        else:  # PUBLIC_WORKS
+            min_bid = min(contract._bids, key=lambda b: b["amount"])
+            winner = min_bid
 
         contract.mark_winner(winner["bidder_id"], self.turn.turn_number, 0)
-        contract._winning_bid = winner
-        contract._tax_rate = winner["tax_rate"]
 
-        # === 新增：计算年净收入 ===
-        province = self.get_province(contract.province_id)
-        if province:
-            land_price = self.get_economic_rule("land_price_per_unit", 10)
-            private_income_rate = self.get_economic_rule("private_land_income_rate", 0.05)
-            base_tax_rate = self.get_economic_rule("province_tax_rate", 0.1)
+        if contract.contract_type == ContractType.TAX_FARMING:
+            # 包税权处理（原有逻辑，略作简化，确保字段正确）
+            contract._winning_bid = winner
+            contract._tax_rate = winner["tax_rate"]
+            province = self.get_province(contract.province_id)
+            if province:
+                land_price = self.get_economic_rule("land_price_per_unit", 10)
+                private_income_rate = self.get_economic_rule("private_land_income_rate", 0.05)
+                base_tax_rate = self.get_economic_rule("province_tax_rate", 0.1)
+                land_value = province.land_public * land_price
+                base_income = int(land_value * private_income_rate)
+                actual_tax_rate = base_tax_rate * (1 + winner["tax_rate"])
+                actual_tax = int(base_income * actual_tax_rate)
+                annual_net = actual_tax - winner["amount"]
+                contract._annual_profit = annual_net
+                contract.expected_profit = annual_net * contract.duration_years
+        else:
+            # 公共工程处理
+            contract._winning_bid = winner
+            r = winner["r"]
+            contract._original_budget = winner["original_budget"]
+            contract._construction_years = winner["construction"]
+            contract._warranty_years = winner["warranty"]
+            contract._annual_income = winner["annual_income"]
+            contract._annual_cost = winner["annual_cost"]
+            contract.base_cost = winner["amount"]
+            contract.remaining_years = winner["construction"]  # 施工剩余年限
+            contract._warranty_remaining = winner["warranty"]
 
-            land_value = province.land_public * land_price
-            base_income = int(land_value * private_income_rate)  # 与原生成逻辑一致（截断）
-            actual_tax_rate = base_tax_rate * (1 + winner["tax_rate"])
-            actual_tax = int(base_income * actual_tax_rate)  # 截断
-            annual_net = actual_tax - winner["amount"]
-            contract._annual_profit = annual_net
-            contract.expected_profit = annual_net * contract.duration_years
-        # ========================
+            province = self.get_province(contract.province_id)
+            if province:
+                land_price = self.get_economic_rule("land_price_per_unit", 10)
+                infra_rate = self.get_economic_rule("infrastructure_cost_rate", 0.001)
+                land_value = province.land_public * land_price
+                infra_cost = int(land_value * infra_rate)
+                actual_cost = int(infra_cost * (1 - r))
+                contract.expected_profit = winner["amount"] - actual_cost  # 总收益
 
+        # 绑定骑士和行省
         figure = self.get_member(winner["bidder_id"])
         if figure:
             figure.add_contract(contract_id)
@@ -586,6 +616,9 @@ class GameState:
 
         province = self.get_province(contract.province_id)
         if province:
-            province.bind_tax_contract(contract_id)
+            if contract.contract_type == ContractType.TAX_FARMING:
+                province.bind_tax_contract(contract_id)
+            else:
+                province.bind_project_contract(contract_id)
 
         return True

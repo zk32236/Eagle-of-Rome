@@ -29,6 +29,14 @@ class Contract:
     _create_turn: int = 0  # 创建回合
     _annual_profit: int = 0  # 年净收入（中标后设置）
 
+    # === MVP 0.5 公共工程新增字段 ===
+    _original_budget: int = 0  # 原始预算
+    _construction_years: int = 0  # 实际施工周期
+    _warranty_years: int = 0  # 实际质保周期
+    _annual_income: int = 0  # 骑士年收入
+    _warranty_remaining: int = 0  # 剩余质保年限
+    _annual_cost: int = 0  # 骑士年支出
+
     status: ContractStatus = ContractStatus.PENDING
 
     # 基本信息
@@ -202,8 +210,32 @@ class Contract:
         return self._tax_rate
 
     @property
+    def original_budget(self) -> int:
+        return self._original_budget
+
+    @property
+    def construction_years(self) -> int:
+        return self._construction_years
+
+    @property
+    def warranty_years(self) -> int:
+        return self._warranty_years
+
+    @property
+    def annual_income(self) -> int:
+        return self._annual_income
+
+    @property
     def annual_profit(self) -> int:
         return self._annual_profit
+
+    @property
+    def warranty_remaining(self) -> int:
+        return self._warranty_remaining
+
+    @property
+    def annual_cost(self) -> int:
+        return self._annual_cost
 
     # === MVP 0.5 新增方法 ===
     def mark_winner(self, winner_id: int, current_turn: int, profit_base: int) -> None:

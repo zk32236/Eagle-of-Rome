@@ -24,7 +24,6 @@ class RevenueCommand(Command):
         super().__init__(state)
 
     def execute(self, args: List[str]) -> bool:
-
         if not self.state.is_phase_executed("mortality"):
             print("⚠️ 必须先执行天命阶段 (mortality)")
             return False
@@ -50,7 +49,7 @@ class RevenueCommand(Command):
             self.state.add_faction_treasury(faction.id, stipend)
             print(f"   {faction.name}: +{stipend} {terms.currency}")
 
-        # 3. 私地收益（浮点计算，加财富四舍五入，仅显示实际值）
+        # 3. 私地收益
         self._process_private_land_income(terms)
 
         # 4. 军团维护费
@@ -73,12 +72,15 @@ class RevenueCommand(Command):
         # 8. 合同摘要
         self._show_contract_summary(terms)
 
-        # 9. 显示私地状态以便对比
+        # 9. 显示私地状态
         from src.ui.commands.func_status import StatusPrivateLandCommand
         spr_cmd = StatusPrivateLandCommand(self.state)
         spr_cmd.execute([])
 
-        # 10. 兼容旧逻辑
+        # 10. 处理已完成工程合同的质保年限递减
+        self._process_warranty_decay(terms)
+
+        # 11. 兼容旧逻辑
         if hasattr(self.state.turn, 'current_phase'):
             self.state.turn.current_phase = "revenue"
 
@@ -87,7 +89,6 @@ class RevenueCommand(Command):
         return True
 
     def _process_private_land_income(self, terms):
-        """计算并发放私地收益（浮点计算，加财富四舍五入，仅显示实际值）"""
         land_price = self.state.get_economic_rule("land_price_per_unit", 10)
         rate = self.state.get_economic_rule("private_land_income_rate", 0.05)
 
@@ -105,13 +106,6 @@ class RevenueCommand(Command):
             print(f"\n   🌾 无私地收益")
 
     def _process_contract_revenues(self, terms):
-        """
-        处理活跃合同的年度收益
-
-        遍历所有状态为 ACTIVE 的合同：
-        - 包税合同：根据中标信息和实际税率结算
-        - 工程合同：原有逻辑（国库支付年度预算，骑士获得利润）
-        """
         from src.core.entities.contract import ContractType, ContractStatus
 
         active_contracts = [c for c in self.state.contracts
@@ -124,52 +118,87 @@ class RevenueCommand(Command):
 
         for contract in active_contracts:
             if contract.contract_type == ContractType.TAX_FARMING:
+                # 包税合同处理
                 winning_bid = contract.winning_bid
-                annual_profit = contract.annual_profit
-                if not winning_bid or annual_profit == 0:
+                if not winning_bid:
                     continue
-
                 figure = self.state.get_member(winning_bid["bidder_id"])
                 if not figure or figure.is_dead:
                     contract.terminate()
+                    province = self.state.get_province(contract.province_id)
+                    if province:
+                        province.unbind_tax_contract()
                     print(f"      ⚠️  {contract.name}: 中标者已死亡，合同终止")
                     continue
 
-                # 国库获得中标价
+                # 获取年净收入（已在 resolve_auction 中计算）
+                annual_profit = contract.annual_profit  # 关键修复：定义变量
                 self.state.add_treasury(winning_bid["amount"])
-                # 骑士获得年净收入
                 self.state.add_figure_wealth(winning_bid["bidder_id"], annual_profit)
-                # 更新合同收益累计（用于进度显示）
                 contract.total_collected += annual_profit
 
-                print(
-                    f"      📊 {contract.name}: {figure.name} 获得 {annual_profit} {terms.currency} 净收入，国库 +{winning_bid['amount']}")
+                print(f"      📊 {contract.name}: {figure.name} 获得 {annual_profit} {terms.currency} 净收入，国库 +{winning_bid['amount']}")
 
                 contract.remaining_years -= 1
                 if contract.remaining_years <= 0:
                     contract.mark_complete(self.state.turn.turn_number)
+                    province = self.state.get_province(contract.province_id)
+                    if province:
+                        province.unbind_tax_contract()
                     print(f"         ✅ 合同到期完成")
 
             elif contract.contract_type == ContractType.PUBLIC_WORKS:
-                # 工程合同（原有逻辑）
+                # 工程合同处理
                 figure = self.state.get_member(contract.awarded_to)
                 if not figure or figure.is_dead:
-                    contract.expire()
-                    print(f"      ⚠️  {contract.name}: Contractor deceased, contract void")
+                    contract.terminate()
+                    province = self.state.get_province(contract.province_id)
+                    if province:
+                        province.unbind_project_contract()
+                    print(f"      ⚠️  {contract.name}: 中标者已死亡，合同终止")
                     continue
 
-                annual_budget = contract.base_cost // contract.duration_years
-                profit = contract.execute_works_payment()
+                if contract.remaining_years > 0:
+                    annual_income = contract.annual_income
+                    # 最后一年补足余数
+                    if contract.remaining_years == 1:
+                        paid = contract.total_spent
+                        total_bid = contract.base_cost
+                        payment = total_bid - paid
+                    else:
+                        payment = annual_income
 
-                self.state.add_treasury(-annual_budget)
-                self.state.add_figure_wealth(contract.awarded_to, profit)
+                    self.state.add_treasury(-payment)
+                    self.state.add_figure_wealth(contract.awarded_to, payment)
+                    contract.total_spent += payment
+                    contract.remaining_years -= 1
+                    print(f"      🏗️ {contract.name}: Treasury -{payment}, {figure.name} +{payment} (成本 {contract.annual_cost})")
 
-                print(f"      🏗️ {contract.name}: Treasury -{annual_budget}, {figure.name} +{profit} profit")
+                    if contract.remaining_years <= 0:
+                        contract.mark_complete(self.state.turn.turn_number)
+                        province = self.state.get_province(contract.province_id)
+                        if province:
+                            province.unbind_project_contract()
+                        print(f"         ✅ 工程竣工")
+                else:
+                    continue
 
-                if contract.status == ContractStatus.COMPLETED:
-                    print(f"         ✅ Project completed! Total profit: {contract.total_spent}")
+    def _process_warranty_decay(self, terms):
+        """遍历所有已完成的工程合同，减少其剩余质保年限"""
+        from src.core.entities.contract import ContractType, ContractStatus
+
+        for contract in self.state.contracts:
+            if (contract.contract_type == ContractType.PUBLIC_WORKS
+                    and contract.status == ContractStatus.COMPLETED
+                    and hasattr(contract, 'warranty_remaining') and contract.warranty_remaining > 0):
+                contract._warranty_remaining -= 1
+                if contract.warranty_remaining == 0:
+                    # 质保到期，可触发事件（暂留接口）
+                    print(f"      ⚠️ {contract.name} 质保期结束，进入失修状态")
 
     def _show_contract_summary(self, terms):
+        from src.core.entities.contract import ContractStatus
+
         active = [c for c in self.state.contracts if c.status == ContractStatus.ACTIVE]
         pending = [c for c in self.state.contracts if c.status == ContractStatus.PENDING]
         completed = [c for c in self.state.contracts if c.status == ContractStatus.COMPLETED]
