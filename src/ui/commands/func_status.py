@@ -178,24 +178,39 @@ class StatusFigureCommand(Command):
             faction = self.state.get_faction(fig.faction_id)
             faction_name = faction.name if faction else "无"
 
+            # 计算起始年份（用于转换回合数为实际年份）
+            current_turn = self.state.turn.turn_number
+            current_year = self.state.turn.year
+            start_year = current_year - (current_turn - 1)
+
+            # 格式化历史公职，将回合数转换为年份
+            history_parts = []
+            for term in fig.office_history:
+                year = start_year + (term.start_turn - 1)
+                bc_ad = "BC" if year < 0 else "AD"
+                history_parts.append(f"{term.office_type}({bc_ad}{abs(year)})")
+
             print("\n" + "=" * 50)
             print(f"   {status}{tier_emoji} 人物详细信息 (ID:{fig.id})")
             print("=" * 50)
             print(f"姓名: {fig.get_formal_name()}")
             print(f"派系: {faction_name}")
             print(f"阶层: {fig.class_tier.value}")
-            # 新增家族信息
             print(f"家族: {fig.nomen if fig.nomen else '无'} (声望: {fig.family_prestige})")
             print(f"年龄: {fig.age}")
-            print(f"影响力: {fig.influence}")
+            land_inf = fig.land_private * 10
+            vet_inf = fig.veterans * 10
+            fam_inf = fig.family_prestige * 10
+            off_bonus = fig.get_office_influence_bonus()
+            print(
+                f"影响力: {fig.influence} = 私地{land_inf} + 老兵{vet_inf} + 人气{fig.popularity} + 家族{fam_inf} + 公职{off_bonus}")
             print(f"官职等级: {fig.rank}")
             print(f"财富: {fig.wealth}")
             print(f"人气: {fig.popularity}")
             print(f"私地: {fig.land_private} C")
             print(f"老兵: {fig.veterans}")
             print(f"担任公职: {fig.office if fig.office else '无'}")
-            print(
-                f"公职历史: {', '.join([f'{t.office_type}({t.start_turn})' for t in fig.office_history]) if fig.office_history else '无'}")
+            print(f"公职历史: {', '.join(history_parts) if history_parts else '无'}")
             print(f"持有合同: {fig.contract_ids if fig.contract_ids else '无'}")
             print(f"是否派系领袖: {'是' if fig.is_faction_leader else '否'}")
             print(f"是否死亡: {'是' if fig.is_dead else '否'}")
