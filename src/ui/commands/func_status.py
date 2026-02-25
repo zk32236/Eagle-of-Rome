@@ -184,8 +184,10 @@ class StatusFigureCommand(Command):
             print(f"姓名: {fig.get_formal_name()}")
             print(f"派系: {faction_name}")
             print(f"阶层: {fig.class_tier.value}")
+            # 新增家族信息
+            print(f"家族: {fig.nomen if fig.nomen else '无'} (声望: {fig.family_prestige})")
             print(f"年龄: {fig.age}")
-            print(f"影响力: {fig.influence}")  # 原 power
+            print(f"影响力: {fig.influence}")
             print(f"官职等级: {fig.rank}")
             print(f"财富: {fig.wealth}")
             print(f"人气: {fig.popularity}")

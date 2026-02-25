@@ -51,13 +51,13 @@ EX_OFFICE_INFLUENCE_BONUS = {
 }
 
 FAMILY_PRESTIGE = {
-    "Julius": 3,
-    "Cornelius": 3,
-    "Claudius": 2,
-    "Fabius": 2,
-    "Aemilius": 1,
-    "Servilius": 1,
-    "Valerius": 1,
+    "Julius": 4,
+    "Cornelius": 4,
+    "Claudius": 3,
+    "Fabius": 3,
+    "Aemilius": 2,
+    "Servilius": 2,
+    "Valerius": 2,
     # 其他族名（平民）默认为0
 }
 
