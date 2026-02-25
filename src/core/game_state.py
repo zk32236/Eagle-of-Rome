@@ -9,13 +9,14 @@ from typing import Dict, List, Optional, Set, Any
 from typing import TYPE_CHECKING
 
 from src.core.config import Config
-from src.core.entities.curia import Curia  # 新增导入
-from src.core.entities.contract import Contract, ContractType, ContractStatus  # 新增导入
-from src.core.entities.entities import Province  # 新增导入
+from src.core.entities.curia import Curia
+from src.core.entities.contract import Contract, ContractType, ContractStatus
+from src.core.entities.entities import Province
+from src.core.entities.figure import Figure
 
 
 if TYPE_CHECKING:
-    from src.core.entities import Figure, Faction, GameTurn
+    from src.core.entities import Faction, GameTurn
     from src.core.systems.war_system import WarSystem
     from src.core.systems.military_system import MilitarySystem
 
@@ -34,6 +35,7 @@ class GameState:
         """
         # 创建配置实例
         self._config = Config(config_path)
+        Figure.load_config(self._config)
 
         # 所有状态改为实例属性，确保实例隔离
         self._members: Dict[int, 'Figure'] = {}
@@ -60,6 +62,7 @@ class GameState:
         self._contracts_dict: Dict[int, Contract] = {} # 合同注册表（字典，替代原有列表）
         self._public_land_total: int = 0                # 全局公地总数
         self._contract_id_counter: int = 1              # 合同ID自增计数器
+
 
         # 初始化时调用 reset，确保状态一致性
         self.reset()

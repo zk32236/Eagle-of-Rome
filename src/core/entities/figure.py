@@ -16,52 +16,7 @@ class ClassTier(Enum):
     PLEBEIAN = "plebeian"
 
 
-# 罗马官职等级映射（用于 rank 属性）
-OFFICE_RANK = {
-    "dictator": 6,
-    "censor": 5,
-    "consul": 4,
-    "praetor": 3,
-    "tribune": 2,
-    "quaestor": 1,
-}
-
-# 现任公职影响力加成
-OFFICE_INFLUENCE_BONUS = {
-    "dictator": 60,
-    "censor": 50,
-    "consul": 40,
-    "praetor": 30,
-    "tribune": 20,
-    "quaestor": 10,      # 注意拼写与代码一致
-    "proconsul": 0,
-    "propraetor": 0,
-}
-
-# 前任公职影响力加成
-EX_OFFICE_INFLUENCE_BONUS = {
-    "ex-dictator": 30,
-    "ex-censor": 25,
-    "ex-consul": 20,
-    "ex-praetor": 15,
-    "ex-tribune": 10,
-    "ex-quaestor": 5,
-    "ex-proconsul": 20,
-    "ex-propraetor": 15,
-}
-
-FAMILY_PRESTIGE = {
-    "Julius": 4,
-    "Cornelius": 4,
-    "Claudius": 3,
-    "Fabius": 3,
-    "Aemilius": 2,
-    "Servilius": 2,
-    "Valerius": 2,
-    # 其他族名（平民）默认为0
-}
-
-# 罗马历史名字库（保持不变）
+# 罗马历史名字库
 ROMAN_NAMES = {
     "praenomina": [
         "Gaius", "Marcus", "Lucius", "Publius", "Quintus",
@@ -139,6 +94,48 @@ class Figure:
     人物实体 - MVP 0.4.5 术语澄清版
     """
 
+    # 类属性（配置项，可通过 load_config 覆盖）
+    OFFICE_RANK = {
+        "dictator": 6,
+        "censor": 5,
+        "consul": 4,
+        "praetor": 3,
+        "tribune": 2,
+        "quaestor": 1,
+    }
+
+    OFFICE_INFLUENCE_BONUS = {
+        "dictator": 60,
+        "censor": 50,
+        "consul": 40,
+        "praetor": 30,
+        "tribune": 20,
+        "quaestor": 10,
+        "proconsul": 0,
+        "propraetor": 0,
+    }
+
+    EX_OFFICE_INFLUENCE_BONUS = {
+        "ex-dictator": 30,
+        "ex-censor": 25,
+        "ex-consul": 20,
+        "ex-praetor": 15,
+        "ex-tribune": 10,
+        "ex-quaestor": 5,
+        "ex-proconsul": 20,
+        "ex-propraetor": 15,
+    }
+
+    FAMILY_PRESTIGE = {
+        "Julius": 3,
+        "Cornelius": 3,
+        "Claudius": 2,
+        "Fabius": 2,
+        "Aemilius": 1,
+        "Servilius": 1,
+        "Valerius": 1,
+    }
+
     # 基础信息
     id: int
     name: str
@@ -148,22 +145,21 @@ class Figure:
     cognomen: Optional[str] = None
 
     # MVP核心属性
-    # 删除 power 字段
     wealth: int = 0
     popularity: int = 0
-    land: int = 0          # 用于席位计算的土地（可能包含公地？暂保留）
+    land: int = 0          # 保留，但不再使用
     veterans: int = 0
     office: Optional[str] = None
     class_tier: ClassTier = ClassTier.PLEBEIAN
     age: int = 30
 
-    # MVP 0.4.5 激活的预留属性（资格属性）
+    # 资格属性
     zeal: int = 0
     charisma: int = 0
-    martial: int = 0          # 原 strategy，军略
-    intelligence: int = 0     # 原 management，智略
+    martial: int = 0
+    intelligence: int = 0
 
-    # 机制属性（预留）
+    # 机制属性
     family: Optional[str] = None
     family_prestige: int = 0
     experience: int = 0
@@ -174,7 +170,6 @@ class Figure:
     loyalty_history: List[Dict] = field(default_factory=list)
     corruption: int = 0
     bribe_income: int = 0
-
 
     # 状态标记
     is_faction_leader: bool = False
@@ -195,26 +190,20 @@ class Figure:
     _tribute_profit: int = 0
     _project_profit: int = 0
     _figure_type: str = "plebeian"
-    _influence: int = field(default=0, init=False)   # 私有影响力字段，不在 __init__ 中
+    _influence: int = field(default=0, init=False)
 
     # ==================== 核心方法 ====================
 
     def __post_init__(self):
-        """初始化后处理，计算初始影响力"""
-        # 确保旧字段值迁移到新字段（如果从旧版本加载）
-        # 这里假设工厂方法已正确设置 martial 和 intelligence，无需迁移
         self.update_influence()
 
     def get_seat_share(self) -> int:
-        """席位份额 = 私地 + 老兵"""
         return self._land_private + self.veterans
 
     def get_voting_power(self) -> int:
-        """兼容旧接口，返回影响力"""
         return self.influence
 
     def update_influence(self) -> int:
-        """重新计算影响力：私地*10 + 老兵*10 + 人气 + 公职加成 + 家族声望*10"""
         base = self._land_private * 10 + self.veterans * 10 + self.popularity
         family_bonus = self.family_prestige * 10
         office_bonus = self.get_office_influence_bonus()
@@ -231,29 +220,24 @@ class Figure:
 
     @property
     def rank(self) -> int:
-        """根据当前官职获取权力等级"""
-        if self.office and self.office in OFFICE_RANK:
-            return OFFICE_RANK[self.office]
-        return 0
+        if not self.office:
+            return 0
+        return self.__class__.OFFICE_RANK.get(self.office, 0)
 
-    # 特殊权力判断方法
     def has_military_command(self) -> bool:
-        """是否拥有军事指挥权（执政官、独裁官、总督）"""
         return self.office in ("consul", "dictator", "propraetor")
 
     def has_veto_power(self) -> bool:
-        """是否拥有否决权（保民官）"""
         return self.office == "tribune"
 
     def has_prosecution_power(self) -> bool:
-        """是否拥有起诉权（监察官）"""
         return self.office == "censor"
 
     def get_qualification_attribute(self, office_type: str) -> int:
         mapping = {
             "consul": self.charisma,
-            "praetor": self.intelligence,   # 智略
-            "quaestor": self.martial,       # 军略
+            "praetor": self.intelligence,
+            "quaestor": self.martial,
             "censor": self.zeal,
             "aedile": self.zeal,
         }
@@ -350,12 +334,11 @@ class Figure:
         self._land_private += amount
         return True
 
-    # 工厂方法
+    # ==================== 工厂方法 ====================
     @classmethod
     def create_nobile(cls, id: int, faction_id: str, age: int = 35) -> "Figure":
         praenomen, nomen, cognomen, full_name = RomanNameGenerator.generate_nobile_name()
-        # 获取初始家族声望，若不在表中则默认1
-        initial_prestige = FAMILY_PRESTIGE.get(nomen, 1)
+        initial_prestige = cls.FAMILY_PRESTIGE.get(nomen, 1)
         figure = cls(
             id=id,
             name=full_name,
@@ -369,7 +352,7 @@ class Figure:
             popularity=random.randint(2, 5),
             veterans=0,
             family=nomen,
-            family_prestige=initial_prestige,  # 设置初始声望
+            family_prestige=initial_prestige,
             loyalty=7,
             charisma=random.randint(5, 9),
             intelligence=random.randint(3, 7),
@@ -398,9 +381,9 @@ class Figure:
             family_prestige=0,
             loyalty=5,
             economic_exp=random.randint(1, 5),
-            intelligence=random.randint(5, 9),   # 原 management
+            intelligence=random.randint(5, 9),
             charisma=random.randint(3, 6),
-            martial=random.randint(2, 5),        # 原 strategy
+            martial=random.randint(2, 5),
             zeal=random.randint(1, 4),
         )
         figure._figure_type = "equestrian"
@@ -426,11 +409,13 @@ class Figure:
             loyalty=3,
             zeal=random.randint(5, 9),
             charisma=random.randint(2, 6),
-            intelligence=random.randint(1, 4),   # 原 management
-            martial=random.randint(1, 4),        # 原 strategy
+            intelligence=random.randint(1, 4),
+            martial=random.randint(1, 4),
         )
         figure._figure_type = "plebeian"
         return figure
+
+    # ==================== 其他方法 ====================
 
     def __repr__(self) -> str:
         if self.is_dead:
@@ -535,13 +520,23 @@ class Figure:
         self.wealth += profit
 
     def get_office_influence_bonus(self) -> int:
-        """根据当前 office 获取影响力加成"""
         if not self.office:
             return 0
         if self.office.startswith("ex-"):
-            return EX_OFFICE_INFLUENCE_BONUS.get(self.office, 0)
+            return self.__class__.EX_OFFICE_INFLUENCE_BONUS.get(self.office, 0)
         else:
-            return OFFICE_INFLUENCE_BONUS.get(self.office, 0)
+            return self.__class__.OFFICE_INFLUENCE_BONUS.get(self.office, 0)
+
+    @classmethod
+    def load_config(cls, config):
+        """从配置加载静态数据（覆盖默认值）"""
+        if config:
+            political_rules = config.get("political_rules", {})
+            # 使用 get 并传入当前值作为默认，避免覆盖时丢失原值
+            cls.OFFICE_RANK = political_rules.get("office_rank", cls.OFFICE_RANK)
+            cls.OFFICE_INFLUENCE_BONUS = political_rules.get("office_influence_bonus", cls.OFFICE_INFLUENCE_BONUS)
+            cls.EX_OFFICE_INFLUENCE_BONUS = political_rules.get("ex_office_influence_bonus", cls.EX_OFFICE_INFLUENCE_BONUS)
+            cls.FAMILY_PRESTIGE = political_rules.get("family_prestige", cls.FAMILY_PRESTIGE)
 
     # ==================== MVP 0.5 新增属性访问器 ====================
     @property

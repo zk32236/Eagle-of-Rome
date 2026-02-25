@@ -1,81 +1,101 @@
 {
   "scenario_name": "MVP 0.5 Forum Phase",
   "terminology_preset": "original",
-
   "political_rules": {
     "leader_cooldown_years": 2,
     "leaders_per_election": 2,
-    "allow_consecutive_terms": false
+    "allow_consecutive_terms": false,
+    "office_cooldowns": {
+      "consul": 2,
+      "praetor": 2,
+      "quaestor": 2,
+      "censor": 2,
+      "aedile": 2
+    },
+    "offices_per_election": {
+      "consul": 2,
+      "praetor": 1,
+      "quaestor": 1,
+      "censor": 1,
+      "aedile": 1
+    },
+    "candidates_per_election": {
+      "consul": 2,
+      "praetor": 2,
+      "quaestor": 2,
+      "censor": 2,
+      "aedile": 2
+    },
+    "office_rank": {
+      "dictator": 6,
+      "censor": 5,
+      "consul": 4,
+      "praetor": 3,
+      "tribune": 2,
+      "quaestor": 1
+    },
+    "office_influence_bonus": {
+      "dictator": 60,
+      "censor": 50,
+      "consul": 40,
+      "praetor": 30,
+      "tribune": 20,
+      "quaestor": 10,
+      "proconsul": 0,
+      "propraetor": 0
+    },
+    "ex_office_influence_bonus": {
+      "ex-dictator": 30,
+      "ex-censor": 25,
+      "ex-consul": 20,
+      "ex-praetor": 15,
+      "ex-tribune": 10,
+      "ex-quaestor": 5,
+      "ex-proconsul": 20,
+      "ex-propraetor": 15
+    },
+    "family_prestige": {
+      "Julius": 4,
+      "Cornelius": 4,
+      "Claudius": 3,
+      "Fabius": 3,
+      "Aemilius": 2,
+      "Servilius": 2
+    }
   },
-
   "mortality_rules": {
-  "death_count": 1,
+    "death_count": 1,
     "event_deck": [
-        {"name": "死神来了", "type": "厄运", "effect": "death", "weight": 1},
-        {"name": "丰调雨顺", "type": "好运", "effect": "bountiful_harvest", "weight": 1},
-        {"name": "国泰民安", "type": "好运", "effect": "peace", "weight": 1},
-        {"name": "天降猛男", "type": "好运", "effect": "mighty_man", "weight": 1},
-        {"name": "无妄天灾", "type": "厄运", "effect": "disaster", "weight": 1}
+      {"name": "死神来了", "type": "厄运", "effect": "death", "weight": 1},
+      {"name": "丰调雨顺", "type": "好运", "effect": "bountiful_harvest", "weight": 1},
+      {"name": "国泰民安", "type": "好运", "effect": "peace", "weight": 1},
+      {"name": "天降猛男", "type": "好运", "effect": "mighty_man", "weight": 1},
+      {"name": "无妄天灾", "type": "厄运", "effect": "disaster", "weight": 1}
     ],
     "event_draw_count": 1
   },
-
   "voting_rules": {
     "finalist_count": 2,
     "tiebreaker": "highest_influence"
   },
-
-  "terminology_preset": "original",
-    "political_rules": {
-        "office_cooldowns": {
-            "consul": 2,
-            "praetor": 2,
-            "quaestor": 2,
-            "censor": 2,
-            "aedile": 2
-        },
-        "offices_per_election": {
-            "consul": 2,
-            "praetor": 1,
-            "quaestor": 1,
-            "censor": 1,
-            "aedile": 1
-        },
-        "candidates_per_election": {
-            "consul": 2,
-            "praetor": 2,
-            "quaestor": 2,
-            "censor": 2,
-            "aedile": 2
-        }
-    },
-    "decay_rules": {
-        "veterans_annual_decay": 0.20,
-        "popularity_annual_decay": 0.50
-    },
-    "economic_rules": {
-
+  "decay_rules": {
+    "veterans_annual_decay": 0.20,
+    "popularity_annual_decay": 0.50
+  },
+  "economic_rules": {
     "faction_stipend": 10,
-
-
     "legion_recruit_cost": 10,
     "legion_maintenance_base": 2,
     "veteran_maintenance_bonus": 1,
-
-
     "land_price_per_unit": 10,
     "private_land_income_rate": 0.05,
     "national_public_land_tax_rate": 0.02,
     "initial_national_public_land": 1000,
-
-
     "province_tax_rate": 0.1,
     "tax_auction_ratio": 0.8,
     "tax_contract_duration": 5,
     "tax_bid_increment_min": 0.05,
     "tax_bid_increment_max": 0.20,
-
-
     "infrastructure_cost_rate": 0.01,
     "project_budget_margin": 0.2,
     "project_theoretical_construction": 3,
