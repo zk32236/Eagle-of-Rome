@@ -369,7 +369,7 @@ class SenateCommand(Command):
             seat_count = int((assets / total_assets) * 300)
             seat_pct = (assets / total_assets) * 100
             print(f"      {idx}. {fig.name} ({fname}): {seat_count} seats ({seat_pct:.1f}%) "
-                  f"[Land:{fig.land} Vet:{fig.veterans}]")
+                  f"[Land:{fig.land_private} Vet:{fig.veterans}]")
 
         # 派系总计
         print(f"\n   🏛️  Faction Totals:")

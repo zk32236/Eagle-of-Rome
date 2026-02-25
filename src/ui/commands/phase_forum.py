@@ -133,12 +133,12 @@ class ForumCommand(Command):
             tier_emoji = {"nobile": "🏛️", "eques": "💰", "plebeian": "👤"}.get(tier, "❓")
             print(f"\n      {tier_emoji} {tier.upper()} ({len(figures)}):")
             for fig in figures:
-                power = f"权{fig.influence}" if fig.influence > 0 else ""
-                wealth = f"财{fig.wealth}" if fig.wealth > 0 else ""
-                pop = f"人{fig.popularity}" if fig.popularity > 0 else ""
+                influence_str = f"影响力 {fig.influence} " if fig.influence > 0 else ""
+                wealth_str = f"财富 {fig.wealth} " if fig.wealth > 0 else ""
+                pop_str = f"人气 {fig.popularity} " if fig.popularity > 0 else ""
                 family_info = f" 家族:{fig.family}" if fig.family else ""
                 print(f"         ID:{fig.id} {fig.get_formal_name()}")
-                print(f"            [{power}{wealth}{pop}]{family_info}")
+                print(f"            [{influence_str}{wealth_str}{pop_str}]{family_info}")
 
     def _generate_contracts(self):
         """生成包税权合同和公共工程合同，返回合同列表（不竞标）"""

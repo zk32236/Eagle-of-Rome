@@ -33,9 +33,9 @@ class LandTradingService:
         modifier = 1.0
 
         # 卖方溢价因素
-        if seller.popularity >= 10:
+        if seller.popularity >= buyer.popularity:
             modifier += 0.20
-        if seller.power >= 8:
+        if seller.influence >= buyer.influence:
             modifier += 0.10
 
         # 买方折扣因素
