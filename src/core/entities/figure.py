@@ -148,6 +148,7 @@ class Figure:
     _has_active_contract: bool = False
     _tribute_profit: int = 0
     _project_profit: int = 0
+    _figure_type: str = "plebeian"
 
     # ==================== 核心方法 ====================
 
@@ -297,11 +298,13 @@ class Figure:
             strategy=random.randint(3, 7),
             zeal=random.randint(2, 6),
         )
+        figure._figure_type = "nobile"  # 新增行
+        return figure
 
     @classmethod
     def create_eques(cls, id: int, faction_id: str, age: int = 30) -> "Figure":
         praenomen, nomen, cognomen, full_name = RomanNameGenerator.generate_eques_name()
-        return cls(
+        figure = cls(
             id=id,
             name=full_name,
             faction_id=faction_id,
@@ -324,6 +327,8 @@ class Figure:
             strategy=random.randint(2, 5),
             zeal=random.randint(1, 4),
         )
+        figure._figure_type = "equestrian"  # 新增行
+        return figure
 
     @classmethod
     def create_plebeian(cls, id: int, faction_id: str, age: int = 25) -> "Figure":
@@ -350,6 +355,8 @@ class Figure:
             management=random.randint(1, 4),
             strategy=random.randint(1, 4),
         )
+        figure._figure_type = "plebeian"  # 新增行
+        return figure
 
     def __repr__(self) -> str:
         if self.is_dead:
@@ -474,3 +481,7 @@ class Figure:
     @property
     def project_profit(self) -> int:
         return self._project_profit
+
+    @property
+    def figure_type(self) -> str:
+        return self._figure_type

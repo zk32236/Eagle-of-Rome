@@ -20,15 +20,15 @@ class TestFigure:
         assert fig.land_private == 0          # 期望有 land_private 属性
         assert fig.contract_ids == []          # 期望有 contract_ids 列表
         assert fig.has_active_contract is False  # 期望有 has_active_contract
-        assert fig.figure_type == "patrician"     # 期望有 figure_type
+        assert fig.figure_type == "plebeian"     # 期望有 figure_type
         assert fig.tribute_profit == 0           # 期望有 tribute_profit
         assert fig.project_profit == 0           # 期望有 project_profit
 
     def test_fig_002_set_figure_type(self, sample_figure):
         """FIG-002: 设置 _figure_type（直接赋值）"""
         fig = sample_figure
-        fig._figure_type = "knight"
-        assert fig.figure_type == "knight"
+        fig._figure_type = "equestrian"
+        assert fig.figure_type == "equestrian"
 
     def test_fig_003_add_contract_normal(self, sample_figure):
         """FIG-003: add_contract 正常添加"""
@@ -114,7 +114,7 @@ class TestFaction:
         assert fac.province_owned == [1]  # 列表应保持不变
 
     def test_fac_006_update_knight_contract_count_normal(self, sample_faction):
-        """FAC-006: update_knight_contract_count 正确统计有活跃合同的骑士数量"""
+        """FAC-006: update_equestrian_contract_count 正确统计有活跃合同的骑士数量"""
         fac = sample_faction
         # 创建两个模拟骑士，设置 has_active_contract
         class MockKnight:

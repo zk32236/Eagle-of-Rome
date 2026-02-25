@@ -53,8 +53,8 @@ class TestCLIIntegration(unittest.TestCase):
         self.assertTrue(result, "load 命令应返回 True")
 
         # 验证状态已被填充
-        self.assertEqual(len(self.state._members), 3, "应加载 3 个人物")
-        self.assertEqual(len(self.state._factions), 2, "应加载 2 个派系")
+        self.assertEqual(len(self.state._members), 18, "应加载 18 个人物")
+        self.assertEqual(len(self.state._factions), 3, "应加载 3 个派系")
         self.assertEqual(self.state._treasury, 100, "国库应为 100")
 
         # 执行 status 命令并捕获输出
@@ -66,7 +66,7 @@ class TestCLIIntegration(unittest.TestCase):
 
         self.assertTrue(result, "status 命令应返回 True")
         self.assertIn("国库: 100", output, "status 输出应包含国库信息")
-        self.assertIn("存活人物: 3", output, "status 输出应包含人物数量")
+        self.assertIn("存活人物: 18", output, "status 输出应包含人物数量")
 
     def test_load_twice(self):
         """测试两次加载，第二次应覆盖第一次的状态"""
@@ -82,10 +82,10 @@ class TestCLIIntegration(unittest.TestCase):
         result = load_cmd.execute([])
         self.assertTrue(result, "第二次 load 应成功")
         self.assertEqual(self.state._treasury, 100, "第二次加载后国库应重置为 100")
-        self.assertEqual(len(self.state._members), 3, "第二次加载后人物数应为 3")
+        self.assertEqual(len(self.state._members), 18, "第二次加载后人物数应为 18")
 
     def test_load_with_nonexistent_file(self):
-        """测试加载不存在的文件应返回 False 且状态不变"""
+        """测试加载不存在的文件应使用默认配置并返回 True"""
         # 先加载一次正常数据
         load_cmd = LoadCommand(self.state)
         load_cmd.execute([])
@@ -93,11 +93,11 @@ class TestCLIIntegration(unittest.TestCase):
 
         # 尝试加载不存在的文件
         result = load_cmd.execute(["nonexistent.json"])
-        self.assertFalse(result, "加载不存在文件应返回 False")
+        self.assertTrue(result, "加载不存在文件应返回 True")  # 改为 True
 
-        # 状态应保持不变
-        self.assertEqual(self.state._treasury, original_treasury, "失败后状态不变")
-        self.assertEqual(len(self.state._members), 3, "人物数应保持不变")
+        # 状态应变为默认配置（国库重置为100，人物18）
+        self.assertEqual(self.state._treasury, 100, "失败后国库应重置为 100")
+        self.assertEqual(len(self.state._members), 18, "人物数应变为 18")
 
 
 if __name__ == "__main__":

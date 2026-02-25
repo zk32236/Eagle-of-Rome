@@ -134,31 +134,7 @@ class TestSenateCommand(unittest.TestCase):
         # 设置回合
         self.state.turn = GameTurn(turn_number=1, year=-264)
         self.state._treasury = 200
-
-    def _setup_mock_contracts(self):
-        """创建模拟的合同用于测试"""
-        # 包税合同
-        tax_contract = MagicMock(spec=Contract)
-        tax_contract.contract_type = ContractType.TAX_FARMING
-        tax_contract.status = ContractStatus.PENDING
-        tax_contract.name = "西西里包税权"
-        tax_contract.base_cost = 30
-        tax_contract.expected_profit = 50
-        tax_contract.duration_years = 5
-        tax_contract.award.return_value = True
-
-        # 工程合同
-        works_contract = MagicMock(spec=Contract)
-        works_contract.contract_type = ContractType.PUBLIC_WORKS
-        works_contract.status = ContractStatus.PENDING
-        works_contract.name = "罗马大道工程"
-        works_contract.base_cost = 40
-        works_contract.expected_profit = 20
-        works_contract.duration_years = 2
-        works_contract.award.return_value = True
-
-        self.state._contracts = [tax_contract, works_contract]
-        return tax_contract, works_contract
+        self.state.mark_phase_executed("population")
 
     # ===== 测试用例 =====
 
@@ -221,8 +197,10 @@ class TestSenateCommand(unittest.TestCase):
 
     def test_contract_processing(self):
         """测试合同处理逻辑"""
-        tax_contract, works_contract = self._setup_mock_contracts()
+        # 使用真实合同
+        tax_contract, works_contract = self._create_real_contracts_for_senate()
 
+        # 确保有骑士候选人（已在 setUp 中生成）
         cmd = SenateCommand(self.state)
 
         f = io.StringIO()
@@ -231,19 +209,20 @@ class TestSenateCommand(unittest.TestCase):
 
         self.assertTrue(result)
 
-        # 验证包税合同被授予（应有骑士候选人）
-        tax_contract.award.assert_called_once()
-        args, kwargs = tax_contract.award.call_args
-        # 参数应为 (figure_id, faction_id, turn_number)
-        figure_id = args[0]
-        awarded_fig = self.state.get_member(figure_id)
+        # 刷新合同对象（重新从 state 获取，确保状态更新）
+        tax_contract = self.state.get_contract(tax_contract.id)
+        works_contract = self.state.get_contract(works_contract.id)
+
+        # 验证包税合同已被授予（状态变为 ACTIVE）
+        self.assertEqual(tax_contract.status, ContractStatus.ACTIVE)
+        self.assertIsNotNone(tax_contract.awarded_to)
+        awarded_fig = self.state.get_member(tax_contract.awarded_to)
         self.assertEqual(awarded_fig.class_tier.value, "eques", "包税合同应授予骑士")
 
-        # 验证工程合同被授予
-        works_contract.award.assert_called_once()
-        args, kwargs = works_contract.award.call_args
-        figure_id = args[0]
-        awarded_fig = self.state.get_member(figure_id)
+        # 验证工程合同已被授予
+        self.assertEqual(works_contract.status, ContractStatus.ACTIVE)
+        self.assertIsNotNone(works_contract.awarded_to)
+        awarded_fig = self.state.get_member(works_contract.awarded_to)
         self.assertEqual(awarded_fig.class_tier.value, "eques", "工程合同应授予骑士")
 
     def test_presiding_officer(self):
@@ -374,6 +353,42 @@ class TestSenateCommand(unittest.TestCase):
         self.assertEqual(cmd._get_power_bonus("consul"), 5)
         self.assertEqual(cmd._get_power_bonus("praetor"), 3)
         self.assertEqual(cmd._get_power_bonus("quqaestor"), 2)
+
+    def _create_real_contracts_for_senate(self):
+        """创建真实的合同对象用于元老院阶段测试"""
+        from src.core.entities.entities import Province
+
+        # 添加行省
+        province1 = Province(101, "西西里", 1000)
+        province2 = Province(102, "罗马", 1000)
+        self.state.add_province(province1)
+        self.state.add_province(province2)
+
+        # 创建包税合同
+        tax_contract = self.state.create_contract(
+            ContractType.TAX_FARMING,
+            province_id=101,
+            base_cost=30,
+            current_turn=self.state.turn.turn_number
+        )
+        tax_contract.name = "西西里包税权"
+        tax_contract.status = ContractStatus.PENDING
+        tax_contract.expected_profit = 50
+        tax_contract.duration_years = 5
+
+        # 创建工程合同
+        works_contract = self.state.create_contract(
+            ContractType.PUBLIC_WORKS,
+            province_id=102,
+            base_cost=200,
+            current_turn=self.state.turn.turn_number
+        )
+        works_contract.name = "罗马大道工程"
+        works_contract.status = ContractStatus.PENDING
+        works_contract.expected_profit = 40
+        works_contract.duration_years = 2
+
+        return tax_contract, works_contract
 
 
 if __name__ == "__main__":

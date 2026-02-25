@@ -71,6 +71,8 @@ class Config:
             "province_tax_rate": 0.1,  # 行省基础税率（10%）
             "tax_auction_ratio": 0.8,  # 包税权拍卖底价占年收益的比例（80%）
             "tax_contract_profit_rate": 0.2,  # 保留原利润比例（可沿用，但阶段3将基于实际利润）
+            "faction_initial_treasury": 10,  # 派系初始资金
+            "faction_tax_rate": 0.1,  # 派系抽成比例（从成员收入中扣除）
         },
         "combat_rules": {
             "triumph_threshold": 12,

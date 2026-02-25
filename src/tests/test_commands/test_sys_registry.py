@@ -175,8 +175,8 @@ class CmdB(Command):
     aliases = ["x"]
     def execute(self, args): return True
 '''
-    create_command_file(tmp_path, "file1.py", content1)
-    create_command_file(tmp_path, "file2.py", content2)
+    create_command_file(tmp_path, "file1_alias.py", content1)   # 修改文件名
+    create_command_file(tmp_path, "file2_alias.py", content2)   # 修改文件名
 
     with pytest.raises(ValueError, match="别名冲突.*x"):
         CommandRegistry(str(tmp_path))
@@ -200,8 +200,8 @@ class CmdB(Command):
     aliases = []
     def execute(self, args): return True
 '''
-    create_command_file(tmp_path, "file1.py", content1)
-    create_command_file(tmp_path, "file2.py", content2)
+    create_command_file(tmp_path, "file1_aliasname.py", content1)   # 修改文件名
+    create_command_file(tmp_path, "file2_aliasname.py", content2)   # 修改文件名
 
     with pytest.raises(ValueError, match="命令名冲突.*b"):
         CommandRegistry(str(tmp_path))

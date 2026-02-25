@@ -81,6 +81,8 @@
     "project_theoretical_construction": 3,
     "project_theoretical_warranty": 10,
     "project_bid_discount_min": 0.05,
-    "project_bid_discount_max": 0.20
+    "project_bid_discount_max": 0.20,
+    "faction_initial_treasury": 10,
+    "faction_tax_rate": 0.1
   }
 }

@@ -22,7 +22,8 @@ from src.ui.commands.phase_combat import CombatCommand
 from src.core.entities.war import War, WarStatus
 from src.core.entities.legion import Legion, LegionStatus
 from src.core.entities.figure import Figure
-from src.core.localization import TerminologyService
+
+
 
 
 class TestCombatCommand(unittest.TestCase):
@@ -32,6 +33,13 @@ class TestCombatCommand(unittest.TestCase):
         """每个测试前创建测试用 GameState"""
         test_config = {}
         self.state = GameState.create_for_testing(test_config)
+
+        # ===== 新增：设置回合 =====
+        from src.core.entities.entities import GameTurn
+        self.state.turn = GameTurn(turn_number=1, year=-264)
+
+        # ===== 新增：标记 senate 阶段已执行 =====
+        self.state.mark_phase_executed("senate")
 
         # 创建模拟的战争系统
         self.mock_war_system = MagicMock()

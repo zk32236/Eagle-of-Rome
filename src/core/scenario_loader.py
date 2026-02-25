@@ -77,11 +77,13 @@ class ScenarioLoader:
     @staticmethod
     def _load_factions(state: GameState, config: dict):
         factions_data = config["initial_state"]["factions"]
+        # 获取配置中的初始资金，默认10
+        initial_treasury = state.get_economic_rule("faction_initial_treasury", 10)
         for f_data in factions_data:
             faction = Faction(
                 id=f_data["id"],
                 name=f_data["name"],
-                treasury=f_data.get("treasury", 50),
+                treasury=initial_treasury,  # 使用配置值
                 is_player=f_data.get("is_player", False)
             )
             state.add_faction(faction)

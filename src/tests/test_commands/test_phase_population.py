@@ -28,9 +28,10 @@ class TestPopulationCommand(unittest.TestCase):
     def setUp(self):
         """每个测试前创建测试用 GameState"""
         self.state = GameState.create_for_testing({})
-        # 设置回合
         from src.core.entities.entities import GameTurn
         self.state.turn = GameTurn(turn_number=1, year=-264)
+        # 新增：标记 forum 阶段已执行
+        self.state.mark_phase_executed("forum")
 
     def _setup_mock_military_system(self, active_legions=5, unassigned_legions=2, available_legions=3):
         """创建并设置模拟的军事系统"""

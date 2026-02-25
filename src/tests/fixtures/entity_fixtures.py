@@ -47,6 +47,6 @@ def sample_figure():
 def sample_knight_figure():
     """创建一个类型为骑士的Figure对象"""
     fig = Figure(id=2002, name="测试骑士")
-    fig._figure_type = "knight"  # 直接设置私有属性
+    fig._figure_type = "equestrian"  # 直接设置私有属性
     fig._wealth = 200
     return fig

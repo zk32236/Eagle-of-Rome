@@ -10,12 +10,12 @@ from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.war import WarStatus
 from src.core.entities.legion import LegionStatus
+from src.ui.commands.func_status import get_progress_bar   # 新增
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
     from src.core.entities.war import War
-    from src.core.entities.figure import Figure
-    from src.ui.commands.func_status import get_progress_bar
+
 
 
 class CombatCommand(Command):

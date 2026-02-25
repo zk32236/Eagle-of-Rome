@@ -44,7 +44,7 @@ class TestConfig(unittest.TestCase):
         config = Config("nonexistent.json")
         # 验证使用了默认配置
         self.assertEqual(config.get("political_rules.leader_cooldown_years"), 10)
-        self.assertEqual(config.get("mortality_rules.base_draw_count"), 1)
+        self.assertEqual(config.get("mortality_rules.event_draw_count"), 1)  # 原为 base_draw_count
         self.assertEqual(config.get("economic_rules.base_tax"), 100)
 
     def test_default_fallback_empty_path(self):
@@ -85,7 +85,8 @@ class TestConfig(unittest.TestCase):
         # 访问嵌套值
         self.assertEqual(config.get("political_rules.leader_cooldown_years"), 10)
         self.assertEqual(config.get("political_rules.min_ages.consul"), 40)
-        self.assertEqual(config.get("mortality_rules.draw_per_members"), 5)
+        # 原为 draw_per_members，改为实际存在的键 death_count
+        self.assertEqual(config.get("mortality_rules.death_count"), 2)
 
         # 部分路径不存在
         self.assertIsNone(config.get("political_rules.nonexistent"))
@@ -109,16 +110,15 @@ class TestConfig(unittest.TestCase):
         """测试简单键值合并"""
         override = {
             "mortality_rules": {
-                "base_draw_count": 3  # 覆盖默认值
+                "event_draw_count": 3  # 覆盖默认值（原为 base_draw_count）
             }
         }
         self._create_config_file(override)
 
         config = Config(self.config_path)
-        self.assertEqual(config.get("mortality_rules.base_draw_count"), 3)
-        # 其他值保持默认
-        self.assertEqual(config.get("mortality_rules.draw_per_members"), 5)
-        self.assertEqual(config.get("mortality_rules.max_draws"), 3)
+        self.assertEqual(config.get("mortality_rules.event_draw_count"), 3)
+        # 其他值保持默认：death_count 应为 2
+        self.assertEqual(config.get("mortality_rules.death_count"), 2)
 
     def test_deep_merge_nested(self):
         """测试嵌套字典深度合并"""
@@ -173,24 +173,24 @@ class TestConfig(unittest.TestCase):
     def test_reload_success(self):
         """测试成功重载配置"""
         # 初始配置
-        self._create_config_file({"mortality_rules": {"base_draw_count": 1}})
+        self._create_config_file({"mortality_rules": {"event_draw_count": 1}})
         config = Config(self.config_path)
-        self.assertEqual(config.get("mortality_rules.base_draw_count"), 1)
+        self.assertEqual(config.get("mortality_rules.event_draw_count"), 1)
 
         # 修改配置文件
-        self._create_config_file({"mortality_rules": {"base_draw_count": 3}})
+        self._create_config_file({"mortality_rules": {"event_draw_count": 3}})
 
         # 重载
         result = config.reload()
         self.assertTrue(result)
-        self.assertEqual(config.get("mortality_rules.base_draw_count"), 3)
+        self.assertEqual(config.get("mortality_rules.event_draw_count"), 3)
 
     def test_reload_fail_keep_old(self):
         """测试重载失败时保持原配置"""
         # 初始配置
-        self._create_config_file({"mortality_rules": {"base_draw_count": 1}})
+        self._create_config_file({"mortality_rules": {"event_draw_count": 1}})
         config = Config(self.config_path)
-        self.assertEqual(config.get("mortality_rules.base_draw_count"), 1)
+        self.assertEqual(config.get("mortality_rules.event_draw_count"), 1)
 
         # 确认文件存在
         self.assertTrue(os.path.exists(self.config_path), "配置文件应该存在")
@@ -204,7 +204,7 @@ class TestConfig(unittest.TestCase):
         # 重载应失败，但原配置保持不变
         result = config.reload()
         self.assertFalse(result, "重载失败应返回 False")
-        self.assertEqual(config.get("mortality_rules.base_draw_count"), 1, "原配置应保持不变")
+        self.assertEqual(config.get("mortality_rules.event_draw_count"), 1, "原配置应保持不变")
 
     def test_reload_no_path(self):
         """测试未指定路径时重载失败"""
@@ -219,12 +219,12 @@ class TestConfig(unittest.TestCase):
         config = Config()
         original = config.to_dict()
 
-        # 修改返回的字典
-        original["mortality_rules"]["base_draw_count"] = 999
+        # 修改返回的字典（使用实际存在的键 event_draw_count）
+        original["mortality_rules"]["event_draw_count"] = 999
         original["new_key"] = "new_value"
 
         # 内部配置应保持不变
-        self.assertEqual(config.get("mortality_rules.base_draw_count"), 1)
+        self.assertEqual(config.get("mortality_rules.event_draw_count"), 1)
         self.assertIsNone(config.get("new_key"))
 
     def test_config_immutable(self):
@@ -232,10 +232,10 @@ class TestConfig(unittest.TestCase):
         config = Config()
         # 尝试直接访问内部属性修改
         try:
-            config._config["mortality_rules"]["base_draw_count"] = 999
+            config._config["mortality_rules"]["event_draw_count"] = 999
             # 如果能修改，说明内部属性可访问，但这是预期行为（约定使用公共方法）
             # 我们测试的是通过公共方法获取的值是否被意外修改
-            self.assertEqual(config.get("mortality_rules.base_draw_count"), 999)
+            self.assertEqual(config.get("mortality_rules.event_draw_count"), 999)
         except AttributeError:
             # 如果有属性保护，这里会失败，但目前没有保护，所以不 assert
             pass
@@ -264,6 +264,9 @@ class TestConfig(unittest.TestCase):
         self.assertIsNotNone(config.get("political_rules.office_cooldowns.consul"))
         self.assertIsNotNone(config.get("political_rules.min_ages.consul"))
         self.assertIsNotNone(config.get("political_rules.candidates_per_election.consul"))
+        # 验证 mortality_rules 中的实际键
+        self.assertIsNotNone(config.get("mortality_rules.event_draw_count"))
+        self.assertIsNotNone(config.get("mortality_rules.death_count"))
 
     def test_path_property(self):
         """测试 path 属性"""

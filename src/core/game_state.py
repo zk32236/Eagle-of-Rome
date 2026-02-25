@@ -122,6 +122,7 @@ class GameState:
         instance._contracts_dict = {}
         instance._public_land_total = 0
         instance._contract_id_counter = 1
+        instance._national_public_land = test_config.get("economic_rules", {}).get("initial_national_public_land", 1000)
 
         return instance
 

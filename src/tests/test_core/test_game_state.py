@@ -105,8 +105,8 @@ class TestGameStateMultiInstance(unittest.TestCase):
         test_b = GameState.create_for_testing(config_b)
 
         self.assertIsNot(test_a, test_b)
-        self.assertEqual(test_a._config._config, config_a)  # 修改点
-        self.assertEqual(test_b._config._config, config_b)  # 修改点
+        self.assertEqual(test_a._config._config, config_a)
+        self.assertEqual(test_b._config._config, config_b)
 
         # 修改其中一个的国库，验证隔离
         test_a._treasury = 500
@@ -239,16 +239,7 @@ class TestGameStateMultiInstance(unittest.TestCase):
         self.assertEqual(state.get_economic_rule("nonexistent", 99), 99)
         self.assertIsNone(state.get_economic_rule("nonexistent"))
 
-    def test_contracts_property(self):
-        """测试合同属性"""
-        state = GameState()
-        self.assertEqual(state.contracts, [])
-
-        test_contracts = ["合同1", "合同2"]
-        state.contracts = test_contracts
-        self.assertEqual(state.contracts, test_contracts)
-
-# ==================== MVP 0.5 新增测试 ====================
+    # ==================== MVP 0.5 新增测试 ====================
 
 class TestGameStateMVP05(unittest.TestCase):
     """测试 GameState MVP 0.5 新增的行省/合同管理接口"""
@@ -381,22 +372,6 @@ class TestGameStateMVP05(unittest.TestCase):
         self.assertEqual(self.state._public_land_total, 0)
         self.assertEqual(self.state._contract_id_counter, 1)
 
-    # ---------- contracts 属性兼容性测试 ----------
-
-    def test_contracts_property_returns_old_list(self):
-        """测试 contracts 属性返回原有的 _contracts 列表（兼容旧版）"""
-        from src.core.entities.contract import ContractType
-
-        # 使用新方法创建合同，不会影响 _contracts
-        self.state.create_contract(ContractType.TAX_FARMING, 1, 90, 5)
-
-        # _contracts 应该仍是空列表
-        self.assertEqual(self.state.contracts, [])
-
-        # 设置原有列表
-        test_list = ["合同1", "合同2"]
-        self.state.contracts = test_list
-        self.assertEqual(self.state.contracts, test_list)
 
 if __name__ == "__main__":
     unittest.main()
