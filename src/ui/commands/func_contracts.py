@@ -7,6 +7,7 @@ from typing import List, Optional, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.contract import ContractType, ContractStatus
+from src.core.entities.figure import ClassTier
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState

@@ -189,7 +189,6 @@ class Figure:
     _has_active_contract: bool = False
     _tribute_profit: int = 0
     _project_profit: int = 0
-    _figure_type: str = "plebeian"
     _influence: int = field(default=0, init=False)
 
     # ==================== 核心方法 ====================
@@ -359,7 +358,6 @@ class Figure:
             martial=random.randint(3, 7),
             zeal=random.randint(2, 6),
         )
-        figure._figure_type = "nobile"
         return figure
 
     @classmethod
@@ -386,7 +384,6 @@ class Figure:
             martial=random.randint(2, 5),
             zeal=random.randint(1, 4),
         )
-        figure._figure_type = "equestrian"
         return figure
 
     @classmethod
@@ -412,7 +409,6 @@ class Figure:
             intelligence=random.randint(1, 4),
             martial=random.randint(1, 4),
         )
-        figure._figure_type = "plebeian"
         return figure
 
     # ==================== 其他方法 ====================
@@ -558,7 +554,3 @@ class Figure:
     @property
     def project_profit(self) -> int:
         return self._project_profit
-
-    @property
-    def figure_type(self) -> str:
-        return self._figure_type

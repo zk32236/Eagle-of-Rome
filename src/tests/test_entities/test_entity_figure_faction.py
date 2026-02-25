@@ -4,7 +4,7 @@ T1-2 实体层校验测试：Figure 和 Faction 增量功能
 """
 
 import pytest
-from src.core.entities.figure import Figure
+from src.core.entities.figure import Figure, ClassTier
 from src.core.entities.entities import Faction
 
 
@@ -17,15 +17,10 @@ class TestFigure:
         assert fig.land_private == 0
         assert fig.contract_ids == []
         assert fig.has_active_contract is False
-        assert fig.figure_type == "plebeian"
+        # 删除 figure_type 断言，或改为 class_tier
+        assert fig.class_tier == ClassTier.PLEBEIAN
         assert fig.tribute_profit == 0
         assert fig.project_profit == 0
-
-    def test_fig_002_set_figure_type(self, sample_figure):
-        """FIG-002: 设置 _figure_type（直接赋值）"""
-        fig = sample_figure
-        fig._figure_type = "equestrian"
-        assert fig.figure_type == "equestrian"
 
     def test_fig_003_add_contract_normal(self, sample_figure):
         """FIG-003: add_contract 正常添加"""
