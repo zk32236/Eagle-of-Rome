@@ -80,12 +80,11 @@ class Faction:
     _knight_contract_count: int = 0          # 派系内骑士持有的合同总数
 
     def get_total_influence(self, state: 'GameState') -> int:
-        """计算在场成员总影响力"""
         total = 0
         for mid in self.member_ids:
             member = state.get_member(mid)
             if member and not member.is_dead and member.is_present:
-                total += member.power
+                total += member.influence   # 原 member.power
         return total
 
     def get_members(self, state: 'GameState') -> List['Figure']:
@@ -100,12 +99,11 @@ class Faction:
     # ==================== MVP 0.4.5 新增 ====================
 
     def get_leader(self, state: 'GameState') -> Optional['Figure']:
-        """获取当前派系领袖（权力最高者）"""
         members = self.get_members(state)
         living = [m for m in members if not m.is_dead and m.is_present]
         if not living:
             return None
-        return max(living, key=lambda m: m.power)
+        return max(living, key=lambda m: m.influence)   # 原 m.power
 
     def update_faction_leader(self, state: 'GameState') -> Optional['Figure']:
         """更新派系领袖标记（应在权力变化后调用）"""

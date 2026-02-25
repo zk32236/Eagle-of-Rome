@@ -100,13 +100,13 @@ class ScenarioLoader:
                     break
                 elif term.office_type == "praetor" and highest != "consul":
                     highest = "praetor"
-                elif term.office_type == "quqaestor" and highest not in ("consul", "praetor"):
-                    highest = "quqaestor"
+                elif term.office_type == "quaestor" and highest not in ("consul", "praetor"):
+                    highest = "quaestor"
             if highest == "consul":
                 figure._land_private = 3
             elif highest == "praetor":
                 figure._land_private = 2
-            elif highest == "quqaestor":
+            elif highest == "quaestor":
                 figure._land_private = 1
             else:
                 # 无历史，随机1-3
@@ -164,7 +164,7 @@ class ScenarioLoader:
 
             # 为贵族中权力最高者添加执政官历史（确保有历史人物）
             if nobles:
-                nobles_sorted = sorted(nobles, key=lambda f: f.power, reverse=True)
+                nobles_sorted = sorted(nobles, key=lambda f: f.influence, reverse=True)
                 # 前执政官（权力最高）
                 ex_consul = nobles_sorted[0]
                 ex_consul.add_office_history("quqaestor", -8)
@@ -177,18 +177,22 @@ class ScenarioLoader:
                     ex_praetor = nobles_sorted[1]
                     ex_praetor.add_office_history("quqaestor", -6)
                     ex_praetor.add_office_history("praetor", -3)
-                    ex_praetor.management = max(ex_praetor.management, 8)
+                    ex_praetor.intelligence = max(ex_praetor.intelligence, 8)  # 原 management
 
                 # 前财务官（权力第三高）
                 if len(nobles_sorted) >= 3:
                     ex_quaestor = nobles_sorted[2]
                     ex_quaestor.add_office_history("quqaestor", -4)
-                    ex_quaestor.strategy = max(ex_quaestor.strategy, 7)
+                    ex_quaestor.martial = max(ex_quaestor.martial, 7)  # 原 strategy
 
             # 设置私地：根据官职或随机
             all_figures = nobles + equites + plebs
             for fig in all_figures:
                 ScenarioLoader._set_land_by_office(fig)
+
+            # 初始化影响力
+            for fig in all_figures:
+                fig.update_influence()
 
             # 添加到游戏状态
             for fig in all_figures:

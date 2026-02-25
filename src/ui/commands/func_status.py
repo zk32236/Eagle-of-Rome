@@ -163,8 +163,9 @@ class StatusFigureCommand(Command):
             }.get(fig.class_tier, "❓")
             faction = self.state.get_faction(fig.faction_id)
             faction_name = faction.name if faction else "无"
+            office_display = fig.office if fig.office else "无"
             print(
-                f"{status}{tier_emoji} ID:{fig.id:<3} {fig.get_formal_name():<25} 派系:{faction_name:<12} 权力:{fig.power} 财富:{fig.wealth} 人气:{fig.popularity} 私地:{fig.land_private} 老兵:{fig.veterans}")
+                f"{status}{tier_emoji} ID:{fig.id:<3} {fig.get_formal_name():<25} 派系:{faction_name:<12} 影响力:{fig.influence} 财富:{fig.wealth} 人气:{fig.popularity} 私地:{fig.land_private} 老兵:{fig.veterans} 官职:{office_display}")
 
         def _print_figure_detail(self, fig):
             """详细显示一个人物的所有属性"""
@@ -184,7 +185,8 @@ class StatusFigureCommand(Command):
             print(f"派系: {faction_name}")
             print(f"阶层: {fig.class_tier.value}")
             print(f"年龄: {fig.age}")
-            print(f"权力: {fig.power}")
+            print(f"影响力: {fig.influence}")  # 原 power
+            print(f"官职等级: {fig.rank}")
             print(f"财富: {fig.wealth}")
             print(f"人气: {fig.popularity}")
             print(f"私地: {fig.land_private} C")

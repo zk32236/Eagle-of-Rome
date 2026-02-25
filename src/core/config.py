@@ -20,28 +20,28 @@ class Config:
             "office_cooldowns": {
                 "consul": 10,
                 "praetor": 5,
-                "quqaestor": 2,
+                "quaestor": 2,
                 "censor": 8,
                 "aedile": 4
             },
             "offices_per_election": {
                 "consul": 2,
                 "praetor": 2,
-                "quqaestor": 2,
+                "quaestor": 2,
                 "censor": 1,
                 "aedile": 2
             },
             "min_ages": {
                 "consul": 40,
                 "praetor": 35,
-                "quqaestor": 30,
+                "quaestor": 30,
                 "censor": 42,
                 "aedile": 36
             },
             "candidates_per_election": {
                 "consul": 3,
                 "praetor": 3,
-                "quqaestor": 3
+                "quaestor": 3
             }
         },
         "mortality_rules": {

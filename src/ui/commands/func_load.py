@@ -55,7 +55,7 @@ class LoadCommand(Command):
 
         # 最后找财务官（有 quaestor 历史，且不是前两者）
         for m in members:
-            if any(term.office_type == "quqaestor" for term in m.office_history) and m not in (ex_consul, ex_praetor):
+            if any(term.office_type == "quaestor" for term in m.office_history) and m not in (ex_consul, ex_praetor):
                 ex_quaestor = m
                 break
 
@@ -88,7 +88,7 @@ class LoadCommand(Command):
         for faction in self.state.factions.values():
             leader = faction.get_leader(self.state)
             if leader:
-                print(f"   👑 {faction.name} leader: {leader.name} (Power: {leader.power})")
+                print(f"   👑 {faction.name} leader: {leader.name} (Influence: {leader.influence})")  # 修改点
 
         print(f"\n✅ Game loaded!")
         print("=" * 50)
@@ -110,8 +110,8 @@ class LoadCommand(Command):
                 display_name = member.get_formal_name()
                 print(f"  {status_emoji}{tier_emoji} ID:{member.id} {display_name}")
 
-            total_power = sum(m.power for m in members)
-            print(f"  Total Power: {total_power}")
+            total_influence = sum(m.influence for m in members)  # 修改点
+            print(f"  Total Influence: {total_influence}")       # 修改点
             print()
 
         print("=" * 50)

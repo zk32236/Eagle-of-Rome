@@ -16,6 +16,51 @@ class ClassTier(Enum):
     PLEBEIAN = "plebeian"
 
 
+# 罗马官职等级映射（用于 rank 属性）
+OFFICE_RANK = {
+    "dictator": 6,
+    "censor": 5,
+    "consul": 4,
+    "praetor": 3,
+    "tribune": 2,
+    "quaestor": 1,
+}
+
+# 现任公职影响力加成
+OFFICE_INFLUENCE_BONUS = {
+    "dictator": 60,
+    "censor": 50,
+    "consul": 40,
+    "praetor": 30,
+    "tribune": 20,
+    "quaestor": 10,      # 注意拼写与代码一致
+    "proconsul": 0,
+    "propraetor": 0,
+}
+
+# 前任公职影响力加成
+EX_OFFICE_INFLUENCE_BONUS = {
+    "ex-dictator": 30,
+    "ex-censor": 25,
+    "ex-consul": 20,
+    "ex-praetor": 15,
+    "ex-tribune": 10,
+    "ex-quaestor": 5,
+    "ex-proconsul": 20,
+    "ex-propraetor": 15,
+}
+
+FAMILY_PRESTIGE = {
+    "Julius": 3,
+    "Cornelius": 3,
+    "Claudius": 2,
+    "Fabius": 2,
+    "Aemilius": 1,
+    "Servilius": 1,
+    "Valerius": 1,
+    # 其他族名（平民）默认为0
+}
+
 # 罗马历史名字库（保持不变）
 ROMAN_NAMES = {
     "praenomina": [
@@ -103,10 +148,10 @@ class Figure:
     cognomen: Optional[str] = None
 
     # MVP核心属性
-    power: int = 0
+    # 删除 power 字段
     wealth: int = 0
     popularity: int = 0
-    land: int = 0
+    land: int = 0          # 用于席位计算的土地（可能包含公地？暂保留）
     veterans: int = 0
     office: Optional[str] = None
     class_tier: ClassTier = ClassTier.PLEBEIAN
@@ -115,8 +160,8 @@ class Figure:
     # MVP 0.4.5 激活的预留属性（资格属性）
     zeal: int = 0
     charisma: int = 0
-    strategy: int = 0
-    management: int = 0
+    martial: int = 0          # 原 strategy，军略
+    intelligence: int = 0     # 原 management，智略
 
     # 机制属性（预留）
     family: Optional[str] = None
@@ -149,33 +194,65 @@ class Figure:
     _tribute_profit: int = 0
     _project_profit: int = 0
     _figure_type: str = "plebeian"
+    _influence: int = field(default=0, init=False)   # 私有影响力字段，不在 __init__ 中
 
     # ==================== 核心方法 ====================
 
+    def __post_init__(self):
+        """初始化后处理，计算初始影响力"""
+        # 确保旧字段值迁移到新字段（如果从旧版本加载）
+        # 这里假设工厂方法已正确设置 martial 和 intelligence，无需迁移
+        self.update_influence()
+
     def get_seat_share(self) -> int:
+        """获取席位份额（用于元老院席位分配）"""
         return self.land + self.veterans
 
     def get_voting_power(self) -> int:
-        seat_power = self.get_seat_share()
-        office_power = self.get_office_power_bonus()
-        self.power = seat_power + office_power
-        return self.power
+        """兼容旧接口，返回影响力"""
+        return self.influence
 
-    def get_office_power_bonus(self) -> int:
-        bonuses = {
-            "consul": 5,
-            "praetor": 3,
-            "censor": 4,
-            "quqaestor": 2,
-            "aedile": 2
-        }
-        return bonuses.get(self.office, 0)
+    def update_influence(self) -> int:
+        """重新计算影响力：私地*10 + 老兵*10 + 人气 + 公职加成 + 家族声望*10"""
+        base = self._land_private * 10 + self.veterans * 10 + self.popularity
+        family_bonus = self.family_prestige * 10
+        office_bonus = self.get_office_influence_bonus()
+        self._influence = base + family_bonus + office_bonus
+        return self._influence
+
+    @property
+    def influence(self) -> int:
+        return self._influence
+
+    @influence.setter
+    def influence(self, value: int):
+        self._influence = value
+
+    @property
+    def rank(self) -> int:
+        """根据当前官职获取权力等级"""
+        if self.office and self.office in OFFICE_RANK:
+            return OFFICE_RANK[self.office]
+        return 0
+
+    # 特殊权力判断方法
+    def has_military_command(self) -> bool:
+        """是否拥有军事指挥权（执政官、独裁官、总督）"""
+        return self.office in ("consul", "dictator", "propraetor")
+
+    def has_veto_power(self) -> bool:
+        """是否拥有否决权（保民官）"""
+        return self.office == "tribune"
+
+    def has_prosecution_power(self) -> bool:
+        """是否拥有起诉权（监察官）"""
+        return self.office == "censor"
 
     def get_qualification_attribute(self, office_type: str) -> int:
         mapping = {
             "consul": self.charisma,
-            "praetor": self.management,
-            "quqaestor": self.strategy,
+            "praetor": self.intelligence,   # 智略
+            "quaestor": self.martial,       # 军略
             "censor": self.zeal,
             "aedile": self.zeal,
         }
@@ -186,7 +263,7 @@ class Figure:
         return cooldowns.get(office_type, 2)
 
     def can_hold_office(self, office_type: str, current_turn: int, config: Dict) -> Tuple[bool, str]:
-        min_ages = {"consul": 40, "praetor": 35, "quqaestor": 30, "censor": 42, "aedile": 36}
+        min_ages = {"consul": 40, "praetor": 35, "quaestor": 30, "censor": 42, "aedile": 36}
         if self.age < min_ages.get(office_type, 30):
             return False, f"Age {self.age} < {min_ages.get(office_type, 30)}"
         if self.office == office_type:
@@ -202,7 +279,7 @@ class Figure:
             if not has_praetor:
                 return False, "Requires prior Praetor service"
         elif office_type == "praetor":
-            has_quaestor = any(h.office_type == "quqaestor" for h in self.office_history)
+            has_quaestor = any(h.office_type == "quaestor" for h in self.office_history)
             if not has_quaestor:
                 return False, "Requires prior Quaestor service"
         return True, "Eligible"
@@ -272,11 +349,13 @@ class Figure:
         self.land += amount
         return True
 
-    # 工厂方法 MVP 0.4.5
+    # 工厂方法
     @classmethod
     def create_nobile(cls, id: int, faction_id: str, age: int = 35) -> "Figure":
         praenomen, nomen, cognomen, full_name = RomanNameGenerator.generate_nobile_name()
-        return cls(
+        # 获取初始家族声望，若不在表中则默认1
+        initial_prestige = FAMILY_PRESTIGE.get(nomen, 1)
+        figure = cls(
             id=id,
             name=full_name,
             faction_id=faction_id,
@@ -285,20 +364,19 @@ class Figure:
             cognomen=cognomen,
             class_tier=ClassTier.NOBILE,
             age=age,
-            power=random.randint(3, 6),
             wealth=random.randint(10, 20),
             popularity=random.randint(2, 5),
             land=random.randint(2, 4),
             veterans=0,
             family=nomen,
-            family_prestige=random.randint(3, 8),
+            family_prestige=initial_prestige,  # 设置初始声望
             loyalty=7,
             charisma=random.randint(5, 9),
-            management=random.randint(3, 7),
-            strategy=random.randint(3, 7),
+            intelligence=random.randint(3, 7),
+            martial=random.randint(3, 7),
             zeal=random.randint(2, 6),
         )
-        figure._figure_type = "nobile"  # 新增行
+        figure._figure_type = "nobile"
         return figure
 
     @classmethod
@@ -313,7 +391,6 @@ class Figure:
             cognomen=cognomen,
             class_tier=ClassTier.EQUES,
             age=age,
-            power=random.randint(1, 3),
             wealth=random.randint(15, 30),
             popularity=random.randint(1, 3),
             land=0,
@@ -322,18 +399,18 @@ class Figure:
             family_prestige=0,
             loyalty=5,
             economic_exp=random.randint(1, 5),
-            management=random.randint(5, 9),
+            intelligence=random.randint(5, 9),   # 原 management
             charisma=random.randint(3, 6),
-            strategy=random.randint(2, 5),
+            martial=random.randint(2, 5),        # 原 strategy
             zeal=random.randint(1, 4),
         )
-        figure._figure_type = "equestrian"  # 新增行
+        figure._figure_type = "equestrian"
         return figure
 
     @classmethod
     def create_plebeian(cls, id: int, faction_id: str, age: int = 25) -> "Figure":
         praenomen, nomen, cognomen, full_name = RomanNameGenerator.generate_plebeian_name()
-        return cls(
+        figure = cls(
             id=id,
             name=full_name,
             faction_id=faction_id,
@@ -342,7 +419,6 @@ class Figure:
             cognomen=cognomen,
             class_tier=ClassTier.PLEBEIAN,
             age=age,
-            power=random.randint(0, 2),
             wealth=random.randint(3, 8),
             popularity=random.randint(0, 2),
             land=0,
@@ -352,10 +428,10 @@ class Figure:
             loyalty=3,
             zeal=random.randint(5, 9),
             charisma=random.randint(2, 6),
-            management=random.randint(1, 4),
-            strategy=random.randint(1, 4),
+            intelligence=random.randint(1, 4),   # 原 management
+            martial=random.randint(1, 4),        # 原 strategy
         )
-        figure._figure_type = "plebeian"  # 新增行
+        figure._figure_type = "plebeian"
         return figure
 
     def __repr__(self) -> str:
@@ -377,18 +453,17 @@ class Figure:
             office_emoji = {
                 "consul": "🏛️",
                 "praetor": "⚖️",
-                "quqaestor": "💰",
+                "quaestor": "💰",
                 "censor": "📜",
                 "aedile": "🏗️"
             }.get(self.office, "📋")
             office_emoji = f"[{office_emoji}{self.office[:3]}]"
 
         display_name = self.get_formal_name()
-        current_power = self.get_voting_power()
         seat_share = self.get_seat_share()
 
         return (f"{status}{tier_emoji} ID:{self.id} {display_name}{office_emoji} "
-                f"权力{current_power} 财富{self.wealth} 人气{self.popularity} 地产{self.land} 老兵{self.veterans} 席位{seat_share}")
+                f"影响力{self.influence} 财富{self.wealth} 人气{self.popularity} 地产{self.land} 老兵{self.veterans} 席位{seat_share}")
 
     def add_office_history(self, office_type: str, start_turn: int, end_turn: Optional[int] = None):
         term = OfficeTerm(
@@ -403,7 +478,7 @@ class Figure:
             self.age = max(self.age, 42)
         elif office_type == "praetor":
             self.age = max(self.age, 37)
-        elif office_type == "quqaestor":
+        elif office_type == "quaestor":
             self.age = max(self.age, 32)
 
     @classmethod
@@ -417,7 +492,7 @@ class Figure:
             if previous_office == "consul":
                 figure.charisma = max(figure.charisma, 7)
             elif previous_office == "praetor":
-                figure.management = max(figure.management, 7)
+                figure.intelligence = max(figure.intelligence, 7)
         return figure
 
     @classmethod
@@ -429,9 +504,9 @@ class Figure:
             start_turn = random.randint(-10, -3)
             figure.add_office_history(previous_office, start_turn)
             if previous_office == "praetor":
-                figure.management = max(figure.management, 8)
-            elif previous_office == "quqaestor":
-                figure.strategy = max(figure.strategy, 7)
+                figure.intelligence = max(figure.intelligence, 8)
+            elif previous_office == "quaestor":
+                figure.martial = max(figure.martial, 7)
         return figure
 
     @classmethod
@@ -442,8 +517,8 @@ class Figure:
         if previous_office:
             start_turn = random.randint(-10, -3)
             figure.add_office_history(previous_office, start_turn)
-            if previous_office == "quqaestor":
-                figure.strategy = max(figure.strategy, 6)
+            if previous_office == "quaestor":
+                figure.martial = max(figure.martial, 6)
         return figure
 
     # ==================== MVP 0.5 新增方法 ====================
@@ -460,6 +535,15 @@ class Figure:
 
     def settle_contract_profit(self, profit: int) -> None:
         self.wealth += profit
+
+    def get_office_influence_bonus(self) -> int:
+        """根据当前 office 获取影响力加成"""
+        if not self.office:
+            return 0
+        if self.office.startswith("ex-"):
+            return EX_OFFICE_INFLUENCE_BONUS.get(self.office, 0)
+        else:
+            return OFFICE_INFLUENCE_BONUS.get(self.office, 0)
 
     # ==================== MVP 0.5 新增属性访问器 ====================
     @property

@@ -72,7 +72,9 @@ class TestMortalityPhaseExt:
         from src.ui.commands.phase_revenue import RevenueCommand
         from src.core.localization import TerminologyService
         rev_cmd = RevenueCommand(state)
-        rev_cmd._process_contract_revenues(TerminologyService.get())
+        faction_tax_collected = {}
+        tax_rate = state.get_economic_rule("faction_tax_rate", 0.1)
+        rev_cmd._process_contract_revenues(TerminologyService.get(), faction_tax_collected, tax_rate)
 
         assert contract.status == ContractStatus.EXPIRED
         province = state.get_province(contract.province_id)

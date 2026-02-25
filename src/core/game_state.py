@@ -316,14 +316,15 @@ class GameState:
     # ========== 主持人 ==========
 
     def get_presiding_officer(self) -> Optional['Figure']:
-        """获取主持人"""
+        """获取元老院主持人（官职等级最高者，同等级则选影响力高者）"""
         candidates = [
             m for m in self._members.values()
-            if not m.is_dead and hasattr(m, 'is_present') and m.is_present
+            if not m.is_dead and m.is_present
         ]
         if not candidates:
             return None
-        return max(candidates, key=lambda m: getattr(m, 'power', 0))
+        # 按 rank 降序，rank 相同时按 influence 降序
+        return max(candidates, key=lambda m: (m.rank, m.influence))
 
     # ========== 日志 ==========
 

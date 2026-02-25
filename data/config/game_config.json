@@ -30,21 +30,21 @@
         "office_cooldowns": {
             "consul": 2,
             "praetor": 2,
-            "quqaestor": 2,
+            "quaestor": 2,
             "censor": 2,
             "aedile": 2
         },
         "offices_per_election": {
             "consul": 2,
             "praetor": 1,
-            "quqaestor": 1,
+            "quaestor": 1,
             "censor": 1,
             "aedile": 1
         },
         "candidates_per_election": {
             "consul": 2,
             "praetor": 2,
-            "quqaestor": 2,
+            "quaestor": 2,
             "censor": 2,
             "aedile": 2
         }

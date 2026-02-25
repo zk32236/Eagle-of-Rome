@@ -133,7 +133,7 @@ class ForumCommand(Command):
             tier_emoji = {"nobile": "🏛️", "eques": "💰", "plebeian": "👤"}.get(tier, "❓")
             print(f"\n      {tier_emoji} {tier.upper()} ({len(figures)}):")
             for fig in figures:
-                power = f"权{fig.power}" if fig.power > 0 else ""
+                power = f"权{fig.influence}" if fig.influence > 0 else ""
                 wealth = f"财{fig.wealth}" if fig.wealth > 0 else ""
                 pop = f"人{fig.popularity}" if fig.popularity > 0 else ""
                 family_info = f" 家族:{fig.family}" if fig.family else ""

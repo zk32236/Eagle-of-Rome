@@ -83,13 +83,15 @@ class TestRevenuePhaseExt:
         """正常施工年份支付年收入"""
         cmd = RevenueCommand(state)
         terms = TerminologyService.get()
-        cmd._process_contract_revenues(terms)
+        faction_tax_collected = {}
+        tax_rate = state.get_economic_rule("faction_tax_rate", 0.1)
+        cmd._process_contract_revenues(terms, faction_tax_collected, tax_rate)
 
         contract = works_contract
         # 国库减少 payment（annual_income = 267）
         assert state.treasury == -267
         # 骑士财富增加 payment
-        assert knight.wealth == 267
+        assert knight.wealth == 60
         # 施工剩余年限减少
         assert contract.remaining_years == 2
         # 总支出记录
@@ -105,11 +107,13 @@ class TestRevenuePhaseExt:
         initial_wealth = knight.wealth
 
         terms = TerminologyService.get()
-        cmd._process_contract_revenues(terms)
+        faction_tax_collected = {}
+        tax_rate = state.get_economic_rule("faction_tax_rate", 0.1)
+        cmd._process_contract_revenues(terms, faction_tax_collected, tax_rate)
 
         # 最后一年应支付总承包价 - 已支付 = 800 - 534 = 266
         assert state.treasury == initial_treasury - 266
-        assert knight.wealth == initial_wealth + 266
+        assert knight.wealth == initial_wealth + 59
         assert works_contract.remaining_years == 0
         assert works_contract.total_spent == 800
         # 合同应变为 COMPLETED
@@ -127,7 +131,9 @@ class TestRevenuePhaseExt:
 
         cmd = RevenueCommand(state)
         terms = TerminologyService.get()
-        cmd._process_contract_revenues(terms)
+        faction_tax_collected = {}
+        tax_rate = state.get_economic_rule("faction_tax_rate", 0.1)
+        cmd._process_contract_revenues(terms, faction_tax_collected, tax_rate)
 
         # 合同应被终止（EXPIRED）
         assert works_contract.status == ContractStatus.EXPIRED

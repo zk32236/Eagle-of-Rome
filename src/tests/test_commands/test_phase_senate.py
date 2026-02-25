@@ -38,22 +38,22 @@ class TestSenateCommand(unittest.TestCase):
                 "office_cooldowns": {
                     "consul": 10,
                     "praetor": 5,
-                    "quqaestor": 2
+                    "quaestor": 2
                 },
                 "offices_per_election": {
                     "consul": 2,
                     "praetor": 2,
-                    "quqaestor": 2
+                    "quaestor": 2
                 },
                 "min_ages": {
                     "consul": 40,
                     "praetor": 35,
-                    "quqaestor": 30
+                    "quaestor": 30
                 },
                 "candidates_per_election": {
                     "consul": 3,
                     "praetor": 3,
-                    "quqaestor": 3
+                    "quaestor": 3
                 }
             }
         }
@@ -74,18 +74,18 @@ class TestSenateCommand(unittest.TestCase):
         figures = []
 
         def create_figure(name, faction_id, age, class_tier,
-                          power=5, wealth=20, popularity=5,
-                          charisma=5, management=5, strategy=5,
+                          influence=5, wealth=20, popularity=5,
+                          charisma=5, intelligence=5, martial=5,
                           history=None):
             nonlocal next_id
             fig = Figure(id=next_id, name=name, faction_id=faction_id, age=age)
             fig.class_tier = class_tier
-            fig.power = power
+            fig.influence = influence  # 使用 influence 属性
             fig.wealth = wealth
             fig.popularity = popularity
             fig.charisma = charisma
-            fig.management = management
-            fig.strategy = strategy
+            fig.intelligence = intelligence
+            fig.martial = martial
             if history:
                 for office, start_turn in history:
                     fig.office_history.append(OfficeTerm(office, start_turn))
@@ -97,30 +97,30 @@ class TestSenateCommand(unittest.TestCase):
         for faction_id in ["senate", "populares", "equites"]:
             # 3 贵族
             create_figure(f"{faction_id}_noble1", faction_id, 45, ClassTier.NOBILE,
-                          power=8, wealth=30, popularity=7,
-                          charisma=8, management=6, strategy=5,
-                          history=[("quqaestor", -8), ("praetor", -5), ("consul", -2)])  # 前执政官
+                          influence=8, wealth=30, popularity=7,
+                          charisma=8, intelligence=6, martial=5,
+                          history=[("quaestor", -8), ("praetor", -5), ("consul", -2)])  # 前执政官
             create_figure(f"{faction_id}_noble2", faction_id, 42, ClassTier.NOBILE,
-                          power=6, wealth=25, popularity=6,
-                          charisma=7, management=7, strategy=6,
-                          history=[("quqaestor", -7), ("praetor", -4)])  # 前大法官
+                          influence=6, wealth=25, popularity=6,
+                          charisma=7, intelligence=7, martial=6,
+                          history=[("quaestor", -7), ("praetor", -4)])  # 前大法官
             create_figure(f"{faction_id}_noble3", faction_id, 38, ClassTier.NOBILE,
-                          power=5, wealth=20, popularity=5,
-                          charisma=6, management=5, strategy=7,
-                          history=[("quqaestor", -6)])  # 前财务官
+                          influence=5, wealth=20, popularity=5,
+                          charisma=6, intelligence=5, martial=7,
+                          history=[("quaestor", -6)])  # 前财务官
 
             # 2 骑士
             create_figure(f"{faction_id}_eques1", faction_id, 35, ClassTier.EQUES,
-                          power=3, wealth=40, popularity=4,
-                          charisma=4, management=8, strategy=4)
+                          influence=3, wealth=40, popularity=4,
+                          charisma=4, intelligence=8, martial=4)
             create_figure(f"{faction_id}_eques2", faction_id, 32, ClassTier.EQUES,
-                          power=2, wealth=35, popularity=3,
-                          charisma=3, management=7, strategy=5)
+                          influence=2, wealth=35, popularity=3,
+                          charisma=3, intelligence=7, martial=5)
 
             # 1 平民
             create_figure(f"{faction_id}_pleb1", faction_id, 30, ClassTier.PLEBEIAN,
-                          power=1, wealth=5, popularity=2,
-                          charisma=2, management=2, strategy=2)
+                          influence=1, wealth=5, popularity=2,
+                          charisma=2, intelligence=2, martial=2)
 
         # 将所有人物添加到状态
         for fig in figures:
@@ -142,7 +142,6 @@ class TestSenateCommand(unittest.TestCase):
         """测试成功执行元老院阶段"""
         cmd = SenateCommand(self.state)
 
-        # 捕获输出
         f = io.StringIO()
         with redirect_stdout(f):
             result = cmd.execute([])
@@ -193,7 +192,6 @@ class TestSenateCommand(unittest.TestCase):
             self.assertIsNotNone(fig)
 
         # 注意：由于同一人物可能当选多个官职导致最终覆盖，不再对大法官和财务官人数做硬性断言
-        # 这些细节已在其他测试中验证（如资格检查、选举流程输出等）
 
     def test_contract_processing(self):
         """测试合同处理逻辑"""
@@ -233,10 +231,12 @@ class TestSenateCommand(unittest.TestCase):
         presiding = self.state.get_presiding_officer()
         self.assertIsNotNone(presiding, "主持人不应为None")
 
-        # 主持人应为权力最高者
+        # 主持人应为权力最高者（按 rank 优先，同 rank 比 influence）
         living = self.state.get_living_members()
-        max_power = max(m.power for m in living)
-        self.assertEqual(presiding.power, max_power, "主持人必须是权力最高者")
+        max_rank = max(m.rank for m in living)
+        candidates = [m for m in living if m.rank == max_rank]
+        expected_presiding = max(candidates, key=lambda m: m.influence)
+        self.assertEqual(presiding.id, expected_presiding.id)
 
     def test_seat_standings(self):
         """测试席位占比显示（直接调用私有方法验证输出）"""
@@ -283,7 +283,7 @@ class TestSenateCommand(unittest.TestCase):
         # 设置官职
         fig1.office = "consul"
         fig2.office = "praetor"
-        fig3.office = "quqaestor"
+        fig3.office = "quaestor"
 
         # 添加到状态（临时）
         self.state.add_member(fig1)
@@ -292,11 +292,11 @@ class TestSenateCommand(unittest.TestCase):
 
         cmd._remove_office_holders("consul")  # 只卸任执政官
 
-        # 验证fig1卸任
-        self.assertIsNone(fig1.office)
+        # 验证fig1卸任后变为 ex-consul
+        self.assertEqual(fig1.office, "ex-consul")
         # fig2和fig3不应受影响
         self.assertEqual(fig2.office, "praetor")
-        self.assertEqual(fig3.office, "quqaestor")
+        self.assertEqual(fig3.office, "quaestor")
 
     def test_qualification_checks(self):
         """测试资格检查方法"""
@@ -307,7 +307,7 @@ class TestSenateCommand(unittest.TestCase):
         fig_qualified = Figure(id=9971, name="Qualified", faction_id="senate", age=45)
         fig_qualified.class_tier = ClassTier.NOBILE
         fig_qualified.office_history = [
-            OfficeTerm("quqaestor", -8),
+            OfficeTerm("quaestor", -8),
             OfficeTerm("praetor", -5)
         ]
         self.state.add_member(fig_qualified)
@@ -320,23 +320,23 @@ class TestSenateCommand(unittest.TestCase):
         # 测试 _get_min_age
         self.assertEqual(cmd._get_min_age("consul"), 40)
         self.assertEqual(cmd._get_min_age("praetor"), 35)
-        self.assertEqual(cmd._get_min_age("quqaestor"), 30)
+        self.assertEqual(cmd._get_min_age("quaestor"), 30)
 
         # 测试 _get_prerequisite
         self.assertEqual(cmd._get_prerequisite("consul"), "Praetor")
         self.assertEqual(cmd._get_prerequisite("praetor"), "Quaestor")
-        self.assertEqual(cmd._get_prerequisite("quqaestor"), "None")
+        self.assertEqual(cmd._get_prerequisite("quaestor"), "None")
 
         # 测试 _check_prerequisite
         # 有历史人物
         self.assertTrue(cmd._check_prerequisite(fig_qualified, "consul"))  # 有 praetor 历史
         self.assertTrue(cmd._check_prerequisite(fig_qualified, "praetor"))  # 有 quaestor 历史
-        self.assertTrue(cmd._check_prerequisite(fig_qualified, "quqaestor"))  # quqaestor 无前置，应返回 True
+        self.assertTrue(cmd._check_prerequisite(fig_qualified, "quaestor"))  # quaestor 无前置，应返回 True
 
         # 无历史人物
         self.assertFalse(cmd._check_prerequisite(fig_unqualified, "consul"))  # 无 praetor 历史
         self.assertFalse(cmd._check_prerequisite(fig_unqualified, "praetor"))  # 无 quaestor 历史
-        self.assertTrue(cmd._check_prerequisite(fig_unqualified, "quqaestor"))  # quqaestor 无前置，返回 True
+        self.assertTrue(cmd._check_prerequisite(fig_unqualified, "quaestor"))  # quaestor 无前置，返回 True
 
         # 测试 _check_in_cooldown
         current_turn = 1
@@ -346,13 +346,6 @@ class TestSenateCommand(unittest.TestCase):
         # 假设最近刚担任过
         fig_qualified.office_history.append(OfficeTerm("praetor", current_turn - 1))
         self.assertTrue(cmd._check_in_cooldown(fig_qualified, "praetor", current_turn))
-
-    def test_power_bonus(self):
-        """测试权力加成"""
-        cmd = SenateCommand(self.state)
-        self.assertEqual(cmd._get_power_bonus("consul"), 5)
-        self.assertEqual(cmd._get_power_bonus("praetor"), 3)
-        self.assertEqual(cmd._get_power_bonus("quqaestor"), 2)
 
     def _create_real_contracts_for_senate(self):
         """创建真实的合同对象用于元老院阶段测试"""

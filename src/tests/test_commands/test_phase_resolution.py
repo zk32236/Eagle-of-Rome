@@ -126,8 +126,8 @@ class TestResolutionCommand(unittest.TestCase):
     def test_victory_conditions(self):
         """测试胜利条件检查"""
         # 设置影响力：元老院派更高
-        self.fig1.power = 10
-        self.fig2.power = 5
+        self.fig1._influence = 10
+        self.fig2._influence = 5
 
         cmd = ResolutionCommand(self.state)
         f = io.StringIO()

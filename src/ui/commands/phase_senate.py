@@ -47,7 +47,7 @@ class SenateCommand(Command):
         print("   🏛️  MAGISTRATE ELECTIONS")
         print(f"{'=' * 50}")
 
-        election_order = ["consul", "praetor", "quqaestor"]  # 注意拼写与原代码一致
+        election_order = ["consul", "praetor", "quaestor"]  # 注意拼写与原代码一致
 
         for office_type in election_order:
             count = self.state.get_offices_per_election(office_type)
@@ -56,7 +56,7 @@ class SenateCommand(Command):
             for i in range(count):
                 winner = self._elect_single_magistrate(office_type, terms)
                 if winner:
-                    emoji = {"consul": "🏛️", "praetor": "⚖️", "quqaestor": "💰"}.get(office_type, "📋")
+                    emoji = {"consul": "🏛️", "praetor": "⚖️", "quaestor": "💰"}.get(office_type, "📋")
                     print(f"      {emoji} {winner.name} elected as {office_type}")
 
                     # 执政官特殊处理：添加到leader_ids（兼容现有逻辑）
@@ -71,7 +71,7 @@ class SenateCommand(Command):
         for faction in self.state.factions.values():
             leader = faction.update_faction_leader(self.state)
             if leader:
-                print(f"      {faction.name}: {leader.name} (Power: {leader.power})")
+                print(f"      {faction.name}: {leader.name} (Influence: {leader.influence})")
 
         # ========== 第3步：主持人确定 ==========
         presiding = self.state.get_presiding_officer()
@@ -117,7 +117,7 @@ class SenateCommand(Command):
             fname = faction.name[:8] if faction else "?"
 
             qual_attr = fig.get_qualification_attribute(office_type)
-            qual_name = {"consul": "CHA", "praetor": "MAN", "quqaestor": "STR"}.get(office_type, "PWR")
+            qual_name = {"consul": "CHA", "praetor": "MAN", "quaestor": "STR"}.get(office_type, "PWR")
 
             has_prereq = self._check_prerequisite(fig, office_type)
             prereq_str = "✓" if has_prereq else "✗"
@@ -139,7 +139,7 @@ class SenateCommand(Command):
 
         # 2. 按资格属性取TOP N
         top_candidates = self._get_top_candidates_by_attribute(eligible, office_type, num_candidates)
-        qual_name = {"consul": "CHA", "praetor": "MAN", "quqaestor": "STR"}.get(office_type, "PWR")
+        qual_name = {"consul": "CHA", "praetor": "MAN", "quaestor": "STR"}.get(office_type, "PWR")
         print(f"\n      🏆 TOP {num_candidates} CANDIDATES (by {qual_name}):")
 
         for idx, c in enumerate(top_candidates, 1):
@@ -169,17 +169,13 @@ class SenateCommand(Command):
 
         if winner:
             win_faction = self.state.get_faction(winner.faction_id)
-            self._remove_office_holders(office_type)
+            self._remove_office_holders(office_type)  # 先卸任同职位的人
             print(f"\n      ✓ WINNER: {winner.name} ({win_faction.name if win_faction else '?'})")
-            print(f"        Power bonus: +{self._get_power_bonus(office_type)}")
 
             # 任命
             winner.office = office_type
             winner.office_history.append(OfficeTerm(office_type, current_turn))
-
-            # 权力加成
-            power_bonus = self._get_power_bonus(office_type)
-            winner.power += power_bonus
+            winner.update_influence()  # 重新计算影响力（包括公职加成）
 
             # 派系领袖可能变更
             faction = self.state.get_faction(winner.faction_id)
@@ -239,13 +235,15 @@ class SenateCommand(Command):
         return next((c for c in candidates if c.id == winner_id), None)
 
     def _remove_office_holders(self, office_type: str):
-        """卸任该职位的所有现任者"""
+        """卸任该职位的所有现任者，并设置前任公职"""
         for fig in self.state.get_living_members():
             if fig.office == office_type:
-                old_office = fig.office
-                fig.office = None
-                fig.get_voting_power()  # 这会更新fig.power
-                print(f"      📤 {fig.name} steps down as {old_office} (power: {fig.power})")
+                # 记录历史（结束回合）
+                fig.add_office_history(office_type, self.state.turn.turn_number - 1, self.state.turn.turn_number)
+                # 设置为前任公职
+                fig.office = f"ex-{office_type}"
+                fig.update_influence()
+                print(f"      📤 {fig.name} steps down as {office_type}, now {fig.office} (influence: {fig.influence})")
 
     # ---------- 合同处理私有方法 ----------
 
@@ -390,18 +388,18 @@ class SenateCommand(Command):
 
     def _get_min_age(self, office_type: str) -> int:
         """获取最低年龄要求"""
-        return {"consul": 40, "praetor": 35, "quqaestor": 30}.get(office_type, 30)
+        return {"consul": 40, "praetor": 35, "quaestor": 30}.get(office_type, 30)
 
     def _get_prerequisite(self, office_type: str) -> str:
         """获取前置职务要求"""
-        return {"consul": "Praetor", "praetor": "Quaestor", "quqaestor": "None"}.get(office_type, "None")
+        return {"consul": "Praetor", "praetor": "Quaestor", "quaestor": "None"}.get(office_type, "None")
 
     def _check_prerequisite(self, fig: 'Figure', office_type: str) -> bool:
         """检查是否满足前置职务"""
         if office_type == "consul":
             return any(h.office_type == "praetor" for h in fig.office_history)
         elif office_type == "praetor":
-            return any(h.office_type == "quqaestor" for h in fig.office_history)
+            return any(h.office_type == "quaestor" for h in fig.office_history)
         return True  # Quaestor无前置
 
     def _check_in_cooldown(self, fig: 'Figure', office_type: str, current_turn: int) -> bool:
@@ -413,7 +411,3 @@ class SenateCommand(Command):
                 if years_ago < cooldown:
                     return True
         return False
-
-    def _get_power_bonus(self, office_type: str) -> int:
-        """获取职务权力加成"""
-        return {"consul": 5, "praetor": 3, "quqaestor": 2}.get(office_type, 0)
