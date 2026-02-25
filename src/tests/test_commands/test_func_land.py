@@ -140,7 +140,7 @@ def test_seats_with_assets(mock_state):
     # 创建测试人物
     fig1 = MagicMock(spec=Figure)
     fig1.is_dead = False
-    fig1.land = 10
+    fig1.land_private = 10
     fig1.veterans = 5
     fig1.get_seat_share.return_value = 15
     fig1.name = "Fig1"
@@ -149,7 +149,7 @@ def test_seats_with_assets(mock_state):
 
     fig2 = MagicMock(spec=Figure)
     fig2.is_dead = False
-    fig2.land = 8
+    fig2.land_private = 8
     fig2.veterans = 2
     fig2.get_seat_share.return_value = 10
     fig2.name = "Fig2"
@@ -173,7 +173,7 @@ def test_seats_with_assets(mock_state):
 def test_seats_no_assets(mock_state):
     fig = MagicMock(spec=Figure)
     fig.is_dead = False
-    fig.land = 0
+    fig.land_private = 0
     fig.veterans = 0
     fig.get_seat_share.return_value = 0
     mock_state.get_living_members.return_value = [fig]

@@ -175,6 +175,7 @@ class Figure:
     corruption: int = 0
     bribe_income: int = 0
 
+
     # 状态标记
     is_faction_leader: bool = False
     is_dead: bool = False
@@ -205,8 +206,8 @@ class Figure:
         self.update_influence()
 
     def get_seat_share(self) -> int:
-        """获取席位份额（用于元老院席位分配）"""
-        return self.land + self.veterans
+        """席位份额 = 私地 + 老兵"""
+        return self._land_private + self.veterans
 
     def get_voting_power(self) -> int:
         """兼容旧接口，返回影响力"""
@@ -327,7 +328,7 @@ class Figure:
         return current_turn - max(t.start_turn for t in consul_terms)
 
     def can_sell_land(self, amount: int) -> bool:
-        return self.land >= amount
+        return self._land_private >= amount
 
     def can_buy_land(self, amount: int, price_per_unit: int) -> bool:
         total_cost = amount * price_per_unit
@@ -336,7 +337,7 @@ class Figure:
     def sell_land(self, amount: int, price_per_unit: int) -> int:
         if not self.can_sell_land(amount):
             return 0
-        self.land -= amount
+        self._land_private -= amount
         earnings = amount * price_per_unit
         self.wealth += earnings
         return earnings
@@ -346,7 +347,7 @@ class Figure:
             return False
         total_cost = amount * price_per_unit
         self.wealth -= total_cost
-        self.land += amount
+        self._land_private += amount
         return True
 
     # 工厂方法
@@ -366,7 +367,6 @@ class Figure:
             age=age,
             wealth=random.randint(10, 20),
             popularity=random.randint(2, 5),
-            land=random.randint(2, 4),
             veterans=0,
             family=nomen,
             family_prestige=initial_prestige,  # 设置初始声望
@@ -393,7 +393,6 @@ class Figure:
             age=age,
             wealth=random.randint(15, 30),
             popularity=random.randint(1, 3),
-            land=0,
             veterans=0,
             family=None,
             family_prestige=0,
@@ -421,7 +420,6 @@ class Figure:
             age=age,
             wealth=random.randint(3, 8),
             popularity=random.randint(0, 2),
-            land=0,
             veterans=0,
             family=None,
             family_prestige=0,
@@ -463,7 +461,7 @@ class Figure:
         seat_share = self.get_seat_share()
 
         return (f"{status}{tier_emoji} ID:{self.id} {display_name}{office_emoji} "
-                f"影响力{self.influence} 财富{self.wealth} 人气{self.popularity} 地产{self.land} 老兵{self.veterans} 席位{seat_share}")
+                f"影响力{self.influence} 财富{self.wealth} 人气{self.popularity} 地产{self._land_private} 老兵{self.veterans} 席位{seat_share}")
 
     def add_office_history(self, office_type: str, start_turn: int, end_turn: Optional[int] = None):
         term = OfficeTerm(

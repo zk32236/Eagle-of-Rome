@@ -348,7 +348,7 @@ class SenateCommand(Command):
         """显示席位占比排名"""
         # 计算全国总资产
         all_figures = [m for m in self.state.get_living_members() if not m.is_dead]
-        total_land = sum(m.land for m in all_figures)
+        total_land = sum(m.land_private for m in all_figures)
         total_veterans = sum(m.veterans for m in all_figures)
         total_assets = total_land + total_veterans
 
@@ -375,7 +375,7 @@ class SenateCommand(Command):
         print(f"\n   🏛️  Faction Totals:")
         for faction in self.state.factions.values():
             members = faction.get_members(self.state)
-            fact_land = sum(m.land for m in members)
+            fact_land = sum(m.land_private for m in members)
             fact_vets = sum(m.veterans for m in members)
             fact_assets = fact_land + fact_vets
             fact_seats = int((fact_assets / total_assets) * 300)

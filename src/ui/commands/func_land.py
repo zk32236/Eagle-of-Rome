@@ -114,7 +114,7 @@ class SeatsCommand(Command):
         print(f"{'=' * 60}")
 
         all_figures = [m for m in self.state.get_living_members() if not m.is_dead]
-        total_land = sum(m.land for m in all_figures)
+        total_land = sum(m.land_private for m in all_figures)
         total_veterans = sum(m.veterans for m in all_figures)
         total_assets = total_land + total_veterans
 
@@ -134,9 +134,9 @@ class SeatsCommand(Command):
         for idx, fig in enumerate(sorted_figures, 1):
             faction = self.state.get_faction(fig.faction_id)
             fname = faction.name[:10] if faction else "Unknown"
-            assets = fig.get_seat_share()
-            seat_count = int((assets / total_assets) * 300)
-            seat_pct = (assets / total_assets) * 100
+            assets = fig.get_seat_share()  # 直接使用 get_seat_share()
+            seat_count = int((assets / total_assets) * 300) if total_assets > 0 else 0
+            seat_pct = (assets / total_assets) * 100 if total_assets > 0 else 0
             tier_emoji = {"nobile": "🏛️", "eques": "💰", "plebeian": "👤"}.get(fig.class_tier.value, "❓")
             print(f"   {idx:<4} {tier_emoji} {fig.name[:18]:<20} {fname:<12} "
                   f"{assets:<6} {seat_count:<6} {seat_pct:4.1f}%")
@@ -149,7 +149,7 @@ class SeatsCommand(Command):
         total_faction_seats = 0
         for faction in self.state.factions.values():
             members = faction.get_members(self.state)
-            fact_land = sum(m.land for m in members)
+            fact_land = sum(m.land_private for m in members)
             fact_vets = sum(m.veterans for m in members)
             fact_assets = fact_land + fact_vets
             fact_seats = int((fact_assets / total_assets) * 300) if total_assets > 0 else 0

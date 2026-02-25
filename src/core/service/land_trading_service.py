@@ -58,18 +58,11 @@ class LandTradingService:
         return "neutral"
 
     def execute_trade(self, seller_id: int, buyer_id: int, amount: int) -> Tuple[bool, str]:
-        """
-        执行土地交易
-
-        返回: (是否成功, 消息)
-        """
         terms = TerminologyService.get()
 
-        # 获取双方人物
         seller = self.state.get_member(seller_id)
         buyer = self.state.get_member(buyer_id)
 
-        # 验证
         if not seller or not buyer:
             return False, "Figure not found"
 
@@ -82,8 +75,9 @@ class LandTradingService:
         if amount <= 0:
             return False, "Invalid amount"
 
-        if seller.land < amount:
-            return False, f"{seller.name} has insufficient land ({seller.land} < {amount})"
+        # 检查卖方土地是否足够
+        if seller.land_private < amount:
+            return False, f"{seller.name} has insufficient land ({seller.land_private} < {amount})"
 
         # 计算价格
         price_per_unit = self.calculate_land_price(seller, buyer)
@@ -92,51 +86,43 @@ class LandTradingService:
         if buyer.wealth < total_cost:
             return False, f"{buyer.name} cannot afford {total_cost} {terms.currency} (has {buyer.wealth})"
 
-        # ===== 记录交易前状态 =====
-        seller_land_before = seller.land
-        buyer_land_before = buyer.land
-
-        # 获取全国总资产（用于计算席位比例）
-        all_figures = [m for m in self.state.get_living_members() if not m.is_dead]
-        total_land = sum(m.land for m in all_figures)
-        total_veterans = sum(m.veterans for m in all_figures)
-        total_assets = total_land + total_veterans
-
-        # 计算交易前的席位（按比例）
-        if total_assets > 0:
-            seller_assets_before = seller_land_before + seller.veterans
-            buyer_assets_before = buyer_land_before + buyer.veterans
-            seller_seats_before = int((seller_assets_before / total_assets) * 300)
-            buyer_seats_before = int((buyer_assets_before / total_assets) * 300)
-        else:
-            seller_seats_before = buyer_seats_before = 0
+        # 记录交易前状态（用于显示）
+        seller_land_before = seller.land_private
+        buyer_land_before = buyer.land_private
 
         # 执行交易
-        seller.land -= amount
-        seller.wealth += total_cost
-        buyer.land += amount
-        buyer.wealth -= total_cost
-
-        # 计算交易后的席位（总资产不变，个人资产变化）
-        if total_assets > 0:
-            seller_assets_after = seller.land + seller.veterans
-            buyer_assets_after = buyer.land + buyer.veterans
-            seller_seats_after = int((seller_assets_after / total_assets) * 300)
-            buyer_seats_after = int((buyer_assets_after / total_assets) * 300)
-        else:
-            seller_seats_after = buyer_seats_after = 0
+        earnings = seller.sell_land(amount, price_per_unit)  # 卖家土地减少，财富增加
+        if earnings == 0:
+            return False, "Seller failed to sell land"
+        success = buyer.buy_land(amount, price_per_unit)  # 买家财富减少，土地增加
+        if not success:
+            # 回滚卖家
+            seller.buy_land(amount, price_per_unit)  # 重新买回
+            return False, "Buyer failed to buy land"
 
         # 记录交易历史
         self._record_trade(seller, buyer, amount, price_per_unit)
 
-        # 生成消息（显示比例席位）
+        # 生成消息
         msg = (f"Trade complete: {amount} land @ {price_per_unit}/unit = {total_cost} {terms.currency}\n"
-               f"   {seller.name}: land {seller_land_before}→{seller.land}, "
-               f"seats {seller_seats_before}→{seller_seats_after} (of 300)\n"
-               f"   {buyer.name}: land {buyer_land_before}→{buyer.land}, "
-               f"seats {buyer_seats_before}→{buyer_seats_after} (of 300)")
+               f"   {seller.name}: land {seller_land_before}→{seller.land_private}, "
+               f"seats {self._calculate_seats(seller_land_before, seller.veterans)}→{self._calculate_seats(seller.land_private, seller.veterans)} (of 300)\n"
+               f"   {buyer.name}: land {buyer_land_before}→{buyer.land_private}, "
+               f"seats {self._calculate_seats(buyer_land_before, buyer.veterans)}→{self._calculate_seats(buyer.land_private, buyer.veterans)} (of 300)")
 
         return True, msg
+
+    def _calculate_seats(self, land: int, veterans: int, total_assets: int = None) -> int:
+        """根据土地和私兵计算席位（需全国总资产）"""
+        if total_assets is None:
+            all_figures = [m for m in self.state.get_living_members() if not m.is_dead]
+            total_land = sum(m.land_private for m in all_figures)
+            total_veterans = sum(m.veterans for m in all_figures)
+            total_assets = total_land + total_veterans
+        if total_assets == 0:
+            return 0
+        assets = land + veterans
+        return int((assets / total_assets) * 300)
 
     def _record_trade(self, seller: Figure, buyer: Figure, amount: int, price: int):
         """记录交易历史"""
@@ -153,7 +139,6 @@ class LandTradingService:
         seller.land_trade_history.append(trade_record)
 
     def get_trade_preview(self, seller_id: int, buyer_id: int, amount: int) -> Optional[dict]:
-        """获取交易预览信息"""
         seller = self.state.get_member(seller_id)
         buyer = self.state.get_member(buyer_id)
 
@@ -169,9 +154,9 @@ class LandTradingService:
             "amount": amount,
             "price_per_unit": price_per_unit,
             "total_cost": total_cost,
-            "seller_land_after": seller.land - amount,
-            "buyer_land_after": buyer.land + amount,
-            "can_execute": seller.land >= amount and buyer.wealth >= total_cost
+            "seller_land_after": seller.land_private - amount,
+            "buyer_land_after": buyer.land_private + amount,
+            "can_execute": seller.land_private >= amount and buyer.wealth >= total_cost
         }
 
     def get_faction_land_summary(self, faction_id: str) -> dict:
@@ -181,7 +166,7 @@ class LandTradingService:
             return {}
 
         members = faction.get_members(self.state)
-        total_land = sum(m.land for m in members)
+        total_land = sum(m.land_private for m in members)
         total_seats = sum(m.get_seat_share() for m in members)
 
         return {
