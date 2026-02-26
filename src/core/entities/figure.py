@@ -239,7 +239,8 @@ class Figure:
             "praetor": self.intelligence,
             "quaestor": self.martial,
             "censor": self.zeal,
-            "aedile": self.zeal,
+            "aedile": self.intelligence,
+            "dictator": self.martial,
         }
         return mapping.get(office_type, 0)
 
@@ -247,43 +248,44 @@ class Figure:
         cooldowns = config.get("political_rules", {}).get("office_cooldowns", {})
         return cooldowns.get(office_type, 2)
 
+    # 在 can_hold_office 方法中，增加监察官的特殊条件
     def can_hold_office(self, office_type: str, current_turn: int, config: Dict) -> Tuple[bool, str]:
         # 获取目标官职等级
         target_rank = self.__class__.OFFICE_RANK.get(office_type, 0)
         if target_rank == 0:
             return False, f"Unknown office type: {office_type}"
 
-        # 辅助函数：获取任何官职（含ex-）的等级
         def get_rank(off: Optional[str]) -> int:
             if not off:
                 return 0
             if off.startswith("ex-"):
-                base = off[3:]  # 去掉 "ex-"
+                base = off[3:]
             else:
                 base = off
             return self.__class__.OFFICE_RANK.get(base, 0)
 
-        # 检查当前官职：如果当前官职等级高于目标，则不能竞选
+        # 检查当前官职：如果当前官职等级高于目标，则不能竞选（除非是监察官？但监察官允许当前高阶？这里保留限制，因为现任执政官一般不兼任监察官）
         if get_rank(self.office) > target_rank:
             return False, f"Cannot run for lower office while holding higher office: {self.office}"
 
-        # 检查历史官职：如果曾担任过高阶官职，则不能竞选低阶
-        for term in self.office_history:
-            if get_rank(term.office_type) > target_rank:
-                return False, f"Has held higher office: {term.office_type}"
+        # 检查历史官职：如果曾担任过高阶官职，则不能竞选低阶（监察官除外）
+        if office_type != "censor":  # 监察官允许曾担任高阶官职
+            for term in self.office_history:
+                if get_rank(term.office_type) > target_rank:
+                    return False, f"Has held higher office: {term.office_type}"
 
-        # 原有检查（年龄、现任、冷却、前置职务）保持不变
         # 年龄检查
-        min_ages = {"consul": 40, "praetor": 35, "quaestor": 30, "censor": 42, "aedile": 36}
+        min_ages = config.get("political_rules", {}).get("min_ages", {})
         if self.age < min_ages.get(office_type, 30):
             return False, f"Age {self.age} < {min_ages.get(office_type, 30)}"
 
-        # 检查是否已经担任同一官职
+        # 现任相同官职检查
         if self.office == office_type:
             return False, "Already holding this office"
 
         # 冷却期检查
-        cooldown = self.get_office_cooldown_years(office_type, config)
+        cooldowns = config.get("political_rules", {}).get("office_cooldowns", {})
+        cooldown = cooldowns.get(office_type, 2)
         for term in self.office_history:
             if term.office_type == office_type:
                 years_ago = current_turn - term.start_turn
@@ -299,6 +301,11 @@ class Figure:
             has_quaestor = any(h.office_type == "quaestor" for h in self.office_history)
             if not has_quaestor:
                 return False, "Requires prior Quaestor service"
+        elif office_type == "censor":
+            # 监察官必须是前执政官（允许历史中有 consul）
+            has_consul = any(h.office_type == "consul" for h in self.office_history)
+            if not has_consul:
+                return False, "Requires prior Consul service"
 
         return True, "Eligible"
 
