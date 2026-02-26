@@ -41,7 +41,7 @@ class PopulationCommand(Command):
         print("   🏛️  MAGISTRATE ELECTIONS")
         print(f"{'=' * 50}")
 
-        election_order = ["consul", "praetor", "quaestor"]
+        election_order = ["consul", "censor", "praetor", "quaestor"]
 
         for office_type in election_order:
             count = self.state.get_offices_per_election(office_type)
@@ -50,10 +50,10 @@ class PopulationCommand(Command):
             for i in range(count):
                 winner = self._elect_single_magistrate(office_type, terms)
                 if winner:
-                    emoji = {"consul": "🏛️", "praetor": "⚖️", "quaestor": "💰"}.get(office_type, "📋")
+                    emoji = {"consul": "🏛️", "censor": "📜", "praetor": "⚖️", "quaestor": "💰"}.get(office_type, "📋")
                     print(f"      {emoji} {winner.name} elected as {office_type}")
 
-                    # 执政官特殊处理：添加到 leader_ids（兼容现有逻辑）
+                    # 执政官特殊处理：添加到 leader_ids
                     if office_type == "consul":
                         if winner.id not in self.state.turn.leader_ids:
                             self.state.turn.leader_ids.append(winner.id)
@@ -134,8 +134,8 @@ class PopulationCommand(Command):
             print(f"            {qual_name}:{attr_val:2} | Pop:{pop:2} | "
                   f"Age:{c.age:2} | History: {history_str or 'None'}")
 
-        # 3. 派系人气投票
-        votes = self._conduct_popularity_voting(top_candidates)
+        # 3. 派系影响力投票
+        votes = self._conduct_influence_voting(top_candidates)
 
         print(f"\n      🗳️  VOTING RESULTS:")
         total_votes = sum(votes.values())
@@ -180,14 +180,14 @@ class PopulationCommand(Command):
         )
         return sorted_candidates[:n]
 
-    def _conduct_popularity_voting(self, candidates: List['Figure']) -> dict:
-        """派系人气投票（只看人气总和）"""
+    def _conduct_influence_voting(self, candidates: List['Figure']) -> dict:
+        """派系影响力投票（看影响力总和）"""
         votes = {c.id: 0 for c in candidates}
 
         for faction in self.state.factions.values():
-            # 计算派系总人气
-            faction_pop = sum(
-                m.popularity for m in faction.get_members(self.state)
+            # 计算派系总影响力
+            faction_influence = sum(
+                m.influence for m in faction.get_members(self.state)
                 if not m.is_dead
             )
 
@@ -195,13 +195,13 @@ class PopulationCommand(Command):
             own = [c for c in candidates if c.faction_id == faction.id]
 
             if own:
-                # 投给本派系人气最高的
-                target = max(own, key=lambda c: c.popularity)
+                # 投给本派系影响力最高的
+                target = max(own, key=lambda c: c.influence)
             else:
                 # 随机投给其他派系
                 target = random.choice(candidates)
 
-            votes[target.id] += faction_pop
+            votes[target.id] += faction_influence
 
         return votes
 
@@ -226,20 +226,26 @@ class PopulationCommand(Command):
                 print(f"      📤 {fig.name} steps down as {office_type}, now {fig.office} (influence: {fig.influence})")
 
     def _get_min_age(self, office_type: str) -> int:
-        """获取最低年龄要求"""
-        return {"consul": 40, "praetor": 35, "quaestor": 30}.get(office_type, 30)
+        """从配置获取最低年龄要求"""
+        return self.state.get_min_age(office_type)
 
     def _get_prerequisite(self, office_type: str) -> str:
-        """获取前置职务要求"""
-        return {"consul": "Praetor", "praetor": "Quaestor", "quaestor": "None"}.get(office_type, "None")
+        prereq = {
+            "consul": "Praetor",
+            "praetor": "Quaestor",
+            "quaestor": "None",
+            "censor": "Consul"
+        }.get(office_type, "None")
+        return prereq
 
     def _check_prerequisite(self, fig: 'Figure', office_type: str) -> bool:
-        """检查是否满足前置职务"""
         if office_type == "consul":
             return any(h.office_type == "praetor" for h in fig.office_history)
         elif office_type == "praetor":
             return any(h.office_type == "quaestor" for h in fig.office_history)
-        return True  # Quaestor无前置
+        elif office_type == "censor":
+            return any(h.office_type == "consul" for h in fig.office_history)
+        return True  # Quaestor 无前置
 
     def _check_in_cooldown(self, fig: 'Figure', office_type: str, current_turn: int) -> bool:
         """检查是否在冷却期"""

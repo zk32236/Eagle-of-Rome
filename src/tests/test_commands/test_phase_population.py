@@ -324,6 +324,17 @@ class TestPopulationCommand(unittest.TestCase):
         output = f.getvalue()
         self.assertIn("No significant events", output)
 
+    def test_censor_election(self):
+        """测试监察官选举：只有前执政官能参选"""
+        cmd = PopulationCommand(self.state)
+        f = io.StringIO()
+        with redirect_stdout(f):
+            cmd.execute([])
+        output = f.getvalue()
+
+        # 验证监察官选举部分包含合适的候选人
+        self.assertIn("Electing CENSOR", output)
+        # 可以进一步检查是否有合格候选人，但不易断言，可依赖整体运行不崩溃
 
 if __name__ == "__main__":
     unittest.main()

@@ -151,6 +151,28 @@ class TestFigure:
         can, reason = fig_ex_praetor.can_hold_office("consul", current_turn, config)
         assert "higher office" not in reason
 
+    def test_censor_prerequisite(self):
+        """测试监察官需要曾担任执政官"""
+        config = {
+            "political_rules": {
+                "office_cooldowns": {"consul": 2, "censor": 2}
+            }
+        }
+        current_turn = 10
+
+        # 曾担任执政官，可以竞选监察官
+        fig_ex_consul = Figure(id=1, name="Ex-Consul", faction_id="f1", age=50)
+        fig_ex_consul.office_history = [OfficeTerm("consul", start_turn=5)]
+        can, reason = fig_ex_consul.can_hold_office("censor", current_turn, config)
+        assert can, "曾担任执政官应能竞选监察官"
+
+        # 从未担任执政官，不能竞选监察官
+        fig_never_consul = Figure(id=2, name="No Consul", faction_id="f1", age=45)
+        fig_never_consul.office_history = [OfficeTerm("praetor", start_turn=7)]
+        can, reason = fig_never_consul.can_hold_office("censor", current_turn, config)
+        assert not can
+        assert "Requires prior Consul service" in reason
+
 
 class TestFaction:
     """Faction 类 MVP 0.5 新增功能测试"""
