@@ -505,5 +505,97 @@ class TestForumCommand(unittest.TestCase):
         # 民怨应设为1（至少1）
         self.assertEqual(province.grievance, 1)
 
+    def test_italy_unrest_trigger(self):
+        """测试意大利本土连续未分地达到阈值时触发民怨升级"""
+        from src.core.entities.entities import Province
+        import io
+        from contextlib import redirect_stdout
+
+        # 创建测试状态，设置配置阈值
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+        state.mark_phase_executed("revenue")
+        # 注入配置
+        state.config._config = {
+            "economic_rules": {
+                "italy_unrest_trigger_turns": 2
+            }
+        }
+
+        # 获取意大利行省（手动创建）
+        italy = Province(0, "意大利", 0)
+        italy._grievance = 0
+        italy._turns_since_last_land_distribution = 0
+        state.add_province(italy)
+
+        cmd = ForumCommand(state)
+
+        # 第一回合：未达阈值，不应升级
+        f = io.StringIO()
+        with redirect_stdout(f):
+            cmd._process_civil_unrest()
+        self.assertEqual(italy.grievance, 0)
+
+        # 第二回合：计数器变为1，仍未达阈值
+        f = io.StringIO()
+        with redirect_stdout(f):
+            cmd._process_civil_unrest()
+        self.assertEqual(italy.grievance, 0)
+
+        # 第三回合：计数器变为2，达到阈值，触发升级至1
+        f = io.StringIO()
+        with redirect_stdout(f):
+            cmd._process_civil_unrest()
+        output = f.getvalue()
+        self.assertEqual(italy.grievance, 1)
+        self.assertIn("意大利本土因长期未分地，民怨升至 1 级", output)
+
+    def test_italy_unrest_trigger(self):
+        """测试意大利本土连续未分地达到阈值时触发民怨升级"""
+        from src.core.entities.entities import Province
+        import io
+        from contextlib import redirect_stdout
+
+        # 创建测试状态，设置配置阈值
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+        state.mark_phase_executed("revenue")
+        # 注入配置
+        state.config._config = {
+            "economic_rules": {
+                "italy_unrest_trigger_turns": 2
+            }
+        }
+
+        # 获取意大利行省（手动创建）
+        italy = Province(0, "意大利", 0)
+        italy._grievance = 0
+        italy._turns_since_last_land_distribution = 0
+        state.add_province(italy)
+
+        cmd = ForumCommand(state)
+
+        # 第一回合：未达阈值，不应升级
+        f = io.StringIO()
+        with redirect_stdout(f):
+            cmd._process_civil_unrest()
+        self.assertEqual(italy.grievance, 0)
+
+        # 第二回合：计数器变为1，再加1后达到阈值，触发升级至1
+        f = io.StringIO()
+        with redirect_stdout(f):
+            cmd._process_civil_unrest()
+        output = f.getvalue()
+        self.assertEqual(italy.grievance, 1)  # 修正：应为1
+        self.assertIn("意大利本土因长期未分地，民怨升至 1 级", output)
+
+        # 第三回合：自动升级到2
+        f = io.StringIO()
+        with redirect_stdout(f):
+            cmd._process_civil_unrest()
+        output = f.getvalue()
+        self.assertEqual(italy.grievance, 2)  # 修正：应为2
+        self.assertIn("意大利本土 民怨升级至 2 级", output)
+
 if __name__ == "__main__":
     unittest.main()

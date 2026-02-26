@@ -113,7 +113,8 @@ class ForumCommand(Command):
         """处理民变触发与自动升级，并打印详细信息"""
         print(f"\n   📊 行省民变状态：")
         base_tax_rate = self.state.get_economic_rule("province_tax_rate", 0.1)
-        italy_unrest_threshold = self.state.config.get("economic_rules.italy_unrest_threshold", 3)
+        # 从配置读取意大利触发阈值，键名应与配置文件一致
+        italy_unrest_trigger = self.state.config.get("economic_rules.italy_unrest_trigger_turns", 3)
         provinces = self.state.get_all_provinces()
         if not provinces:
             return
@@ -137,7 +138,8 @@ class ForumCommand(Command):
             if old_grievance == 0:
                 # 增加未分地回合计数
                 italy._turns_since_last_land_distribution += 1
-                if italy._turns_since_last_land_distribution >= italy_unrest_threshold:
+                # 使用 italy_unrest_trigger 变量，而不是未定义的 italy_unrest_threshold
+                if italy._turns_since_last_land_distribution >= italy_unrest_trigger:
                     italy.set_grievance(1)
                     print(f"      ⚠️ 意大利本土因长期未分地，民怨升至 1 级")
                     any_change = True

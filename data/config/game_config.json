@@ -108,6 +108,6 @@
     "faction_initial_treasury": 10,
     "faction_tax_rate": 0.1,
     "faction_member_limit": 6,
-    "italy_unrest_threshold": 3
+    "italy_unrest_trigger_turns": 3
   }
 }
