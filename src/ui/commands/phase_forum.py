@@ -113,6 +113,7 @@ class ForumCommand(Command):
         """处理民变触发与自动升级，并打印详细信息"""
         print(f"\n   📊 行省民变状态：")
         base_tax_rate = self.state.get_economic_rule("province_tax_rate", 0.1)
+        italy_unrest_threshold = self.state.config.get("economic_rules.italy_unrest_threshold", 3)
         provinces = self.state.get_all_provinces()
         if not provinces:
             return
@@ -129,10 +130,34 @@ class ForumCommand(Command):
 
         any_change = False
 
-        # 先处理自动升级（不包括意大利）
+        # 处理意大利本土的民变（ID=0）
+        italy = self.state.get_province(0)
+        if italy:
+            old_grievance = italy.grievance
+            if old_grievance == 0:
+                # 增加未分地回合计数
+                italy._turns_since_last_land_distribution += 1
+                if italy._turns_since_last_land_distribution >= italy_unrest_threshold:
+                    italy.set_grievance(1)
+                    print(f"      ⚠️ 意大利本土因长期未分地，民怨升至 1 级")
+                    any_change = True
+            elif 0 < old_grievance < 3:
+                # 自动升级
+                italy.set_grievance(old_grievance + 1)
+                print(f"      ⚠️ 意大利本土 民怨升级至 {italy.grievance} 级")
+                if italy.grievance == 3:
+                    print(f"         意大利本土爆发平民起义！政府倒台，游戏结束。")
+                    # 触发游戏结束（简单退出）
+                    import sys
+                    sys.exit(0)
+                any_change = True
+            # 如果已经是3，不再处理
+
+        # 处理行省的自动升级和合同触发
         for province in provinces:
             if province.province_id == 0:
                 continue
+            # 自动升级
             if 0 < province.grievance < 3:
                 old = province.grievance
                 province.set_grievance(old + 1)
@@ -141,17 +166,9 @@ class ForumCommand(Command):
                     print(f"         行省 {province.name} 爆发平民起义！")
                 any_change = True
 
-        # 然后处理合同触发的民怨
-        for province in provinces:
-            if province.province_id == 0:
-                # 意大利暂不处理
-                if province.grievance > 0:
-                    print(f"      ℹ️ 意大利本土 当前民怨 {province.grievance} 级（待实现）")
-                continue
-
+            # 合同触发的民怨
             contracts = province_contracts.get(province.province_id, [])
             if contracts:
-                # 有包税合同，检查每个合同的税率
                 for contract in contracts:
                     tax_rate = getattr(contract, 'tax_rate', 0.0)
                     if tax_rate > base_tax_rate:
@@ -167,7 +184,6 @@ class ForumCommand(Command):
                         print(
                             f"      ✅ 行省 {province.name} 包税合同税率 {tax_rate * 100:.0f}% 在允许范围内，民怨 {province.grievance} 级")
             else:
-                # 无合同，如果民怨>0则显示
                 if province.grievance > 0:
                     print(f"      ℹ️ 行省 {province.name} 当前民怨 {province.grievance} 级")
                     any_change = True

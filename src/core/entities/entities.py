@@ -231,6 +231,7 @@ class Province:
         self._tax_contract_id: Optional[int] = None # 包税权合同ID
         self._project_contract_id: Optional[int] = None # 公共工程合同ID
         self._has_project = False                    # 是否有生效公共工程
+        self._turns_since_last_land_distribution = 0  # 仅对意大利有效
 
     # --- 属性访问器（只读）---
     @property
