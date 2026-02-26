@@ -41,7 +41,7 @@ class PopulationCommand(Command):
         print("   🏛️  MAGISTRATE ELECTIONS")
         print(f"{'=' * 50}")
 
-        election_order = ["consul", "censor", "praetor", "quaestor"]
+        election_order = ["consul", "censor", "praetor", "quaestor", "tribune"]
 
         for office_type in election_order:
             count = self.state.get_offices_per_election(office_type)
@@ -50,10 +50,10 @@ class PopulationCommand(Command):
             for i in range(count):
                 winner = self._elect_single_magistrate(office_type, terms)
                 if winner:
-                    emoji = {"consul": "🏛️", "censor": "📜", "praetor": "⚖️", "quaestor": "💰"}.get(office_type, "📋")
+                    emoji = {"consul": "🏛️", "censor": "📜", "praetor": "⚖️", "quaestor": "💰", "tribune": "🛡️"}.get(
+                        office_type, "📋")
                     print(f"      {emoji} {winner.name} elected as {office_type}")
 
-                    # 执政官特殊处理：添加到 leader_ids
                     if office_type == "consul":
                         if winner.id not in self.state.turn.leader_ids:
                             self.state.turn.leader_ids.append(winner.id)
@@ -234,7 +234,8 @@ class PopulationCommand(Command):
             "consul": "Praetor",
             "praetor": "Quaestor",
             "quaestor": "None",
-            "censor": "Consul"
+            "censor": "Consul",
+            "tribune": "None"
         }.get(office_type, "None")
         return prereq
 
@@ -245,7 +246,9 @@ class PopulationCommand(Command):
             return any(h.office_type == "quaestor" for h in fig.office_history)
         elif office_type == "censor":
             return any(h.office_type == "consul" for h in fig.office_history)
-        return True  # Quaestor 无前置
+        elif office_type == "tribune":
+            return True  # 无前置
+        return True
 
     def _check_in_cooldown(self, fig: 'Figure', office_type: str, current_turn: int) -> bool:
         """检查是否在冷却期"""

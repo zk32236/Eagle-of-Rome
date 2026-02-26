@@ -255,6 +255,7 @@ class Figure:
         if target_rank == 0:
             return False, f"Unknown office type: {office_type}"
 
+        # 辅助函数：获取任何官职（含ex-）的等级
         def get_rank(off: Optional[str]) -> int:
             if not off:
                 return 0
@@ -264,12 +265,12 @@ class Figure:
                 base = off
             return self.__class__.OFFICE_RANK.get(base, 0)
 
-        # 检查当前官职：如果当前官职等级高于目标，则不能竞选（除非是监察官？但监察官允许当前高阶？这里保留限制，因为现任执政官一般不兼任监察官）
+        # 检查当前官职：如果当前官职等级高于目标，则不能竞选
         if get_rank(self.office) > target_rank:
             return False, f"Cannot run for lower office while holding higher office: {self.office}"
 
         # 检查历史官职：如果曾担任过高阶官职，则不能竞选低阶（监察官除外）
-        if office_type != "censor":  # 监察官允许曾担任高阶官职
+        if office_type != "censor":
             for term in self.office_history:
                 if get_rank(term.office_type) > target_rank:
                     return False, f"Has held higher office: {term.office_type}"
@@ -302,10 +303,13 @@ class Figure:
             if not has_quaestor:
                 return False, "Requires prior Quaestor service"
         elif office_type == "censor":
-            # 监察官必须是前执政官（允许历史中有 consul）
             has_consul = any(h.office_type == "consul" for h in self.office_history)
             if not has_consul:
                 return False, "Requires prior Consul service"
+        elif office_type == "tribune":
+            # 保民官仅限骑士和平民
+            if self.class_tier not in (ClassTier.EQUES, ClassTier.PLEBEIAN):
+                return False, "Only equites and plebeians can be tribune"
 
         return True, "Eligible"
 

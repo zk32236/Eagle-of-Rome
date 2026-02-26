@@ -336,5 +336,33 @@ class TestPopulationCommand(unittest.TestCase):
         self.assertIn("Electing CENSOR", output)
         # 可以进一步检查是否有合格候选人，但不易断言，可依赖整体运行不崩溃
 
+    def test_tribune_class_restriction(self):
+        """测试保民官仅限骑士和平民"""
+        config = {
+            "political_rules": {
+                "office_cooldowns": {"tribune": 2}
+            }
+        }
+        current_turn = 10
+
+        # 贵族不能竞选
+        fig_nobile = Figure(id=1, name="Nobile", faction_id="f1", age=35)
+        fig_nobile.class_tier = ClassTier.NOBILE
+        can, reason = fig_nobile.can_hold_office("tribune", current_turn, config)
+        assert not can
+        assert "Only equites and plebeians" in reason
+
+        # 骑士可以
+        fig_eques = Figure(id=2, name="Eques", faction_id="f1", age=35)
+        fig_eques.class_tier = ClassTier.EQUES
+        can, reason = fig_eques.can_hold_office("tribune", current_turn, config)
+        assert can
+
+        # 平民可以
+        fig_pleb = Figure(id=3, name="Pleb", faction_id="f1", age=35)
+        fig_pleb.class_tier = ClassTier.PLEBEIAN
+        can, reason = fig_pleb.can_hold_office("tribune", current_turn, config)
+        assert can
+
 if __name__ == "__main__":
     unittest.main()

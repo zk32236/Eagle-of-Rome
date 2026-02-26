@@ -8,33 +8,37 @@
       "consul": 2,
       "censor": 2,
       "praetor": 2,
-      "quaestor": 2
+      "quaestor": 2,
+      "tribune": 2
     },
     "offices_per_election": {
       "consul": 1,
       "censor": 1,
       "praetor": 1,
-      "quaestor": 1
+      "quaestor": 1,
+      "tribune": 1
     },
     "candidates_per_election": {
       "consul": 2,
       "censor": 2,
       "praetor": 2,
-      "quaestor": 2
+      "quaestor": 2,
+      "tribune": 2
     },
     "min_ages": {
       "consul": 40,
-      "censor": 42,
+      "censor": 45,
       "praetor": 35,
-      "quaestor": 30
+      "quaestor": 30,
+      "tribune": 30
     },
     "office_rank": {
       "dictator": 6,
       "censor": 4,
       "consul": 5,
       "praetor": 3,
-      "tribune": 2,
-      "quaestor": 1
+      "tribune": 1,
+      "quaestor": 2
     },
     "office_influence_bonus": {
       "dictator": 60,
