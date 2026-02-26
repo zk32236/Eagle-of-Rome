@@ -199,3 +199,39 @@ def test_step_skip_executed(mock_state, mock_phase_commands, monkeypatch):
 
     # input 调用次数应为 6（因为跳过一个阶段）
     assert input_mock.call_count == 6
+
+
+def test_next_clears_curia():
+    """测试 next 命令执行时，清除广场中未被招募的人物"""
+    from src.core.game_state import GameState
+    from src.core.entities.figure import Figure
+    from src.core.entities.entities import GameTurn
+    from src.ui.commands.func_turn_control import NextCommand
+
+    # 创建测试用的 GameState
+    state = GameState.create_for_testing({})
+
+    # 添加两个平民人物到 curia 和 _members（模拟未被招募的新人物）
+    fig1 = Figure.create_plebeian(999, None, age=20)
+    fig2 = Figure.create_plebeian(1000, None, age=25)
+    state.curia.add_figure(fig1)
+    state.curia.add_figure(fig2)
+    state._members[999] = fig1
+    state._members[1000] = fig2
+
+    # 设置回合信息（create_for_testing 可能未设置 turn）
+    state.turn = GameTurn(turn_number=1, year=-264)
+
+    # 标记所有阶段已执行，以便 next 允许推进
+    for phase in ["mortality", "revenue", "forum", "population", "senate", "combat", "resolution"]:
+        state.mark_phase_executed(phase)
+
+    cmd = NextCommand(state)
+    result = cmd.execute([])
+
+    assert result is True
+    # 验证广场已清空
+    assert state.curia.is_empty() is True
+    # 验证人物已从成员字典中移除
+    assert 999 not in state._members
+    assert 1000 not in state._members

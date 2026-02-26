@@ -83,16 +83,6 @@ class ForumCommand(Command):
         print(f"\n   💡 Use 'persuade <id>' to recruit figures into your faction.")
         print(f"   💡 Use 'contracts' to view pending contracts.")
 
-        # 9. 清理未招募的人物
-        curia = self.state.curia
-        if not curia.is_empty():
-            ids_to_remove = [fig.id for fig in curia.get_all_available()]
-            for fid in ids_to_remove:
-                if fid in self.state._members:
-                    del self.state._members[fid]
-            curia.clear()
-            print(f"      🗑️ {len(ids_to_remove)} 名未被招募的人物已从游戏中消失")
-
         self.state.mark_phase_executed("forum")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
@@ -100,15 +90,25 @@ class ForumCommand(Command):
     def _generate_new_figures(self) -> List[Figure]:
         """生成新人物"""
         new_figures = []
-        count = random.randint(1, 2)
+        # 从 forum_rules 读取配置
+        forum_rules = self.state.config.get("forum_rules", {})
+        count = forum_rules.get("new_figures_count", 3)
+        probs = forum_rules.get("class_probabilities", {})
+        nobile_prob = probs.get("nobile", 0.1)
+        eques_prob = probs.get("eques", 0.25)
+        # 平民概率自动补足，确保总和为1
+        pleb_prob = 1 - nobile_prob - eques_prob
+        if pleb_prob < 0:
+            pleb_prob = 0.65  # 容错处理，但最好确保配置总和为1
+
         next_id = max((mid for mid in self.state.members.keys()), default=0) + 1
 
         for i in range(count):
             figure_id = next_id + i
             tier_roll = random.random()
-            if tier_roll < 0.1:
+            if tier_roll < nobile_prob:
                 figure = Figure.create_nobile(figure_id, None, age=random.randint(30, 50))
-            elif tier_roll < 0.35:
+            elif tier_roll < nobile_prob + eques_prob:
                 figure = Figure.create_eques(figure_id, None, age=random.randint(25, 40))
             else:
                 figure = Figure.create_plebeian(figure_id, None, age=random.randint(20, 35))

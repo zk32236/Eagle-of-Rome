@@ -1,5 +1,4 @@
 {
-  "scenario_name": "MVP 0.5 Forum Phase",
   "terminology_preset": "original",
   "political_rules": {
     "leader_cooldown_years": 2,
@@ -63,6 +62,14 @@
       "Servilius": 2
     }
   },
+  "forum_rules": {
+    "new_figures_count": 3,
+    "class_probabilities": {
+      "nobile": 0.5,
+      "eques": 0.3,
+      "plebeian": 0.2
+    }
+  },
   "mortality_rules": {
     "death_count": 1,
     "event_deck": [
@@ -73,10 +80,6 @@
       {"name": "无妄天灾", "type": "厄运", "effect": "disaster", "weight": 1}
     ],
     "event_draw_count": 1
-  },
-  "voting_rules": {
-    "finalist_count": 2,
-    "tiebreaker": "highest_influence"
   },
   "decay_rules": {
     "veterans_annual_decay": 0.20,

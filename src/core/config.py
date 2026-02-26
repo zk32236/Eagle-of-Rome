@@ -42,6 +42,10 @@ class Config:
                 "consul": 3,
                 "praetor": 3,
                 "quaestor": 3
+            },
+            "voting": {
+                "finalist_count": 2,
+                "tiebreaker": "highest_influence"
             }
         },
         "mortality_rules": {

@@ -1,5 +1,5 @@
 {
-    "scenario_name": "MVP 0.4.5 - Magistrate Elections",
+    "scenario_name": "MVP 0.5 广场阶段功能开发",
     "start_year": -264,
     "initial_state": {
         "treasury": 100,

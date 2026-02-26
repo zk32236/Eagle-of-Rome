@@ -205,6 +205,10 @@ class StatusFigureCommand(Command):
             print(
                 f"影响力: {fig.influence} = 私地{land_inf} + 老兵{vet_inf} + 人气{fig.popularity} + 家族{fam_inf} + 公职{off_bonus}")
             print(f"官职等级: {fig.rank}")
+            print(f"热忱: {fig.zeal}")
+            print(f"魅力: {fig.charisma}")
+            print(f"军略: {fig.martial}")
+            print(f"智略: {fig.intelligence}")
             print(f"财富: {fig.wealth}")
             print(f"人气: {fig.popularity}")
             print(f"私地: {fig.land_private} C")

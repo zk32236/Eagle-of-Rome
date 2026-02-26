@@ -104,6 +104,16 @@ class NextCommand(Command):
             missing_names = ', '.join(missing)
             print(f"\n⚠️ 强制推进 - 跳过: {missing_names}")
 
+        # ===== 新增：清理广场中未被招募的人物 =====
+        curia = self.state.curia
+        if not curia.is_empty():
+            ids_to_remove = [fig.id for fig in curia.get_all_available()]
+            for fid in ids_to_remove:
+                if fid in self.state._members:
+                    del self.state._members[fid]
+            curia.clear()
+            print(f"      🗑️ {len(ids_to_remove)} 名未被招募的人物已从游戏中消失")
+
         self.state.advance_year()
         print(f"已推进至 {abs(self.state.turn.year)} BC")
         self._show_turn_summary()
