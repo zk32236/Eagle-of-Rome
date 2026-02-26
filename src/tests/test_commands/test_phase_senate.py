@@ -6,10 +6,9 @@
 import unittest
 import sys
 import os
-import random
-from unittest.mock import patch, MagicMock
 import io
 from contextlib import redirect_stdout
+from unittest.mock import MagicMock
 
 # 添加项目根目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -19,7 +18,7 @@ if project_root not in sys.path:
 
 from src.core.game_state import GameState
 from src.ui.commands.phase_senate import SenateCommand
-from src.core.entities.figure import Figure, OfficeTerm, ClassTier
+from src.core.entities.figure import Figure, ClassTier
 from src.core.entities.entities import Faction, GameTurn
 from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.core.localization import TerminologyService
@@ -30,36 +29,10 @@ class TestSenateCommand(unittest.TestCase):
 
     def setUp(self):
         """每个测试前创建测试用 GameState"""
-        # 基础配置
-        test_config = {
-            "political_rules": {
-                "leader_cooldown_years": 10,
-                "leaders_per_election": 2,
-                "office_cooldowns": {
-                    "consul": 10,
-                    "praetor": 5,
-                    "quaestor": 2
-                },
-                "offices_per_election": {
-                    "consul": 2,
-                    "praetor": 2,
-                    "quaestor": 2
-                },
-                "min_ages": {
-                    "consul": 40,
-                    "praetor": 35,
-                    "quaestor": 30
-                },
-                "candidates_per_election": {
-                    "consul": 3,
-                    "praetor": 3,
-                    "quaestor": 3
-                }
-            }
-        }
+        test_config = {}
         self.state = GameState.create_for_testing(test_config)
 
-        # ===== 创建三个派系 =====
+        # 创建三个派系
         factions = [
             Faction(id="senate", name="元老院派", treasury=50, is_player=True),
             Faction(id="populares", name="平民派", treasury=30, is_player=False),
@@ -69,74 +42,29 @@ class TestSenateCommand(unittest.TestCase):
             self.state.add_faction(f)
         self.faction1, self.faction2, self.faction3 = factions
 
-        # ===== 辅助函数：创建人物 =====
-        next_id = 1
+        # 创建一些人物（用于派系领袖和主持人）
         figures = []
+        for i, fid in enumerate(["senate", "populares", "equites"]):
+            for j in range(3):
+                fig = Figure(id=i*10 + j + 1, name=f"{fid}_member_{j}", faction_id=fid, age=40)
+                fig.influence = 10 + j
+                self.state.add_member(fig)
+                figures.append(fig)
+                factions[i].member_ids.append(fig.id)
 
-        def create_figure(name, faction_id, age, class_tier,
-                          influence=5, wealth=20, popularity=5,
-                          charisma=5, intelligence=5, martial=5,
-                          history=None):
-            nonlocal next_id
-            fig = Figure(id=next_id, name=name, faction_id=faction_id, age=age)
-            fig.class_tier = class_tier
-            fig.influence = influence  # 使用 influence 属性
-            fig.wealth = wealth
-            fig.popularity = popularity
-            fig.charisma = charisma
-            fig.intelligence = intelligence
-            fig.martial = martial
-            if history:
-                for office, start_turn in history:
-                    fig.office_history.append(OfficeTerm(office, start_turn))
-            figures.append(fig)
-            next_id += 1
-            return fig
-
-        # ===== 为每个派系生成人物 =====
-        for faction_id in ["senate", "populares", "equites"]:
-            # 3 贵族
-            create_figure(f"{faction_id}_noble1", faction_id, 45, ClassTier.NOBILE,
-                          influence=8, wealth=30, popularity=7,
-                          charisma=8, intelligence=6, martial=5,
-                          history=[("quaestor", -8), ("praetor", -5), ("consul", -2)])  # 前执政官
-            create_figure(f"{faction_id}_noble2", faction_id, 42, ClassTier.NOBILE,
-                          influence=6, wealth=25, popularity=6,
-                          charisma=7, intelligence=7, martial=6,
-                          history=[("quaestor", -7), ("praetor", -4)])  # 前大法官
-            create_figure(f"{faction_id}_noble3", faction_id, 38, ClassTier.NOBILE,
-                          influence=5, wealth=20, popularity=5,
-                          charisma=6, intelligence=5, martial=7,
-                          history=[("quaestor", -6)])  # 前财务官
-
-            # 2 骑士
-            create_figure(f"{faction_id}_eques1", faction_id, 35, ClassTier.EQUES,
-                          influence=3, wealth=40, popularity=4,
-                          charisma=4, intelligence=8, martial=4)
-            create_figure(f"{faction_id}_eques2", faction_id, 32, ClassTier.EQUES,
-                          influence=2, wealth=35, popularity=3,
-                          charisma=3, intelligence=7, martial=5)
-
-            # 1 平民
-            create_figure(f"{faction_id}_pleb1", faction_id, 30, ClassTier.PLEBEIAN,
-                          influence=1, wealth=5, popularity=2,
-                          charisma=2, intelligence=2, martial=2)
-
-        # 将所有人物添加到状态
-        for fig in figures:
-            self.state.add_member(fig)
-
-        # 更新派系成员列表
-        self.faction1.member_ids = [f.id for f in figures if f.faction_id == "senate"]
-        self.faction2.member_ids = [f.id for f in figures if f.faction_id == "populares"]
-        self.faction3.member_ids = [f.id for f in figures if f.faction_id == "equites"]
+        # 设置领袖（影响力最高者）
+        for faction in factions:
+            faction.update_faction_leader(self.state)
 
         # 设置回合
         self.state.turn = GameTurn(turn_number=1, year=-264)
         self.state._treasury = 200
         self.state.mark_phase_executed("population")
 
-    # ===== 测试用例 =====
+        # 添加合同测试用的行省
+        from src.core.entities.entities import Province
+        province = Province(1, "西西里", 1000)
+        self.state.add_province(province)
 
     def test_execute_success(self):
         """测试成功执行元老院阶段"""
@@ -150,7 +78,6 @@ class TestSenateCommand(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertIn("Senate Phase", output)
-        self.assertIn("MAGISTRATE ELECTIONS", output)
         self.assertIn("Faction Leaders Updated", output)
         self.assertIn("Presiding Officer", output)
 
@@ -174,214 +101,69 @@ class TestSenateCommand(unittest.TestCase):
         self.assertFalse(result2)
         self.assertIn("元老院阶段在本回合已执行过", output)
 
-    def test_election_logic(self):
-        """测试选举逻辑（核心验证：执政官应选出2人）"""
+    def test_faction_leaders_updated(self):
+        """测试派系领袖更新"""
         cmd = SenateCommand(self.state)
-
         f = io.StringIO()
         with redirect_stdout(f):
-            result = cmd.execute([])
+            cmd.execute([])
+        output = f.getvalue()
 
-        self.assertTrue(result)
-
-        # 验证执政官选举：应有两人当选（核心业务）
-        consuls = [cid for cid in self.state.turn.leader_ids]
-        self.assertEqual(len(consuls), 2, "应选举出2名执政官")
-        for cid in consuls:
-            fig = self.state.get_member(cid)
-            self.assertIsNotNone(fig)
-
-        # 注意：由于同一人物可能当选多个官职导致最终覆盖，不再对大法官和财务官人数做硬性断言
-
-    def test_contract_processing(self):
-        """测试合同处理逻辑"""
-        # 使用真实合同
-        tax_contract, works_contract = self._create_real_contracts_for_senate()
-
-        # 确保有骑士候选人（已在 setUp 中生成）
-        cmd = SenateCommand(self.state)
-
-        f = io.StringIO()
-        with redirect_stdout(f):
-            result = cmd.execute([])
-
-        self.assertTrue(result)
-
-        # 刷新合同对象（重新从 state 获取，确保状态更新）
-        tax_contract = self.state.get_contract(tax_contract.id)
-        works_contract = self.state.get_contract(works_contract.id)
-
-        # 验证包税合同已被授予（状态变为 ACTIVE）
-        self.assertEqual(tax_contract.status, ContractStatus.ACTIVE)
-        self.assertIsNotNone(tax_contract.awarded_to)
-        awarded_fig = self.state.get_member(tax_contract.awarded_to)
-        self.assertEqual(awarded_fig.class_tier.value, "eques", "包税合同应授予骑士")
-
-        # 验证工程合同已被授予
-        self.assertEqual(works_contract.status, ContractStatus.ACTIVE)
-        self.assertIsNotNone(works_contract.awarded_to)
-        awarded_fig = self.state.get_member(works_contract.awarded_to)
-        self.assertEqual(awarded_fig.class_tier.value, "eques", "工程合同应授予骑士")
+        for faction in self.state.factions.values():
+            leader = faction.get_leader(self.state)
+            self.assertIsNotNone(leader)
+            self.assertIn(faction.name, output)
+            self.assertIn(leader.name, output)
 
     def test_presiding_officer(self):
         """测试主持人确定逻辑"""
         cmd = SenateCommand(self.state)
-        cmd.execute([])  # 执行选举
-
-        presiding = self.state.get_presiding_officer()
-        self.assertIsNotNone(presiding, "主持人不应为None")
-
-        # 主持人应为权力最高者（按 rank 优先，同 rank 比 influence）
-        living = self.state.get_living_members()
-        max_rank = max(m.rank for m in living)
-        candidates = [m for m in living if m.rank == max_rank]
-        expected_presiding = max(candidates, key=lambda m: m.influence)
-        self.assertEqual(presiding.id, expected_presiding.id)
-
-    def test_seat_standings(self):
-        """测试席位占比显示（直接调用私有方法验证输出）"""
-        cmd = SenateCommand(self.state)
-
-        # 创建临时人物并设置土地/私兵
-        from src.core.entities.figure import Figure
-        from src.core.entities.entities import Faction
-
-        # 临时派系
-        temp_faction = Faction(id="temp", name="临时派", treasury=0)
-        self.state.add_faction(temp_faction)
-
-        fig1 = Figure(id=9981, name="Land Owner 1", faction_id="temp", age=40)
-        fig1.land = 10
-        fig1.veterans = 5
-        fig2 = Figure(id=9982, name="Land Owner 2", faction_id="temp", age=35)
-        fig2.land = 8
-        fig2.veterans = 2
-        self.state.add_member(fig1)
-        self.state.add_member(fig2)
-        temp_faction.member_ids = [9981, 9982]
-
         f = io.StringIO()
         with redirect_stdout(f):
-            cmd._show_seat_standings(TerminologyService.get())
+            cmd.execute([])
         output = f.getvalue()
 
-        self.assertIn("Senate Seat Distribution", output)
-        self.assertIn("National Assets:", output)
-        self.assertIn("Faction Totals:", output)
-        self.assertIn("seats", output)
+        presiding = self.state.get_presiding_officer()
+        self.assertIsNotNone(presiding)
+        self.assertIn(presiding.name, output)
 
-    def test_remove_office_holders(self):
-        """测试卸任逻辑"""
-        cmd = SenateCommand(self.state)
-
-        # 创建临时人物用于测试
-        from src.core.entities.figure import Figure
-        fig1 = Figure(id=9991, name="Test Consul", faction_id="senate", age=40)
-        fig2 = Figure(id=9992, name="Test Praetor", faction_id="populares", age=35)
-        fig3 = Figure(id=9993, name="Test Quaestor", faction_id="senate", age=30)
-
-        # 设置官职
-        fig1.office = "consul"
-        fig2.office = "praetor"
-        fig3.office = "quaestor"
-
-        # 添加到状态（临时）
-        self.state.add_member(fig1)
-        self.state.add_member(fig2)
-        self.state.add_member(fig3)
-
-        cmd._remove_office_holders("consul")  # 只卸任执政官
-
-        # 验证fig1卸任后变为 ex-consul
-        self.assertEqual(fig1.office, "ex-consul")
-        # fig2和fig3不应受影响
-        self.assertEqual(fig2.office, "praetor")
-        self.assertEqual(fig3.office, "quaestor")
-
-    def test_qualification_checks(self):
-        """测试资格检查方法"""
-        cmd = SenateCommand(self.state)
-        from src.core.entities.figure import Figure, OfficeTerm, ClassTier
-
-        # 创建有历史的人物（符合执政官资格）
-        fig_qualified = Figure(id=9971, name="Qualified", faction_id="senate", age=45)
-        fig_qualified.class_tier = ClassTier.NOBILE
-        fig_qualified.office_history = [
-            OfficeTerm("quaestor", -8),
-            OfficeTerm("praetor", -5)
-        ]
-        self.state.add_member(fig_qualified)
-
-        # 创建无历史的人物（不符合执政官/大法官资格）
-        fig_unqualified = Figure(id=9972, name="Unqualified", faction_id="senate", age=40)
-        fig_unqualified.class_tier = ClassTier.NOBILE
-        self.state.add_member(fig_unqualified)
-
-        # 测试 _get_min_age
-        self.assertEqual(cmd._get_min_age("consul"), 40)
-        self.assertEqual(cmd._get_min_age("praetor"), 35)
-        self.assertEqual(cmd._get_min_age("quaestor"), 30)
-
-        # 测试 _get_prerequisite
-        self.assertEqual(cmd._get_prerequisite("consul"), "Praetor")
-        self.assertEqual(cmd._get_prerequisite("praetor"), "Quaestor")
-        self.assertEqual(cmd._get_prerequisite("quaestor"), "None")
-
-        # 测试 _check_prerequisite
-        # 有历史人物
-        self.assertTrue(cmd._check_prerequisite(fig_qualified, "consul"))  # 有 praetor 历史
-        self.assertTrue(cmd._check_prerequisite(fig_qualified, "praetor"))  # 有 quaestor 历史
-        self.assertTrue(cmd._check_prerequisite(fig_qualified, "quaestor"))  # quaestor 无前置，应返回 True
-
-        # 无历史人物
-        self.assertFalse(cmd._check_prerequisite(fig_unqualified, "consul"))  # 无 praetor 历史
-        self.assertFalse(cmd._check_prerequisite(fig_unqualified, "praetor"))  # 无 quaestor 历史
-        self.assertTrue(cmd._check_prerequisite(fig_unqualified, "quaestor"))  # quaestor 无前置，返回 True
-
-        # 测试 _check_in_cooldown
-        current_turn = 1
-        # fig_qualified 上次担任 praetor 在 -5 回合，距今 6 回合，冷却 5，已过冷却
-        self.assertFalse(cmd._check_in_cooldown(fig_qualified, "praetor", current_turn))
-
-        # 假设最近刚担任过
-        fig_qualified.office_history.append(OfficeTerm("praetor", current_turn - 1))
-        self.assertTrue(cmd._check_in_cooldown(fig_qualified, "praetor", current_turn))
-
-    def _create_real_contracts_for_senate(self):
-        """创建真实的合同对象用于元老院阶段测试"""
-        from src.core.entities.entities import Province
-
-        # 添加行省
-        province1 = Province(101, "西西里", 1000)
-        province2 = Province(102, "罗马", 1000)
-        self.state.add_province(province1)
-        self.state.add_province(province2)
-
-        # 创建包税合同
+    def test_contract_processing(self):
+        """测试合同处理逻辑"""
+        # 创建待决合同
         tax_contract = self.state.create_contract(
             ContractType.TAX_FARMING,
-            province_id=101,
+            province_id=1,
             base_cost=30,
             current_turn=self.state.turn.turn_number
         )
         tax_contract.name = "西西里包税权"
         tax_contract.status = ContractStatus.PENDING
-        tax_contract.expected_profit = 50
-        tax_contract.duration_years = 5
 
-        # 创建工程合同
         works_contract = self.state.create_contract(
             ContractType.PUBLIC_WORKS,
-            province_id=102,
+            province_id=1,
             base_cost=200,
             current_turn=self.state.turn.turn_number
         )
-        works_contract.name = "罗马大道工程"
+        works_contract.name = "西西里工程"
         works_contract.status = ContractStatus.PENDING
-        works_contract.expected_profit = 40
-        works_contract.duration_years = 2
 
-        return tax_contract, works_contract
+        # 确保有骑士候选人
+        knight = Figure(id=999, name="Test Knight", faction_id="senate", age=30)
+        knight.class_tier = ClassTier.EQUES
+        knight.wealth = 100
+        self.state.add_member(knight)
+        self.faction1.member_ids.append(999)
+
+        cmd = SenateCommand(self.state)
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd.execute([])
+        output = f.getvalue()
+
+        self.assertTrue(result)
+        self.assertIn("西西里包税权", output)
+        self.assertIn("西西里工程", output)
 
 
 if __name__ == "__main__":

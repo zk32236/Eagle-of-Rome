@@ -167,7 +167,7 @@ class ScenarioLoader:
                 nobles_sorted = sorted(nobles, key=lambda f: f.influence, reverse=True)
                 # 前执政官（权力最高）
                 ex_consul = nobles_sorted[0]
-                ex_consul.add_office_history("quqaestor", -8)
+                ex_consul.add_office_history("quaestor", -8)
                 ex_consul.add_office_history("praetor", -5)
                 ex_consul.add_office_history("consul", -2)
                 ex_consul.charisma = max(ex_consul.charisma, 8)
@@ -175,14 +175,14 @@ class ScenarioLoader:
                 # 前大法官（权力次高）
                 if len(nobles_sorted) >= 2:
                     ex_praetor = nobles_sorted[1]
-                    ex_praetor.add_office_history("quqaestor", -6)
+                    ex_praetor.add_office_history("quaestor", -6)
                     ex_praetor.add_office_history("praetor", -3)
                     ex_praetor.intelligence = max(ex_praetor.intelligence, 8)  # 原 management
 
                 # 前财务官（权力第三高）
                 if len(nobles_sorted) >= 3:
                     ex_quaestor = nobles_sorted[2]
-                    ex_quaestor.add_office_history("quqaestor", -4)
+                    ex_quaestor.add_office_history("quaestor", -4)
                     ex_quaestor.martial = max(ex_quaestor.martial, 7)  # 原 strategy
 
             # 设置私地：根据官职或随机

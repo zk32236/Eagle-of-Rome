@@ -12,7 +12,7 @@
       "aedile": 2
     },
     "offices_per_election": {
-      "consul": 2,
+      "consul": 1,
       "praetor": 1,
       "quaestor": 1,
       "censor": 1,

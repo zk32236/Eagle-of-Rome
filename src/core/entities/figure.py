@@ -248,17 +248,49 @@ class Figure:
         return cooldowns.get(office_type, 2)
 
     def can_hold_office(self, office_type: str, current_turn: int, config: Dict) -> Tuple[bool, str]:
+        # 获取目标官职等级
+        target_rank = self.__class__.OFFICE_RANK.get(office_type, 0)
+        if target_rank == 0:
+            return False, f"Unknown office type: {office_type}"
+
+        # 辅助函数：获取任何官职（含ex-）的等级
+        def get_rank(off: Optional[str]) -> int:
+            if not off:
+                return 0
+            if off.startswith("ex-"):
+                base = off[3:]  # 去掉 "ex-"
+            else:
+                base = off
+            return self.__class__.OFFICE_RANK.get(base, 0)
+
+        # 检查当前官职：如果当前官职等级高于目标，则不能竞选
+        if get_rank(self.office) > target_rank:
+            return False, f"Cannot run for lower office while holding higher office: {self.office}"
+
+        # 检查历史官职：如果曾担任过高阶官职，则不能竞选低阶
+        for term in self.office_history:
+            if get_rank(term.office_type) > target_rank:
+                return False, f"Has held higher office: {term.office_type}"
+
+        # 原有检查（年龄、现任、冷却、前置职务）保持不变
+        # 年龄检查
         min_ages = {"consul": 40, "praetor": 35, "quaestor": 30, "censor": 42, "aedile": 36}
         if self.age < min_ages.get(office_type, 30):
             return False, f"Age {self.age} < {min_ages.get(office_type, 30)}"
+
+        # 检查是否已经担任同一官职
         if self.office == office_type:
             return False, "Already holding this office"
+
+        # 冷却期检查
         cooldown = self.get_office_cooldown_years(office_type, config)
         for term in self.office_history:
             if term.office_type == office_type:
                 years_ago = current_turn - term.start_turn
                 if years_ago < cooldown:
                     return False, f"Cooldown: {years_ago}/{cooldown} years"
+
+        # 前置职务检查
         if office_type == "consul":
             has_praetor = any(h.office_type == "praetor" for h in self.office_history)
             if not has_praetor:
@@ -267,6 +299,7 @@ class Figure:
             has_quaestor = any(h.office_type == "quaestor" for h in self.office_history)
             if not has_quaestor:
                 return False, "Requires prior Quaestor service"
+
         return True, "Eligible"
 
     def get_formal_name(self) -> str:

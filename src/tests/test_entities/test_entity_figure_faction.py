@@ -4,9 +4,8 @@ T1-2 实体层校验测试：Figure 和 Faction 增量功能
 """
 
 import pytest
-from src.core.entities.figure import Figure, ClassTier
+from src.core.entities.figure import Figure, ClassTier, OfficeTerm
 from src.core.entities.entities import Faction
-
 
 class TestFigure:
     """Figure 类 MVP 0.5 新增功能测试"""
@@ -81,6 +80,76 @@ class TestFigure:
         assert fig.has_military_command() is True
         assert fig.has_veto_power() is False
         assert fig.has_prosecution_power() is False
+
+    def test_can_hold_office_higher_prevents_lower(self):
+        """测试现任或曾担任高阶官职的人物不能竞选低阶官职"""
+        config = {
+            "political_rules": {
+                "office_cooldowns": {"consul": 2, "praetor": 2, "quaestor": 2}
+            }
+        }
+        current_turn = 10
+
+        # 1. 现任执政官不能竞选大法官
+        fig_consul = Figure(id=1, name="Consul", faction_id="f1", age=45)
+        fig_consul.office = "consul"
+        can, reason = fig_consul.can_hold_office("praetor", current_turn, config)
+        assert not can
+        assert "while holding higher office" in reason
+
+        # 2. 现任执政官不能竞选财务官
+        can, reason = fig_consul.can_hold_office("quaestor", current_turn, config)
+        assert not can
+
+        # 3. 现任大法官不能竞选财务官
+        fig_praetor = Figure(id=2, name="Praetor", faction_id="f1", age=40)
+        fig_praetor.office = "praetor"
+        can, reason = fig_praetor.can_hold_office("quaestor", current_turn, config)
+        assert not can
+        assert "while holding higher office" in reason
+
+        # 4. 曾担任执政官不能竞选大法官
+        fig_ex_consul = Figure(id=3, name="Ex-Consul", faction_id="f1", age=50)
+        fig_ex_consul.office_history = [OfficeTerm("consul", start_turn=5)]
+        can, reason = fig_ex_consul.can_hold_office("praetor", current_turn, config)
+        assert not can
+        assert "Has held higher office" in reason
+
+        # 5. 曾担任执政官不能竞选财务官
+        can, reason = fig_ex_consul.can_hold_office("quaestor", current_turn, config)
+        assert not can
+
+        # 6. 曾担任大法官不能竞选财务官
+        fig_ex_praetor = Figure(id=4, name="Ex-Praetor", faction_id="f1", age=45)
+        fig_ex_praetor.office_history = [OfficeTerm("praetor", start_turn=7)]
+        can, reason = fig_ex_praetor.can_hold_office("quaestor", current_turn, config)
+        assert not can
+        assert "Has held higher office" in reason
+
+        # 7. 从未担任过高阶官职，可以竞选（仅检查高阶限制）
+        fig_eligible = Figure(id=5, name="Eligible", faction_id="f1", age=35)
+        fig_eligible.office_history = [OfficeTerm("quaestor", start_turn=8)]
+        can, reason = fig_eligible.can_hold_office("praetor", current_turn, config)
+        assert "higher office" not in reason  # 不应因高阶限制被拒绝
+
+    def test_can_hold_office_higher_does_not_affect_same_level(self):
+        config = {
+            "political_rules": {
+                "office_cooldowns": {"consul": 2, "praetor": 2, "quaestor": 2}
+            }
+        }
+        current_turn = 10
+
+        fig_ex_consul = Figure(id=1, name="Ex-Consul", faction_id="f1", age=50)
+        fig_ex_consul.office_history = [OfficeTerm("consul", start_turn=5)]
+        can, reason = fig_ex_consul.can_hold_office("consul", current_turn, config)
+        # 只要不是因为高阶限制被拒绝即可（冷却期等由其他逻辑处理）
+        assert "higher office" not in reason
+
+        fig_ex_praetor = Figure(id=2, name="Ex-Praetor", faction_id="f1", age=45)
+        fig_ex_praetor.office_history = [OfficeTerm("praetor", start_turn=7)]
+        can, reason = fig_ex_praetor.can_hold_office("consul", current_turn, config)
+        assert "higher office" not in reason
 
 
 class TestFaction:
