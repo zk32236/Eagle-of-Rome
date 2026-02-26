@@ -61,8 +61,10 @@ class ForumCommand(Command):
         else:
             print(f"\n   📭 No new figures this year.")
 
-        # 2. 显示 Curia 状态
+        # 2. 显示 Curia 状态,处理招募,处理战争威胁
         self._display_curia(terms)
+        self._process_recruitment()
+        self._process_war_threats()
 
         # 3. 生成合同（仅生成，不竞标）
         new_contracts = self._generate_contracts()
@@ -76,8 +78,8 @@ class ForumCommand(Command):
         else:
             print(f"\n   📭 No new contracts.")
 
-        # 处理招募
-        self._process_recruitment()
+        #
+
 
         # 5. 对包税合同竞标
         for contract in new_contracts:
@@ -93,6 +95,11 @@ class ForumCommand(Command):
         # 7. 显示待授予合同
         self._display_contracts(terms)
 
+        # 8. 显示激活的战争威胁
+        active_wars = self.state.get_war_system().get_active_wars() if self.state.get_war_system() else []
+        if active_wars:
+            print(f"\n   ⚔️ 活跃战争：{len(active_wars)}场（使用 'wars' 查看详情）")
+
         # 8. 提示可用命令
         print(f"\n   💡 Use 'persuade <id>' to recruit figures into your faction.")
         print(f"   💡 Use 'contracts' to view pending contracts.")
@@ -100,6 +107,20 @@ class ForumCommand(Command):
         self.state.mark_phase_executed("forum")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
+
+    def _process_war_threats(self):
+        """处理战争威胁触发和自动升级"""
+        ws = self.state.get_war_system()
+        if not ws:
+            return
+
+        # 检查新威胁触发
+        ws.check_triggers(self.state.turn.year)
+
+        # 自动升级
+        events = ws.escalate_threats()
+        for event in events:
+            print(f"   {event}")
 
     def _process_recruitment(self):
         """处理派系从广场招募人物"""

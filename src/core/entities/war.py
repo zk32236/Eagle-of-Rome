@@ -7,11 +7,12 @@ from enum import Enum, auto
 
 class WarStatus(Enum):
     """战争状态"""
-    INACTIVE = auto()  # 未激活（在牌堆中）
-    ACTIVE = auto()  # 活跃（正在进行）
-    RESOLVED = auto()  # 已解决（胜利）
-    DEFEATED = auto()  # 失败
-    STALEMATE = auto()  # 僵持（未分胜负）
+    INACTIVE = auto()      # 未激活（在牌堆中）
+    THREAT = auto()        # 威胁中（未爆发，但已触发）
+    ACTIVE = auto()        # 活跃（正在进行）
+    RESOLVED = auto()      # 已解决（胜利）
+    DEFEATED = auto()      # 失败
+    STALEMATE = auto()     # 僵持（未分胜负）
 
 
 class WarType(Enum):
@@ -42,6 +43,12 @@ class War:
     # 战争类型与状态
     war_type: WarType = WarType.FOREIGN
     status: WarStatus = WarStatus.INACTIVE
+    start_year: int = 0  # 预设开始年份（例如 -280）
+    threat_level: int = 0  # 1=外交冲突,2=大军压境,3=战争爆发
+    auto_escalate: bool = True  # 是否自动升级
+    escalate_rate: int = 1  # 每回合升级点数
+
+    _triggered_this_turn: bool = False  # 标记是否在本回合刚触发
 
     # 军事属性
     strength: int = 5  # 基础强度（战斗难度）

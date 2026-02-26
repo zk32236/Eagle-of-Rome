@@ -13,6 +13,7 @@ from src.core.entities.curia import Curia
 from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.core.entities.entities import Province
 from src.core.entities.figure import Figure
+from src.core.systems.war_system import WarSystem
 
 
 if TYPE_CHECKING:
@@ -27,12 +28,6 @@ class GameState:
     MAX_MEMBER_ID = 300
 
     def __init__(self, config_path: Optional[str] = None):
-        """
-        显式实例化 - 每个调用创建独立实例
-
-        Args:
-            config_path: 配置文件路径，None时使用内置默认配置
-        """
         # 创建配置实例
         self._config = Config(config_path)
         Figure.load_config(self._config)
@@ -47,22 +42,20 @@ class GameState:
         self._used_ids: Set[int] = set()
         self._mortality_pool: List[int] = []
 
-
-        # 预留的系统引用
+        # 预留的系统引用（先设为None，reset中会创建）
         self._war_system: Optional['WarSystem'] = None
         self._military_system: Optional['MilitarySystem'] = None
-        self._curia: Optional[Curia] = None          # 将初始化为 Curia 实例
-        self._contracts: List[Any] = []               # 原有合同列表（可能为旧版，但我们将用字典替换）
+        self._curia: Optional[Curia] = None
+        self._contracts: List[Any] = []
 
         # 阶段执行跟踪
         self._executed_phases: Set[str] = set()
 
-        # ==================== MVP 0.5 新增字段 ====================
-        self._provinces: Dict[int, Province] = {}      # 行省注册表
-        self._contracts_dict: Dict[int, Contract] = {} # 合同注册表（字典，替代原有列表）
-        self._public_land_total: int = 0                # 全局公地总数
-        self._contract_id_counter: int = 1              # 合同ID自增计数器
-
+        # MVP 0.5 新增字段
+        self._provinces: Dict[int, Province] = {}
+        self._contracts_dict: Dict[int, Contract] = {}
+        self._public_land_total: int = 0
+        self._contract_id_counter: int = 1
 
         # 初始化时调用 reset，确保状态一致性
         self.reset()
@@ -78,14 +71,15 @@ class GameState:
         self._used_ids.clear()
         self._initialize_mortality_pool()
 
-        # 重置预留系统
-        self._war_system = None
-        self._military_system = None
-        self._curia = Curia()  # 改为创建新 Curia 实例
+        # 重置系统（重新创建）
+        self._war_system = WarSystem(self)
+        self._war_system.load_wars_from_json("wars.json")
+        self._military_system = None  # 军事系统尚未实现，暂为None
+        self._curia = Curia()
         self._contracts.clear()
         self._executed_phases.clear()
 
-        # ==================== MVP 0.5 重置新增字段 ====================
+        # MVP 0.5 重置新增字段
         self._provinces.clear()
         self._contracts_dict.clear()
         self._public_land_total = 0

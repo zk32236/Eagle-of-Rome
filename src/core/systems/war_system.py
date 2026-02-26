@@ -23,13 +23,48 @@ class WarSystem:
     4. 战争与将领/军团关联
     """
 
-    def __init__(self, state: 'GameState'):  # 使用字符串注解
-        self.state: 'GameState' = state
+    def __init__(self, state: 'GameState'):
+        self.state = state
+        self._wars: List[War] = []          # 所有战争（含牌堆、威胁、活跃等）
+        # 原有 _war_deck, _war_discard, _active_wars 可以保留，但为了简化，我们统一用 _wars 并依靠状态区分
+        # 建议逐步迁移到统一列表，但为了兼容，我们暂时保留原有结构，新增 _threats 列表
         self._war_deck: List[War] = []
         self._war_discard: List[War] = []
-        self._active_wars: List[War] = []
+        self._active_wars: List[War] = []   # 已爆发的战争
+        self._threats: List[War] = []        # 威胁中的战争（未爆发）
 
     # ========== 数据加载 ==========
+    def check_triggers(self, current_year: int):
+        """检查是否有战争到达触发年份，将其从 INACTIVE 转为 THREAT"""
+        for war in self._war_deck[:]:
+            if war.status == WarStatus.INACTIVE and current_year >= war.start_year:
+                war.status = WarStatus.THREAT
+                war.threat_level = 1
+                war._triggered_this_turn = True  # 标记为刚触发
+                self._threats.append(war)
+                self._war_deck.remove(war)
+                print(f"   ⚠️ 外交冲突：{war.name} 开始威胁罗马")
+
+    def escalate_threats(self):
+        """处理威胁自动升级，返回升级事件列表"""
+        events = []
+        for war in self._threats[:]:
+            if war._triggered_this_turn:
+                # 刚触发的战争，当年不升级，清除标记
+                war._triggered_this_turn = False
+                continue
+            if war.auto_escalate:
+                war.threat_level += war.escalate_rate
+                if war.threat_level >= 3:
+                    war.status = WarStatus.ACTIVE
+                    war.activation_turn = self.state.turn.turn_number
+                    self._active_wars.append(war)
+                    self._threats.remove(war)
+                    events.append(f"⚔️ 战争爆发：{war.name}！")
+                else:
+                    level_names = ["", "外交冲突", "大军压境"]
+                    events.append(f"⚠️ {war.name} 升级至：{level_names[war.threat_level]}")
+        return events
 
     def load_wars_from_json(self, filename: str = "wars.json") -> List[War]:
         """从JSON加载战争卡数据"""
@@ -58,7 +93,6 @@ class WarSystem:
         return wars
 
     def _parse_war_data(self, data: Dict[str, Any]) -> War:
-        """解析战争JSON数据"""
         # 解析战争类型
         war_type_str = data.get('type', 'foreign').upper()
         try:
@@ -66,12 +100,16 @@ class WarSystem:
         except KeyError:
             war_type = WarType.FOREIGN
 
-        # 创建战争实体
+        # 创建战争实体，并传入新字段
         war = War(
             id=data.get('id', f"war_{random.randint(1000, 9999)}"),
             name=data.get('name', 'Unknown War'),
             description=data.get('description', ''),
             war_type=war_type,
+            start_year=data.get('start_year', 0),  # 新增
+            threat_level=data.get('threat_level', 0),  # 新增
+            auto_escalate=data.get('auto_escalate', True),  # 新增
+            escalate_rate=data.get('escalate_rate', 1),  # 新增
             strength=data.get('strength', 5),
             naval_support_required=data.get('naval_required', False),
             naval_strength=data.get('naval_strength', 0),
@@ -83,7 +121,6 @@ class WarSystem:
             is_imminent=data.get('imminent', False),
             matched_war_id=data.get('matched_war'),
         )
-
         return war
 
     def _create_default_wars(self) -> List[War]:
