@@ -364,5 +364,46 @@ class TestPopulationCommand(unittest.TestCase):
         can, reason = fig_pleb.can_hold_office("tribune", current_turn, config)
         assert can
 
+    def test_automatic_festivals(self):
+        """测试自动庆典为非玩家派系执行"""
+        from src.core.deciders.festival_decider import FestivalDecider
+        from unittest.mock import MagicMock
+
+        # 模拟决策器返回固定出价
+        mock_decider = MagicMock(spec=FestivalDecider)
+        mock_decider.decide_festivals.return_value = {101: 20}
+
+        # 创建测试状态，包含一个非玩家派系和一个符合条件的人物
+        from src.core.entities.entities import Faction, GameTurn
+        from src.core.entities.figure import Figure
+
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+        state.mark_phase_executed("forum")
+
+        faction = Faction(id="ai", name="AI派系", is_player=False, treasury=0)
+        state.add_faction(faction)
+
+        fig = Figure(id=101, name="AI人物", faction_id="ai", age=35)
+        fig.wealth = 50
+        fig.office = None
+        fig.popularity = 0
+        fig.is_dead = False
+        state.add_member(fig)
+        faction.member_ids = [101]
+
+        # 构造候选人字典
+        candidates_by_faction = {faction.id: [fig]}
+
+        cmd = PopulationCommand(state, festival_decider=mock_decider)
+        cmd._process_automatic_festivals(candidates_by_faction)
+
+        # 验证人物财富减少，人气增加，影响力更新
+        self.assertEqual(fig.wealth, 30)  # 50-20
+        self.assertEqual(fig.popularity, 20)
+        # 影响力更新由 update_influence 负责，这里只验证方法被调用（可通过检查 fig.influence 变化，但简单起见，假设更新后不为0）
+        self.assertNotEqual(fig.influence, 0)
+        mock_decider.decide_festivals.assert_called_once_with(faction, [fig], state)
+
 if __name__ == "__main__":
     unittest.main()

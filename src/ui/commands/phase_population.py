@@ -4,11 +4,14 @@
 """
 
 import random
-from typing import List, Optional, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.figure import OfficeTerm, Figure
 from src.ui.commands.func_status import get_progress_bar
+from src.core.deciders.impl.auto_festival_decider import AutoFestivalDecider
+from src.core.deciders.festival_decider import FestivalDecider
+from typing import List, Optional, Dict, TYPE_CHECKING
+from collections import defaultdict
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -21,8 +24,9 @@ class PopulationCommand(Command):
     aliases = ["p"]
     description = "执行人口阶段 (Population Phase) - 举行公职选举、评估共和国状态、处理军团"
 
-    def __init__(self, state: "GameState"):
+    def __init__(self, state: "GameState", festival_decider: Optional[FestivalDecider] = None):
         super().__init__(state)
+        self.festival_decider = festival_decider or AutoFestivalDecider()
 
     def execute(self, args: List[str]) -> bool:
         if not self.state.is_phase_executed("forum"):
@@ -35,8 +39,13 @@ class PopulationCommand(Command):
 
         terms = TerminologyService.get()
         print(f"\n--- {terms.phase_population} Phase (Year {abs(self.state.turn.year)} BC) ---")
+        # ========== 1.1. 计算候选人并按派系分组 ==========
+        candidates_by_faction = self._compute_candidates_by_faction()
 
-        # ========== 1. 公职选举 ==========
+        # ========== 1.2 自动举办庆典（仅针对候选人）==========
+        self._process_automatic_festivals(candidates_by_faction)
+
+        # ========== 1.3 公职选举 ==========
         print(f"\n{'=' * 50}")
         print("   🏛️  MAGISTRATE ELECTIONS")
         print(f"{'=' * 50}")
@@ -74,6 +83,66 @@ class PopulationCommand(Command):
         self.state.mark_phase_executed("population")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
+
+    def _compute_candidates_by_faction(self) -> Dict[str, List[Figure]]:
+        """计算所有官职的候选人并按派系分组（去重）"""
+        candidates_by_faction = defaultdict(list)
+        election_order = ["consul", "censor", "praetor", "quaestor", "tribune"]
+
+        for office_type in election_order:
+            # 获取该官职的候选人（前N名）
+            num_candidates = self.state.config.get("political_rules", {}).get("candidates_per_election", {}).get(
+                office_type, 2)
+            eligible = self._get_eligible_for_office(office_type)
+            if not eligible:
+                continue
+            top_candidates = self._get_top_candidates_by_attribute(eligible, office_type, num_candidates)
+            for fig in top_candidates:
+                if fig.faction_id:
+                    candidates_by_faction[fig.faction_id].append(fig)
+        # 按派系ID去重（同一人物可能出现在多个官职中，但只需一个实例）
+        for faction_id in list(candidates_by_faction.keys()):
+            # 用字典去重（基于id）
+            unique = {fig.id: fig for fig in candidates_by_faction[faction_id]}
+            candidates_by_faction[faction_id] = list(unique.values())
+        return candidates_by_faction
+
+    def _get_eligible_for_office(self, office_type: str) -> List[Figure]:
+        """获取某个官职的所有合格候选人（不考虑人数限制）"""
+        current_turn = self.state.turn.turn_number
+        eligible = []
+        for fig in self.state.get_living_members():
+            can_hold, _ = fig.can_hold_office(office_type, current_turn, self.state.config)
+            if can_hold:
+                eligible.append(fig)
+        return eligible
+
+    def _process_automatic_festivals(self, candidates_by_faction: Dict[str, List[Figure]]):
+        """为所有派系的候选人自动举办庆典（调试阶段，玩家派系也自动执行）"""
+        print(f"\n   🎉 自动举办庆典：")
+        total_spent = 0
+        total_boost = 0
+        for faction in self.state.factions.values():
+            # 调试阶段：所有派系都自动庆典（无论是否玩家）
+            candidates = candidates_by_faction.get(faction.id, [])
+            if not candidates:
+                continue
+            decisions = self.festival_decider.decide_festivals(faction, candidates, self.state)
+            for fig_id, amount in decisions.items():
+                figure = self.state.get_member(fig_id)
+                if not figure or figure.is_dead or figure.wealth < amount:
+                    continue
+                figure.wealth -= amount
+                figure.add_popularity(amount)
+                figure.update_influence()
+                total_spent += amount
+                total_boost += amount
+                print(
+                    f"      {faction.name} 的 {figure.get_formal_name()} 花费 {amount} 举办庆典，人气 +{amount}，新影响力 {figure.influence}")
+        if total_spent > 0:
+            print(f"      总计花费 {total_spent}，增加人气 {total_boost}")
+        else:
+            print(f"      无人举办庆典")
 
     # ---------- 选举相关私有方法（从 phase_senate.py 移植）----------
 

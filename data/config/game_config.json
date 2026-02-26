@@ -27,7 +27,7 @@
     },
     "min_ages": {
       "consul": 40,
-      "censor": 45,
+      "censor": 42,
       "praetor": 35,
       "quaestor": 30,
       "tribune": 30

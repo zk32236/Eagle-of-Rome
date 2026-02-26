@@ -292,7 +292,8 @@ class StatusFigureCommand(Command):
             }.get(fig.class_tier, "❓")
             faction = self.state.get_faction(fig.faction_id)
             faction_name = faction.name if faction else "无"
-            office_display = fig.office if fig.office else "无"
+            # 处理 ex- 前缀的官职：不显示在现任官职列
+            office_display = fig.office if fig.office and not fig.office.startswith("ex-") else "无"
             print(
                 f"{status}{tier_emoji} ID:{fig.id:<3} {fig.get_formal_name():<25} 派系:{faction_name:<12} 影响力:{fig.influence} 财富:{fig.wealth} 人气:{fig.popularity} 私地:{fig.land_private} 老兵:{fig.veterans} 官职:{office_display}")
 
@@ -307,12 +308,12 @@ class StatusFigureCommand(Command):
             faction = self.state.get_faction(fig.faction_id)
             faction_name = faction.name if faction else "无"
 
-            # 计算起始年份（用于转换回合数为实际年份）
+            # 计算起始年份（用于将回合数转换为实际年份）
             current_turn = self.state.turn.turn_number
             current_year = self.state.turn.year
             start_year = current_year - (current_turn - 1)
 
-            # 格式化历史公职，将回合数转换为年份
+            # 格式化历史公职
             history_parts = []
             for term in fig.office_history:
                 year = start_year + (term.start_turn - 1)
@@ -342,7 +343,9 @@ class StatusFigureCommand(Command):
             print(f"人气: {fig.popularity}")
             print(f"私地: {fig.land_private} C")
             print(f"老兵: {fig.veterans}")
-            print(f"担任公职: {fig.office if fig.office else '无'}")
+            # 处理 ex- 前缀的官职：不显示在现任官职列
+            office_display = fig.office if fig.office and not fig.office.startswith("ex-") else "无"
+            print(f"担任公职: {office_display}")
             print(f"公职历史: {', '.join(history_parts) if history_parts else '无'}")
             print(f"持有合同: {fig.contract_ids if fig.contract_ids else '无'}")
             print(f"是否派系领袖: {'是' if fig.is_faction_leader else '否'}")
