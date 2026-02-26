@@ -3,14 +3,143 @@
 Status命令 - 显示当前游戏状态摘要
 """
 
-from typing import List, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.figure import Figure, ClassTier
+from src.core.entities.contract import ContractType, ContractStatus
+from typing import List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
 
+class ProvinceCommand(Command):
+    """显示行省状态命令"""
+
+    name = "province"
+    aliases = ["prov"]
+    description = "显示行省状态，用法: province [行省ID] (不指定ID则显示所有行省概要)"
+
+    def __init__(self, state: "GameState"):
+        super().__init__(state)
+
+    def _get_controlling_faction(self, province_id: int) -> Optional[str]:
+        """返回控制该行省的派系名称，若无则返回 None"""
+        for faction in self.state.factions.values():
+            if province_id in faction.province_owned:
+                return faction.name
+        return None
+
+    def _format_contract_info(self, contract_id: Optional[int]) -> str:
+        """返回合同简要信息"""
+        if contract_id is None:
+            return "无"
+        contract = self.state.get_contract(contract_id)
+        if not contract:
+            return "无效"
+        if contract.contract_type == ContractType.TAX_FARMING:
+            tax_rate = getattr(contract, 'tax_rate', 0.0)
+            return f"包税(税率 {tax_rate*100:.0f}%)"
+        else:
+            return f"工程(预算 {contract.base_cost})"
+
+    def execute(self, args: List[str]) -> bool:
+        if not args:
+            # 显示所有行省概要
+            provinces = self.state.get_all_provinces()
+            if not provinces:
+                print("   📭 没有行省数据")
+                return True
+
+            print("\n" + "=" * 60)
+            print("   🏛️ 行省状态一览")
+            print("=" * 60)
+            print(f"{'ID':<4} {'名称':<12} {'民怨':<4} {'包税合同':<12} {'工程合同':<12} {'控制派系':<12}")
+            print("-" * 60)
+
+            for p in provinces:
+                if p.province_id == 0:
+                    name = "意大利(本土)"
+                else:
+                    name = p.name
+                tax_info = self._format_contract_info(p.tax_contract_id)
+                proj_info = self._format_contract_info(p.project_contract_id)
+                controller = self._get_controlling_faction(p.province_id) or "无"
+                print(f"{p.province_id:<4} {name:<12} {p.grievance:<4} {tax_info:<12} {proj_info:<12} {controller:<12}")
+            print("=" * 60)
+            return True
+
+        # 有参数：显示单个行省详情
+        try:
+            pid = int(args[0])
+        except ValueError:
+            print(f"❌ 无效的行省ID: {args[0]}，必须为整数")
+            return False
+
+        province = self.state.get_province(pid)
+        if not province:
+            print(f"❌ 行省ID {pid} 不存在")
+            return False
+
+        print("\n" + "=" * 60)
+        if pid == 0:
+            print(f"   🏛️ 行省详情：意大利 (本土)")
+        else:
+            print(f"   🏛️ 行省详情：{province.name} (ID:{pid})")
+        print("=" * 60)
+
+        print(f"   总土地: {province.total_land} C")
+        print(f"   公地: {province.land_public} C")
+        print(f"   私地: {province.land_private} C")
+        print(f"   民怨等级: {province.grievance} (0=安居乐业,1=怨声载道,2=民不聊生,3=平民起义)")
+
+        # 包税合同
+        if province.tax_contract_id:
+            contract = self.state.get_contract(province.tax_contract_id)
+            if contract:
+                tax_rate = getattr(contract, 'tax_rate', 0.0)
+                winner = self.state.get_member(contract.awarded_to)
+                winner_name = winner.get_formal_name() if winner else "未知"
+                faction = self.state.get_faction(contract.awarded_faction)
+                faction_name = faction.name if faction else "无"
+                print(f"\n   📊 包税合同:")
+                print(f"      ID: {contract.id}")
+                print(f"      中标者: {winner_name} ({faction_name})")
+                print(f"      实际税率: {tax_rate*100:.1f}%")
+                print(f"      剩余年限: {contract.remaining_years} 年")
+                print(f"      年净收入: {getattr(contract, '_annual_profit', 0)}")
+            else:
+                print(f"\n   ⚠️ 包税合同数据异常")
+        else:
+            print(f"\n   📭 无包税合同")
+
+        # 工程合同
+        if province.project_contract_id:
+            contract = self.state.get_contract(province.project_contract_id)
+            if contract:
+                contractor = self.state.get_member(contract.awarded_to)
+                contractor_name = contractor.get_formal_name() if contractor else "未知"
+                faction = self.state.get_faction(contract.awarded_faction)
+                faction_name = faction.name if faction else "无"
+                print(f"\n   🏗️ 公共工程合同:")
+                print(f"      ID: {contract.id}")
+                print(f"      承建者: {contractor_name} ({faction_name})")
+                print(f"      预算: {contract.base_cost}")
+                print(f"      剩余年限: {contract.remaining_years} 年")
+                print(f"      质保剩余: {getattr(contract, 'warranty_remaining', 0)} 年")
+            else:
+                print(f"\n   ⚠️ 工程合同数据异常")
+        else:
+            print(f"\n   🏗️ 无公共工程合同")
+
+        # 控制派系
+        controller = self._get_controlling_faction(pid)
+        if controller:
+            print(f"\n   🏛️ 控制派系: {controller}")
+        else:
+            print(f"\n   🏛️ 无派系控制")
+
+        print("=" * 60)
+        return True
 
 class StatusCommand(Command):
     """显示游戏状态摘要命令"""

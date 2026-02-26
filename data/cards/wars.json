@@ -85,7 +85,7 @@
       "name": "皮洛士战争",
       "description": "希腊城邦塔伦图姆邀请伊庇鲁斯国王皮洛士介入意大利，与罗马争夺南意大利霸权。",
       "type": "FOREIGN",
-      "start_year": -280,
+      "start_year": -210,
       "threat_level": 0,
       "auto_escalate": true,
       "escalate_rate": 1,

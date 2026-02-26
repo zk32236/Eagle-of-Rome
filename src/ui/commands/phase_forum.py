@@ -78,8 +78,9 @@ class ForumCommand(Command):
         else:
             print(f"\n   📭 No new contracts.")
 
-        #
-
+        # 在 _auto_bid_for_works 循环之前，这样新合同就会触发民变。
+        # 因为新合同还没有开始收税，要到下个回合的r阶段才实际收税引起民变。
+        self._process_civil_unrest()
 
         # 5. 对包税合同竞标
         for contract in new_contracts:
@@ -107,6 +108,81 @@ class ForumCommand(Command):
         self.state.mark_phase_executed("forum")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
+
+    def _process_civil_unrest(self):
+        """处理民变触发与自动升级，并打印详细信息"""
+        print(f"\n   📊 行省民变状态：")
+        base_tax_rate = self.state.get_economic_rule("province_tax_rate", 0.1)
+        provinces = self.state.get_all_provinces()
+        if not provinces:
+            return
+
+        # 收集活跃的包税合同（按行省分组）
+        active_contracts = [c for c in self.state.contracts
+                            if c.status == ContractStatus.ACTIVE and c.contract_type == ContractType.TAX_FARMING]
+        province_contracts = {}
+        for contract in active_contracts:
+            pid = contract.province_id
+            if pid == 0:  # 意大利无包税合同
+                continue
+            province_contracts.setdefault(pid, []).append(contract)
+
+        any_change = False
+
+        # 先处理自动升级（不包括意大利）
+        for province in provinces:
+            if province.province_id == 0:
+                continue
+            if 0 < province.grievance < 3:
+                old = province.grievance
+                province.set_grievance(old + 1)
+                print(f"      ⚠️ 行省 {province.name} 民怨升级至 {province.grievance} 级")
+                if province.grievance == 3:
+                    print(f"         行省 {province.name} 爆发平民起义！")
+                any_change = True
+
+        # 然后处理合同触发的民怨
+        for province in provinces:
+            if province.province_id == 0:
+                # 意大利暂不处理
+                if province.grievance > 0:
+                    print(f"      ℹ️ 意大利本土 当前民怨 {province.grievance} 级（待实现）")
+                continue
+
+            contracts = province_contracts.get(province.province_id, [])
+            if contracts:
+                # 有包税合同，检查每个合同的税率
+                for contract in contracts:
+                    tax_rate = getattr(contract, 'tax_rate', 0.0)
+                    if tax_rate > base_tax_rate:
+                        if province.grievance < 1:
+                            province.set_grievance(1)
+                            print(
+                                f"      🔔 行省 {province.name} 因包税合同税率 {tax_rate * 100:.0f}% > {base_tax_rate * 100:.0f}%，民怨升至 1 级")
+                            any_change = True
+                        else:
+                            print(
+                                f"      📌 行省 {province.name} 包税合同税率 {tax_rate * 100:.0f}%，当前民怨 {province.grievance} 级")
+                    else:
+                        print(
+                            f"      ✅ 行省 {province.name} 包税合同税率 {tax_rate * 100:.0f}% 在允许范围内，民怨 {province.grievance} 级")
+            else:
+                # 无合同，如果民怨>0则显示
+                if province.grievance > 0:
+                    print(f"      ℹ️ 行省 {province.name} 当前民怨 {province.grievance} 级")
+                    any_change = True
+
+        if not any_change:
+            # 检查是否有任何行省有合同或民怨
+            has_info = False
+            for province in provinces:
+                if province.province_id == 0:
+                    continue
+                if province.grievance > 0 or province_contracts.get(province.province_id):
+                    has_info = True
+                    break
+            if not has_info:
+                print(f"      所有行省安居乐业，无民变威胁。")
 
     def _process_war_threats(self):
         """处理战争威胁触发和自动升级"""
@@ -441,7 +517,6 @@ class ForumCommand(Command):
             print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {bid_amount} (降价 {r*100:.0f}%)")
 
         self.state.resolve_auction(contract.id)
-
 
     def _display_contracts(self, terms):
         """显示待授予合同"""

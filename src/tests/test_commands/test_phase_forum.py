@@ -316,6 +316,194 @@ class TestForumCommand(unittest.TestCase):
         # 验证决策器被正确调用
         self.assertEqual(mock_decider.decide_bids.call_count, 2)
 
+    def test_civil_unrest_tax_trigger(self):
+        """测试当包税合同税率超过基础税率时，行省民怨被设为1"""
+        from src.core.entities.entities import Province
+        from src.core.entities.contract import Contract, ContractType, ContractStatus
+
+        # 创建测试状态
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+        state.mark_phase_executed("revenue")
+
+        # 添加测试行省（非意大利）
+        province = Province(1, "西西里", 1000)
+        province._grievance = 0
+        state.add_province(province)
+
+        # 创建一个已中标的包税合同，税率设为15%（超过基础税率10%）
+        contract = Contract(
+            id=1,
+            contract_type=ContractType.TAX_FARMING,
+            name="西西里包税权",
+            base_cost=100,
+            expected_profit=50,
+            status=ContractStatus.ACTIVE,
+            awarded_to=101
+        )
+        contract._tax_rate = 0.15  # 设置实际税率
+        contract._province_id = 1
+        state._contracts_dict[1] = contract
+
+        # 执行民变处理
+        cmd = ForumCommand(state)
+        cmd._process_civil_unrest()
+
+        # 验证行省民怨变为1
+        self.assertEqual(province.grievance, 1)
+
+    def test_civil_unrest_auto_escalation(self):
+        """测试行省民怨从1自动升级到2，再到3并输出起义提示"""
+        from src.core.entities.entities import Province
+        import io
+        from contextlib import redirect_stdout
+
+        # 创建测试状态
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+        state.mark_phase_executed("revenue")
+
+        # 添加测试行省，初始民怨=1
+        province = Province(1, "西西里", 1000)
+        province._grievance = 1
+        state.add_province(province)
+
+        cmd = ForumCommand(state)
+
+        # 第一次升级：1→2
+        f = io.StringIO()
+        with redirect_stdout(f):
+            cmd._process_civil_unrest()
+        output = f.getvalue()
+        self.assertEqual(province.grievance, 2)
+        self.assertNotIn("起义", output)
+
+        # 第二次升级：2→3
+        f = io.StringIO()
+        with redirect_stdout(f):
+            cmd._process_civil_unrest()
+        output = f.getvalue()
+        self.assertEqual(province.grievance, 3)
+        self.assertIn("爆发平民起义", output)
+
+        # 第三次升级：已起义，不再变化
+        f = io.StringIO()
+        with redirect_stdout(f):
+            cmd._process_civil_unrest()
+        self.assertEqual(province.grievance, 3)
+
+    def test_civil_unrest_italy_ignored(self):
+        """测试意大利行省不参与触发和升级"""
+        from src.core.entities.entities import Province
+        from src.core.entities.contract import Contract, ContractType, ContractStatus
+
+        # 创建测试状态
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+        state.mark_phase_executed("revenue")
+
+        # 添加意大利行省，初始民怨=0
+        italy = Province(0, "意大利", 0)
+        italy._grievance = 0
+        state.add_province(italy)
+
+        # 创建包税合同（税率高于基础）
+        contract = Contract(
+            id=1,
+            contract_type=ContractType.TAX_FARMING,
+            name="意大利包税权（不应存在）",
+            base_cost=100,
+            expected_profit=50,
+            status=ContractStatus.ACTIVE,
+            awarded_to=101
+        )
+        contract._tax_rate = 0.15
+        contract._province_id = 0
+        state._contracts_dict[1] = contract
+
+        cmd = ForumCommand(state)
+        cmd._process_civil_unrest()
+
+        # 意大利民怨仍为0
+        self.assertEqual(italy.grievance, 0)
+
+    def test_civil_unrest_already_revolted(self):
+        """测试已起义的行省不再触发和升级"""
+        from src.core.entities.entities import Province
+        from src.core.entities.contract import Contract, ContractType, ContractStatus
+
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+        state.mark_phase_executed("revenue")
+
+        province = Province(1, "西西里", 1000)
+        province._grievance = 3  # 已起义
+        state.add_province(province)
+
+        contract = Contract(
+            id=1,
+            contract_type=ContractType.TAX_FARMING,
+            name="西西里包税权",
+            base_cost=100,
+            expected_profit=50,
+            status=ContractStatus.ACTIVE,
+            awarded_to=101
+        )
+        contract._tax_rate = 0.15
+        contract._province_id = 1
+        state._contracts_dict[1] = contract
+
+        cmd = ForumCommand(state)
+        cmd._process_civil_unrest()
+
+        # 民怨保持3
+        self.assertEqual(province.grievance, 3)
+
+    def test_civil_unrest_multiple_contracts(self):
+        """测试多个合同作用于同一行省，民怨应设为至少1"""
+        from src.core.entities.entities import Province
+        from src.core.entities.contract import Contract, ContractType, ContractStatus
+
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+        state.mark_phase_executed("revenue")
+
+        province = Province(1, "西西里", 1000)
+        province._grievance = 0
+        state.add_province(province)
+
+        # 创建两个合同，一个税率超限，一个不超限
+        contract1 = Contract(
+            id=1,
+            contract_type=ContractType.TAX_FARMING,
+            name="合同1",
+            base_cost=100,
+            expected_profit=50,
+            status=ContractStatus.ACTIVE,
+            awarded_to=101
+        )
+        contract1._tax_rate = 0.15
+        contract1._province_id = 1
+        state._contracts_dict[1] = contract1
+
+        contract2 = Contract(
+            id=2,
+            contract_type=ContractType.TAX_FARMING,
+            name="合同2",
+            base_cost=100,
+            expected_profit=50,
+            status=ContractStatus.ACTIVE,
+            awarded_to=102
+        )
+        contract2._tax_rate = 0.05  # 低于基础
+        contract2._province_id = 1
+        state._contracts_dict[2] = contract2
+
+        cmd = ForumCommand(state)
+        cmd._process_civil_unrest()
+
+        # 民怨应设为1（至少1）
+        self.assertEqual(province.grievance, 1)
 
 if __name__ == "__main__":
     unittest.main()
