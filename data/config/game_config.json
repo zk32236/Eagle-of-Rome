@@ -74,10 +74,10 @@
     "death_count": 1,
     "event_deck": [
       {"name": "死神来了", "type": "厄运", "effect": "death", "weight": 1},
-      {"name": "丰调雨顺", "type": "好运", "effect": "bountiful_harvest", "weight": 1},
-      {"name": "国泰民安", "type": "好运", "effect": "peace", "weight": 1},
-      {"name": "天降猛男", "type": "好运", "effect": "mighty_man", "weight": 1},
-      {"name": "无妄天灾", "type": "厄运", "effect": "disaster", "weight": 1}
+      {"name": "丰调雨顺", "type": "好运", "effect": "bountiful_harvest", "weight": 0},
+      {"name": "国泰民安", "type": "好运", "effect": "peace", "weight": 0},
+      {"name": "天降猛男", "type": "好运", "effect": "mighty_man", "weight": 0},
+      {"name": "无妄天灾", "type": "厄运", "effect": "disaster", "weight": 0}
     ],
     "event_draw_count": 1
   },

@@ -357,13 +357,14 @@ class GameState:
         return new_id
 
     # ========== 死亡标记（之前添加）==========
-    def mark_member_dead(self, member_id: int, transfer_land: bool = True) -> bool:
+    def mark_member_dead(self, member_id: int, transfer_land: bool = True, transfer_wealth: bool = True) -> bool:
         """
-        标记指定ID的人物为死亡
+        标记指定ID的人物为死亡，并回收资产
 
         Args:
             member_id: 要标记死亡的人物ID
             transfer_land: 是否将私地转为国家公地
+            transfer_wealth: 是否将财富归入国库
 
         Returns:
             bool: 操作成功返回 True，人物不存在或已死亡返回 False
@@ -374,13 +375,20 @@ class GameState:
         if member.is_dead:
             return False
 
+        # 财富回收：归入国库
+        if transfer_wealth and member.wealth > 0:
+            self.add_treasury(member.wealth)
+            print(f"      💰 {member.get_formal_name()} 的 {member.wealth} Talents 归入国库")
+            member.wealth = 0
+
         # 土地回收：将私地转为国家公地
         if transfer_land:
-            land = member._land_private  # 获取私地数量
+            land = member._land_private
             if land > 0:
                 self.add_national_public_land(land)
-                member._land_private = 0  # 清零人物私地
-                # 可在此记录日志，但暂时省略
+                print(f"      🏞️ 当前国家公地: {self._national_public_land - land} C (土地回收前)")
+                print(f"      🏞️ 土地回收后国家公地: {self._national_public_land} C (+{land})")
+                member._land_private = 0
 
         member.is_dead = True
 

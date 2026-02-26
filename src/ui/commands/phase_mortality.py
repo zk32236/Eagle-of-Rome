@@ -43,9 +43,15 @@ class MortalityCommand(Command):
             print(f"\n   Progress: {get_progress_bar(self.state)}")
             return True
 
-        # 抽取事件卡
-        for i in range(draw_count):
-            event = random.choice(deck)
+        # 按权重抽取事件卡
+        weights = [e.get("weight", 1) for e in deck]
+        if sum(weights) == 0:
+            # 所有权重为0时回退到等概率
+            weights = [1] * len(deck)
+
+        drawn_events = random.choices(deck, weights=weights, k=draw_count)
+
+        for event in drawn_events:
             event_name = event["name"]
             effect = event["effect"]
 
@@ -77,19 +83,7 @@ class MortalityCommand(Command):
 
         for victim in victims:
             print(f"   💀 死神选中了 {victim.name} (阶级: {victim.class_tier.value})")
-
-            # 转移财产：财富归国库
-            self.state.add_treasury(victim.wealth)
-            print(f"      💰 {victim.wealth} {TerminologyService.get().currency} 归入国库")
-
-            # 提前保存私地数量
-            land = victim.land_private
-            national_land_before = self.state._national_public_land
-            print(f"      🏞️ 当前国家公地: {national_land_before} C (土地回收前)")
-
-            self.state.mark_member_dead(victim.id, transfer_land=True)
-
-            national_land_after = self.state._national_public_land
-            print(f"      🏞️ 土地回收后国家公地: {national_land_after} C (+{land})")
+            # 直接调用 mark_member_dead 统一处理资产回收
+            self.state.mark_member_dead(victim.id, transfer_land=True, transfer_wealth=True)
 
         self.state.log_event(f"💀 死神来了：{len(victims)} 人死亡，财产归公")

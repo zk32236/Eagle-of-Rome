@@ -6,9 +6,11 @@
 import unittest
 import sys
 import os
-from unittest.mock import patch
 import io
 from contextlib import redirect_stdout
+from unittest.mock import MagicMock, patch
+from src.core.deciders.retirement_decider import RetirementDecider
+from src.core.entities.curia import Curia
 
 # 添加项目根目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -145,6 +147,94 @@ class TestForumCommand(unittest.TestCase):
 
         output = f.getvalue()
         self.assertIn("测试行省包税权", output)
+
+    def test_process_retirements(self):
+        """测试广场阶段淘汰人物功能"""
+        from src.core.entities.entities import Faction
+        from src.core.entities.figure import Figure
+        from src.core.entities.entities import GameTurn
+
+        # 创建测试状态
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+        state.mark_phase_executed("revenue")
+
+        # 创建派系
+        faction = Faction(id="test", name="测试派", treasury=10)
+        state.add_faction(faction)  # 注意：这里应该用 state，不是 self.state
+
+        # 创建两个人物：一个可抛弃，一个不可抛弃（领袖）
+        fig1 = Figure(id=101, name="可抛弃", faction_id="test")
+        fig1.is_faction_leader = False
+        fig1.office = None
+        fig1._has_active_contract = False  # 使用私有字段
+
+        fig2 = Figure(id=102, name="不可抛弃", faction_id="test")
+        fig2.is_faction_leader = True
+        fig2.office = None
+        fig2._has_active_contract = False  # 使用私有字段
+
+        state.add_member(fig1)
+        state.add_member(fig2)
+
+        faction.member_ids = [101, 102]
+
+        # 创建模拟的退休决策器，固定返回 fig1.id
+        mock_decider = MagicMock(spec=RetirementDecider)
+        mock_decider.decide_whom_to_retire.return_value = 101
+
+        cmd = ForumCommand(state, retirement_decider=mock_decider)
+
+        # 执行内部方法
+        cmd._process_retirements()
+
+        # 验证：fig1 被移出派系，加入 Curia
+        self.assertNotIn(101, faction.member_ids)
+        self.assertIsNone(fig1.faction_id)
+        self.assertTrue(fig1.is_available)
+        # 验证 Curia 中包含 fig1
+        curia_figures = state.curia.get_all_available()
+        self.assertTrue(any(f.id == 101 for f in curia_figures))
+        # 验证 fig2 仍在派系中
+        self.assertIn(102, faction.member_ids)
+
+        # 验证决策器被调用
+        mock_decider.decide_whom_to_retire.assert_called_once_with(faction)
+
+    def test_process_retirements_no_candidate(self):
+        """测试无可抛弃人物时，不进行任何操作"""
+        from src.core.entities.entities import Faction
+        from src.core.entities.figure import Figure
+        from src.core.entities.entities import GameTurn
+
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+        state.mark_phase_executed("revenue")
+
+        faction = Faction(id="test", name="测试派", treasury=10)
+        state.add_faction(faction)
+
+        fig = Figure(id=101, name="唯一人物", faction_id="test")
+        fig.is_faction_leader = True  # 领袖，不可抛弃
+        fig.office = None
+        fig._has_active_contract = False  # 使用私有字段
+
+        state.add_member(fig)
+        faction.member_ids = [101]
+
+        mock_decider = MagicMock(spec=RetirementDecider)
+        mock_decider.decide_whom_to_retire.return_value = None
+
+        cmd = ForumCommand(state, retirement_decider=mock_decider)
+        cmd._process_retirements()
+
+        # 验证没有任何变化
+        self.assertIn(101, faction.member_ids)
+        self.assertEqual(fig.faction_id, "test")
+        self.assertTrue(fig.is_available)  # is_available 默认 True
+        self.assertTrue(state.curia.is_empty())
+
+        mock_decider.decide_whom_to_retire.assert_called_once_with(faction)
 
 
 if __name__ == "__main__":

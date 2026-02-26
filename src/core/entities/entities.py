@@ -79,6 +79,13 @@ class Faction:
     _province_owned: List[int] = field(default_factory=list)  # 控制的行省ID列表
     _knight_contract_count: int = 0          # 派系内骑士持有的合同总数
 
+    def remove_member(self, member_id: int):
+        """
+        从派系成员列表中移除指定人物ID。
+        """
+        if member_id in self.member_ids:
+            self.member_ids.remove(member_id)
+
     def get_total_influence(self, state: 'GameState') -> int:
         total = 0
         for mid in self.member_ids:

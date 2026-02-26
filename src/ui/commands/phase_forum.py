@@ -10,6 +10,8 @@ from src.core.localization import TerminologyService
 from src.core.entities.figure import Figure, ClassTier
 from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.ui.commands.func_status import get_progress_bar
+from src.core.deciders.impl.auto_retirement_decider import AutoRetirementDecider
+from src.core.deciders.retirement_decider import RetirementDecider
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -22,8 +24,9 @@ class ForumCommand(Command):
     aliases = ["f"]
     description = "执行广场阶段 (Forum Phase)"
 
-    def __init__(self, state: "GameState"):
+    def __init__(self, state: "GameState", retirement_decider=None):
         super().__init__(state)
+        self.retirement_decider = retirement_decider or AutoRetirementDecider(state)
 
     def execute(self, args: List[str]) -> bool:
         if not self.state.is_phase_executed("revenue"):
@@ -35,7 +38,11 @@ class ForumCommand(Command):
             return False
 
         terms = TerminologyService.get()
+
         print(f"\n--- {terms.phase_forum} Phase (Year {abs(self.state.turn.year)} BC) ---")
+
+        # 淘汰派系成员
+        self._process_retirements()
 
         # 1. 生成新人物
         new_figures = self._generate_new_figures()
@@ -86,6 +93,28 @@ class ForumCommand(Command):
         self.state.mark_phase_executed("forum")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
+
+    def _process_retirements(self):
+        """处理各派系抛弃人物"""
+        # 从配置读取是否启用淘汰（可先硬编码启用，后续配置化）
+        count = 0
+        for faction in self.state.factions.values():
+            member_id = self.retirement_decider.decide_whom_to_retire(faction)
+            if member_id is None:
+                continue
+            figure = self.state.get_member(member_id)
+            if not figure:
+                continue
+            # 从派系移除
+            faction.remove_member(member_id)
+            figure.faction_id = None
+            figure.is_available = True  # 标记为可招募
+            # 放入 Curia
+            self.state.curia.add_figure(figure)
+            count += 1
+            print(f"      {faction.name} 抛弃了 {figure.get_formal_name()}")
+        if count > 0:
+            print(f"      🗑️ 共 {count} 名人物被抛弃，现已加入广场")
 
     def _generate_new_figures(self) -> List[Figure]:
         """生成新人物"""
