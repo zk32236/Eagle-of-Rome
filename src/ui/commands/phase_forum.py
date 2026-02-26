@@ -217,33 +217,33 @@ class ForumCommand(Command):
             print(f"   {event}")
 
     def _process_recruitment(self):
-        """处理派系从广场招募人物"""
         member_limit = self.state.config.get("economic_rules.faction_member_limit", 6)
-
         factions = list(self.state.factions.values())
         if not factions:
             return
-
         available_figures = self.state.curia.get_all_available()
         if not available_figures:
             return
+
+        # 记录每个派系已承诺的总出价
+        committed = {faction.id: 0 for faction in factions}
 
         all_bids = {}
         for faction in factions:
             vacancies = faction.get_vacancies(self.state, member_limit)
             if vacancies <= 0:
                 continue
-
             bids = self.recruitment_decider.decide_bids(faction, available_figures, vacancies, self.state)
             if not bids:
                 continue
-
             for fig_id, amount in bids.items():
-                if faction.treasury < amount:
+                # 检查该派系当前已承诺总额 + 本次出价是否超过金库
+                if committed[faction.id] + amount > faction.treasury:
                     continue
                 if fig_id not in all_bids:
                     all_bids[fig_id] = {}
                 all_bids[fig_id][faction.id] = amount
+                committed[faction.id] += amount  # 累加承诺
 
         if not all_bids:
             print(f"\n   📭 No recruitment bids this year.")
@@ -273,6 +273,11 @@ class ForumCommand(Command):
                 winner_fid = top_factions[0]
 
             winner_faction = self.state.get_faction(winner_fid)
+
+            # 扣款前检查：确保当前金库仍足够（理论上因为承诺控制，应该足够，但以防万一）
+            if winner_faction.treasury < max_amount:
+                print(f"      ⚠️ {winner_faction.name} 金库不足 {max_amount}，无法招募 {figure.get_formal_name()}")
+                continue
 
             winner_faction.treasury -= max_amount
             figure.wealth += max_amount
@@ -376,6 +381,8 @@ class ForumCommand(Command):
         private_income_rate = config.get("economic_rules.private_land_income_rate", 0.05)
         province_tax_rate = config.get("economic_rules.province_tax_rate", 0.1)
         auction_ratio = config.get("economic_rules.tax_auction_ratio", 0.8)
+        year = self.state.turn.year
+        year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
 
         # 包税合同
         for province in self.state.get_all_provinces():
@@ -398,7 +405,7 @@ class ForumCommand(Command):
                 base_cost,
                 self.state.turn.turn_number
             )
-            contract.name = f"{province.name}包税权"
+            contract.name = f"{province.name}包税权 ({year_display})"
             contract.description = f"{province.name}行省税收承包权"
             contract.expected_profit = base_tax - base_cost
             # 从配置读取包税合同期限
@@ -418,8 +425,7 @@ class ForumCommand(Command):
             infra_cost = int(land_value * infra_rate)
             budget = int(infra_cost * (1 + budget_margin))
 
-            year = self.state.turn.year
-            year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
+
             contract = self.state.create_contract(
                 ContractType.PUBLIC_WORKS,
                 province.province_id,
@@ -459,17 +465,30 @@ class ForumCommand(Command):
             amount = int(contract.base_cost * (1 + r))
 
             if knight.wealth < amount:
-                print(f"         {faction.name} 的 {knight.get_formal_name()} 财富不足 {knight.wealth} < {amount}，无法出价")
+                print(
+                    f"         {faction.name} 的 {knight.get_formal_name()} 财富不足 {knight.wealth} < {amount}，无法出价")
                 continue
             self.state.place_bid(contract.id, knight.id, amount, tax_rate=r)
-            print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {amount} (加价 {r*100:.0f}%)")
+            print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {amount} (加价 {r * 100:.0f}%)")
 
         self.state.resolve_auction(contract.id)
 
         if contract.status == ContractStatus.ACTIVE and contract.winning_bid:
             winner = self.state.get_member(contract.winning_bid["bidder_id"])
             winner_name = winner.get_formal_name() if winner else "未知"
-            print(f"      ✅ 中标者: {winner_name}，中标价 {contract.winning_bid['amount']}，税率 {contract.tax_rate*100:.0f}%")
+            actual_inc = (contract.winning_bid['amount'] - contract.base_cost) / contract.base_cost * 100
+            print(f"      ✅ 中标者: {winner_name}，中标价 {contract.winning_bid['amount']}，加价 {actual_inc:.0f}%")
+
+            # ===== 清理该行省所有已过期的包税权合同 =====
+            province_id = contract.province_id
+            expired_contracts = [c for c in self.state.contracts
+                                 if c.province_id == province_id
+                                 and c.contract_type == ContractType.TAX_FARMING
+                                 and c.status == ContractStatus.EXPIRED]
+            for ec in expired_contracts:
+                if ec.id in self.state._contracts_dict:
+                    del self.state._contracts_dict[ec.id]
+                    print(f"         🗑️ 清理过期包税合同: {ec.name}")
         else:
             print(f"      ❌ 流拍")
 

@@ -265,8 +265,8 @@ class Figure:
                 base = off
             return self.__class__.OFFICE_RANK.get(base, 0)
 
-        # 检查当前官职：如果当前官职等级高于目标，则不能竞选
-        if get_rank(self.office) > target_rank:
+        # 检查当前官职：如果当前官职是现任官职（非ex-）且等级高于目标，则不能竞选
+        if self.office and not self.office.startswith("ex-") and get_rank(self.office) > target_rank:
             return False, f"Cannot run for lower office while holding higher office: {self.office}"
 
         # 检查历史官职：如果曾担任过高阶官职，则不能竞选低阶（监察官除外）

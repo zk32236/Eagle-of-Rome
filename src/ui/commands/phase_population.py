@@ -39,18 +39,25 @@ class PopulationCommand(Command):
 
         terms = TerminologyService.get()
         print(f"\n--- {terms.phase_population} Phase (Year {abs(self.state.turn.year)} BC) ---")
-        # ========== 1.1. 计算候选人并按派系分组 ==========
+
+        # 选举顺序
+        election_order = ["consul", "censor", "praetor", "quaestor", "tribune"]
+
+        # ========== 1. 卸任所有现任官员（任期一年） ==========
+        print(f"\n   📤 所有官员卸任：")
+        for office_type in election_order:
+            self._remove_office_holders(office_type)
+
+        # ========== 2. 计算候选人并按派系分组 ==========
         candidates_by_faction = self._compute_candidates_by_faction()
 
-        # ========== 1.2 自动举办庆典（仅针对候选人）==========
+        # ========== 3. 自动举办庆典 ==========
         self._process_automatic_festivals(candidates_by_faction)
 
-        # ========== 1.3 公职选举 ==========
+        # ========== 4. 公职选举 ==========
         print(f"\n{'=' * 50}")
         print("   🏛️  MAGISTRATE ELECTIONS")
         print(f"{'=' * 50}")
-
-        election_order = ["consul", "censor", "praetor", "quaestor", "tribune"]
 
         for office_type in election_order:
             count = self.state.get_offices_per_election(office_type)
@@ -69,17 +76,12 @@ class PopulationCommand(Command):
                 else:
                     print(f"      ⚠️  No eligible candidate for {office_type}")
 
-        # ========== 2. 原有国家状态评估 ==========
+        # ========== 5. 原有国家状态评估、军团解散、人口事件 ==========
         republic_state = self._calculate_republic_state(terms)
         print(f"\n   🏛️  State of the Republic: {republic_state}")
-
-        # ========== 3. 军团解散逻辑 ==========
         self._process_legion_disbandment(terms, republic_state)
-
-        # ========== 4. 人口事件 ==========
         self._process_population_events(terms)
 
-        # 标记阶段已执行
         self.state.mark_phase_executed("population")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
