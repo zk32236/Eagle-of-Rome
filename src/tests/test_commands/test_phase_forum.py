@@ -2,14 +2,21 @@
 """
 广场阶段命令单元测试
 """
+# src/tests/test_commands/test_phase_forum.py
+"""
+广场阶段命令单元测试
+"""
 
 import unittest
 import sys
 import os
 import io
+import random  # 可能需要的，虽然当前测试未直接使用
 from contextlib import redirect_stdout
 from unittest.mock import MagicMock, patch
+
 from src.core.deciders.retirement_decider import RetirementDecider
+from src.core.deciders.recruitment_decider import RecruitmentDecider  # 新增
 from src.core.entities.curia import Curia
 
 # 添加项目根目录到路径
@@ -22,7 +29,8 @@ from src.core.game_state import GameState
 from src.ui.commands.phase_forum import ForumCommand
 from src.core.localization import TerminologyService
 from src.core.entities.figure import Figure
-from src.core.entities.contract import ContractType,Contract
+from src.core.entities.entities import Faction, GameTurn, Province  # 确保 Faction 在这里导入
+from src.core.entities.contract import ContractType, Contract
 
 
 class TestForumCommand(unittest.TestCase):
@@ -235,6 +243,78 @@ class TestForumCommand(unittest.TestCase):
         self.assertTrue(state.curia.is_empty())
 
         mock_decider.decide_whom_to_retire.assert_called_once_with(faction)
+
+    def test_recruitment_process(self):
+        """测试招募流程：模拟出价并验证派系资金变化"""
+
+        # 创建测试状态
+        state = GameState.create_for_testing({})
+        from src.core.entities.entities import GameTurn
+        state.turn = GameTurn(turn_number=1, year=-264)
+        state.mark_phase_executed("revenue")
+
+        # 创建两个派系
+        faction_opt = Faction(id="optimates", name="Optimates", treasury=100)
+        faction_pop = Faction(id="populares", name="Populares", treasury=100)
+        state.add_faction(faction_opt)
+        state.add_faction(faction_pop)
+
+        # 创建两个人人物
+        fig1 = Figure(id=101, name="被抛弃者", faction_id=None)
+        fig1.abandoned_by = "optimates"  # 被 Optimates 抛弃
+        fig1.wealth = 0
+        fig2 = Figure(id=102, name="自由人", faction_id=None)
+        fig2.wealth = 0
+        state.add_member(fig1)
+        state.add_member(fig2)
+
+        # 将两人加入 Curia
+        state.curia.add_figure(fig1)
+        state.curia.add_figure(fig2)
+
+        # 设置派系成员（初始为空，有空缺）
+        faction_opt.member_ids = []
+        faction_pop.member_ids = []
+
+        # 模拟决策器，返回固定出价
+        mock_decider = MagicMock(spec=RecruitmentDecider)
+
+        def decide_bids_side_effect(faction, available, vacancies, state):
+            # 只有 Populares 出价 fig2，Optimates 不出价
+            if faction.id == "populares":
+                return {102: 15}
+            return {}
+
+        mock_decider.decide_bids.side_effect = decide_bids_side_effect
+
+        # 创建命令实例，传入模拟的 recruitment_decider
+        cmd = ForumCommand(state, recruitment_decider=mock_decider)
+
+        # 执行招募流程
+        cmd._process_recruitment()
+
+        # 验证结果
+        # fig2 应加入 Populares
+        self.assertEqual(fig2.faction_id, "populares")
+        self.assertIn(102, faction_pop.member_ids)
+        # fig2 财富增加 15
+        self.assertEqual(fig2.wealth, 15)
+        # Populares 国库减少 15
+        self.assertEqual(faction_pop.treasury, 85)
+
+        # fig1 应仍在 Curia，未被招募
+        self.assertIsNone(fig1.faction_id)
+        self.assertIn(fig1, state.curia.get_all_available())
+        # Optimates 国库未变
+        self.assertEqual(faction_opt.treasury, 100)
+
+        # 验证 Curia 中只剩下 fig1
+        curia_figures = state.curia.get_all_available()
+        self.assertEqual(len(curia_figures), 1)
+        self.assertEqual(curia_figures[0].id, 101)
+
+        # 验证决策器被正确调用
+        self.assertEqual(mock_decider.decide_bids.call_count, 2)
 
 
 if __name__ == "__main__":

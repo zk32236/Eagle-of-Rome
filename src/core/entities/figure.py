@@ -176,6 +176,7 @@ class Figure:
     is_dead: bool = False
     is_present: bool = True
     is_available: bool = True
+    abandoned_by: Optional[str] = None  # 记录抛弃该人物的派系ID
 
     # 历史记录
     office_history: List[OfficeTerm] = field(default_factory=list)

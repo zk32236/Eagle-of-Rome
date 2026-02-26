@@ -79,6 +79,11 @@ class Faction:
     _province_owned: List[int] = field(default_factory=list)  # 控制的行省ID列表
     _knight_contract_count: int = 0          # 派系内骑士持有的合同总数
 
+    def get_vacancies(self, state: 'GameState', member_limit: int) -> int:
+        """计算派系空缺数（基于存活成员）"""
+        current_members = len(self.get_members(state))
+        return max(0, member_limit - current_members)
+
     def remove_member(self, member_id: int):
         """
         从派系成员列表中移除指定人物ID。

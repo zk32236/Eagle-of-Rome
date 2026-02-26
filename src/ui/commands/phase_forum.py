@@ -12,6 +12,8 @@ from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.ui.commands.func_status import get_progress_bar
 from src.core.deciders.impl.auto_retirement_decider import AutoRetirementDecider
 from src.core.deciders.retirement_decider import RetirementDecider
+from src.core.deciders.impl.auto_recruitment_decider import AutoRecruitmentDecider
+from src.core.deciders.recruitment_decider import RecruitmentDecider
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -24,9 +26,10 @@ class ForumCommand(Command):
     aliases = ["f"]
     description = "执行广场阶段 (Forum Phase)"
 
-    def __init__(self, state: "GameState", retirement_decider=None):
+    def __init__(self, state: "GameState", retirement_decider=None, recruitment_decider=None):
         super().__init__(state)
         self.retirement_decider = retirement_decider or AutoRetirementDecider(state)
+        self.recruitment_decider = recruitment_decider or AutoRecruitmentDecider()
 
     def execute(self, args: List[str]) -> bool:
         if not self.state.is_phase_executed("revenue"):
@@ -73,6 +76,9 @@ class ForumCommand(Command):
         else:
             print(f"\n   📭 No new contracts.")
 
+        # 处理招募
+        self._process_recruitment()
+
         # 5. 对包税合同竞标
         for contract in new_contracts:
             if contract.contract_type == ContractType.TAX_FARMING:
@@ -82,6 +88,7 @@ class ForumCommand(Command):
         for contract in new_contracts:
             if contract.contract_type == ContractType.PUBLIC_WORKS:
                 self._auto_bid_for_works(contract)
+
 
         # 7. 显示待授予合同
         self._display_contracts(terms)
@@ -93,6 +100,80 @@ class ForumCommand(Command):
         self.state.mark_phase_executed("forum")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
+
+    def _process_recruitment(self):
+        """处理派系从广场招募人物"""
+        member_limit = self.state.config.get("economic_rules.faction_member_limit", 6)
+
+        factions = list(self.state.factions.values())
+        if not factions:
+            return
+
+        available_figures = self.state.curia.get_all_available()
+        if not available_figures:
+            return
+
+        all_bids = {}
+        for faction in factions:
+            vacancies = faction.get_vacancies(self.state, member_limit)
+            if vacancies <= 0:
+                continue
+
+            bids = self.recruitment_decider.decide_bids(faction, available_figures, vacancies, self.state)
+            if not bids:
+                continue
+
+            for fig_id, amount in bids.items():
+                if faction.treasury < amount:
+                    continue
+                if fig_id not in all_bids:
+                    all_bids[fig_id] = {}
+                all_bids[fig_id][faction.id] = amount
+
+        if not all_bids:
+            print(f"\n   📭 No recruitment bids this year.")
+            return
+
+        # 打印出价情况
+        print(f"\n   📢 招募出价情况：")
+        for fig_id, faction_bids in all_bids.items():
+            figure = self.state.get_member(fig_id)
+            if not figure:
+                continue
+            bid_str = ", ".join([f"{self.state.get_faction(fid).name}:{amt}" for fid, amt in faction_bids.items()])
+            print(f"      {figure.get_formal_name()} 收到出价：{bid_str}")
+
+        recruited_count = 0
+        for fig_id, faction_bids in all_bids.items():
+            figure = self.state.get_member(fig_id)
+            if not figure or figure not in self.state.curia.get_all_available():
+                continue
+
+            max_amount = max(faction_bids.values())
+            top_factions = [fid for fid, amt in faction_bids.items() if amt == max_amount]
+
+            if len(top_factions) > 1:
+                winner_fid = random.choice(top_factions)
+            else:
+                winner_fid = top_factions[0]
+
+            winner_faction = self.state.get_faction(winner_fid)
+
+            winner_faction.treasury -= max_amount
+            figure.wealth += max_amount
+
+            self.state.curia.remove_figure(fig_id)
+            figure.faction_id = winner_fid
+            winner_faction.member_ids.append(fig_id)
+            figure.abandoned_by = None
+
+            recruited_count += 1
+            print(f"      ✅ {figure.get_formal_name()} 加入 {winner_faction.name}，成交价 {max_amount}")
+
+        if recruited_count > 0:
+            print(f"   🎉 {recruited_count} 名人物被招募")
+        else:
+            print(f"   📭 No successful recruitments.")
 
     def _process_retirements(self):
         """处理各派系抛弃人物"""
@@ -107,7 +188,8 @@ class ForumCommand(Command):
                 continue
             # 从派系移除
             faction.remove_member(member_id)
-            figure.faction_id = None
+            figure.abandoned_by = faction.id    # 先保存faction.id
+            figure.faction_id = None            #再清空faction.id
             figure.is_available = True  # 标记为可招募
             # 放入 Curia
             self.state.curia.add_figure(figure)
@@ -338,6 +420,7 @@ class ForumCommand(Command):
             print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {bid_amount} (降价 {r*100:.0f}%)")
 
         self.state.resolve_auction(contract.id)
+
 
     def _display_contracts(self, terms):
         """显示待授予合同"""

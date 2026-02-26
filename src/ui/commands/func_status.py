@@ -220,6 +220,48 @@ class StatusFigureCommand(Command):
             print(f"是否死亡: {'是' if fig.is_dead else '否'}")
             print("=" * 50)
 
+class FactionStatusCommand(Command):
+    """显示所有派系状态命令"""
+
+    name = "factions"
+    aliases = ["fs"]
+    description = "显示所有派系状态（金库、成员数、总影响力）"
+
+    def __init__(self, state: "GameState"):
+        super().__init__(state)
+
+    def execute(self, args: List[str]) -> bool:
+        """执行 factions 命令"""
+        if not self.state:
+            print("错误: 游戏状态未初始化")
+            return False
+
+        print("\n" + "=" * 60)
+        print("   🏛️ 派系状态一览")
+        print("=" * 60)
+
+        for faction in self.state.factions.values():
+            members = faction.get_members(self.state)
+            member_count = len(members)
+            total_influence = sum(m.influence for m in members)
+            player_flag = " [玩家]" if faction.is_player else ""
+
+            # 计算平均影响力
+            avg_influence = total_influence // member_count if member_count > 0 else 0
+
+            print(f"\n{faction.name} ({faction.id}){player_flag}")
+            print(f"   💰 金库: {faction.treasury} Talents")
+            print(f"   👥 成员: {member_count} 人")
+            print(f"   📊 总影响力: {total_influence}")
+            print(f"   📈 平均影响力: {avg_influence}")
+
+            # 如果成员数为0，显示警告
+            if member_count == 0:
+                print(f"   ⚠️  派系无人！")
+
+        print("=" * 60)
+        return True
+
 def get_progress_bar(state, width=7):
     """生成进度条字符串，格式：[▓░░░░░░] 已执行/总数"""
     executed = len(state.executed_phases)
