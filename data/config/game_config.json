@@ -1,6 +1,9 @@
 {
   "terminology_preset": "original",
   "enable_threats": false,
+  "testing": {
+    "budget_always_pass": true
+  },
   "political_rules": {
     "leader_cooldown_years": 2,
     "leaders_per_election": 2,
@@ -82,7 +85,7 @@
   "mortality_rules": {
     "death_count": 1,
     "event_deck": [
-      {"name": "死神来了", "type": "厄运", "effect": "death", "weight": 1},
+      {"name": "死神来了", "type": "厄运", "effect": "death", "weight": 0},
       {"name": "丰调雨顺", "type": "好运", "effect": "bountiful_harvest", "weight": 1},
       {"name": "国泰民安", "type": "好运", "effect": "peace", "weight": 1},
       {"name": "天降猛男", "type": "好运", "effect": "mighty_man", "weight": 1},
