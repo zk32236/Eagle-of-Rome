@@ -54,6 +54,8 @@ class War:
     strength: int = 5  # 基础强度（战斗难度）
     naval_support_required: bool = False  # 是否需要海军支援
     naval_strength: int = 0  # 海军战斗强度（如需要）
+    proposed_legions: int = 0  # 元老院批准的最大军团数
+    declared_by: Optional[int] = None  # 宣战的执政官 ID
 
     # 土地战斗属性
     land_battle: bool = True  # 是否进行陆战

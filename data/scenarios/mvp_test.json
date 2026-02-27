@@ -1,6 +1,6 @@
 {
     "scenario_name": "MVP 0.5 广场阶段功能开发",
-    "start_year": -281,
+    "start_year": -280,
     "initial_state": {
         "treasury": 100,
         "factions": [

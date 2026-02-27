@@ -37,8 +37,19 @@ class PopulationCommand(Command):
             print("⚠️ 人口阶段在本回合已执行过")
             return False
 
+        # ===== 新增：清理广场中未被招募的人物 =====
+        curia = self.state.curia
+        if not curia.is_empty():
+            ids_to_remove = [fig.id for fig in curia.get_all_available()]
+            for fid in ids_to_remove:
+                if fid in self.state._members:
+                    del self.state._members[fid]
+            curia.clear()
+            print(f"      🗑️ {len(ids_to_remove)} 名未被招募的人物已从游戏中消失")
+
         terms = TerminologyService.get()
         print(f"\n--- {terms.phase_population} Phase (Year {abs(self.state.turn.year)} BC) ---")
+
 
         # 选举顺序
         election_order = ["consul", "censor", "praetor", "quaestor", "tribune"]
@@ -194,11 +205,12 @@ class PopulationCommand(Command):
             in_cooldown = self._check_in_cooldown(fig, office_type, current_turn)
             cooldown_str = "OK" if not in_cooldown else "CD"
 
+            """
             print(f"         {status} {fig.name[:20]:20} ({fname:8}) "
                   f"Age:{fig.age:2} {qual_name}:{qual_attr:2} "
                   f"Prereq:{prereq_str} Cooldown:{cooldown_str} "
                   f"→ {reason if not can_hold else 'Eligible'}")
-
+            """
             if can_hold:
                 eligible.append(fig)
 
@@ -305,12 +317,15 @@ class PopulationCommand(Command):
         """卸任该职位的所有现任者，并设置前任公职"""
         for fig in self.state.get_living_members():
             if fig.office == office_type:
-                # 记录历史（结束回合）
+                # 记录历史
                 fig.add_office_history(office_type, self.state.turn.turn_number - 1, self.state.turn.turn_number)
                 # 设置为前任公职
                 fig.office = f"ex-{office_type}"
                 fig.update_influence()
                 print(f"      📤 {fig.name} steps down as {office_type}, now {fig.office} (influence: {fig.influence})")
+                # 如果是执政官，从 leader_ids 中移除
+                if office_type == "consul" and fig.id in self.state.turn.leader_ids:
+                    self.state.turn.leader_ids.remove(fig.id)
 
     def _get_min_age(self, office_type: str) -> int:
         """从配置获取最低年龄要求"""

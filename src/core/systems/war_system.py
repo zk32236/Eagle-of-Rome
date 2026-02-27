@@ -215,8 +215,8 @@ class WarSystem:
         return [w for w in self._active_wars if w.status == WarStatus.ACTIVE]
 
     def get_war_by_id(self, war_id: str) -> Optional[War]:
-        """通过ID查找战争"""
-        all_wars = self._war_deck + self._war_discard + self._active_wars
+        """通过ID查找战争（搜索所有战争列表）"""
+        all_wars = self._war_deck + self._war_discard + self._active_wars + self._threats
         for war in all_wars:
             if war.id == war_id:
                 return war
@@ -230,6 +230,23 @@ class WarSystem:
         return None
 
     # ========== 战争操作 ==========
+
+    def activate_war(self, war_id: str, consul_id: int, legions: int) -> bool:
+        """将威胁战争激活，记录宣战者和批准军团数"""
+        war = self.get_war_by_id(war_id)
+        if not war or war.status != WarStatus.THREAT:
+            print(f"      ⚠️ 激活战争失败：战争 {war_id} 不存在或不是威胁状态")
+            return False
+        war.status = WarStatus.ACTIVE
+        war.declared_by = consul_id
+        war.proposed_legions = legions
+        war.activation_turn = self.state.turn.turn_number
+        # 从威胁列表移到活跃列表
+        if war in self._threats:
+            self._threats.remove(war)
+        self._active_wars.append(war)
+        print(f"      ✅ 战争 {war.name} 已激活，批准军团数 {legions}")
+        return True
 
     def assign_commander(self, war_id: str, commander_id: int, legions: int = 0, fleets: int = 0) -> bool:
         """指派将领和军队到战争"""

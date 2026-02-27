@@ -2,6 +2,7 @@
 
 from typing import List, Optional, TYPE_CHECKING
 from dataclasses import dataclass, field
+from src.core.entities.figure import ClassTier
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -79,6 +80,15 @@ class Faction:
     _province_owned: List[int] = field(default_factory=list)  # 控制的行省ID列表
     _knight_contract_count: int = 0          # 派系内骑士持有的合同总数
 
+    def get_senate_influence(self, state: 'GameState') -> int:
+        total = 0
+        for mid in self.member_ids:
+            member = state.get_member(mid)
+            if member and not member.is_dead and member.is_present and not member.is_absent:
+                if member.class_tier == ClassTier.NOBILE:
+                    total += member.influence
+        return total
+
     def get_vacancies(self, state: 'GameState', member_limit: int) -> int:
         """计算派系空缺数（基于存活成员）"""
         current_members = len(self.get_members(state))
@@ -91,12 +101,14 @@ class Faction:
         if member_id in self.member_ids:
             self.member_ids.remove(member_id)
 
-    def get_total_influence(self, state: 'GameState') -> int:
+    def get_total_influence(self, state: 'GameState', only_in_rome: bool = False) -> int:
         total = 0
         for mid in self.member_ids:
             member = state.get_member(mid)
             if member and not member.is_dead and member.is_present:
-                total += member.influence   # 原 member.power
+                if only_in_rome and member.is_absent:
+                    continue
+                total += member.influence
         return total
 
     def get_members(self, state: 'GameState') -> List['Figure']:

@@ -136,6 +136,8 @@ class Figure:
         "Valerius": 1,
     }
 
+
+
     # 基础信息
     id: int
     name: str
@@ -177,6 +179,7 @@ class Figure:
     is_present: bool = True
     is_available: bool = True
     abandoned_by: Optional[str] = None  # 记录抛弃该人物的派系ID
+    is_absent: bool = False  # 新增：是否离开罗马（出征）
 
     # 历史记录
     office_history: List[OfficeTerm] = field(default_factory=list)
@@ -486,7 +489,8 @@ class Figure:
         display_name = self.get_formal_name()
         seat_share = self.get_seat_share()
 
-        return (f"{status}{tier_emoji} ID:{self.id} {display_name}{office_emoji} "
+        absent = "🚩" if self.is_absent else ""
+        return (f"{status}{tier_emoji} ID:{self.id} {display_name}{office_emoji}{absent} "
                 f"影响力{self.influence} 财富{self.wealth} 人气{self.popularity} 地产{self._land_private} 老兵{self.veterans} 席位{seat_share}")
 
     def add_office_history(self, office_type: str, start_turn: int, end_turn: Optional[int] = None):

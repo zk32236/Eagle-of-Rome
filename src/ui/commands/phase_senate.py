@@ -9,7 +9,9 @@ from src.core.localization import TerminologyService
 from src.core.entities.contract import ContractType, ContractStatus
 from src.ui.commands.func_status import get_progress_bar
 from src.core.deciders.impl.auto_budget_decider import AutoBudgetDecider
-from src.core.deciders.budget_decider import BudgetDecider
+from src.core.deciders.senate_vote_decider import SenateVoteDecider
+from src.core.deciders.impl.auto_senate_vote_decider import AutoSenateVoteDecider
+from src.core.entities.war import WarStatus
 
 
 if TYPE_CHECKING:
@@ -23,9 +25,13 @@ class SenateCommand(Command):
     aliases = ["s"]
     description = "执行元老院阶段 (Senate Phase) - 处理合同、更新派系领袖、确定主持人"
 
-    def __init__(self, state: "GameState", budget_decider: Optional[BudgetDecider] = None):
+    def __init__(self, state: "GameState",
+                 vote_decider: Optional[SenateVoteDecider] = None):
         super().__init__(state)
-        self.budget_decider = budget_decider or AutoBudgetDecider()
+        self.vote_decider = vote_decider or AutoSenateVoteDecider()
+        # 如果还需要合同选取逻辑（decide_proposals），可保留 BudgetDecider 或将其也通用化
+        # 但为简化，我们继续保留原有 budget_decider 用于选取提案
+        self.budget_decider = AutoBudgetDecider()
 
     def execute(self, args: List[str]) -> bool:
         if not self.state.is_phase_executed("population"):
@@ -55,24 +61,114 @@ class SenateCommand(Command):
         office_display = presiding.office if presiding.office else "无"
         print(f"\n   🎤 Presiding Officer: {presiding.name} ({office_display})")
 
-        # ========== 3. 合同处理 ==========
+        # 2.1 宣战提案处理（新增）
+        self._process_war_proposals()
+
+        # 2.2 任命总督处理（预留）
+
+        # 2.3 审判总督处理（预留）
+
+        # ========== 3.法案处理 ==========
+
+        # 3.1 预算审批（合同授权）
         self._process_budget_proposals(terms)
-        # self._process_pending_contracts(terms) move to phase forum
 
         self.state.mark_phase_executed("senate")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
+    import random  # 确保在文件顶部有导入
+
+    def _process_war_proposals(self):
+        ws = self.state.get_war_system()
+        if not ws:
+            return
+
+        threats = [w for w in ws._threats if w.status == WarStatus.THREAT]
+        if not threats:
+            print(f"\n   ⚔️ 没有战争威胁需要处理。")
+            return
+
+        consul_id = self.state.turn.leader_ids[0] if self.state.turn.leader_ids else None
+        if not consul_id:
+            print(f"\n   ⚠️ 没有执政官，无法处理宣战提案。")
+            return
+        consul = self.state.get_member(consul_id)
+        if not consul:
+            return
+
+        print(f"\n   ⚔️ 战争威胁处理（执政官：{consul.name}）：")
+
+        # 读取配置并打印
+        propose_chance = self.state.config.get("testing.propose_war_chance", 0.7)
+        always_declare = self.state.config.get("testing.always_declare", False)
+        min_legions = self.state.config.get("testing.min_legions", 4)
+        max_legions = self.state.config.get("testing.max_legions", 8)
+        print(f"      DEBUG: propose_chance={propose_chance}, always_declare={always_declare}")
+
+        for war in threats:
+            print(f"\n      📋 战争威胁：{war.name}")
+            print(f"         威胁等级：{war.threat_level}")
+
+            # 决定是否提议
+            if always_declare or random.random() < propose_chance:
+                legions = random.randint(min_legions, max_legions)
+                print(f"         执政官提议宣战，要求批准 {legions} 个军团。")
+            else:
+                print(f"         执政官决定暂不宣战。")
+                continue
+
+            votes_for = 0
+            votes_against = 0
+            total_influence = 0
+
+            for faction in self.state.get_active_factions():
+                influence = faction.get_senate_influence(self.state)
+                if influence == 0:
+                    continue
+                total_influence += influence
+
+                if faction.id == consul.faction_id:
+                    support = True  # 执政官派系自动支持
+                else:
+                    support = self.vote_decider.decide_vote(war, faction, self.state)
+
+                if support:
+                    votes_for += influence
+                    print(f"          {faction.name} 支持，影响力 {influence}")
+                else:
+                    votes_against += influence
+                    print(f"          {faction.name} 反对，影响力 {influence}")
+
+            if total_influence == 0:
+                print(f"          无元老在场，宣战失败。")
+                continue
+
+            support_ratio = votes_for / total_influence
+            print(
+                f"          总影响力：{total_influence}，支持 {votes_for}，反对 {votes_against}，支持率 {support_ratio:.1%}")
+
+            if support_ratio > 0.5:
+                success = ws.activate_war(war.id, consul_id, legions)
+                if success:
+                    consul.is_absent = True
+                    self.state.log_event(f"宣战通过：{war.name}，执政官 {consul.name} 出征，批准军团 {legions}")
+                    print(f"          ✅ 宣战通过！执政官 {consul.name} 出征，影响力不再计入元老院。")
+                    new_presiding = self.state.get_presiding_officer()
+                    if new_presiding:
+                        print(f"          元老院新主持人：{new_presiding.name}（官职 {new_presiding.office}）")
+                else:
+                    print(f"          ⚠️ 激活战争失败，请联系管理员。")
+            else:
+                print(f"          ❌ 宣战被元老院否决。")
+
     def _process_budget_proposals(self, terms):
-        """处理待决合同的预算提案与表决"""
         pending = [c for c in self.state.contracts if c.status == ContractStatus.PENDING]
         if not pending:
             print(f"\n   📭 No pending contracts for budget.")
             return
 
         print(f"\n   📋 Budget Proposals:")
-
-        # 1. 由决策器选取本次提交表决的合同
         proposals = self.budget_decider.decide_proposals(pending, self.state)
         if not proposals:
             print(f"      No contracts selected for vote.")
@@ -81,20 +177,38 @@ class SenateCommand(Command):
         for contract in proposals:
             print(f"\n      📊 {contract.name}")
 
-            # 2. 对每个合同进行表决
-            approved = self.budget_decider.decide_vote(contract, self.state)
-            if approved:
-                contract.status = ContractStatus.BUDGETED
-                print(f"         ✅ 预算通过，状态变为 BUDGETED")
-            else:
-                print(f"         ❌ 预算否决，保持 PENDING")
+            votes_for = 0
+            votes_against = 0
+            total_influence = 0
 
-        # 3. 显示未提交表决的合同
-        not_selected = [c for c in pending if c not in proposals]
-        if not_selected:
-            print(f"\n      ⏸️ 未提交表决的合同（保持 PENDING）:")
-            for c in not_selected:
-                print(f"         {c.name}")
+            for faction in self.state.get_active_factions():
+                influence = faction.get_senate_influence(self.state)
+                if influence == 0:
+                    continue
+                total_influence += influence
+
+                support = self.vote_decider.decide_vote(contract, faction, self.state)
+                if support:
+                    votes_for += influence
+                    print(f"          {faction.name} 支持，影响力 {influence}")
+                else:
+                    votes_against += influence
+                    print(f"          {faction.name} 反对，影响力 {influence}")
+
+            if total_influence == 0:
+                print(f"          无元老在场，合同无法表决。")
+                continue
+
+            support_ratio = votes_for / total_influence
+            print(
+                f"          总影响力：{total_influence}，支持 {votes_for}，反对 {votes_against}，支持率 {support_ratio:.1%}")
+
+            if support_ratio > 0.5:
+                contract.status = ContractStatus.BUDGETED
+                print(f"          ✅ 预算通过，状态变为 BUDGETED")
+                self.state.log_event(f"合同预算通过：{contract.name}")
+            else:
+                print(f"          ❌ 预算否决，保持 PENDING")
 
     def _process_pending_contracts(self, terms):
         """处理待决合同"""
