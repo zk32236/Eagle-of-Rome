@@ -1,4 +1,5 @@
 # src/core/systems/military_system.py
+# 修改内容：添加军团恢复相关方法
 
 from typing import List, Optional, Dict, Tuple
 from src.core.entities.legion import Legion, LegionStatus
@@ -15,6 +16,7 @@ class MilitarySystem:
     2. 征召/解散逻辑
     3. 维护费计算
     4. 军团指派到战争
+    5. 新增：军团恢复机制
     """
 
     MAX_LEGIONS = 10
@@ -38,12 +40,12 @@ class MilitarySystem:
         return self._legions
 
     def get_available_legions(self) -> List[Legion]:
-        """获取可征召的军团（包括已解散的）"""
+        """获取可征召的军团（包括未征召和已解散的）"""
         return [l for l in self._legions
                 if l.status in (LegionStatus.UNRAISED, LegionStatus.DISBANDED)]
 
     def get_active_legions(self) -> List[Legion]:
-        """获取已征召的活跃军团"""
+        """获取已征召的活跃军团（ACTIVE 和 VETERAN）"""
         return [l for l in self._legions
                 if l.status in (LegionStatus.ACTIVE, LegionStatus.VETERAN)]
 
@@ -62,6 +64,46 @@ class MilitarySystem:
                 return legion
         return None
 
+    # ========== 新增：获取被摧毁的军团 ==========
+    def get_destroyed_legions(self) -> List[Legion]:
+        """获取所有被摧毁的军团，按摧毁回合升序排序（最老的在前面）"""
+        destroyed = [l for l in self._legions if l.status == LegionStatus.DESTROYED]
+        destroyed.sort(key=lambda l: l.destroyed_turn)
+        return destroyed
+
+    # ========== 新增：军团恢复逻辑 ==========
+    def _process_legion_recovery(self, current_turn: int) -> List[int]:
+        """
+        处理军团恢复：
+        - 从配置读取恢复间隔 interval
+        - 遍历所有被摧毁的军团，检查是否满足恢复条件（current_turn - destroyed_turn >= interval）
+        - 每 interval 回合恢复一个最老的被摧毁军团（满足条件的第一个）
+        - 恢复后的军团状态变为 DISBANDED
+        返回本次恢复的军团编号列表（用于日志）
+        """
+        interval = self.state.config.get("combat_rules.legion_recovery_interval", 5)
+        if interval <= 0:
+            return []
+
+        destroyed = self.get_destroyed_legions()
+        if not destroyed:
+            return []
+
+        recovered = []
+        # 从最老的开始检查，恢复第一个满足条件的
+        for legion in destroyed:
+            if current_turn - legion.destroyed_turn >= interval:
+                if legion.recover():
+                    recovered.append(legion.number)
+                    # 注意：每次只恢复一个（最老且满足条件的）
+                    break
+
+        if recovered:
+            terms = TerminologyService.get()
+            print(f"      ♻️ 军团 {recovered[0]} 已恢复，可重新征召")
+
+        return recovered
+
     # ========== 军团操作 ==========
 
     def recruit_legion(self, legion_number: int) -> Tuple[bool, str]:
@@ -72,16 +114,16 @@ class MilitarySystem:
         if not legion:
             return False, f"Invalid {terms.legion} number"
 
-        # 检查是否可以征召（未征召或已解散）
+        # 检查是否可以征召（UNRAISED 或 DISBANDED）
         if legion.status not in (LegionStatus.UNRAISED, LegionStatus.DISBANDED):
             return False, f"{legion.name} already active"
 
         # 检查国库
-        recruit_cost = 10
+        recruit_cost = self.state.get_economic_rule("legion_recruit_cost", 10)
         if self.state.treasury < recruit_cost:
             return False, f"Insufficient treasury ({recruit_cost} needed)"
 
-        # 执行征召（重置状态）
+        # 执行征召
         legion.status = LegionStatus.ACTIVE
         legion.is_veteran = False  # 重新招募不是老兵
         self.state.treasury -= recruit_cost
@@ -116,7 +158,7 @@ class MilitarySystem:
         return False, "Cannot disband this legion"
 
     def assign_to_war(self, legion_numbers: List[int], war_id: str, commander_id: int) -> Tuple[int, str]:
-        """指派多个军团到战争（修复：严格检查征召状态）"""
+        """指派多个军团到战争"""
         terms = TerminologyService.get()
         assigned = 0
         errors = []
@@ -127,13 +169,9 @@ class MilitarySystem:
                 errors.append(f"Invalid {terms.legion} {num}")
                 continue
 
-            # 严格检查：必须已征召且活跃
-            if legion.status == LegionStatus.UNRAISED:
-                errors.append(f"{legion.name} not recruited (unraised)")
-                continue
-
-            if legion.status == LegionStatus.DISBANDED:
-                errors.append(f"{legion.name} disbanded")
+            # 必须已征召且活跃
+            if legion.status not in (LegionStatus.ACTIVE, LegionStatus.VETERAN):
+                errors.append(f"{legion.name} not active")
                 continue
 
             if legion.war_id:
@@ -225,36 +263,35 @@ class MilitarySystem:
             legion.battles_fought += 1
 
             if disaster:
-                # 灾难：军团覆灭
-                legion.status = LegionStatus.DISBANDED
-                legion.recall()
+                # 灾难：军团覆灭 -> 标记为 DESTROYED
+                legion.mark_destroyed(self.state.turn.turn_number)
                 print(f"      💀 {legion.name} destroyed in disaster!")
             elif victory:
                 # 胜利：晋升为老兵
                 legion.promote_to_veteran()
-                legion.recall()  # 凯旋召回
+                legion.recall()
                 print(f"      🏆 {legion.name} returns in triumph!")
             else:
                 # 失败或僵持：保持现状
                 print(f"      ⏳ {legion.name} remains in field")
-                pass
 
     # ========== 显示 ==========
 
     def get_military_summary(self) -> str:
-        """获取军事摘要"""
+        """获取军事摘要（已包含 DESTROYED 统计）"""
         terms = TerminologyService.get()
 
-        unraised = len(self.get_available_legions())
-        active = len([l for l in self.get_active_legions() if not l.is_veteran])
-        veteran = len([l for l in self.get_active_legions() if l.is_veteran])
+        unraised = len([l for l in self._legions if l.status == LegionStatus.UNRAISED])
+        active = len([l for l in self._legions if l.status in (LegionStatus.ACTIVE, LegionStatus.VETERAN)])
+        disbanded = len([l for l in self._legions if l.status == LegionStatus.DISBANDED])
+        destroyed = len([l for l in self._legions if l.status == LegionStatus.DESTROYED])
         assigned = len(self.get_assigned_legions())
 
         total_cost, _ = self.calculate_maintenance()
 
         lines = [
             f"\n   🛡️  {terms.legion} Status:",
-            f"      Available: {unraised} | Active: {active} | Veteran: {veteran}",
+            f"      Available: {unraised} | Active: {active} | Disbanded: {disbanded} | Destroyed: {destroyed}",
             f"      Assigned to wars: {assigned}",
             f"      Maintenance: {total_cost} {terms.currency}/turn",
         ]
@@ -272,4 +309,5 @@ class MilitarySystem:
             vet = "⭐" if info['veteran'] else " "
             cost = info['cost']
             war = f"→War" if info['assigned'] else ""
-            print(f"      {status} {info['name']}{vet} [Cost:{cost}] {war}")
+            destroyed_info = f" (摧毁于{legion.destroyed_turn})" if legion.status == LegionStatus.DESTROYED else ""
+            print(f"      {status} {info['name']}{vet}[Cost:{cost}] {war}{destroyed_info}")

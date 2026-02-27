@@ -3,7 +3,7 @@
   "enable_threats": true,
   "testing": {
     "always_declare": false,
-    "propose_war_chance": 0.5,
+    "propose_war_chance": 0.7,
     "min_legions": 4,
     "max_legions": 8,
     "budget_always_pass": false,
@@ -22,11 +22,11 @@
       "tribune": 2
     },
     "offices_per_election": {
-      "consul": 1,
-      "censor": 1,
-      "praetor": 1,
-      "quaestor": 1,
-      "tribune": 1
+      "consul": 2,
+      "censor": 2,
+      "praetor": 2,
+      "quaestor": 2,
+      "tribune": 2
     },
     "candidates_per_election": {
       "consul": 2,
@@ -101,6 +101,14 @@
   "decay_rules": {
     "veterans_annual_decay": 0.20,
     "popularity_annual_decay": 0.50
+  },
+  "combat_rules": {
+    "triumph_threshold": 12,
+    "victory_threshold": 6,
+    "defeat_threshold": -3,
+    "disaster_rolls": [2, 3, 4],
+    "standoff_rolls": [5, 6, 7, 8, 9],
+    "legion_recovery_interval": 5
   },
   "economic_rules": {
     "faction_stipend": 10,

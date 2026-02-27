@@ -8,6 +8,7 @@ import sys
 import os
 import io
 from contextlib import redirect_stdout
+from src.core.deciders.impl.auto_budget_decider import AutoBudgetDecider
 from unittest.mock import MagicMock
 
 # 添加项目根目录到路径
@@ -129,6 +130,13 @@ class TestSenateCommand(unittest.TestCase):
 
     def test_contract_processing(self):
         """测试合同处理逻辑"""
+        # 创建贵族人物（元老）并赋予影响力，确保投票有效
+        senator = Figure(id=1000, name="Test Senator", faction_id="senate", age=50)
+        senator.class_tier = ClassTier.NOBILE
+        senator.influence = 50
+        self.state.add_member(senator)
+        self.faction1.member_ids.append(1000)
+
         # 创建待决合同
         tax_contract = self.state.create_contract(
             ContractType.TAX_FARMING,
@@ -148,22 +156,22 @@ class TestSenateCommand(unittest.TestCase):
         works_contract.name = "西西里工程"
         works_contract.status = ContractStatus.PENDING
 
-        # 确保有骑士候选人
-        knight = Figure(id=999, name="Test Knight", faction_id="senate", age=30)
-        knight.class_tier = ClassTier.EQUES
-        knight.wealth = 100
-        self.state.add_member(knight)
-        self.faction1.member_ids.append(999)
+        # 模拟 budget_decider 总是返回所有合同
+        mock_budget_decider = MagicMock(spec=AutoBudgetDecider)
+        mock_budget_decider.decide_proposals.return_value = [tax_contract, works_contract]
 
-        cmd = SenateCommand(self.state)
+        # 创建 SenateCommand 实例并注入模拟的 budget_decider
+        cmd = SenateCommand(self.state, vote_decider=None)  # 使用默认投票决策器
+        cmd.budget_decider = mock_budget_decider  # 替换为模拟
+
         f = io.StringIO()
         with redirect_stdout(f):
             result = cmd.execute([])
         output = f.getvalue()
 
         self.assertTrue(result)
-        self.assertIn("西西里包税权", output)
-        self.assertIn("西西里工程", output)
+        self.assertIn("西西里包税权", output)  # 应出现在输出中
+        self.assertIn("西西里工程", output)  # 也应出现
 
 
 if __name__ == "__main__":

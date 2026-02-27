@@ -178,7 +178,6 @@ class PopulationCommand(Command):
     def _elect_single_magistrate(self, office_type: str, terms) -> Optional['Figure']:
         """选举单个官员"""
         current_turn = self.state.turn.turn_number
-
         # 获取候选人数量配置（默认2）
         num_candidates = self.state.config.get("political_rules", {}).get("candidates_per_election", {}).get(office_type, 2)
 
@@ -250,7 +249,7 @@ class PopulationCommand(Command):
 
         if winner:
             win_faction = self.state.get_faction(winner.faction_id)
-            self._remove_office_holders(office_type)  # 先卸任同职位的人
+
             print(f"\n      ✓ WINNER: {winner.name} ({win_faction.name if win_faction else '?'})")
 
             # 任命

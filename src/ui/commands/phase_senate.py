@@ -104,7 +104,7 @@ class SenateCommand(Command):
         always_declare = self.state.config.get("testing.always_declare", False)
         min_legions = self.state.config.get("testing.min_legions", 4)
         max_legions = self.state.config.get("testing.max_legions", 8)
-        print(f"      DEBUG: propose_chance={propose_chance}, always_declare={always_declare}")
+
 
         for war in threats:
             print(f"\n      📋 战争威胁：{war.name}")
