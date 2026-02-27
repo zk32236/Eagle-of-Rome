@@ -66,21 +66,28 @@ class ForumCommand(Command):
         self._process_recruitment()
         self._process_war_threats()
 
+
+
         # 3. 生成合同（仅生成，不竞标）
         new_contracts = self._generate_contracts()
 
-        # 4. 公告新合同
-        if new_contracts:
-            print(f"\n   📜 {len(new_contracts)} new contract(s) announced:")
-            for c in new_contracts:
+        # 4. 公告已预算的合同（即将竞标）
+        budgeted_contracts = [c for c in self.state.contracts if c.status == ContractStatus.BUDGETED]
+        if budgeted_contracts:
+            print(f"\n   📜 有预算的合同 ({len(budgeted_contracts)} 份) 将进行竞标：")
+            for c in budgeted_contracts:
                 type_name = "包税" if c.contract_type == ContractType.TAX_FARMING else "工程"
                 print(f"      {type_name}: {c.name}")
         else:
-            print(f"\n   📭 No new contracts.")
+            print(f"\n   📭 没有待竞标的预算合同。")
 
         # 在 _auto_bid_for_works 循环之前，这样新合同就会触发民变。
         # 因为新合同还没有开始收税，要到下个回合的r阶段才实际收税引起民变。
         self._process_civil_unrest()
+
+        self._process_budgeted_auctions()
+
+        """
 
         # 5. 对包税合同竞标
         for contract in new_contracts:
@@ -91,7 +98,7 @@ class ForumCommand(Command):
         for contract in new_contracts:
             if contract.contract_type == ContractType.PUBLIC_WORKS:
                 self._auto_bid_for_works(contract)
-
+        """
 
         # 7. 显示待授予合同
         self._display_contracts(terms)
@@ -109,8 +116,23 @@ class ForumCommand(Command):
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
+    def _process_budgeted_auctions(self):
+        """对已预算的合同进行竞标"""
+        budgeted = [c for c in self.state.contracts if c.status == ContractStatus.BUDGETED]
+        if not budgeted:
+            return
+
+        print(f"\n   🔔 对已预算合同进行竞标：")
+        for contract in budgeted:
+            if contract.contract_type == ContractType.TAX_FARMING:
+                self._auto_bid_for_contract(contract)
+            elif contract.contract_type == ContractType.PUBLIC_WORKS:
+                self._auto_bid_for_works(contract)
+
     def _process_civil_unrest(self):
         """处理民变触发与自动升级，并打印详细信息"""
+        if not self.state.config.get("enable_threats", True):
+            return
         print(f"\n   📊 行省民变状态：")
         base_tax_rate = self.state.get_economic_rule("province_tax_rate", 0.1)
         # 从配置读取意大利触发阈值，键名应与配置文件一致
@@ -373,7 +395,7 @@ class ForumCommand(Command):
 
     def _generate_contracts(self):
         """生成包税权合同和公共工程合同，返回合同列表（不竞标）"""
-        from src.core.entities.contract import ContractType
+        from src.core.entities.contract import ContractType, ContractStatus
 
         contracts = []
         config = self.state.config
@@ -381,62 +403,132 @@ class ForumCommand(Command):
         private_income_rate = config.get("economic_rules.private_land_income_rate", 0.05)
         province_tax_rate = config.get("economic_rules.province_tax_rate", 0.1)
         auction_ratio = config.get("economic_rules.tax_auction_ratio", 0.8)
-        year = self.state.turn.year
-        year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
 
-        # 包税合同
+        # ========== 1. 处理续约合同 ==========
+        for contract in self.state.contracts:
+            # 包税合同：剩余1年时生成新待决合同
+            if contract.contract_type == ContractType.TAX_FARMING and contract.status == ContractStatus.ACTIVE:
+                if contract.remaining_years == 1:
+                    province = self.state.get_province(contract.province_id)
+                    if not province:
+                        continue
+                    existing = any(c for c in self.state.contracts
+                                   if c.province_id == contract.province_id
+                                   and c.contract_type == ContractType.TAX_FARMING
+                                   and c.status == ContractStatus.PENDING)
+                    if not existing:
+                        public_land = province.land_public
+                        if public_land == 0:
+                            continue
+                        land_value = public_land * land_price
+                        base_income = int(land_value * private_income_rate)
+                        base_tax = int(base_income * province_tax_rate)
+                        base_cost = int(base_tax * auction_ratio)
+
+                        new_contract = self.state.create_contract(
+                            ContractType.TAX_FARMING,
+                            province.province_id,
+                            base_cost,
+                            self.state.turn.turn_number
+                        )
+                        year = self.state.turn.year
+                        year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
+                        new_contract.name = f"{province.name}包税权 ({year_display})"
+                        new_contract.description = f"{province.name}行省税收承包权（续约）"
+                        new_contract.expected_profit = base_tax - base_cost
+                        new_contract.duration_years = config.get("economic_rules.tax_contract_duration", 5)
+                        contracts.append(new_contract)
+                        print(f"      📊 续约包税权合同生成：{province.name} 底价 {base_cost}")
+
+            # 工程合同：竣工后质保剩余1年时生成新待决合同
+            elif contract.contract_type == ContractType.PUBLIC_WORKS and contract.status == ContractStatus.COMPLETED:
+                if contract.warranty_remaining == 1:
+                    province = self.state.get_province(contract.province_id)
+                    if not province:
+                        continue
+                    existing = any(c for c in self.state.contracts
+                                   if c.province_id == contract.province_id
+                                   and c.contract_type == ContractType.PUBLIC_WORKS
+                                   and c.status == ContractStatus.PENDING)
+                    if not existing:
+                        public_land = province.land_public
+                        if public_land == 0:
+                            continue
+                        land_value = public_land * land_price
+                        infra_rate = config.get("economic_rules.infrastructure_cost_rate", 0.001)
+                        budget_margin = config.get("economic_rules.project_budget_margin", 0.2)
+                        infra_cost = int(land_value * infra_rate)
+                        budget = int(infra_cost * (1 + budget_margin))
+
+                        year = self.state.turn.year
+                        year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
+                        new_contract = self.state.create_contract(
+                            ContractType.PUBLIC_WORKS,
+                            province.province_id,
+                            budget,
+                            self.state.turn.turn_number
+                        )
+                        new_contract.name = f"{province.name}工程 ({year_display})"
+                        new_contract.description = f"{province.name}公共建设项目（续约）"
+                        new_contract._original_budget = budget
+                        contracts.append(new_contract)
+                        print(f"      🏗️ 续约工程合同生成：{province.name} 预算 {budget}")
+
+        # ========== 2. 处理全新合同 ==========
         for province in self.state.get_all_provinces():
-            if province.province_id == 0:  # 跳过意大利
-                continue
-            if province.tax_contract_id is not None:
-                continue
-            public_land = province.land_public
-            if public_land == 0:
-                continue
+            # 包税合同（意大利不生成）
+            if province.province_id != 0:
+                has_tax_active = any(c for c in self.state.contracts
+                                     if c.province_id == province.province_id
+                                     and c.contract_type == ContractType.TAX_FARMING
+                                     and c.status in (
+                                     ContractStatus.ACTIVE, ContractStatus.PENDING, ContractStatus.BUDGETED))
+                if not has_tax_active and province.land_public > 0:
+                    land_value = province.land_public * land_price
+                    base_income = int(land_value * private_income_rate)
+                    base_tax = int(base_income * province_tax_rate)
+                    base_cost = int(base_tax * auction_ratio)
 
-            land_value = public_land * land_price
-            base_income = int(land_value * private_income_rate)
-            base_tax = int(base_income * province_tax_rate)
-            base_cost = int(base_tax * auction_ratio)
+                    contract = self.state.create_contract(
+                        ContractType.TAX_FARMING,
+                        province.province_id,
+                        base_cost,
+                        self.state.turn.turn_number
+                    )
+                    year = self.state.turn.year
+                    year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
+                    contract.name = f"{province.name}包税权 ({year_display})"
+                    contract.description = f"{province.name}行省税收承包权"
+                    contract.expected_profit = base_tax - base_cost
+                    contract.duration_years = config.get("economic_rules.tax_contract_duration", 5)
+                    contracts.append(contract)
+                    print(f"      📊 新包税权合同生成：{province.name} 底价 {base_cost}")
 
-            contract = self.state.create_contract(
-                ContractType.TAX_FARMING,
-                province.province_id,
-                base_cost,
-                self.state.turn.turn_number
-            )
-            contract.name = f"{province.name}包税权 ({year_display})"
-            contract.description = f"{province.name}行省税收承包权"
-            contract.expected_profit = base_tax - base_cost
-            # 从配置读取包税合同期限
-            contract.duration_years = config.get("economic_rules.tax_contract_duration", 5)
-            contracts.append(contract)
-            print(f"      📊 包税权合同生成：{province.name} 底价 {base_cost}")
+            # 工程合同（所有行省包括意大利）
+            has_works = any(c for c in self.state.contracts
+                            if c.province_id == province.province_id
+                            and c.contract_type == ContractType.PUBLIC_WORKS
+                            and c.status not in (ContractStatus.EXPIRED, ContractStatus.COMPLETED))
+            if not has_works and province.land_public > 0:
+                land_value = province.land_public * land_price
+                infra_rate = config.get("economic_rules.infrastructure_cost_rate", 0.001)
+                budget_margin = config.get("economic_rules.project_budget_margin", 0.2)
+                infra_cost = int(land_value * infra_rate)
+                budget = int(infra_cost * (1 + budget_margin))
 
-        # 公共工程合同
-        infra_rate = config.get("economic_rules.infrastructure_cost_rate", 0.001)
-        budget_margin = config.get("economic_rules.project_budget_margin", 0.2)
-        for province in self.state.get_all_provinces():
-            if province.project_contract_id is not None or province.has_project:
-                continue
-            if province.land_public == 0:
-                continue
-            land_value = province.land_public * land_price
-            infra_cost = int(land_value * infra_rate)
-            budget = int(infra_cost * (1 + budget_margin))
-
-
-            contract = self.state.create_contract(
-                ContractType.PUBLIC_WORKS,
-                province.province_id,
-                budget,
-                self.state.turn.turn_number
-            )
-            contract.name = f"{province.name}工程 ({year_display})"
-            contract.description = f"{province.name}公共建设项目"
-            contract._original_budget = budget
-            contracts.append(contract)
-            print(f"      🏗️ 公共工程合同生成：{province.name} 预算 {budget}")
+                year = self.state.turn.year
+                year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
+                contract = self.state.create_contract(
+                    ContractType.PUBLIC_WORKS,
+                    province.province_id,
+                    budget,
+                    self.state.turn.turn_number
+                )
+                contract.name = f"{province.name}工程 ({year_display})"
+                contract.description = f"{province.name}公共建设项目"
+                contract._original_budget = budget
+                contracts.append(contract)
+                print(f"      🏗️ 新公共工程合同生成：{province.name} 预算 {budget}")
 
         return contracts
 
@@ -481,14 +573,19 @@ class ForumCommand(Command):
 
             # ===== 清理该行省所有已过期的包税权合同 =====
             province_id = contract.province_id
-            expired_contracts = [c for c in self.state.contracts
-                                 if c.province_id == province_id
-                                 and c.contract_type == ContractType.TAX_FARMING
-                                 and c.status == ContractStatus.EXPIRED]
-            for ec in expired_contracts:
+            extended_contracts = [c for c in self.state.contracts
+                                  if c.province_id == province_id
+                                  and c.contract_type == ContractType.TAX_FARMING
+                                  and c.id != contract.id
+                                  and c.status == ContractStatus.ACTIVE
+                                  and c.is_extended]
+            for ec in extended_contracts:
                 if ec.id in self.state._contracts_dict:
                     del self.state._contracts_dict[ec.id]
-                    print(f"         🗑️ 清理过期包税合同: {ec.name}")
+                    province = self.state.get_province(province_id)
+                    if province and province.tax_contract_id == ec.id:
+                        province.unbind_tax_contract()
+                    print(f"         🗑️ 清理延期包税合同: {ec.name}")
         else:
             print(f"      ❌ 流拍")
 
@@ -551,9 +648,19 @@ class ForumCommand(Command):
                 annual_income=annual_income,
                 annual_cost=annual_cost
             )
-            print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {bid_amount} (降价 {r*100:.0f}%)")
+            print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {bid_amount} (降价 {r * 100:.0f}%)")
 
         self.state.resolve_auction(contract.id)
+
+        # 打印中标结果
+        if contract.status == ContractStatus.ACTIVE and contract.winning_bid:
+            winner = self.state.get_member(contract.winning_bid["bidder_id"])
+            winner_name = winner.get_formal_name() if winner else "未知"
+            r = contract.winning_bid.get("r", 0)
+            discount_pct = r * 100
+            print(f"      ✅ 中标者: {winner_name}，中标价 {contract.winning_bid['amount']}，降价 {discount_pct:.0f}%")
+        else:
+            print(f"      ❌ 流拍")
 
     def _display_contracts(self, terms):
         """显示待授予合同"""
@@ -562,20 +669,19 @@ class ForumCommand(Command):
             print(f"\n   📭 No pending contracts.")
             return
 
-        print(f"\n   📋 Pending Contracts:")
+        print(f"\n   📋 Pending Contracts (等待元老院预算表决):")
         tax_contracts = [c for c in pending if c.contract_type == ContractType.TAX_FARMING]
         works_contracts = [c for c in pending if c.contract_type == ContractType.PUBLIC_WORKS]
 
         if tax_contracts:
-            print(f"\n      📊 Tax Farming (Senate Vote Required):")
+            print(f"\n      📊 Tax Farming:")
             for c in tax_contracts:
                 print(f"         ID:{c.id} {c.name}")
                 print(f"            预付:{c.base_cost} 年收益:{c.expected_profit} 期限:{c.duration_years}年")
-                print(f"            💡 Senate Phase: use 'vote contract {c.id}'")
+
 
         if works_contracts:
-            print(f"\n      🏗️ Public Works (Consul Assigns):")
+            print(f"\n      🏗️ Public Works:")
             for c in works_contracts:
                 print(f"         ID:{c.id} {c.name}")
                 print(f"            预算:{c.base_cost} 预期利润:{c.expected_profit}")
-                print(f"            💡 Senate Phase: Consul uses 'assign works {c.id} <figure_id>'")

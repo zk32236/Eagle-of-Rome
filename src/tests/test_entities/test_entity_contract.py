@@ -139,7 +139,7 @@ class TestContract(unittest.TestCase):
     def test_mark_winner(self):
         """测试 mark_winner 方法"""
         contract = Contract.create_tax_farming(10, "阿非利加", 120, 180)
-
+        contract.status = ContractStatus.BUDGETED  # 新增
         contract.mark_winner(2001, 10, 90)
 
         self.assertEqual(contract.status, ContractStatus.ACTIVE)
@@ -157,6 +157,7 @@ class TestContract(unittest.TestCase):
     def test_mark_complete(self):
         """测试 mark_complete 方法"""
         contract = Contract.create_public_works(11, "神殿修缮", 400)
+        contract.status = ContractStatus.BUDGETED  # 新增
         contract.mark_winner(2003, 15, 80)
 
         self.assertTrue(contract.is_under_execution)
@@ -170,6 +171,7 @@ class TestContract(unittest.TestCase):
     def test_terminate(self):
         """测试 terminate 方法"""
         contract = Contract.create_tax_farming(12, "西班牙", 150, 250)
+        contract.status = ContractStatus.BUDGETED  # 新增
         contract.mark_winner(2004, 20, 120)
 
         self.assertTrue(contract.is_under_execution)
@@ -190,15 +192,17 @@ class TestContract(unittest.TestCase):
         self.assertTrue(result1)
         self.assertEqual(contract.awarded_to, 3001)
 
-        # 重置合同（测试用，实际业务中不会这样）
+        # 使用新的 mark_winner 方法处理另一个合同
         contract2 = Contract.create_tax_farming(14, "不列颠", 180, 270)
-
-        # 使用新的 mark_winner 方法
+        contract2.status = ContractStatus.BUDGETED
         contract2.mark_winner(3002, 30, 135)
+
+        # 验证 contract2 的状态
+        self.assertEqual(contract2.status, ContractStatus.ACTIVE)
         self.assertEqual(contract2.awarded_to, 3002)
         self.assertEqual(contract2.profit_base, 135)
 
-        # 两个方法都能正确设置 awarded_to
+        # 验证两个合同互不影响
         self.assertNotEqual(contract.awarded_to, contract2.awarded_to)
 
 

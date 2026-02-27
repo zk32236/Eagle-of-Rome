@@ -81,7 +81,8 @@ class TestContract:
             duration_years=3,
             target_province="西西里"
         )
-        assert contract.status == ContractStatus.PENDING
+        contract.status = ContractStatus.BUDGETED  # 设为 BUDGETED
+        assert contract.status == ContractStatus.BUDGETED
 
         contract.mark_winner(winner_id=1001, current_turn=5, profit_base=20)
 

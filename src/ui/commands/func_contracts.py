@@ -36,19 +36,26 @@ class ContractsCommand(Command):
             print(f"\n   📭 No contracts")
             return True
 
+        # 按状态分组
         pending = [c for c in self.state.contracts if c.status == ContractStatus.PENDING]
+        budgeted = [c for c in self.state.contracts if c.status == ContractStatus.BUDGETED]
         active = [c for c in self.state.contracts if c.status == ContractStatus.ACTIVE]
         completed = [c for c in self.state.contracts if c.status == ContractStatus.COMPLETED]
         expired = [c for c in self.state.contracts if c.status == ContractStatus.EXPIRED]
 
         if pending:
-            print(f"\n   ⏳ PENDING (Awaiting Senate Action):")
+            print(f"\n   ⏳ PENDING (Awaiting Senate Budget Vote):")
             for c in pending:
                 type_name = "📊 Tax" if c.contract_type == ContractType.TAX_FARMING else "🏗️ Works"
                 print(f"      ID:{c.id} {type_name}: {c.name}")
                 print(f"         Cost: {c.base_cost} | Profit: {c.expected_profit}")
-                if c.contract_type == ContractType.TAX_FARMING:
-                    print(f"         💡 Use: vote contract {c.id}")
+
+        if budgeted:
+            print(f"\n   💰 BUDGETED (Awaiting Forum Auction):")
+            for c in budgeted:
+                type_name = "📊 Tax" if c.contract_type == ContractType.TAX_FARMING else "🏗️ Works"
+                print(f"      ID:{c.id} {type_name}: {c.name}")
+                print(f"         Cost: {c.base_cost} | Profit: {c.expected_profit}")
 
         if active:
             print(f"\n   ▶️  ACTIVE:")
@@ -58,22 +65,20 @@ class ContractsCommand(Command):
                 fname = figure.name if figure else "Unknown"
                 faction = self.state.get_faction(c.awarded_faction)
                 fact_name = faction.name if faction else "Unknown"
-                print(f"      ID:{c.id} {type_name}: {c.name}")
+                extended = " (已延期)" if getattr(c, 'is_extended', False) else ""
+                print(f"      ID:{c.id} {type_name}: {c.name}{extended}")
                 print(f"         Contractor: {fname} ({fact_name})")
                 print(f"         Remaining: {c.remaining_years} years")
-                # 根据合同类型显示不同进度
                 if c.contract_type == ContractType.TAX_FARMING:
-                    progress = f"{c.total_collected}/{c.expected_profit}"
+                    print(f"         Progress: {c.total_collected}/{c.expected_profit}")
                 else:
-                    progress = f"{c.total_spent}/{c.base_cost}"
-                print(f"         Progress: {progress}")
+                    print(f"         Progress: {c.total_spent}/{c.base_cost}")
 
         if completed:
             print(f"\n   ✅ COMPLETED:")
             for c in completed:
                 type_name = "📊" if c.contract_type == ContractType.TAX_FARMING else "🏗️"
                 total = c.total_collected + c.total_spent
-                # 为工程合同添加质保期信息
                 warranty_info = ""
                 if c.contract_type == ContractType.PUBLIC_WORKS and hasattr(c, 'warranty_remaining'):
                     if c.warranty_remaining > 0:

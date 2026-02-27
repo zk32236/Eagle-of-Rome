@@ -48,11 +48,17 @@ class PopulationCommand(Command):
         for office_type in election_order:
             self._remove_office_holders(office_type)
 
+        # 打印卸任后影响力
+        self._print_faction_influences("庆典前")
+
         # ========== 2. 计算候选人并按派系分组 ==========
         candidates_by_faction = self._compute_candidates_by_faction()
 
         # ========== 3. 自动举办庆典 ==========
         self._process_automatic_festivals(candidates_by_faction)
+
+        # 打印庆典后影响力
+        self._print_faction_influences("庆典后")
 
         # ========== 4. 公职选举 ==========
         print(f"\n{'=' * 50}")
@@ -76,6 +82,9 @@ class PopulationCommand(Command):
                 else:
                     print(f"      ⚠️  No eligible candidate for {office_type}")
 
+            # 每个官职选举完毕后打印一次影响力
+            self._print_faction_influences(f"选举后 ({office_type})")
+
         # ========== 5. 原有国家状态评估、军团解散、人口事件 ==========
         republic_state = self._calculate_republic_state(terms)
         print(f"\n   🏛️  State of the Republic: {republic_state}")
@@ -85,6 +94,13 @@ class PopulationCommand(Command):
         self.state.mark_phase_executed("population")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
+
+    def _print_faction_influences(self, label: str):
+        """打印当前所有派系的总影响力"""
+        print(f"\n   📊 {label} 各派系影响力：")
+        for faction in self.state.factions.values():
+            total = faction.get_total_influence(self.state)
+            print(f"      {faction.name}: {total}")
 
     def _compute_candidates_by_faction(self) -> Dict[str, List[Figure]]:
         """计算所有官职的候选人并按派系分组（去重）"""

@@ -55,7 +55,9 @@ class TestContractExt:
             _province_id=30,
             _create_turn=7
         )
-        assert contract.status == ContractStatus.PENDING
+        # 必须先设为 BUDGETED
+        contract.status = ContractStatus.BUDGETED
+        assert contract.status == ContractStatus.BUDGETED
 
         contract.mark_winner(winner_id=101, current_turn=8, profit_base=50)
 
@@ -64,7 +66,6 @@ class TestContractExt:
         assert contract.awarded_turn == 8
         assert contract.profit_base == 50
         assert contract.is_under_execution is True
-        # 对于包税合同，剩余年限应设置为 duration_years（默认1，但可设置）
         assert contract.remaining_years == contract.duration_years
 
     def test_mark_complete_works(self):
@@ -75,6 +76,8 @@ class TestContractExt:
             _province_id=40,
             _create_turn=9
         )
+        contract.status = ContractStatus.BUDGETED  # 先设为 BUDGETED
+        contract.mark_winner(winner_id=201, current_turn=10, profit_base=0)
         contract._is_under_execution = True
         contract.status = ContractStatus.ACTIVE
 
@@ -92,6 +95,8 @@ class TestContractExt:
             _province_id=50,
             _create_turn=11
         )
+        contract.status = ContractStatus.BUDGETED
+        contract.mark_winner(winner_id=202, current_turn=12, profit_base=0)
         contract._is_under_execution = True
         contract.status = ContractStatus.ACTIVE
 
@@ -99,5 +104,4 @@ class TestContractExt:
 
         assert contract.status == ContractStatus.EXPIRED
         assert contract.is_under_execution is False
-        # complete_turn 不应被设置
         assert contract.complete_turn is None

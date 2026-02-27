@@ -13,6 +13,7 @@ class TestAutoFestivalDecider:
         fig.office = None
         fig.is_dead = False
         state = MagicMock(spec=GameState)
+        state.config.get.return_value = 30  # 或使用 side_effect 返回默认值
         candidates = [fig]
         decider = AutoFestivalDecider()
         decisions = decider.decide_festivals(faction, candidates, state)
@@ -26,6 +27,7 @@ class TestAutoFestivalDecider:
         fig.office = "consul"
         fig.is_dead = False
         state = MagicMock()
+        state.config.get.return_value = 30  # 或使用 side_effect 返回默认值
         candidates = [fig]
         decider = AutoFestivalDecider()
         decisions = decider.decide_festivals(faction, candidates, state)
@@ -38,6 +40,7 @@ class TestAutoFestivalDecider:
         fig.office = None
         fig.is_dead = True
         state = MagicMock()
+        state.config.get.return_value = 30  # 或使用 side_effect 返回默认值
         candidates = [fig]
         decider = AutoFestivalDecider()
         decisions = decider.decide_festivals(faction, candidates, state)
@@ -50,6 +53,7 @@ class TestAutoFestivalDecider:
         fig.office = None
         fig.is_dead = False
         state = MagicMock()
+        state.config.get.return_value = 30  # 或使用 side_effect 返回默认值
         candidates = [fig]
         decider = AutoFestivalDecider()
         decisions = decider.decide_festivals(faction, candidates, state)

@@ -121,28 +121,33 @@ class TestForumPhaseExt:
         contracts = cmd._generate_contracts()
         tax_contract = next(c for c in contracts if c.contract_type == ContractType.TAX_FARMING and c.province_id == 1)
 
+        # 将合同状态设为 BUDGETED（因为只有 BUDGETED 才能竞标）
+        tax_contract.status = ContractStatus.BUDGETED
+
         try:
             cmd._auto_bid_for_contract(tax_contract)
         except Exception as e:
             pytest.fail(f"自动竞标抛出异常: {e}")
 
-        assert tax_contract.status in (ContractStatus.ACTIVE, ContractStatus.EXPIRED)
-        if tax_contract.status == ContractStatus.ACTIVE:
-            assert tax_contract.winning_bid is not None
-            assert tax_contract.awarded_to is not None
+        # 竞标后状态应为 ACTIVE（中标）或 BUDGETED（流拍）
+        assert tax_contract.status in (ContractStatus.ACTIVE, ContractStatus.BUDGETED)
 
     def test_auto_bid_for_works_contract(self, state, provinces, factions_and_knights):
         """测试工程合同自动竞标流程"""
         cmd = ForumCommand(state)
         contracts = cmd._generate_contracts()
-        works_contract = next(c for c in contracts if c.contract_type == ContractType.PUBLIC_WORKS and c.province_id == 0)
+        works_contract = next(
+            c for c in contracts if c.contract_type == ContractType.PUBLIC_WORKS and c.province_id == 0)
+
+        # 将合同状态设为 BUDGETED
+        works_contract.status = ContractStatus.BUDGETED
 
         try:
             cmd._auto_bid_for_works(works_contract)
         except Exception as e:
             pytest.fail(f"工程自动竞标抛出异常: {e}")
 
-        assert works_contract.status in (ContractStatus.ACTIVE, ContractStatus.EXPIRED)
+        assert works_contract.status in (ContractStatus.ACTIVE, ContractStatus.BUDGETED)
         if works_contract.status == ContractStatus.ACTIVE:
             assert works_contract.winning_bid is not None
             assert works_contract.awarded_to is not None

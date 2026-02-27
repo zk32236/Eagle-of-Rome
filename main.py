@@ -1,6 +1,7 @@
 # main.py
 """
 Eagle of Rome 游戏主入口
+Eagle of Rome 游戏主入口
 MVP 0.4.5 整改后版本
 """
 
@@ -28,7 +29,7 @@ def main():
         from src.ui.debug_cli import DebugCLI
 
         print("\n" + "=" * 60)
-        print("   Eagle of Rome - MVP 0.4.5 (整改后版本)")
+        print("   Eagle of Rome - MVP 0.5 （元老院阶段)")
         print("=" * 60)
         print("项目根目录:", current_dir)
         print("Python路径:", src_path)

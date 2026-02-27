@@ -67,19 +67,10 @@ class TestMortalityPhaseExt:
         cmd._handle_death_event()
 
         assert knight.is_dead is True
-        assert contract.status == ContractStatus.ACTIVE
-
-        from src.ui.commands.phase_revenue import RevenueCommand
-        from src.core.localization import TerminologyService
-        rev_cmd = RevenueCommand(state)
-        faction_tax_collected = {}
-        tax_rate = state.get_economic_rule("faction_tax_rate", 0.1)
-        rev_cmd._process_contract_revenues(TerminologyService.get(), faction_tax_collected, tax_rate)
-
+        # 合同应变为 EXPIRED
         assert contract.status == ContractStatus.EXPIRED
-        province = state.get_province(contract.province_id)
+        # 行省解绑
         assert province.tax_contract_id is None
-        assert state.treasury >= 200
 
     def test_mortality_command_execute(self, state):
         """测试 MortalityCommand.execute 能正常运行"""

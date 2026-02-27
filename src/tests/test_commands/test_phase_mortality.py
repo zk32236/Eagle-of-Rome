@@ -17,6 +17,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.core.game_state import GameState
+from src.core.entities.contract import ContractStatus
 from src.ui.commands.phase_mortality import MortalityCommand
 
 
@@ -173,6 +174,50 @@ class TestMortalityCommand(unittest.TestCase):
         cmd.execute([])
 
         self.assertTrue(self.state.is_phase_executed("mortality"))
+
+    def test_death_event_terminates_contract(self):
+        """测试死亡事件终止合同"""
+        from src.core.entities.entities import Province, Faction, GameTurn
+        from src.core.entities.contract import Contract, ContractType, ContractStatus
+        from src.core.entities.figure import Figure, ClassTier
+        from src.ui.commands.phase_mortality import MortalityCommand
+        from src.core.game_state import GameState
+
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+
+        # 创建派系和人物
+        faction = Faction(id="test", name="测试派")
+        state.add_faction(faction)
+        knight = Figure(id=101, name="骑士", faction_id="test", age=30)
+        knight.wealth = 200
+        knight.class_tier = ClassTier.EQUES
+        state.add_member(knight)
+        faction.member_ids = [101]
+
+        # 创建行省
+        province = Province(1, "西西里", 1000)
+        state.add_province(province)
+
+        # 创建合同
+        contract = state.create_contract(
+            ContractType.TAX_FARMING,
+            province_id=1,
+            base_cost=100,
+            current_turn=state.turn.turn_number - 1
+        )
+        contract._winning_bid = {"bidder_id": 101, "amount": 100}
+        contract.status = ContractStatus.ACTIVE
+        contract.awarded_to = 101
+        province.bind_tax_contract(contract.id)
+        knight.add_contract(contract.id)
+
+        cmd = MortalityCommand(state)
+        cmd._handle_death_event()
+
+        self.assertTrue(knight.is_dead)
+        self.assertEqual(contract.status, ContractStatus.EXPIRED)
+        self.assertIsNone(province.tax_contract_id)
 
 
 if __name__ == "__main__":

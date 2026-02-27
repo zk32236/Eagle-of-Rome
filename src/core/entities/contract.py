@@ -12,11 +12,11 @@ class ContractType(Enum):
 
 
 class ContractStatus(Enum):
-    """合同状态"""
-    PENDING = "pending"  # 等待授予
-    ACTIVE = "active"  # 执行中
-    COMPLETED = "completed"  # 已完成
-    EXPIRED = "expired"  # 过期（未授予）
+    PENDING = "pending"
+    BUDGETED = "budgeted"   # 新增
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    EXPIRED = "expired"
 
 
 @dataclass
@@ -36,6 +36,7 @@ class Contract:
     _annual_income: int = 0  # 骑士年收入
     _warranty_remaining: int = 0  # 剩余质保年限
     _annual_cost: int = 0  # 骑士年支出
+    _is_extended: bool = False
 
     status: ContractStatus = ContractStatus.PENDING
 
@@ -237,10 +238,22 @@ class Contract:
     def annual_cost(self) -> int:
         return self._annual_cost
 
+    @property
+    def is_extended(self) -> bool:
+        return self._is_extended
+
+
     # === MVP 0.5 新增方法 ===
+    def set_extended(self, extended: bool = True):
+        self._is_extended = extended
+
     def mark_winner(self, winner_id: int, current_turn: int, profit_base: int) -> None:
-        if self.status != ContractStatus.PENDING:
-            raise ValueError(f"Contract {self.id} cannot be awarded: status is {self.status.value}")
+        """
+        标记中标，激活合同。
+        只允许 BUDGETED 状态的合同中标。
+        """
+        if self.status != ContractStatus.BUDGETED:
+            raise ValueError(f"Contract {self.id} cannot be awarded: status is {self.status.value} (must be BUDGETED)")
         self.awarded_to = winner_id
         self.awarded_turn = current_turn
         self.status = ContractStatus.ACTIVE

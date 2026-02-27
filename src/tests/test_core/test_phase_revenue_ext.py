@@ -53,6 +53,7 @@ def works_contract(state, province, knight):
         base_cost=1000,
         current_turn=5
     )
+    contract.status = ContractStatus.BUDGETED  # 必须先设为 BUDGETED
     # 模拟中标后设置的字段
     contract._winning_bid = {
         "bidder_id": knight.id,

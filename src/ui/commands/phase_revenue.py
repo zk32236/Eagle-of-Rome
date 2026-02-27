@@ -147,12 +147,12 @@ class RevenueCommand(Command):
 
         for contract in active_contracts:
             if contract.contract_type == ContractType.TAX_FARMING:
-                # 包税合同
                 winning_bid = contract.winning_bid
                 if not winning_bid:
                     continue
                 figure = self.state.get_member(winning_bid["bidder_id"])
                 if not figure or figure.is_dead:
+                    # 中标者已死亡，终止合同
                     contract.terminate()
                     province = self.state.get_province(contract.province_id)
                     if province:
@@ -160,8 +160,7 @@ class RevenueCommand(Command):
                     print(f"      ⚠️  {contract.name}: 中标者已死亡，合同终止")
                     continue
 
-                # 年净收入（已在 resolve_auction 中计算）
-                annual_profit = contract.annual_profit  # int
+                annual_profit = contract.annual_profit
                 profit_float = float(annual_profit)
                 tax_float = profit_float * tax_rate
                 net_profit_int = int(round(profit_float - tax_float))
@@ -173,15 +172,14 @@ class RevenueCommand(Command):
                 if figure.faction_id and figure.faction_id in faction_tax_collected:
                     faction_tax_collected[figure.faction_id] += tax_float
 
-                print(f"      📊 {contract.name}: {figure.name} 获得 {net_profit_int} {terms.currency} 净收入，国库 +{winning_bid['amount']}")
+                print(
+                    f"      📊 {contract.name}: {figure.name} 获得 {net_profit_int} {terms.currency} 净收入，国库 +{winning_bid['amount']}")
 
-                contract.remaining_years -= 1
-                if contract.remaining_years <= 0:
-                    contract.mark_complete(self.state.turn.turn_number)
-                    province = self.state.get_province(contract.province_id)
-                    if province:
-                        province.unbind_tax_contract()
-                    print(f"         ✅ 合同到期完成")
+                if contract.remaining_years > 0:
+                    contract.remaining_years -= 1
+                    if contract.remaining_years == 0:
+                        contract.set_extended(True)
+                        print(f"         📌 合同已延期，继续生效")
 
 
             elif contract.contract_type == ContractType.PUBLIC_WORKS:

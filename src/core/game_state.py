@@ -540,16 +540,11 @@ class GameState:
         return self.get_contract(contract_id)
 
     def place_bid(self, contract_id: int, bidder_id: int, amount: int, **kwargs) -> bool:
-        """
-        为指定合同记录一个出价。
-        返回是否成功（合同存在且处于 PENDING 状态）。
-        kwargs 用于存储工程合同的额外字段（如 r, construction, warranty, annual_income 等）。
-        """
         contract = self.get_contract(contract_id)
-        if not contract or contract.status != ContractStatus.PENDING:
+        if not contract or contract.status != ContractStatus.BUDGETED:
             return False
         bid = {"bidder_id": bidder_id, "amount": amount}
-        bid.update(kwargs)  # 合并额外参数
+        bid.update(kwargs)
         contract._bids.append(bid)
         return True
 
@@ -561,10 +556,15 @@ class GameState:
 
     def resolve_auction(self, contract_id: int) -> bool:
         contract = self.get_contract(contract_id)
-        if not contract or contract.status != ContractStatus.PENDING:
+        if not contract or contract.status != ContractStatus.BUDGETED:
             return False
         if not contract._bids:
-            contract.status = ContractStatus.EXPIRED
+            # 无出价，流拍
+            if contract.status == ContractStatus.BUDGETED:
+                # 保持 BUDGETED，以便下次竞标
+                contract.status = ContractStatus.BUDGETED
+            else:
+                contract.status = ContractStatus.EXPIRED
             return False
 
         # 根据合同类型选择中标者
@@ -577,8 +577,25 @@ class GameState:
 
         contract.mark_winner(winner["bidder_id"], self.turn.turn_number, 0)
 
+        # 包税合同处理
         if contract.contract_type == ContractType.TAX_FARMING:
-            # 包税权处理（原有逻辑，略作简化，确保字段正确）
+            # 先解除该行省所有活跃的包税合同（旧合同）
+            active_tax = [c for c in self._contracts_dict.values()
+                          if c.province_id == contract.province_id
+                          and c.contract_type == ContractType.TAX_FARMING
+                          and c.status == ContractStatus.ACTIVE
+                          and c.id != contract.id]
+            for ac in active_tax:
+                ac.mark_complete(self.turn.turn_number)
+                # 从原持有者中移除合同
+                if ac.awarded_to:
+                    old_figure = self.get_member(ac.awarded_to)
+                    if old_figure:
+                        old_figure.remove_contract(ac.id)
+                province = self.get_province(contract.province_id)
+                if province and province.tax_contract_id == ac.id:
+                    province.unbind_tax_contract()
+
             contract._winning_bid = winner
             contract._tax_rate = winner["tax_rate"]
             province = self.get_province(contract.province_id)
@@ -593,8 +610,35 @@ class GameState:
                 annual_net = actual_tax - winner["amount"]
                 contract._annual_profit = annual_net
                 contract.expected_profit = annual_net * contract.duration_years
+
+            # 绑定骑士和行省
+            figure = self.get_member(winner["bidder_id"])
+            if figure:
+                figure.add_contract(contract_id)
+                contract.awarded_faction = figure.faction_id
+
+            province = self.get_province(contract.province_id)
+            if province:
+                province.bind_tax_contract(contract_id)  # 此时应无冲突
+
+        # 公共工程处理
         else:
-            # 公共工程处理
+            # 先解除该行省所有活跃的工程合同
+            active_works = [c for c in self._contracts_dict.values()
+                            if c.province_id == contract.province_id
+                            and c.contract_type == ContractType.PUBLIC_WORKS
+                            and c.status == ContractStatus.ACTIVE
+                            and c.id != contract.id]
+            for aw in active_works:
+                aw.mark_complete(self.turn.turn_number)
+                if aw.awarded_to:
+                    old_figure = self.get_member(aw.awarded_to)
+                    if old_figure:
+                        old_figure.remove_contract(aw.id)
+                province = self.get_province(contract.province_id)
+                if province and province.project_contract_id == aw.id:
+                    province.unbind_project_contract()
+
             contract._winning_bid = winner
             r = winner["r"]
             contract._original_budget = winner["original_budget"]
@@ -603,7 +647,7 @@ class GameState:
             contract._annual_income = winner["annual_income"]
             contract._annual_cost = winner["annual_cost"]
             contract.base_cost = winner["amount"]
-            contract.remaining_years = winner["construction"]  # 施工剩余年限
+            contract.remaining_years = winner["construction"]
             contract._warranty_remaining = winner["warranty"]
 
             province = self.get_province(contract.province_id)
@@ -613,19 +657,15 @@ class GameState:
                 land_value = province.land_public * land_price
                 infra_cost = int(land_value * infra_rate)
                 actual_cost = int(infra_cost * (1 - r))
-                contract.expected_profit = winner["amount"] - actual_cost  # 总收益
+                contract.expected_profit = winner["amount"] - actual_cost
 
-        # 绑定骑士和行省
-        figure = self.get_member(winner["bidder_id"])
-        if figure:
-            figure.add_contract(contract_id)
-            contract.awarded_faction = figure.faction_id
+            figure = self.get_member(winner["bidder_id"])
+            if figure:
+                figure.add_contract(contract_id)
+                contract.awarded_faction = figure.faction_id
 
-        province = self.get_province(contract.province_id)
-        if province:
-            if contract.contract_type == ContractType.TAX_FARMING:
-                province.bind_tax_contract(contract_id)
-            else:
+            province = self.get_province(contract.province_id)
+            if province:
                 province.bind_project_contract(contract_id)
 
         return True

@@ -9,6 +9,7 @@ from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.figure import ClassTier
 from src.ui.commands.func_status import get_progress_bar
+from src.core.entities.contract import ContractStatus, ContractType
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -69,7 +70,7 @@ class MortalityCommand(Command):
         return True
 
     def _handle_death_event(self):
-        """死神来了：随机抽取死亡人数，财产归公"""
+        """死神来了：随机抽取死亡人数，财产归公，同时终止死亡人物的合同"""
         rules = self.state.config.get("mortality_rules", {})
         death_count = rules.get("death_count", 1)
 
@@ -83,6 +84,22 @@ class MortalityCommand(Command):
 
         for victim in victims:
             print(f"   💀 死神选中了 {victim.name} (阶级: {victim.class_tier.value})")
+
+            # 终止该人物持有的所有活跃合同
+            if victim.has_active_contract:
+                for contract_id in victim.contract_ids:
+                    contract = self.state.get_contract(contract_id)
+                    if contract and contract.status == ContractStatus.ACTIVE:
+                        contract.terminate()  # 将合同状态设为 EXPIRED
+                        # 解绑行省
+                        province = self.state.get_province(contract.province_id)
+                        if province:
+                            if contract.contract_type == ContractType.TAX_FARMING:
+                                province.unbind_tax_contract()
+                            elif contract.contract_type == ContractType.PUBLIC_WORKS:
+                                province.unbind_project_contract()
+                        print(f"      📜 {victim.name} 的合同 {contract.name} 已终止")
+
             # 直接调用 mark_member_dead 统一处理资产回收
             self.state.mark_member_dead(victim.id, transfer_land=True, transfer_wealth=True)
 

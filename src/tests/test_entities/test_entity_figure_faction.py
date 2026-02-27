@@ -29,13 +29,12 @@ class TestFigure:
         assert fig.has_active_contract is True
 
     def test_fig_004_add_contract_duplicate(self, sample_figure):
-        """FIG-004: add_contract 重复添加应抛出 ValueError"""
+        """FIG-004: add_contract 重复添加应不引发异常，且合同列表不变"""
         fig = sample_figure
         fig.add_contract(1)
-        with pytest.raises(ValueError, match="Contract ID 1 already exists"):
-            fig.add_contract(1)
-        assert fig.contract_ids == [1]
-        assert fig.has_active_contract is True
+        fig.add_contract(1)  # 再次添加相同ID
+        assert fig.contract_ids == [1]  # 列表不应增加
+        assert fig.has_active_contract is True  # 活跃状态应保持
 
     def test_fig_005_remove_contract_normal(self, sample_figure):
         """FIG-005: remove_contract 正常移除"""

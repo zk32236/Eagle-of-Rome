@@ -3,11 +3,14 @@
 元老院阶段命令 - 处理合同、更新派系领袖、确定主持人
 """
 import random
-from typing import List, TYPE_CHECKING
+from typing import List, TYPE_CHECKING, Optional
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.contract import ContractType, ContractStatus
 from src.ui.commands.func_status import get_progress_bar
+from src.core.deciders.impl.auto_budget_decider import AutoBudgetDecider
+from src.core.deciders.budget_decider import BudgetDecider
+
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -20,8 +23,9 @@ class SenateCommand(Command):
     aliases = ["s"]
     description = "执行元老院阶段 (Senate Phase) - 处理合同、更新派系领袖、确定主持人"
 
-    def __init__(self, state: "GameState"):
+    def __init__(self, state: "GameState", budget_decider: Optional[BudgetDecider] = None):
         super().__init__(state)
+        self.budget_decider = budget_decider or AutoBudgetDecider()
 
     def execute(self, args: List[str]) -> bool:
         if not self.state.is_phase_executed("population"):
@@ -48,14 +52,49 @@ class SenateCommand(Command):
             self.state.log_event("Error: No presiding officer!")
             return False
 
-        print(f"\n   🎤 Presiding Officer: {presiding.name}")
+        office_display = presiding.office if presiding.office else "无"
+        print(f"\n   🎤 Presiding Officer: {presiding.name} ({office_display})")
 
         # ========== 3. 合同处理 ==========
-        self._process_pending_contracts(terms)
+        self._process_budget_proposals(terms)
+        # self._process_pending_contracts(terms) move to phase forum
 
         self.state.mark_phase_executed("senate")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
+
+    def _process_budget_proposals(self, terms):
+        """处理待决合同的预算提案与表决"""
+        pending = [c for c in self.state.contracts if c.status == ContractStatus.PENDING]
+        if not pending:
+            print(f"\n   📭 No pending contracts for budget.")
+            return
+
+        print(f"\n   📋 Budget Proposals:")
+
+        # 1. 由决策器选取本次提交表决的合同
+        proposals = self.budget_decider.decide_proposals(pending, self.state)
+        if not proposals:
+            print(f"      No contracts selected for vote.")
+            return
+
+        for contract in proposals:
+            print(f"\n      📊 {contract.name}")
+
+            # 2. 对每个合同进行表决
+            approved = self.budget_decider.decide_vote(contract, self.state)
+            if approved:
+                contract.status = ContractStatus.BUDGETED
+                print(f"         ✅ 预算通过，状态变为 BUDGETED")
+            else:
+                print(f"         ❌ 预算否决，保持 PENDING")
+
+        # 3. 显示未提交表决的合同
+        not_selected = [c for c in pending if c not in proposals]
+        if not_selected:
+            print(f"\n      ⏸️ 未提交表决的合同（保持 PENDING）:")
+            for c in not_selected:
+                print(f"         {c.name}")
 
     def _process_pending_contracts(self, terms):
         """处理待决合同"""

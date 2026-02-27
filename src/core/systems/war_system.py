@@ -36,6 +36,8 @@ class WarSystem:
     # ========== 数据加载 ==========
     def check_triggers(self, current_year: int):
         """检查是否有战争到达触发年份，将其从 INACTIVE 转为 THREAT"""
+        if not self.state.config.get("enable_threats", True):
+            return
         for war in self._war_deck[:]:
             if war.status == WarStatus.INACTIVE and current_year >= war.start_year:
                 war.status = WarStatus.THREAT
@@ -47,6 +49,8 @@ class WarSystem:
 
     def escalate_threats(self):
         """处理威胁自动升级，返回升级事件列表"""
+        if not self.state.config.get("enable_threats", True):
+            return []
         events = []
         for war in self._threats[:]:
             if war._triggered_this_turn:
