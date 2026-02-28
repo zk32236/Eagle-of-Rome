@@ -68,8 +68,11 @@ class War:
 
     # 奖励（胜利时）
     rewards: Dict[str, Any] = field(default_factory=dict)
+
     # 包含：treasury（国库）, influence（影响力）, popularity（声望）,
     #       unrest_reduction（动乱减少）, land_bill（土地法案）等
+    _soldier_share: int = 0  # 待凯旋的士兵份额
+
 
     # 惩罚（拖延时）
     penalties: Dict[str, Any] = field(default_factory=dict)
@@ -207,3 +210,16 @@ class War:
         """报告指挥官伤亡"""
         self.commander_status = status
         self.commander_casualty_turn = turn
+
+    @property
+    def soldier_share(self) -> int:
+        """返回待凯旋的士兵份额"""
+        return self._soldier_share
+
+    def set_soldier_share(self, value: int):
+        """设置士兵份额（通常在战斗结算时调用）"""
+        self._soldier_share = value
+
+    def clear_soldier_share(self):
+        """清零士兵份额（凯旋处理后调用）"""
+        self._soldier_share = 0

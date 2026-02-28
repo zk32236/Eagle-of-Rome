@@ -293,23 +293,15 @@ class WarSystem:
     # ========== 战争结算 ==========
 
     def resolve_war(self, war_id: str, victory: bool) -> Dict[str, Any]:
-        """结算战争（胜利或失败）"""
+        """
+        结算战争（胜利或失败），增加奖励分配逻辑。
+        返回结果字典，包含战利品分配详情。
+        """
         war = self.get_war_by_id(war_id)
         if not war:
             return {}
 
         terms = TerminologyService.get()
-
-        # 获取军事系统并召回所有军团
-        ms = self.state.get_military_system()
-        if ms:
-            # 强制召回所有军团（双重保险）
-            ms.recall_from_war(war.id)
-
-        # 清理战争数据
-        war.commander_id = None
-        war.legions_assigned = 0
-        war.fleets_assigned = 0
 
         result = {
             'war_name': war.name,
@@ -321,24 +313,93 @@ class WarSystem:
 
         if victory:
             war.status = WarStatus.RESOLVED
-            result['rewards'] = war.calculate_rewards()
+            # 获取战利品奖励字典
+            rewards = war.calculate_rewards()
+            result['rewards'] = rewards
+
+            # 从配置读取分配比例
+            treasury_share = self.state.config.get("combat_rules.treasury_share", 0.5)
+            faction_share = self.state.config.get("combat_rules.faction_share", 0.25)
+            commander_share = self.state.config.get("combat_rules.commander_share", 0.15)
+            soldier_share = self.state.config.get("combat_rules.soldier_share", 0.15)
+
+            total_treasury = rewards.get('treasury', 0)
+
+            # 计算各项份额（取整）
+            treasury_part = int(total_treasury * treasury_share)
+            faction_part = int(total_treasury * faction_share)
+            commander_part = int(total_treasury * commander_share)
+            # 士兵份额使用剩余部分，确保总和等于 total_treasury
+            soldier_part = total_treasury - treasury_part - faction_part - commander_part
+
+            # --- 保护逻辑：如果没有指挥官，所有份额归国库 ---
+            if not war.commander_id:
+                # 国库获得全部战利品
+                self.state.add_treasury(total_treasury)
+                self.state.log_event(f"战争 {war.name} 战利品: 国库 +{total_treasury}（无指挥官）")
+                # 士兵份额为0，其他不分配
+                war.set_soldier_share(0)
+            else:
+                # 有指挥官，正常分配
+                # 分配国库
+                if treasury_part > 0:
+                    self.state.add_treasury(treasury_part)
+                    self.state.log_event(f"战争 {war.name} 战利品: 国库 +{treasury_part}")
+
+                # 分配派系金库
+                if faction_part > 0:
+                    commander = self.state.get_member(war.commander_id)
+                    if commander and commander.faction_id:
+                        faction = self.state.get_faction(commander.faction_id)
+                        if faction:
+                            faction.treasury += faction_part
+                            self.state.log_event(f"战争 {war.name} 战利品: 派系 {faction.name} +{faction_part}")
+
+                # 分配指挥官私库
+                if commander_part > 0:
+                    commander = self.state.get_member(war.commander_id)
+                    if commander:
+                        commander.wealth += commander_part
+                        self.state.log_event(f"战争 {war.name} 战利品: 指挥官 {commander.name} +{commander_part}")
+
+                # 存储士兵份额
+                if soldier_part > 0:
+                    war.set_soldier_share(soldier_part)
+                    self.state.log_event(f"战争 {war.name} 战利品: 士兵份额 {soldier_part} 待凯旋分配")
+
+            # 处理土地奖励（无论是否有指挥官，土地都归国家）
+            land_reward = rewards.get('land', 0)
+            if land_reward > 0:
+                self.state.add_national_public_land(land_reward)
+                self.state.log_event(f"战争 {war.name} 土地: 国家公地 +{land_reward}")
+
+            # 处理家族声望（需要指挥官存在）
+            prestige_reward = rewards.get('family_prestige', 0)
+            if prestige_reward > 0 and war.commander_id:
+                commander = self.state.get_member(war.commander_id)
+                if commander:
+                    commander.family_prestige += prestige_reward
+                    self.state.log_event(f"战争 {war.name} 家族声望: {commander.name} +{prestige_reward}")
+
             print(f"   ✅ {war.name} resolved! Victory!")
             print(f"   🎁 Rewards: {result['rewards']}")
+
         else:
             war.status = WarStatus.DEFEATED
             print(f"   ❌ {war.name} lost! Defeat!")
 
-        # 从活跃列表移除，加入弃牌堆
+        # --- 清理战争数据（原有逻辑，放在分配之后）---
+        ms = self.state.get_military_system()
+        if ms:
+            ms.recall_from_war(war.id)
+
+        war.commander_id = None
+        war.legions_assigned = 0
+        war.fleets_assigned = 0
+
         if war in self._active_wars:
             self._active_wars.remove(war)
         self._war_discard.append(war)
-
-        # 清理将领状态
-        if war.commander_id:
-            commander = self.state.get_member(war.commander_id)
-            if commander:
-                # 凯旋或阵亡处理（第4阶段完善）
-                pass
 
         return result
 
