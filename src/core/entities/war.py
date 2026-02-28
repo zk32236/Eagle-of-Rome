@@ -89,6 +89,7 @@ class War:
     activation_turn: int = 0  # 激活回合
     duration: int = 0  # 已持续回合数
     commander_id: Optional[int] = None  # 指派将领ID
+    _triumph_commander_id: Optional[int] = None   # 凯旋时保留的指挥官ID
     legions_assigned: int = 0  # 指派军团数
     fleets_assigned: int = 0  # 指派舰队数
 
@@ -246,3 +247,12 @@ class War:
 
     def set_triumph_approved(self, value: bool = True):
         self._triumph_approved = value
+
+    @property
+    def triumph_commander_id(self) -> Optional[int]:
+        """获取凯旋时保留的指挥官ID"""
+        return self._triumph_commander_id
+
+    def set_triumph_commander(self, commander_id: int):
+        """设置凯旋指挥官（在胜利时调用）"""
+        self._triumph_commander_id = commander_id

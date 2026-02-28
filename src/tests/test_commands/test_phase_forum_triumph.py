@@ -92,6 +92,7 @@ class TestForumTriumph:
         """测试多个待凯旋战争"""
         war2 = MagicMock(spec=War)
         war2.id = "war2"
+        war2.name = "第二次战争"
         war2.status = WarStatus.RESOLVED
         war2.soldier_share = 30
         war2.commander_id = 102

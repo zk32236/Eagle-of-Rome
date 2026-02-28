@@ -14,6 +14,7 @@ from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.core.entities.entities import Province
 from src.core.entities.figure import Figure
 from src.core.systems.war_system import WarSystem
+from src.core.systems.military_system import MilitarySystem
 
 
 if TYPE_CHECKING:
@@ -42,7 +43,6 @@ class GameState:
         self._used_ids: Set[int] = set()
         self._mortality_pool: List[int] = []
 
-        # 预留的系统引用（先设为None，reset中会创建）
         self._war_system: Optional['WarSystem'] = None
         self._military_system: Optional['MilitarySystem'] = None
         self._curia: Optional[Curia] = None
@@ -74,7 +74,7 @@ class GameState:
         # 重置系统（重新创建）
         self._war_system = WarSystem(self)
         self._war_system.load_wars_from_json("wars.json")
-        self._military_system = None  # 军事系统尚未实现，暂为None
+        self._military_system = MilitarySystem(self)  # <-- 创建军事系统实例
         self._curia = Curia()
         self._contracts.clear()
         self._executed_phases.clear()

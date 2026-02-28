@@ -1,5 +1,4 @@
 # src/core/systems/war_system.py
-
 import json
 import random
 from pathlib import Path
@@ -317,6 +316,9 @@ class WarSystem:
 
         if victory:
             war.status = WarStatus.RESOLVED
+            # ===== 新增：保存凯旋指挥官ID =====
+            if war.commander_id:
+                war.set_triumph_commander(war.commander_id)
             # 获取战利品奖励字典
             rewards = war.calculate_rewards()
             result['rewards'] = rewards
@@ -335,6 +337,27 @@ class WarSystem:
             commander_part = int(total_treasury * commander_share)
             # 士兵份额使用剩余部分，确保总和等于 total_treasury
             soldier_part = total_treasury - treasury_part - faction_part - commander_part
+
+            # ========== 新增：详细打印战利品分配 ==========
+            print(f"\n      📦 战利品分配 ({war.name}):")
+            print(f"        总额: {total_treasury} 塔兰特")
+            print(f"        国库: +{treasury_part}")
+            if war.commander_id:
+                commander = self.state.get_member(war.commander_id)
+                commander_name = commander.name if commander else "未知"
+                print(f"        指挥官 {commander_name} 私库: +{commander_part}")
+                if commander and commander.faction_id:
+                    faction = self.state.get_faction(commander.faction_id)
+                    if faction:
+                        print(f"        派系 {faction.name} 金库: +{faction_part}")
+                    else:
+                        print(f"        派系金库: +{faction_part} (无派系)")
+                else:
+                    print(f"        派系金库: +{faction_part} (指挥官无派系)")
+            else:
+                print(f"        指挥官私库部分 (无指挥官) 归国库: +{commander_part + faction_part}")
+            print(f"        士兵份额: {soldier_part} (将转换为老兵支持)")
+            # ============================================
 
             # --- 保护逻辑：如果没有指挥官，所有份额归国库 ---
             if not war.commander_id:

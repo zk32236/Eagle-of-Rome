@@ -96,7 +96,7 @@
         "treasury": 500,
         "influence": 30,
         "land": 200,
-        "unrest_reduction": 2
+        "family_prestige": 1
       },
       "penalties": {
         "unrest_per_turn": 1,

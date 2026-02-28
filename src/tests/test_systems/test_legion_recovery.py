@@ -146,8 +146,16 @@ class TestLegionRecovery:
         assert legion.status == LegionStatus.DESTROYED
 
     def test_apply_battle_results_disaster(self, military_system):
-        """测试战斗灾难结果自动标记 DESTROYED"""
-        # 国库已在 fixture 中设为1000，直接征召
+        # 模拟战争系统
+        from unittest.mock import MagicMock
+        mock_ws = MagicMock()
+        mock_war = MagicMock()
+        mock_war.id = "test_war"
+        mock_ws.get_war_by_id.return_value = mock_war
+        # 设置 state.get_war_system 返回模拟战争系统
+        military_system.state.get_war_system = MagicMock(return_value=mock_ws)
+
+        # 原有代码继续...
         legion = military_system.get_legion_by_number(1)
         success, msg = military_system.recruit_legion(1)
         assert success, f"征召失败: {msg}"
@@ -168,3 +176,5 @@ class TestLegionRecovery:
         assert legion.status == LegionStatus.DESTROYED
         assert legion.destroyed_turn == 15
         assert legion.war_id is None
+
+    

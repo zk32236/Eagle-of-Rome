@@ -1,10 +1,11 @@
 # src/core/systems/military_system.py
-# 修改内容：添加军团恢复相关方法
 
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict, Tuple, TYPE_CHECKING
 from src.core.entities.legion import Legion, LegionStatus
-from src.core.game_state import GameState
 from src.core.localization import TerminologyService
+
+if TYPE_CHECKING:
+    from src.core.game_state import GameState
 
 
 class MilitarySystem:
@@ -21,7 +22,7 @@ class MilitarySystem:
 
     MAX_LEGIONS = 10
 
-    def __init__(self, state: GameState):
+    def __init__(self, state: 'GameState'):
         self.state = state
         self._legions: List[Legion] = []
         self._initialize_legions()
@@ -72,6 +73,12 @@ class MilitarySystem:
         return destroyed
 
     # ========== 新增：军团恢复逻辑 ==========
+    def process_legion_recovery(self, current_turn: int) -> List[int]:
+        """
+        公共方法：处理军团恢复，返回本次恢复的军团编号列表。
+        """
+        return self._process_legion_recovery(current_turn)
+
     def _process_legion_recovery(self, current_turn: int) -> List[int]:
         """
         处理军团恢复：
@@ -158,7 +165,7 @@ class MilitarySystem:
         return False, "Cannot disband this legion"
 
     def assign_to_war(self, legion_numbers: List[int], war_id: str, commander_id: int) -> Tuple[int, str]:
-        """指派多个军团到战争"""
+        """指派多个军团到战争（同时记录军团编号到战争对象）"""
         terms = TerminologyService.get()
         assigned = 0
         errors = []
@@ -186,7 +193,8 @@ class MilitarySystem:
             if legion.assign_to_war(war_id, commander_id):
                 assigned += 1
                 # 记录军团编号到战争对象
-                war.add_legion_number(num)
+                if hasattr(war, 'add_legion_number'):
+                    war.add_legion_number(num)
 
         msg = f"Assigned {assigned} {terms.legion}(s)"
         if errors:
@@ -319,6 +327,7 @@ class MilitarySystem:
             destroyed_info = f" (摧毁于{legion.destroyed_turn})" if legion.status == LegionStatus.DESTROYED else ""
             print(f"      {status} {info['name']}{vet}[Cost:{cost}] {war}{destroyed_info}")
 
+    # ========== 新增：解散军团（用于战争结束） ==========
     def disband_legions_for_war(self, legion_numbers: List[int]) -> Tuple[int, List[str]]:
         """
         解散指定编号列表的军团。

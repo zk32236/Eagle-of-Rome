@@ -57,6 +57,14 @@ class ResolutionCommand(Command):
         # 6. 年度衰减（原代码中在 _prepare_next_year 后调用 _apply_annual_decay）
         self._apply_annual_decay(terms)
 
+        # ========== 新增：处理军团恢复 ==========
+        ms = self.state.get_military_system()
+        if ms:
+            recovered = ms.process_legion_recovery(self.state.turn.turn_number)
+            if recovered:
+                print(f"      ♻️ 军团 {recovered} 已恢复，可重新征召")
+        # =====================================
+
         # 兼容旧逻辑：设置当前阶段
         if hasattr(self.state.turn, 'current_phase'):
             self.state.turn.current_phase = "resolution"

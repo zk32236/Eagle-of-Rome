@@ -126,7 +126,8 @@ class PopulationCommand(Command):
 
             # 如果该战争有批准的凯旋，且指挥官存活，则举行凯旋式
             if war.triumph_approved:
-                commander = self.state.get_member(war.commander_id)
+                commander_id = war.triumph_commander_id or war.commander_id
+                commander = self.state.get_member(commander_id) if commander_id else None
                 if commander and not commander.is_dead:
                     print(f"      🏛️ {commander.name} 的军团举行凯旋式！")
 

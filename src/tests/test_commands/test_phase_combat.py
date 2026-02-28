@@ -83,7 +83,6 @@ class TestCombatCommand(unittest.TestCase):
         return war
 
     def _create_mock_legion(self, number=1, is_veteran=False):
-        """创建模拟的军团对象"""
         legion = MagicMock(spec=Legion)
         legion.number = number
         legion.name = f"Legio {number}"
@@ -92,6 +91,7 @@ class TestCombatCommand(unittest.TestCase):
         legion.get_combat_strength.return_value = 2 + (1 if is_veteran else 0)
         legion.promote_to_veteran = MagicMock()
         legion.recall = MagicMock()
+        legion.mark_destroyed = MagicMock()  # 添加这一行
         return legion
 
     # ===== 测试用例 =====
@@ -303,8 +303,7 @@ class TestCombatCommand(unittest.TestCase):
         self.assertIn("RESULT: DISASTER", output)
 
         for leg in legions:
-            leg.recall.assert_called_once()
-            self.assertEqual(leg.status, LegionStatus.DISBANDED)
+            leg.mark_destroyed.assert_called_once_with(1)  # 假设当前回合为1
 
         self.assertTrue(self.commander.is_dead)
         war.report_commander_casualty.assert_called_once_with("killed", 1)

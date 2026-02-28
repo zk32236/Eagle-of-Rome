@@ -92,10 +92,7 @@ class CombatCommand(Command):
     # ---------- 战斗解决私有方法 ----------
 
     def _resolve_battle(self, war_system, war: "War", terms):
-        """执行单场战斗"""
-        print(f"\n   🎯 Battle: {war.name}")
-        print(f"      Enemy Strength: {war.get_total_strength()}")
-
+        """执行单场战斗（包含强制结果开关）"""
         # 检查指挥官
         if war.commander_id is None:
             print(f"      ⚠️  No {terms.commander} assigned!")
@@ -110,7 +107,7 @@ class CombatCommand(Command):
         # 获取军事系统
         ms = self.state.get_military_system()
 
-        # 计算军团战力
+        # 获取指派军团
         legions = ms.get_legions_for_battle(war.id) if ms else []
         legion_count = len(legions)
 
@@ -118,6 +115,14 @@ class CombatCommand(Command):
             print(f"      ❌ No {terms.legion}s assigned!")
             war.duration += 1
             return
+
+        # ===== 新增：强制结果开关 =====
+        force_result = self.state.config.get("testing.force_battle_result")
+        if force_result:
+            print(f"      ⚙️ 强制战斗结果: {force_result}")
+            self._apply_battle_result(war_system, war, commander, force_result, terms, ms, legions)
+            return
+        # =============================
 
         # 计算军团战力
         legion_strength = sum(l.get_combat_strength() for l in legions)
