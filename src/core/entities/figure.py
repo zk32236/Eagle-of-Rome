@@ -194,8 +194,33 @@ class Figure:
     _tribute_profit: int = 0
     _project_profit: int = 0
     _influence: int = field(default=0, init=False)
+    _temp_influence_tasks: List[Dict] = field(default_factory=list)
 
     # ==================== 核心方法 ====================
+    def add_temp_influence_task(self, per_turn: int, duration: int):
+        """添加临时影响力任务"""
+        self._temp_influence_tasks.append({"per_turn": per_turn, "remaining": duration})
+
+    def get_temp_influence(self) -> int:
+        """计算所有任务提供的临时影响力总和"""
+        return sum(task["per_turn"] for task in self._temp_influence_tasks)
+
+    def decay_temp_influence_tasks(self):
+        """每回合调用，减少剩余回合，移除已完成的任务"""
+        remaining_tasks = []
+        for task in self._temp_influence_tasks:
+            task["remaining"] -= 1
+            if task["remaining"] > 0:
+                remaining_tasks.append(task)
+        self._temp_influence_tasks = remaining_tasks
+
+    def update_influence(self) -> int:
+        """重写影响力计算，包含临时影响力"""
+        base = self._land_private * 10 + self.veterans * 10 + self.popularity
+        family_bonus = self.family_prestige * 10
+        office_bonus = self.get_office_influence_bonus()
+        self._influence = base + family_bonus + office_bonus + self.get_temp_influence()
+        return self._influence
 
     def __post_init__(self):
         self.update_influence()
@@ -205,13 +230,6 @@ class Figure:
 
     def get_voting_power(self) -> int:
         return self.influence
-
-    def update_influence(self) -> int:
-        base = self._land_private * 10 + self.veterans * 10 + self.popularity
-        family_bonus = self.family_prestige * 10
-        office_bonus = self.get_office_influence_bonus()
-        self._influence = base + family_bonus + office_bonus
-        return self._influence
 
     @property
     def influence(self) -> int:

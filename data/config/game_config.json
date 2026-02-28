@@ -108,8 +108,10 @@
     "defeat_threshold": -3,
     "disaster_rolls": [2, 3, 4],
     "standoff_rolls": [5, 6, 7, 8, 9],
-    "legion_recovery_interval": 5
-  },
+    "legion_recovery_interval": 5,
+    "triumph_veteran_duration": 5,
+    "triumph_approval_chance": 0.5
+},
   "economic_rules": {
     "faction_stipend": 10,
     "legion_recruit_cost": 10,

@@ -11,9 +11,10 @@ from src.core.entities.figure import Figure, ClassTier
 from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.ui.commands.func_status import get_progress_bar
 from src.core.deciders.impl.auto_retirement_decider import AutoRetirementDecider
-from src.core.deciders.retirement_decider import RetirementDecider
 from src.core.deciders.impl.auto_recruitment_decider import AutoRecruitmentDecider
-from src.core.deciders.recruitment_decider import RecruitmentDecider
+from src.core.entities.war import WarStatus
+from src.core.deciders.impl.auto_triumph_decider import AutoTriumphDecider
+from src.core.deciders.triumph_decider import TriumphDecider
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -26,10 +27,11 @@ class ForumCommand(Command):
     aliases = ["f"]
     description = "执行广场阶段 (Forum Phase)"
 
-    def __init__(self, state: "GameState", retirement_decider=None, recruitment_decider=None):
+    def __init__(self, state: "GameState", retirement_decider=None, recruitment_decider=None, triumph_decider=None):
         super().__init__(state)
         self.retirement_decider = retirement_decider or AutoRetirementDecider(state)
         self.recruitment_decider = recruitment_decider or AutoRecruitmentDecider()
+        self.triumph_decider = triumph_decider or AutoTriumphDecider()  # 新增
 
     def execute(self, args: List[str]) -> bool:
         if not self.state.is_phase_executed("revenue"):
@@ -84,7 +86,7 @@ class ForumCommand(Command):
         # 在 _auto_bid_for_works 循环之前，这样新合同就会触发民变。
         # 因为新合同还没有开始收税，要到下个回合的r阶段才实际收税引起民变。
         self._process_civil_unrest()
-
+        self._process_triumphs()
         self._process_budgeted_auctions()
 
         """
@@ -115,6 +117,41 @@ class ForumCommand(Command):
         self.state.mark_phase_executed("forum")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
+
+    def _process_triumphs(self):
+        """处理所有待凯旋的战争"""
+        ws = self.state.get_war_system()
+        if not ws:
+            return
+
+        # 获取所有已解决且有士兵份额的战争（可从 _war_discard 或单独列表获取）
+        # 这里假设 ws._war_discard 中存放已解决的战争，且可能有士兵份额
+        # 更稳妥的方式：遍历所有战争（包括活跃和已解决），但需避免重复处理
+        # 我们可以在 War 中增加一个标记 _triumph_processed，但简化起见，我们只处理刚解决的战争，
+        # 但需要持久化。由于战争解决后即移入弃牌堆，我们可以遍历弃牌堆中士兵份额 >0 的战争。
+        # 但弃牌堆可能累积，为避免重复处理，应在处理后将 soldier_share 清零。
+        for war in ws._war_discard:
+            if war.soldier_share > 0 and war.status == WarStatus.RESOLVED:
+                commander = self.state.get_member(war.commander_id)
+                if not commander or commander.is_dead:
+                    # 指挥官已死，士兵份额消失
+                    war.set_soldier_share(0)
+                    continue
+
+                # 调用决策器决定是否批准凯旋
+                if self.triumph_decider.decide_triumph(war, commander, self.state):
+                    duration = self.state.config.get("combat_rules.triumph_veteran_duration", 5)
+                    per_turn = war.soldier_share // duration
+                    if per_turn > 0:
+                        commander.add_temp_influence_task(per_turn, duration)
+                        print(f"      🏆 {commander.name} 凯旋！获得 {per_turn}×{duration} 临时影响力")
+                        self.state.log_event(f"凯旋批准：{commander.name} 获得 {war.soldier_share} 士兵份额，分 {duration} 回合")
+                    else:
+                        print(f"      ⚠️ {commander.name} 凯旋：士兵份额 {war.soldier_share} 过少，无法分配")
+                else:
+                    print(f"      ⏳ {commander.name} 的凯旋被元老院否决")
+                # 无论批准与否，清零士兵份额，避免重复处理
+                war.set_soldier_share(0)
 
     def _process_budgeted_auctions(self):
         """对已预算的合同进行竞标"""
