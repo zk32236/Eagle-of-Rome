@@ -199,6 +199,7 @@ class CombatCommand(Command):
                 legion.promote_to_veteran()
                 legion.recall()
                 print(f"      🏆 {legion.name} returns in triumph!")
+            # 调用 resolve_war 进行奖励分配和战争结算
             war_system.resolve_war(war.id, victory=True)
 
         elif result == "VICTORY":
@@ -243,14 +244,15 @@ class CombatCommand(Command):
 
             war.commander_id = None
             war.duration += 1
+            # 调用 resolve_war 进行失败结算（无奖励）
+            war_system.resolve_war(war.id, victory=False)
 
         elif result == "DISASTER":
             print(f"      🔥 DISASTER! Catastrophic defeat!")
 
             # 灾难：全军覆没
             for legion in legions:
-                legion.status = LegionStatus.DISBANDED
-                legion.recall()
+                legion.mark_destroyed(self.state.turn.turn_number)  # 使用 Step 1 的摧毁标记
                 print(f"      💀 {legion.name} destroyed!")
 
             # 将领阵亡
@@ -268,3 +270,5 @@ class CombatCommand(Command):
             self.state.log_event(f"💀 Disaster at {war.name}: {commander.name} killed")
 
             war.duration += 1
+            # 调用 resolve_war 进行失败结算
+            war_system.resolve_war(war.id, victory=False)
