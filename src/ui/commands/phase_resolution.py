@@ -1,6 +1,7 @@
 # src/ui/commands/phase_resolution.py
 """
 决议阶段命令 - 处理胜利条件、革命风险、合同过期、年度衰减，准备下一回合
+新增：临时影响力衰减处理
 """
 
 from typing import List, Dict, Optional, TYPE_CHECKING
@@ -24,14 +25,10 @@ class ResolutionCommand(Command):
         super().__init__(state)
 
     def execute(self, args: List[str]) -> bool:
-        """
-        执行决议阶段
-        """
         if not self.state.is_phase_executed("combat"):
             print("⚠️ 必须先执行战斗阶段 (combat)")
             return False
 
-        # 检查阶段是否已执行
         if self.state.is_phase_executed("resolution"):
             print("⚠️ 决议阶段在本回合已执行过")
             return False
@@ -57,6 +54,10 @@ class ResolutionCommand(Command):
         # 6. 年度衰减（原代码中在 _prepare_next_year 后调用 _apply_annual_decay）
         self._apply_annual_decay(terms)
 
+        # ========== 新增：处理临时影响力衰减 ==========
+        self._process_temp_influence_decay()
+        # =============================================
+
         # ========== 新增：处理军团恢复 ==========
         ms = self.state.get_military_system()
         if ms:
@@ -73,7 +74,24 @@ class ResolutionCommand(Command):
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
-    # ---------- 私有方法（移植自原 resolution_phase.py）----------
+    # ---------- 私有方法 ----------
+
+    def _process_temp_influence_decay(self):
+        """处理所有存活人物的临时影响力衰减"""
+        print(f"\n   📉 临时影响力衰减：")
+        any_decay = False
+        for fig in self.state.get_living_members():
+            before = fig.get_temp_influence()
+            if before > 0:
+                fig.decay_temp_influence_tasks()
+                after = fig.get_temp_influence()
+                if before != after:
+                    fig.update_influence()
+                    any_decay = True
+                    # 可以打印详细变化，但为避免刷屏，只在有变化时打印汇总
+                    print(f"      {fig.name}: 临时影响力 {before} → {after}")
+        if not any_decay:
+            print(f"      无临时影响力变化")
 
     def _check_victory_conditions(self, terms) -> Dict:
         """检查胜利条件（MVP 0.3简化版）"""

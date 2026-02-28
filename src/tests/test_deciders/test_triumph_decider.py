@@ -90,12 +90,18 @@ class TestForumTriumph:
 
     def test_multiple_wars(self, mock_state, mock_war, mock_commander):
         """测试多个待凯旋战争"""
+        # 确保 mock_war 有必要的属性
+        mock_war.triumph_commander_id = None
+        mock_war.set_triumph_approved = MagicMock()
+
         war2 = MagicMock(spec=War)
         war2.id = "war2"
         war2.name = "第二次战争"
         war2.status = WarStatus.RESOLVED
         war2.soldier_share = 30
         war2.commander_id = 102
+        war2.triumph_commander_id = None
+        war2.set_triumph_approved = MagicMock()
 
         commander2 = MagicMock(spec=Figure)
         commander2.id = 102
@@ -108,6 +114,7 @@ class TestForumTriumph:
 
         def get_member_side_effect(fid):
             return mock_commander if fid == 101 else commander2
+
         mock_state.get_member.side_effect = get_member_side_effect
 
         mock_decider = MagicMock()
