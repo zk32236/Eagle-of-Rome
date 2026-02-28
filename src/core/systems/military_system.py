@@ -163,13 +163,18 @@ class MilitarySystem:
         assigned = 0
         errors = []
 
+        # 获取战争对象（需要从战争系统获取）
+        war_system = self.state.get_war_system()
+        war = war_system.get_war_by_id(war_id) if war_system else None
+        if not war:
+            return 0, f"战争 {war_id} 不存在"
+
         for num in legion_numbers:
             legion = self.get_legion_by_number(num)
             if not legion:
                 errors.append(f"Invalid {terms.legion} {num}")
                 continue
 
-            # 必须已征召且活跃
             if legion.status not in (LegionStatus.ACTIVE, LegionStatus.VETERAN):
                 errors.append(f"{legion.name} not active")
                 continue
@@ -180,6 +185,8 @@ class MilitarySystem:
 
             if legion.assign_to_war(war_id, commander_id):
                 assigned += 1
+                # 记录军团编号到战争对象
+                war.add_legion_number(num)
 
         msg = f"Assigned {assigned} {terms.legion}(s)"
         if errors:
@@ -311,3 +318,35 @@ class MilitarySystem:
             war = f"→War" if info['assigned'] else ""
             destroyed_info = f" (摧毁于{legion.destroyed_turn})" if legion.status == LegionStatus.DESTROYED else ""
             print(f"      {status} {info['name']}{vet}[Cost:{cost}] {war}{destroyed_info}")
+
+    def disband_legions_for_war(self, legion_numbers: List[int]) -> Tuple[int, List[str]]:
+        """
+        解散指定编号列表的军团。
+        返回 (成功解散数量, 错误信息列表)
+        """
+        terms = TerminologyService.get()
+        disbanded = 0
+        errors = []
+
+        for num in legion_numbers:
+            legion = self.get_legion_by_number(num)
+            if not legion:
+                errors.append(f"军团 {num} 不存在")
+                continue
+
+            # 检查是否已指派给战争
+            if legion.war_id:
+                errors.append(f"{legion.name} 仍指派给战争，无法解散")
+                continue
+
+            # 检查是否可以解散
+            if not legion.can_be_disbanded(None):
+                errors.append(f"{legion.name} 无法解散（可能已在解散状态或未征召）")
+                continue
+
+            if legion.disband():
+                disbanded += 1
+            else:
+                errors.append(f"{legion.name} 解散失败")
+
+        return disbanded, errors

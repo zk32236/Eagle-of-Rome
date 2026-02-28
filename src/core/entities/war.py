@@ -72,6 +72,8 @@ class War:
     # 包含：treasury（国库）, influence（影响力）, popularity（声望）,
     #       unrest_reduction（动乱减少）, land_bill（土地法案）等
     _soldier_share: int = 0  # 待凯旋的士兵份额
+    _legion_numbers: List[int] = field(default_factory=list)  # 参与该战争的军团编号
+    _triumph_approved: bool = False  # 是否已批准凯旋
 
 
     # 惩罚（拖延时）
@@ -223,3 +225,24 @@ class War:
     def clear_soldier_share(self):
         """清零士兵份额（凯旋处理后调用）"""
         self._soldier_share = 0
+
+    @property
+    def legion_numbers(self) -> List[int]:
+        """返回参与该战争的军团编号列表副本"""
+        return self._legion_numbers.copy()
+
+    def add_legion_number(self, number: int):
+        """添加军团编号（在指派时调用）"""
+        if number not in self._legion_numbers:
+            self._legion_numbers.append(number)
+
+    def clear_legion_numbers(self):
+        """清空军团编号（解散后调用）"""
+        self._legion_numbers.clear()
+
+    @property
+    def triumph_approved(self) -> bool:
+        return self._triumph_approved
+
+    def set_triumph_approved(self, value: bool = True):
+        self._triumph_approved = value

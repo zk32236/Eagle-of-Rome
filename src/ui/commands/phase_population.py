@@ -12,6 +12,7 @@ from src.core.deciders.impl.auto_festival_decider import AutoFestivalDecider
 from src.core.deciders.festival_decider import FestivalDecider
 from typing import List, Optional, Dict, TYPE_CHECKING
 from collections import defaultdict
+from src.core.entities.war import WarStatus
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -59,8 +60,13 @@ class PopulationCommand(Command):
         for office_type in election_order:
             self._remove_office_holders(office_type)
 
+        # ========== 新增：处理军团解散和凯旋式 ==========
+        self._process_legion_disbandment_and_triumphs()
+
         # 打印卸任后影响力
         self._print_faction_influences("庆典前")
+
+
 
         # ========== 2. 计算候选人并按派系分组 ==========
         candidates_by_faction = self._compute_candidates_by_faction()
@@ -105,6 +111,34 @@ class PopulationCommand(Command):
         self.state.mark_phase_executed("population")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
+
+    def _process_legion_disbandment_and_triumphs(self):
+        """处理军团解散和凯旋式"""
+        ws = self.state.get_war_system()
+        ms = self.state.get_military_system()
+        if not ws or not ms:
+            return
+
+        # 遍历所有已解决的战争（从弃牌堆获取）
+        for war in ws._war_discard:
+            if war.status != WarStatus.RESOLVED:
+                continue
+
+            # 如果该战争有批准的凯旋，且指挥官存活，则举行凯旋式
+            if war.triumph_approved:
+                commander = self.state.get_member(war.commander_id)
+                if commander and not commander.is_dead:
+                    print(f"      🏛️ {commander.name} 的军团举行凯旋式！")
+
+            # 解散参与该战争的所有军团
+            if war.legion_numbers:
+                disbanded, errors = ms.disband_legions_for_war(war.legion_numbers)
+                if disbanded > 0:
+                    print(f"      解散 {disbanded} 个参与 {war.name} 的军团")
+                for err in errors:
+                    print(f"      ⚠️ {err}")
+                # 清空军团编号列表，避免重复处理
+                war.clear_legion_numbers()
 
     def _print_faction_influences(self, label: str):
         """打印当前所有派系的总影响力"""

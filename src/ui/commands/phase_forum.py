@@ -134,18 +134,18 @@ class ForumCommand(Command):
             if war.soldier_share > 0 and war.status == WarStatus.RESOLVED:
                 commander = self.state.get_member(war.commander_id)
                 if not commander or commander.is_dead:
-                    # 指挥官已死，士兵份额消失
                     war.set_soldier_share(0)
                     continue
 
-                # 调用决策器决定是否批准凯旋
                 if self.triumph_decider.decide_triumph(war, commander, self.state):
                     duration = self.state.config.get("combat_rules.triumph_veteran_duration", 5)
                     per_turn = war.soldier_share // duration
                     if per_turn > 0:
                         commander.add_temp_influence_task(per_turn, duration)
+                        war.set_triumph_approved(True)  # <-- 新增：标记凯旋已批准
                         print(f"      🏆 {commander.name} 凯旋！获得 {per_turn}×{duration} 临时影响力")
-                        self.state.log_event(f"凯旋批准：{commander.name} 获得 {war.soldier_share} 士兵份额，分 {duration} 回合")
+                        self.state.log_event(
+                            f"凯旋批准：{commander.name} 获得 {war.soldier_share} 士兵份额，分 {duration} 回合")
                     else:
                         print(f"      ⚠️ {commander.name} 凯旋：士兵份额 {war.soldier_share} 过少，无法分配")
                 else:
