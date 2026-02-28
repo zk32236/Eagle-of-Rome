@@ -229,6 +229,10 @@ class WarSystem:
                 return war
         return None
 
+    def get_active_wars_without_commander(self) -> List[War]:
+        """获取活跃战争中无指挥官的列表"""
+        return [w for w in self._active_wars if w.status == WarStatus.ACTIVE and w.commander_id is None]
+
     # ========== 战争操作 ==========
 
     def activate_war(self, war_id: str, consul_id: int, legions: int) -> bool:

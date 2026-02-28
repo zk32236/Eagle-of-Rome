@@ -22,7 +22,11 @@ from src.ui.commands.phase_senate import SenateCommand
 from src.core.entities.figure import Figure, ClassTier
 from src.core.entities.entities import Faction, GameTurn
 from src.core.entities.contract import Contract, ContractType, ContractStatus
-from src.core.localization import TerminologyService
+from src.core.entities.war import WarStatus, War
+
+
+
+
 
 
 class TestSenateCommand(unittest.TestCase):
@@ -173,6 +177,72 @@ class TestSenateCommand(unittest.TestCase):
         self.assertIn("西西里包税权", output)  # 应出现在输出中
         self.assertIn("西西里工程", output)  # 也应出现
 
+    def test_war_takeover_no_commander(self):
+        """测试无指挥官的战争被执政官接管"""
+        # 模拟战争系统
+        mock_ws = MagicMock()
+        # 替换 get_war_system 方法为返回 mock_ws 的模拟方法
+        self.state.get_war_system = MagicMock(return_value=mock_ws)
+
+        cmd = SenateCommand(self.state)
+        war = MagicMock(spec=War)
+        war.id = "test_war"
+        war.name = "测试战争"
+        war.status = WarStatus.ACTIVE
+        war.commander_id = None
+        mock_ws.get_active_wars.return_value = [war]
+
+        # 设置执政官
+        self.state.turn.leader_ids = [101]
+        consul = Figure(id=101, name="执政官", faction_id="senate")
+        self.state.add_member(consul)
+
+        # 模拟接管决策器返回 True
+        mock_decider = MagicMock()
+        mock_decider.decide_takeover.return_value = True
+        cmd.takeover_decider = mock_decider
+
+        # 执行
+        cmd._process_war_takeover()
+
+        # 验证
+        assert war.commander_id == 101
+        assert consul.is_absent is True
+        mock_decider.decide_takeover.assert_called_once_with(war, consul, None, self.state)
+
+    def test_war_takeover_existing_proconsul(self):
+        """测试有 proconsul 指挥官的战争被新执政官接管"""
+        # 模拟战争系统
+        mock_ws = MagicMock()
+        self.state.get_war_system = MagicMock(return_value=mock_ws)
+
+        cmd = SenateCommand(self.state)
+        war = MagicMock(spec=War)
+        war.id = "test_war"
+        war.name = "测试战争"
+        war.status = WarStatus.ACTIVE
+        war.commander_id = 201
+        mock_ws.get_active_wars.return_value = [war]
+
+        self.state.turn.leader_ids = [101]
+        consul = Figure(id=101, name="新执政官", faction_id="senate")
+        old_cmd = Figure(id=201, name="旧指挥官", faction_id="senate")
+        old_cmd.office = "proconsul"
+        old_cmd.is_absent = True
+        self.state.add_member(consul)
+        self.state.add_member(old_cmd)
+
+        mock_decider = MagicMock()
+        mock_decider.decide_takeover.return_value = True
+        cmd.takeover_decider = mock_decider
+
+        cmd._process_war_takeover()
+
+        assert war.commander_id == 101
+        assert consul.is_absent is True
+        assert old_cmd.is_absent is False
+        assert old_cmd.office == "ex-proconsul"
+        mock_decider.decide_takeover.assert_called_once_with(war, consul, old_cmd, self.state)
 
 if __name__ == "__main__":
     unittest.main()
