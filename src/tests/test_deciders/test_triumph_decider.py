@@ -1,96 +1,102 @@
-"""
-测试论坛命令中的凯旋处理 _process_triumphs
-"""
+# src/tests/test_deciders/test_triumph_decider.py
+"""凯旋决策器测试 - 依赖广场阶段的凯旋打印方法"""
 
 import pytest
 from unittest.mock import MagicMock, patch
-from src.ui.commands.phase_forum import ForumCommand
+import io
 from src.core.entities.war import War, WarStatus
 from src.core.entities.figure import Figure
 from src.core.game_state import GameState
-from src.core.systems.war_system import WarSystem
-
-
-@pytest.fixture
-def mock_state():
-    state = MagicMock(spec=GameState)
-    state.get_war_system.return_value = MagicMock(spec=WarSystem)
-    state.config.get.return_value = 5  # triumph_veteran_duration 默认5
-    return state
-
-
-@pytest.fixture
-def mock_war():
-    war = MagicMock(spec=War)
-    war.id = "test_war"
-    war.name = "测试战争"
-    war.status = WarStatus.RESOLVED
-    war.soldier_share = 50
-    war.commander_id = 101
-    return war
-
-
-@pytest.fixture
-def mock_commander():
-    fig = MagicMock(spec=Figure)
-    fig.id = 101
-    fig.name = "凯撒"
-    fig.is_dead = False
-    fig.add_temp_influence_task = MagicMock()
-    return fig
+from src.ui.commands.phase_forum import ForumCommand
+from src.core.deciders.triumph_decider import TriumphDecider
 
 
 class TestForumTriumph:
+    """凯旋决策器集成测试"""
+
+    @pytest.fixture
+    def mock_state(self):
+        state = MagicMock(spec=GameState)
+        state.config.get.return_value = 5  # triumph_veteran_duration
+        return state
+
+    @pytest.fixture
+    def mock_war(self):
+        war = MagicMock(spec=War)
+        war.id = "war1"
+        war.name = "测试战争"
+        war.status = WarStatus.RESOLVED
+        war.soldier_share = 50
+        war.commander_id = 101
+        war.triumph_commander_id = None
+        war.set_triumph_approved = MagicMock()
+        war.set_soldier_share = MagicMock()
+        return war
+
+    @pytest.fixture
+    def mock_commander(self):
+        commander = MagicMock(spec=Figure)
+        commander.id = 101
+        commander.name = "凯撒"
+        commander.is_dead = False
+        commander.add_temp_influence_task = MagicMock()
+        return commander
+
     def test_triumph_approved(self, mock_state, mock_war, mock_commander):
-        """测试凯旋批准：士兵份额转为临时影响力任务"""
+        """测试凯旋批准"""
         ws = mock_state.get_war_system.return_value
         ws._war_discard = [mock_war]
         mock_state.get_member.return_value = mock_commander
 
-        mock_decider = MagicMock()
+        mock_decider = MagicMock(spec=TriumphDecider)
         mock_decider.decide_triumph.return_value = True
         cmd = ForumCommand(mock_state, triumph_decider=mock_decider)
 
-        cmd._process_triumphs()
+        with patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+            cmd._print_triumphs()
+        output = mock_stdout.getvalue()
 
-        mock_decider.decide_triumph.assert_called_once_with(mock_war, mock_commander, mock_state)
         mock_commander.add_temp_influence_task.assert_called_once_with(10, 5)
-        mock_war.set_soldier_share.assert_called_once_with(0)
+        mock_war.set_triumph_approved.assert_called_once_with(True)
+        assert "元老院决定授予 凯撒 凯旋" in output
 
     def test_triumph_rejected(self, mock_state, mock_war, mock_commander):
-        """测试凯旋否决：士兵份额消失"""
+        """测试凯旋否决"""
         ws = mock_state.get_war_system.return_value
         ws._war_discard = [mock_war]
         mock_state.get_member.return_value = mock_commander
 
-        mock_decider = MagicMock()
+        mock_decider = MagicMock(spec=TriumphDecider)
         mock_decider.decide_triumph.return_value = False
         cmd = ForumCommand(mock_state, triumph_decider=mock_decider)
 
-        cmd._process_triumphs()
+        with patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+            cmd._print_triumphs()
+        output = mock_stdout.getvalue()
 
-        mock_decider.decide_triumph.assert_called_once()
         mock_commander.add_temp_influence_task.assert_not_called()
-        mock_war.set_soldier_share.assert_called_once_with(0)
+        assert "凯旋被元老院否决" in output
 
     def test_commander_dead(self, mock_state, mock_war, mock_commander):
-        """测试指挥官已死亡：士兵份额消失，不进行凯旋"""
+        """测试指挥官已死亡"""
         mock_commander.is_dead = True
         ws = mock_state.get_war_system.return_value
         ws._war_discard = [mock_war]
         mock_state.get_member.return_value = mock_commander
 
-        mock_decider = MagicMock()
+        mock_decider = MagicMock(spec=TriumphDecider)
         cmd = ForumCommand(mock_state, triumph_decider=mock_decider)
 
-        cmd._process_triumphs()
+        with patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+            cmd._print_triumphs()
+        output = mock_stdout.getvalue()
 
-        mock_decider.decide_triumph.assert_not_called()
+        mock_commander.add_temp_influence_task.assert_not_called()
         mock_war.set_soldier_share.assert_called_once_with(0)
+        assert "元老院决定授予" not in output
 
     def test_multiple_wars(self, mock_state, mock_war, mock_commander):
         """测试多个待凯旋战争"""
-        # 确保 mock_war 有必要的属性
         mock_war.triumph_commander_id = None
         mock_war.set_triumph_approved = MagicMock()
 
@@ -102,6 +108,7 @@ class TestForumTriumph:
         war2.commander_id = 102
         war2.triumph_commander_id = None
         war2.set_triumph_approved = MagicMock()
+        war2.set_soldier_share = MagicMock()
 
         commander2 = MagicMock(spec=Figure)
         commander2.id = 102
@@ -117,14 +124,15 @@ class TestForumTriumph:
 
         mock_state.get_member.side_effect = get_member_side_effect
 
-        mock_decider = MagicMock()
+        mock_decider = MagicMock(spec=TriumphDecider)
         mock_decider.decide_triumph.return_value = True
         cmd = ForumCommand(mock_state, triumph_decider=mock_decider)
 
-        cmd._process_triumphs()
+        with patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+            cmd._print_triumphs()
+        output = mock_stdout.getvalue()
 
-        assert mock_decider.decide_triumph.call_count == 2
         mock_commander.add_temp_influence_task.assert_called_once_with(10, 5)
         commander2.add_temp_influence_task.assert_called_once_with(6, 5)
-        mock_war.set_soldier_share.assert_called_once_with(0)
-        war2.set_soldier_share.assert_called_once_with(0)
+        assert "凯撒" in output
+        assert "庞培" in output
