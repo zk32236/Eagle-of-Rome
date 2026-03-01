@@ -107,6 +107,9 @@ class SenateCommand(Command):
                     war.commander_id = consul.id
                     consul.is_absent = True
                     print(f"      ✅ 执政官 {consul.name} 接管战争 {war.name}")
+                    # ===== 新增：自动征召军团 =====
+                    self._auto_recruit_and_assign_legions_for_war(war, consul.id)
+                    # =============================
                     self.state.log_event(f"执政官 {consul.name} 接管 {war.name}")
                 else:
                     print(f"      ⏳ 执政官 {consul.name} 决定不接管 {war.name}")
@@ -118,15 +121,61 @@ class SenateCommand(Command):
                 # 如果指挥官是 proconsul 或 ex-consul 且不在罗马，新执政官可决定是否接管
                 if old_cmd.office in ("proconsul", "ex-consul") and old_cmd.is_absent:
                     if self.takeover_decider.decide_takeover(war, consul, old_cmd, self.state):
-                        # 接管：原指挥官返回罗马
                         old_cmd.is_absent = False
-                        old_cmd.office = "ex-proconsul"  # 或保留原职，可配置
+                        old_cmd.office = "ex-proconsul"
                         war.commander_id = consul.id
                         consul.is_absent = True
                         print(f"      🔄 执政官 {consul.name} 接管战争 {war.name}，原指挥官 {old_cmd.name} 返回罗马")
+                        # ===== 新增：自动征召补充军团 =====
+                        self._auto_recruit_and_assign_legions_for_war(war, consul.id)
+                        # ===============================
                         self.state.log_event(f"执政官 {consul.name} 接管战争 {war.name}，原指挥官 {old_cmd.name} 返回")
                     else:
                         print(f"      ⏳ 执政官 {consul.name} 决定不接管 {war.name}，由 {old_cmd.name} 继续指挥")
+
+    def _auto_recruit_and_assign_legions_for_war(self, war, consul_id):
+        """自动征召军团并指派给战争（用于执政官接管）"""
+        ms = self.state.get_military_system()
+        if not ms:
+            print("      ⚠️ 军事系统不可用，无法征召军团")
+            return
+
+        # 决定征召数量：优先使用 war.proposed_legions，否则随机生成
+        if war.proposed_legions and war.proposed_legions > 0:
+            legions = war.proposed_legions
+        else:
+            min_leg = self.state.config.get("testing.min_legions", 4)
+            max_leg = self.state.config.get("testing.max_legions", 8)
+            legions = random.randint(min_leg, max_leg)
+            print(f"      ℹ️ 战争未指定军团数，自动分配 {legions} 个")
+
+        # 获取可用军团
+        available = ms.get_available_legions()
+        recruit_cost = self.state.get_economic_rule("legion_recruit_cost", 10)
+
+        # 检查国库资金
+        max_affordable = self.state.treasury // recruit_cost
+        recruit_count = min(legions, len(available), max_affordable)
+        if recruit_count == 0:
+            print("      ⚠️ 没有足够的国库资金或可用军团，无法征召")
+            return
+
+        # 征召军团
+        results = ms.recruit_multiple(recruit_count)
+        recruited_numbers = [r[0] for r in results if r[1]]
+        if not recruited_numbers:
+            print("      ⚠️ 军团征召失败")
+            return
+
+        # 指派到战争
+        assigned, msg = ms.assign_to_war(recruited_numbers, war.id, consul_id)
+        print(f"      {msg}")
+        for num in recruited_numbers:
+            war.add_legion_number(num)
+
+        # 记录日志
+        self.state.log_event(f"执政官接管 {war.name}，征召 {len(recruited_numbers)} 军团")
+        print(f"      ✅ 征召 {len(recruited_numbers)} 个军团并指派给 {war.name}")
 
     def _process_war_proposals(self):
         ws = self.state.get_war_system()

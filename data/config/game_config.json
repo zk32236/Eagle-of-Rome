@@ -23,11 +23,11 @@
       "tribune": 2
     },
     "offices_per_election": {
-      "consul": 2,
-      "censor": 2,
-      "praetor": 2,
+      "consul": 1,
+      "censor": 1,
+      "praetor": 1,
       "quaestor": 2,
-      "tribune": 2
+      "tribune": 1
     },
     "candidates_per_election": {
       "consul": 2,
@@ -107,15 +107,15 @@
     "triumph_threshold": 12,
     "victory_threshold": 6,
     "defeat_threshold": -3,
-    "legion_recovery_interval": 3,
+    "legion_recovery_interval": 1,
     "triumph_veteran_duration": 5,
     "triumph_approval_chance": 0.5,
     "war_takeover_chance": 1.0
   },
   "economic_rules": {
     "faction_stipend": 10,
-    "legion_recruit_cost": 10,
-    "legion_maintenance_base": 2,
+    "legion_recruit_cost": 4,
+    "legion_maintenance_base": 8,
     "veteran_maintenance_bonus": 1,
     "land_price_per_unit": 10,
     "private_land_income_rate": 0.05,
@@ -135,6 +135,6 @@
     "faction_initial_treasury": 10,
     "faction_tax_rate": 0.1,
     "faction_member_limit": 6,
-    "italy_unrest_trigger_turns": 10
+    "italy_unrest_trigger_turns": 99
   }
 }

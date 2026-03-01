@@ -12,7 +12,6 @@ import os
 def main():
     """
     游戏主入口函数
-
     功能:
     1. 添加src到Python路径（确保导入正确）
     2. 启动Debug CLI

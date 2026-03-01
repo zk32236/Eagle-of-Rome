@@ -31,8 +31,37 @@ class WarSystem:
         self._war_discard: List[War] = []
         self._active_wars: List[War] = []   # 已爆发的战争
         self._threats: List[War] = []        # 威胁中的战争（未爆发）
+        self._legions_to_disband: List[int] = []  # 存储需要在人口阶段解散的军团编号
 
     # ========== 数据加载 ==========
+
+    def deactivate_war_to_threat(self, war_id: str, threat_level: int = 1) -> bool:
+        war = self.get_war_by_id(war_id)
+        if not war or war.status != WarStatus.ACTIVE:
+            return False
+
+        war.status = WarStatus.THREAT
+        war.threat_level = threat_level
+        war.commander_id = None
+        war.legions_assigned = 0
+        war.fleets_assigned = 0
+
+        # 从活跃列表移除
+        if war in self._active_wars:
+            self._active_wars.remove(war)
+        if war not in self._threats:
+            self._threats.append(war)
+
+        ms = self.state.get_military_system()
+        if ms:
+            ms.recall_from_war(war.id)
+            # 记录需要解散的军团编号
+            if war.legion_numbers:
+                self._legions_to_disband.extend(war.legion_numbers)  # ✅ 正确使用实例变量
+            war.clear_legion_numbers()
+
+        return True
+
     def check_triggers(self, current_year: int):
         """检查是否有战争到达触发年份，将其从 INACTIVE 转为 THREAT"""
         if not self.state.config.get("enable_threats", True):

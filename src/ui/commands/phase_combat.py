@@ -208,14 +208,20 @@ class CombatCommand(Command):
             war_system.resolve_war(war.id, victory=True)
 
         elif result == "VICTORY":
-            print(f"      ✓ Victory! {war.name} concluded successfully.")
+            print(f"      ✓ Victory! {war.name} concluded, but enemy not destroyed.")
             commander.influence += 5
-
             for legion in legions:
                 legion.promote_to_veteran()
                 legion.recall()
-                print(f"      🏆 {legion.name} returns in triumph!")
-            war_system.resolve_war(war.id, victory=True)
+                print(f"      🏆 {legion.name} returns to Rome.")
+            # 降级为威胁（外交冲突）
+            if war_system.deactivate_war_to_threat(war.id, threat_level=1):
+                # 指挥官返回罗马
+                commander.is_absent = False
+                print(f"      🔄 {war.name} 降级为外交冲突（威胁等级1）。")
+                self.state.log_event(f"{war.name} 战果为小胜，威胁等级降至1。")
+            else:
+                print(f"      ⚠️ 战争状态切换失败。")
 
         elif result == "STALEMATE":
             print(f"      ⏳ Stalemate. War continues...")
@@ -249,8 +255,6 @@ class CombatCommand(Command):
 
             war.commander_id = None
             war.duration += 1
-            # 调用 resolve_war 进行失败结算（无奖励）
-            war_system.resolve_war(war.id, victory=False)
 
         elif result == "DISASTER":
             print(f"      🔥 DISASTER! Catastrophic defeat!")
@@ -275,5 +279,3 @@ class CombatCommand(Command):
             self.state.log_event(f"💀 Disaster at {war.name}: {commander.name} killed")
 
             war.duration += 1
-            # 调用 resolve_war 进行失败结算
-            war_system.resolve_war(war.id, victory=False)

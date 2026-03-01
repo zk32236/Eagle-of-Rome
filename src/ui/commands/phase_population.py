@@ -141,6 +141,15 @@ class PopulationCommand(Command):
                 # 清空军团编号列表，避免重复处理
                 war.clear_legion_numbers()
 
+            # 处理小胜后需解散的军团
+        if ws._legions_to_disband:
+            disbanded, errors = ms.disband_legions_for_war(ws._legions_to_disband)
+            if disbanded > 0:
+                print(f"      解散 {disbanded} 个从降级战争返回的军团")
+            for err in errors:
+                print(f"      ⚠️ {err}")
+            ws._legions_to_disband.clear()
+
     def _print_faction_influences(self, label: str):
         """打印当前所有派系的总影响力"""
         print(f"\n   📊 {label} 各派系影响力：")
@@ -289,7 +298,6 @@ class PopulationCommand(Command):
 
             # 任命
             winner.office = office_type
-            winner.office_history.append(OfficeTerm(office_type, current_turn))
             winner.update_influence()  # 重新计算影响力（包括公职加成）
 
             # 派系领袖可能变更

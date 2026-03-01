@@ -3,7 +3,7 @@
 决议阶段命令 - 处理胜利条件、革命风险、合同过期、年度衰减，准备下一回合
 新增：临时影响力衰减处理
 """
-
+import sys
 from typing import List, Dict, Optional, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
@@ -70,11 +70,23 @@ class ResolutionCommand(Command):
         if hasattr(self.state.turn, 'current_phase'):
             self.state.turn.current_phase = "resolution"
 
+        self._check_italy_unrest_game_over(terms)
+
         self.state.mark_phase_executed("resolution")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
     # ---------- 私有方法 ----------
+
+    def _check_italy_unrest_game_over(self, terms):
+        """检查意大利本土民怨等级，若为3则触发游戏结束"""
+        italy = self.state.get_province(0)
+        if italy and italy.grievance == 3:
+            print(f"\n{'=' * 60}")
+            print(f"   💀 意大利本土爆发平民起义！政府倒台，共和国覆灭！")
+            print(f"{'=' * 60}")
+            print("游戏结束。")
+            sys.exit(0)
 
     def _process_temp_influence_decay(self):
         """处理所有存活人物的临时影响力衰减"""

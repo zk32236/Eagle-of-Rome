@@ -208,10 +208,7 @@ class ForumCommand(Command):
                 italy.set_grievance(old_grievance + 1)
                 print(f"      ⚠️ 意大利本土 民怨升级至 {italy.grievance} 级")
                 if italy.grievance == 3:
-                    print(f"         意大利本土爆发平民起义！政府倒台，游戏结束。")
-                    # 触发游戏结束（简单退出）
-                    import sys
-                    sys.exit(0)
+                    print(f"         意大利本土爆发平民起义！政府面临倒台，马上行动！")
                 any_change = True
             # 如果已经是3，不再处理
 
