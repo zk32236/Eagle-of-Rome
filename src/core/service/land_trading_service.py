@@ -100,29 +100,31 @@ class LandTradingService:
             seller.buy_land(amount, price_per_unit)  # 重新买回
             return False, "Buyer failed to buy land"
 
+        # ========== 新增：更新人物影响力 ==========
+        seller.update_influence()
+        buyer.update_influence()
+
+        # ========== 新增：更新派系总土地 ==========
+        # 卖方派系
+        if seller.faction_id:
+            faction = self.state.get_faction(seller.faction_id)
+            if faction:
+                faction.update_total_land(faction.get_members(self.state))
+        # 买方派系（可能与卖方不同）
+        if buyer.faction_id and buyer.faction_id != seller.faction_id:
+            faction = self.state.get_faction(buyer.faction_id)
+            if faction:
+                faction.update_total_land(faction.get_members(self.state))
+
         # 记录交易历史
         self._record_trade(seller, buyer, amount, price_per_unit)
 
         # 生成消息
         msg = (f"Trade complete: {amount} land @ {price_per_unit}/unit = {total_cost} {terms.currency}\n"
-               f"   {seller.name}: land {seller_land_before}→{seller.land_private}, "
-               f"seats {self._calculate_seats(seller_land_before, seller.veterans)}→{self._calculate_seats(seller.land_private, seller.veterans)} (of 300)\n"
-               f"   {buyer.name}: land {buyer_land_before}→{buyer.land_private}, "
-               f"seats {self._calculate_seats(buyer_land_before, buyer.veterans)}→{self._calculate_seats(buyer.land_private, buyer.veterans)} (of 300)")
+               f"   {seller.name}: land {seller_land_before}→{seller.land_private}, ")
 
         return True, msg
 
-    def _calculate_seats(self, land: int, veterans: int, total_assets: int = None) -> int:
-        """根据土地和私兵计算席位（需全国总资产）"""
-        if total_assets is None:
-            all_figures = [m for m in self.state.get_living_members() if not m.is_dead]
-            total_land = sum(m.land_private for m in all_figures)
-            total_veterans = sum(m.veterans for m in all_figures)
-            total_assets = total_land + total_veterans
-        if total_assets == 0:
-            return 0
-        assets = land + veterans
-        return int((assets / total_assets) * 300)
 
     def _record_trade(self, seller: Figure, buyer: Figure, amount: int, price: int):
         """记录交易历史"""

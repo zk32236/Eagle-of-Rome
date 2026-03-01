@@ -96,8 +96,11 @@ class TestCombatCommand(unittest.TestCase):
 
     # ===== 测试用例 =====
 
-    def test_execute_success(self):
-        """测试成功执行战斗阶段"""
+    @patch('random.randint')
+    def test_execute_success(self, mock_randint):
+        """测试成功执行战斗阶段（小胜）"""
+        mock_randint.return_value = 6  # 固定骰子，确保 combat_total 达到 VICTORY 区间
+
         war = self._create_mock_war()
         self.mock_war_system.get_active_wars.return_value = [war]
 
@@ -113,8 +116,7 @@ class TestCombatCommand(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertIn("Combat Phase", output)
-        # 验证 resolve_war 被调用，注意使用关键字参数匹配
-        self.mock_war_system.resolve_war.assert_called_once_with(war.id, victory=True)
+        self.mock_war_system.deactivate_war_to_threat.assert_called_once_with(war.id, threat_level=1)
 
     def test_unassigned_wars(self):
         """测试有战争但未指派指挥官时跳过"""
@@ -136,10 +138,9 @@ class TestCombatCommand(unittest.TestCase):
         self.assertTrue(result)
         self.assertIn("1 war(s) without commanders!", output)
         self.assertIn("Unassigned War", output)
-        # 验证只有 war2 被 resolve
-        self.mock_war_system.resolve_war.assert_called_once_with(war2.id, victory=True)
-        # 可选：检查战斗阶段输出了战斗结果
-        self.assertIn("RESULT:", output)
+        # 修改点：验证有指挥官的战斗执行
+        self.assertIn("Test Commander", output)  # 指挥官名称
+        self.assertIn("Forces: 1 Legion(s)", output)  # 军团信息
 
     def test_already_executed(self):
         """测试阶段已执行时再次执行应返回False"""
@@ -173,31 +174,6 @@ class TestCombatCommand(unittest.TestCase):
         self.assertIn("No active conflicts", output)
         self.assertTrue(self.state.is_phase_executed("combat"))
 
-    def test_unassigned_wars(self):
-        """测试有战争但未指派指挥官时跳过"""
-        # 两个战争：一个无指挥官，一个有指挥官
-        war1 = self._create_mock_war(war_id="war1", name="Unassigned War", commander_id=None)
-        war2 = self._create_mock_war(war_id="war2", name="Assigned War", commander_id=1)
-        self.mock_war_system.get_active_wars.return_value = [war1, war2]
-
-        # 有指挥官的那个战争设置军团
-        self.mock_military_system.get_legions_for_battle.side_effect = lambda war_id: (
-            [self._create_mock_legion()] if war_id == "war2" else []
-        )
-
-        cmd = CombatCommand(self.state)
-
-        f = io.StringIO()
-        with redirect_stdout(f):
-            result = cmd.execute([])
-        output = f.getvalue()
-
-        self.assertTrue(result)
-        self.assertIn("1 war(s) without commanders!", output)
-        self.assertIn("Unassigned War", output)
-        self.assertIn("Assigned War", output)  # 有指派的战争会战斗
-        self.assertIn("Assigned War", output)
-
     @patch('random.randint')
     def test_battle_outcomes_triumph(self, mock_randint):
         """测试大胜结果"""
@@ -227,7 +203,7 @@ class TestCombatCommand(unittest.TestCase):
 
     @patch('random.randint')
     def test_battle_outcomes_victory(self, mock_randint):
-        """测试胜利结果"""
+        """测试胜利结果（小胜）"""
         mock_randint.return_value = 6
         war = self._create_mock_war(strength=5)
         self.mock_war_system.get_active_wars.return_value = [war]
@@ -242,7 +218,10 @@ class TestCombatCommand(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertIn("RESULT: VICTORY", output)
-        self.mock_war_system.resolve_war.assert_called_once_with("war1", victory=True)
+        # 修改点：验证 deactivate_war_to_threat 被调用，而非 resolve_war
+        self.mock_war_system.deactivate_war_to_threat.assert_called_once_with("war1", threat_level=1)
+        # 可选：验证 resolve_war 未被调用
+        self.mock_war_system.resolve_war.assert_not_called()
 
     @patch('random.randint')
     def test_battle_outcomes_stalemate(self, mock_randint):

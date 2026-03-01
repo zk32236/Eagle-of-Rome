@@ -14,6 +14,8 @@ from src.core.deciders.impl.auto_senate_vote_decider import AutoSenateVoteDecide
 from src.core.entities.war import WarStatus
 from src.core.deciders.impl.auto_war_takeover_decider import AutoWarTakeoverDecider
 from src.core.deciders.war_takeover_decider import WarTakeoverDecider
+from src.core.deciders.impl.auto_land_proposal_decider import AutoLandProposalDecider
+from src.core.deciders.land_proposal_decider import LandProposalDecider
 
 
 
@@ -30,11 +32,17 @@ class SenateCommand(Command):
 
     def __init__(self, state: "GameState",
                  vote_decider: Optional[SenateVoteDecider] = None,
-                 takeover_decider: Optional[WarTakeoverDecider] = None):  # 新增
+                 takeover_decider: Optional[WarTakeoverDecider] = None,
+                 land_proposal_deciders: Optional[List[LandProposalDecider]] = None):  # 新增
         super().__init__(state)
         self.vote_decider = vote_decider or AutoSenateVoteDecider()
         self.budget_decider = AutoBudgetDecider()
-        self.takeover_decider = takeover_decider or AutoWarTakeoverDecider()  # 新增
+        self.takeover_decider = takeover_decider or AutoWarTakeoverDecider()
+        # 默认添加两个派系的提案决策器
+        self.land_proposal_deciders = land_proposal_deciders or [
+            AutoLandProposalDecider("populares", "distribution"),
+            AutoLandProposalDecider("optimates", "sale")
+        ]
 
     def execute(self, args: List[str]) -> bool:
         if not self.state.is_phase_executed("population"):
@@ -79,10 +87,89 @@ class SenateCommand(Command):
         # 3.1 预算审批（合同授权）
         self._process_budget_proposals(terms)
 
+        # 3.2 土地法案
+        self._process_land_proposals(terms)
+
         self.state.mark_phase_executed("senate")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
+# =================================== 方法函数 =============================================
+
+    def _process_land_proposals(self, terms):
+        """处理土地法案提案"""
+        land_rules = self.state.config.get("political_rules.land_proposal", {})
+        submit_chance = land_rules.get("submit_chance", 0.7)  # 执政官提交概率
+
+        presiding = self.state.get_presiding_officer()
+        if not presiding:
+            print(f"\n   ⚠️ 无主持人，无法处理土地法案。")
+            return
+
+        # 收集所有派系提出的法案
+        proposals = []
+        for faction in self.state.factions.values():
+            for decider in self.land_proposal_deciders:
+                result = decider.decide_proposal(faction.id, self.state)
+                if result:
+                    act_type, percent = result
+                    proposals.append({
+                        'type': act_type,
+                        'percent': percent,
+                        'proposer_faction': faction.id,
+                        'description': self._get_land_act_description(act_type, percent)
+                    })
+
+        if not proposals:
+            print(f"\n   📭 无土地法案提案。")
+            return
+
+        for prop in proposals:
+            # 执政官决定是否提交
+            if random.random() < submit_chance:
+                print(f"\n   📋 {prop['description']} 由执政官 {presiding.name} 提交元老院表决。")
+                self._vote_on_land_act(prop)
+            else:
+                print(f"\n   ⏳ 执政官 {presiding.name} 决定不提交 {prop['description']}。")
+
+    def _get_land_act_description(self, act_type: str, percent: float) -> str:
+        if act_type == 'distribution':
+            return f"平民分地法案（分配 {percent * 100:.1f}% 国家公地）"
+        else:
+            return f"贵族买地法案（出售 {percent * 100:.1f}% 国家公地）"
+
+    def _vote_on_land_act(self, act: dict):
+        """对土地法案进行元老院投票"""
+        votes_for = 0
+        votes_against = 0
+        total_influence = 0
+
+        for faction in self.state.get_active_factions():
+            influence = faction.get_senate_influence(self.state)
+            if influence == 0:
+                continue
+            total_influence += influence
+
+            # 使用通用投票决策器
+            support = self.vote_decider.decide_vote(act, faction, self.state)
+            if support:
+                votes_for += influence
+                print(f"          {faction.name} 支持，影响力 {influence}")
+            else:
+                votes_against += influence
+                print(f"          {faction.name} 反对，影响力 {influence}")
+
+        if total_influence == 0:
+            print(f"          无元老在场，法案未通过。")
+            return
+
+        support_ratio = votes_for / total_influence
+        print(f"          总影响力：{total_influence}，支持 {votes_for}，反对 {votes_against}，支持率 {support_ratio:.1%}")
+        if support_ratio > 0.5:
+            print(f"          ✅ 法案通过！")
+            self.state.add_pending_land_act(act)
+        else:
+            print(f"          ❌ 法案否决。")
 
     def _process_war_takeover(self):
         """处理战争接管：为无指挥官的活跃战争指派指挥官，以及处理 proconsul 机制"""

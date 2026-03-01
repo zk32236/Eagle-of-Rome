@@ -128,6 +128,9 @@ class TestResolutionCommand(unittest.TestCase):
         # 设置影响力：元老院派更高
         self.fig1._influence = 10
         self.fig2._influence = 5
+        # 新增：确保人物为贵族，以便计入元老院影响力
+        self.fig1.class_tier = ClassTier.NOBILE
+        self.fig2.class_tier = ClassTier.NOBILE
 
         cmd = ResolutionCommand(self.state)
         f = io.StringIO()
@@ -136,7 +139,8 @@ class TestResolutionCommand(unittest.TestCase):
         output = f.getvalue()
 
         self.assertTrue(result)
-        self.assertIn("Leading: 元老院派", output)
+        self.assertIn("元老院主导派系: 元老院派", output)
+        self.assertIn("% 影响力", output)
 
     def test_revolution_risk(self):
         """测试革命风险评估"""

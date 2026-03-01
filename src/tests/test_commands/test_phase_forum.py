@@ -28,9 +28,10 @@ if project_root not in sys.path:
 from src.core.game_state import GameState
 from src.ui.commands.phase_forum import ForumCommand
 from src.core.localization import TerminologyService
-from src.core.entities.figure import Figure
+from src.core.entities.figure import Figure, ClassTier
 from src.core.entities.entities import Faction, GameTurn, Province  # 确保 Faction 在这里导入
 from src.core.entities.contract import ContractType, Contract
+
 
 
 class TestForumCommand(unittest.TestCase):
@@ -40,6 +41,7 @@ class TestForumCommand(unittest.TestCase):
         self.state = GameState.create_for_testing({})
         from src.core.entities.entities import GameTurn
         self.state.turn = GameTurn(turn_number=1, year=-264)
+        self.state.get_pending_land_acts = MagicMock(return_value=[])
 
         # 添加行省
         from src.core.entities.entities import Province
@@ -54,6 +56,7 @@ class TestForumCommand(unittest.TestCase):
 
     def test_execute_success(self):
         """测试成功执行广场阶段"""
+        self.state.get_pending_land_acts = MagicMock(return_value=[])
         cmd = ForumCommand(self.state)
 
         # 捕获输出
@@ -75,6 +78,8 @@ class TestForumCommand(unittest.TestCase):
 
     def test_already_executed(self):
         """测试阶段已执行时再次执行应返回False"""
+        # 确保 state 模拟了 get_pending_land_acts
+        self.state.get_pending_land_acts = MagicMock(return_value=[])
         cmd = ForumCommand(self.state)
         cmd.execute([])  # 第一次执行
 
@@ -597,6 +602,68 @@ class TestForumCommand(unittest.TestCase):
         output = f.getvalue()
         self.assertEqual(italy.grievance, 2)  # 修正：应为2
         self.assertIn("意大利本土 民怨升级至 2 级", output)
+
+    def test_auto_land_trade_success(self):
+        """测试自动土地交易成功执行"""
+        # 准备模拟数据
+        seller = Figure(id=1, name="Seller", faction_id="senate", class_tier=ClassTier.NOBILE, wealth=100)
+        seller._land_private = 5
+        buyer = Figure(id=2, name="Buyer", faction_id="senate", class_tier=ClassTier.EQUES, wealth=100)
+        buyer._land_private = 0
+        self.state.add_member(seller)
+        self.state.add_member(buyer)
+
+        # 模拟决策器返回交易
+        mock_trade_decider = MagicMock()
+        mock_trade_decider.decide_trade.return_value = (1, 2, 3)
+
+        cmd = ForumCommand(self.state, land_trade_decider=mock_trade_decider)
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            cmd.execute([])
+        output = f.getvalue()
+
+        self.assertIn("自动土地交易执行成功", output)
+        self.assertEqual(seller.land_private, 2)  # 5-3
+        self.assertEqual(buyer.land_private, 3)
+
+    def test_auto_land_trade_failure(self):
+        """测试自动土地交易失败（如财富不足）"""
+        seller = Figure(id=1, name="Seller", faction_id="senate", class_tier=ClassTier.NOBILE, wealth=100)
+        seller._land_private = 5
+        buyer = Figure(id=2, name="Buyer", faction_id="senate", class_tier=ClassTier.EQUES, wealth=10)  # 财富不足
+        buyer._land_private = 0
+        self.state.add_member(seller)
+        self.state.add_member(buyer)
+
+        mock_trade_decider = MagicMock()
+        mock_trade_decider.decide_trade.return_value = (1, 2, 3)
+
+        cmd = ForumCommand(self.state, land_trade_decider=mock_trade_decider)
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            cmd.execute([])
+        output = f.getvalue()
+
+        self.assertIn("自动土地交易失败", output)
+        self.assertEqual(seller.land_private, 5)  # 未变化
+        self.assertEqual(buyer.wealth, 10)
+
+    def test_auto_land_trade_no_opportunity(self):
+        """测试没有交易机会时跳过"""
+        mock_trade_decider = MagicMock()
+        mock_trade_decider.decide_trade.return_value = None
+
+        cmd = ForumCommand(self.state, land_trade_decider=mock_trade_decider)
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            cmd.execute([])
+        output = f.getvalue()
+
+        self.assertIn("没有合适的土地交易机会", output)
 
 if __name__ == "__main__":
     unittest.main()

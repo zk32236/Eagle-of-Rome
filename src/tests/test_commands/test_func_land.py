@@ -12,7 +12,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(_
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.ui.commands.func_land import TradeCommand, LandCommand, SeatsCommand
+from src.ui.commands.func_land import TradeCommand, LandCommand
 from src.core.game_state import GameState
 from src.core.service.land_trading_service import LandTradingService
 from src.core.entities.figure import Figure, ClassTier
@@ -134,50 +134,3 @@ def test_land_price_preview_none(mock_state, mock_service):
     assert result is False
 
 
-# ========== SeatsCommand ==========
-
-def test_seats_with_assets(mock_state):
-    # 创建测试人物
-    fig1 = MagicMock(spec=Figure)
-    fig1.is_dead = False
-    fig1.land_private = 10
-    fig1.veterans = 5
-    fig1.get_seat_share.return_value = 15
-    fig1.name = "Fig1"
-    fig1.class_tier.value = "nobile"
-    fig1.faction_id = "senate"
-
-    fig2 = MagicMock(spec=Figure)
-    fig2.is_dead = False
-    fig2.land_private = 8
-    fig2.veterans = 2
-    fig2.get_seat_share.return_value = 10
-    fig2.name = "Fig2"
-    fig2.class_tier.value = "eques"
-    fig2.faction_id = "senate"
-
-    mock_state.get_living_members.return_value = [fig1, fig2]
-
-    # 创建派系
-    faction = MagicMock(spec=Faction)
-    faction.name = "Senate"
-    faction.get_members.return_value = [fig1, fig2]
-    mock_state.factions = {"senate": faction}
-    mock_state.get_faction.return_value = faction
-
-    cmd = SeatsCommand(mock_state)
-    result = cmd.execute([])
-    assert result is True
-
-
-def test_seats_no_assets(mock_state):
-    fig = MagicMock(spec=Figure)
-    fig.is_dead = False
-    fig.land_private = 0
-    fig.veterans = 0
-    fig.get_seat_share.return_value = 0
-    mock_state.get_living_members.return_value = [fig]
-
-    cmd = SeatsCommand(mock_state)
-    result = cmd.execute([])
-    assert result is True

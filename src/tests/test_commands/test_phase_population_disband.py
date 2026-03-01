@@ -47,6 +47,7 @@ class TestPopulationDisband:
         """测试凯旋已批准的战争：显示凯旋式并解散军团"""
         ws = mock_state.get_war_system.return_value
         ws._war_discard = [mock_war]
+        ws._legions_to_disband = []
         ms = mock_state.get_military_system.return_value
         ms.disband_legions_for_war.return_value = (3, [])
         mock_state.get_member.return_value = mock_commander
@@ -61,6 +62,7 @@ class TestPopulationDisband:
         mock_war.triumph_approved = False
         ws = mock_state.get_war_system.return_value
         ws._war_discard = [mock_war]
+        ws._legions_to_disband = []
         ms = mock_state.get_military_system.return_value
         ms.disband_legions_for_war.return_value = (3, [])
 
@@ -74,6 +76,7 @@ class TestPopulationDisband:
         mock_commander.is_dead = True
         ws = mock_state.get_war_system.return_value
         ws._war_discard = [mock_war]
+        ws._legions_to_disband = []
         ms = mock_state.get_military_system.return_value
         ms.disband_legions_for_war.return_value = (3, [])
         mock_state.get_member.return_value = mock_commander
@@ -88,6 +91,7 @@ class TestPopulationDisband:
         mock_war.legion_numbers = []
         ws = mock_state.get_war_system.return_value
         ws._war_discard = [mock_war]
+        ws._legions_to_disband = []
         ms = mock_state.get_military_system.return_value
 
         cmd = PopulationCommand(mock_state)
@@ -106,6 +110,7 @@ class TestPopulationDisband:
 
         ws = mock_state.get_war_system.return_value
         ws._war_discard = [mock_war, war2]
+        ws._legions_to_disband = []
         ms = mock_state.get_military_system.return_value
         ms.disband_legions_for_war.side_effect = [(3, []), (2, [])]
 

@@ -10,17 +10,22 @@ class AutoSenateVoteDecider(SenateVoteDecider):
     """自动元老院投票决策器，根据议题类型从配置读取概率"""
 
     def decide_vote(self, issue: Any, faction: Faction, state: GameState) -> bool:
-        config = state.config
+        # 如果是土地法案
+        if isinstance(issue, dict) and 'type' in issue:
+            # 提案派系自动支持
+            if faction.id == issue.get('proposer_faction'):
+                return True
+            # 其他派系随机
+            return random.random() < 0.5
 
+        # 原有合同/战争逻辑
         if isinstance(issue, Contract):
-            always_pass = config.get("testing.budget_always_pass", False)
+            always_pass = state.config.get("testing.budget_always_pass", False)
         elif isinstance(issue, War):
-            always_pass = config.get("testing.war_always_pass", False)
+            always_pass = state.config.get("testing.war_always_pass", False)
         else:
             always_pass = False
 
         if always_pass:
             return True
-
-        # 没有强制通过时，随机决定（50% 概率）
         return random.random() < 0.5

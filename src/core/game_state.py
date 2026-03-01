@@ -58,6 +58,8 @@ class GameState:
         self._public_land_total: int = 0
         self._contract_id_counter: int = 1
         self._treasury_deficit_turns = 0
+        self._pending_land_acts: List[Dict] = []
+        self._pending_land_acts: List[Dict] = []  # 新增
 
         # 初始化时调用 reset，确保状态一致性
         self.reset()
@@ -86,6 +88,8 @@ class GameState:
         self._contracts_dict.clear()
         self._public_land_total = 0
         self._contract_id_counter = 1
+
+        self._pending_land_acts.clear()  # 新增
 
     def _initialize_mortality_pool(self):
         """初始化天命池"""
@@ -122,6 +126,7 @@ class GameState:
         instance._public_land_total = 0
         instance._contract_id_counter = 1
         instance._national_public_land = test_config.get("economic_rules", {}).get("initial_national_public_land", 1000)
+        instance._pending_land_acts = []  # 新增
 
         return instance
 
@@ -282,7 +287,6 @@ class GameState:
         if not self._mortality_pool:
             self._initialize_mortality_pool()
         return self._mortality_pool.pop() if self._mortality_pool else 0
-
 
     # ========== 回合管理 ==========
 
@@ -462,6 +466,15 @@ class GameState:
     def get_national_public_land(self) -> int:
         """获取国家公地总量"""
         return self._national_public_land
+
+    def add_pending_land_act(self, act: dict):
+        self._pending_land_acts.append(act)
+
+    def get_pending_land_acts(self) -> List[dict]:
+        return self._pending_land_acts.copy()
+
+    def clear_pending_land_acts(self):
+        self._pending_land_acts.clear()
 
     # ---------- 行省管理 ----------
     def add_province(self, province: Province) -> None:

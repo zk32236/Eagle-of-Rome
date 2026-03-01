@@ -4,7 +4,7 @@
 """
 
 import random
-from typing import List, TYPE_CHECKING
+from typing import List, TYPE_CHECKING, Optional
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.figure import Figure, ClassTier
@@ -15,6 +15,9 @@ from src.core.deciders.impl.auto_recruitment_decider import AutoRecruitmentDecid
 from src.core.entities.war import WarStatus
 from src.core.deciders.impl.auto_triumph_decider import AutoTriumphDecider
 from src.core.deciders.triumph_decider import TriumphDecider
+from src.core.deciders.impl.auto_land_trade_decider import AutoLandTradeDecider
+from src.core.deciders.land_trade_decider import LandTradeDecider
+from src.core.service.land_trading_service import LandTradingService
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -27,11 +30,16 @@ class ForumCommand(Command):
     aliases = ["f"]
     description = "执行广场阶段 (Forum Phase)"
 
-    def __init__(self, state: "GameState", retirement_decider=None, recruitment_decider=None, triumph_decider=None):
+    def __init__(self, state: "GameState",
+                 retirement_decider=None,
+                 recruitment_decider=None,
+                 triumph_decider=None,
+                 land_trade_decider: Optional[LandTradeDecider] = None):  # 新增
         super().__init__(state)
         self.retirement_decider = retirement_decider or AutoRetirementDecider(state)
         self.recruitment_decider = recruitment_decider or AutoRecruitmentDecider()
-        self.triumph_decider = triumph_decider or AutoTriumphDecider()  # 新增
+        self.triumph_decider = triumph_decider or AutoTriumphDecider()
+        self.land_trade_decider = land_trade_decider or AutoLandTradeDecider()  # 新增
 
     def execute(self, args: List[str]) -> bool:
         if not self.state.is_phase_executed("revenue"):
@@ -68,8 +76,6 @@ class ForumCommand(Command):
         self._process_recruitment()
         self._process_war_threats()
 
-
-
         # 3. 生成合同（仅生成，不竞标）
         new_contracts = self._generate_contracts()
 
@@ -87,20 +93,9 @@ class ForumCommand(Command):
         # 因为新合同还没有开始收税，要到下个回合的r阶段才实际收税引起民变。
         self._process_civil_unrest()
         self._process_triumphs()
+        self._execute_pending_land_acts()
         self._process_budgeted_auctions()
-
-        """
-
-        # 5. 对包税合同竞标
-        for contract in new_contracts:
-            if contract.contract_type == ContractType.TAX_FARMING:
-                self._auto_bid_for_contract(contract)
-
-        # 6. 对工程合同竞标
-        for contract in new_contracts:
-            if contract.contract_type == ContractType.PUBLIC_WORKS:
-                self._auto_bid_for_works(contract)
-        """
+        self._process_land_trades()
 
         # 7. 显示待授予合同
         self._display_contracts(terms)
@@ -117,6 +112,88 @@ class ForumCommand(Command):
         self.state.mark_phase_executed("forum")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
+
+     #================================== 方法函数 =========================================
+
+    def _process_land_trades(self):
+        """处理自动土地交易"""
+        trade_info = self.land_trade_decider.decide_trade(self.state)
+        if not trade_info:
+            print(f"\n   📭 没有合适的土地交易机会。")
+            return
+
+        seller_id, buyer_id, amount = trade_info
+        service = LandTradingService(self.state)
+        success, msg = service.execute_trade(seller_id, buyer_id, amount)
+
+        if success:
+            print(f"\n   💱 自动土地交易执行成功：")
+            print(f"      {msg}")
+            self.state.log_event(f"自动土地交易: 卖家 {seller_id} 买家 {buyer_id} 数量 {amount}")
+        else:
+            print(f"\n   ⚠️ 自动土地交易失败：{msg}")
+
+    def _execute_pending_land_acts(self):
+        """执行已通过的平民分地和贵族买地法案"""
+        acts = self.state.get_pending_land_acts()
+        if not acts:
+            return
+        print(f"\n   🏞️ 执行土地法案：")
+        land_price = self.state.get_economic_rule("land_price_per_unit", 10)
+        for act in acts:
+            if act['type'] == 'distribution':
+                self._execute_land_distribution(act, land_price)
+            elif act['type'] == 'sale':
+                self._execute_land_sale(act, land_price)
+        self.state.clear_pending_land_acts()
+
+    def _execute_land_distribution(self, act, land_price):
+        national_land = self.state.get_national_public_land()
+        amount = int(national_land * act['percent'])
+        if amount <= 0:
+            print(f"      ⚠️ 国家公地不足，无法分配。")
+            return
+        # 减少国家公地（自动同步到意大利公地）
+        self.state.add_national_public_land(-amount)
+        italy = self.state.get_province(0)
+        if italy:
+            # 将土地转入意大利行省的私地（代表分配给平民的土地）
+            italy._land_private += amount
+            # 重置民怨计时器和民怨等级
+            italy._turns_since_last_land_distribution = 0
+            italy.set_grievance(0)
+        print(f"      ✅ 平民分地 {amount} C 土地（占国家公地 {act['percent'] * 100:.1f}%），转入意大利私地，民怨重置。")
+
+    def _execute_land_sale(self, act, land_price):
+        national_land = self.state.get_national_public_land()
+        amount = int(national_land * act['percent'])
+        if amount <= 0:
+            print(f"      ⚠️ 国家公地不足，无法出售。")
+            return
+        print(f"      🏛️ 贵族买地：出售 {amount} C 国家公地。")
+        # 获取所有贵族人物（按影响力排序）
+        nobles = [fig for fig in self.state.get_living_members() if fig.class_tier.value == "nobile"]
+        nobles.sort(key=lambda f: f.influence, reverse=True)
+        remaining = amount
+        for fig in nobles:
+            if remaining <= 0:
+                break
+            max_buy = fig.wealth // land_price
+            if max_buy <= 0:
+                continue
+            buy = random.randint(1, min(remaining, max_buy))
+            cost = buy * land_price
+            fig.wealth -= cost
+            fig._land_private += buy
+            fig.update_influence()
+            remaining -= buy
+            print(f"         {fig.name} 购买 {buy} C，花费 {cost}，剩余土地 {remaining} C")
+        sold = amount - remaining
+        if sold > 0:
+            self.state.add_national_public_land(-sold)
+            print(f"      共售出 {sold} C，国家公地剩余 {self.state.get_national_public_land()} C")
+        else:
+            print(f"      无土地售出。")
 
     def _process_triumphs(self):
         """处理所有待凯旋的战争（带调试输出）"""

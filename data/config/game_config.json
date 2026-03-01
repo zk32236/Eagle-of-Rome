@@ -15,6 +15,13 @@
     "leaders_per_election": 2,
     "allow_consecutive_terms": false,
     "min_festival_age": 30,
+    "land_proposal": {
+    "distribution_chance": 0.3,
+    "sale_chance": 0.3,
+    "land_percent_min": 0.05,
+    "land_percent_max": 0.10,
+    "submit_chance": 0.7
+    },
     "office_cooldowns": {
       "consul": 2,
       "censor": 2,
@@ -135,6 +142,6 @@
     "faction_initial_treasury": 10,
     "faction_tax_rate": 0.1,
     "faction_member_limit": 6,
-    "italy_unrest_trigger_turns": 1
+    "italy_unrest_trigger_turns": 3
   }
 }

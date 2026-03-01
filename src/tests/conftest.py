@@ -51,6 +51,14 @@ def sample_figure():
     return fig
 
 @pytest.fixture
+def sample_figure():
+    return Figure(id=1, name="Test Figure", faction_id="test_faction")
+
+@pytest.fixture
+def sample_faction():
+    return Faction(id="test_faction", name="Test Faction")
+
+@pytest.fixture
 def sample_knight_figure():
     """创建一个类型为骑士的Figure对象"""
     fig = Figure(id=2002, name="测试骑士")
