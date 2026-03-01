@@ -146,6 +146,11 @@ class DebugCLI:
             except KeyboardInterrupt:
                 print("\n使用 'exit' 命令退出游戏")
             except Exception as e:
+                # ===== 新增：记录未捕获异常到日志 =====
+                if self.state and hasattr(self.state, 'log_event'):
+                    import logging
+                    self.state.log_event(f"未捕获异常: {cmd_name} - {str(e)}", logging.ERROR)
+                # =====================================
                 print(f"发生未预期错误: {e}")
                 import traceback
                 traceback.print_exc()

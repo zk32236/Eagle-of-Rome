@@ -10,6 +10,7 @@ ENV/
 .venv
 virtualenv/
 venv.bak/
+logs/
 
 # PyCharm
 .idea/

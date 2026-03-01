@@ -721,11 +721,10 @@ class ForumCommand(Command):
 
         if success:
             print(f"\n   💱 自动土地交易执行成功：")
-            lines = msg.split('\n')
-            print(f"      {lines[0]}")
-            if len(lines) > 1:
-                print(f"      {lines[1]}")
+            for line in msg.split('\n'):
+                print(f"      {line}")
             self.state.log_event(f"自动土地交易: 卖家 {seller_id} 买家 {buyer_id} 数量 {amount}")
+
         else:
             seller = self.state.get_member(seller_id)
             buyer = self.state.get_member(buyer_id)

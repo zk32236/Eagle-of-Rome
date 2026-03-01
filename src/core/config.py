@@ -14,6 +14,13 @@ class Config:
 
     # 内置默认配置（从原 game_state.py 的 _load_config 默认值中抽取）
     DEFAULTS: Dict[str, Any] = {
+        "logging": {
+            "enabled": True,
+            "file_path": "logs/game.log",
+            "max_bytes": 10485760,
+            "backup_count": 3,
+            "log_level": "INFO"
+        },
         "political_rules": {
             "leader_cooldown_years": 10,
             "leaders_per_election": 2,

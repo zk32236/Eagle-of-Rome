@@ -5,6 +5,9 @@
 """
 
 import random
+import logging
+import logging.handlers
+import os
 from typing import Dict, List, Optional, Set, Any
 from typing import TYPE_CHECKING
 
@@ -60,8 +63,56 @@ class GameState:
         self._treasury_deficit_turns = 0
         self._pending_land_acts: List[Dict] = []  # 新增
 
+        # ---------- 新增：日志记录器 ----------
+        self._logger: Optional[logging.Logger] = None
+        self._setup_logging()
+        # -----------------------------------
+
         # 初始化时调用 reset，确保状态一致性
         self.reset()
+
+    def _setup_logging(self):
+        """根据配置初始化文件日志（每个实例独立）"""
+        log_config = self._config.get("logging", {})
+        if not log_config.get("enabled", False):
+            return
+
+        file_path = log_config.get("file_path", "logs/game.log")
+        max_bytes = log_config.get("max_bytes", 10485760)
+        backup_count = log_config.get("backup_count", 3)
+        level_str = log_config.get("log_level", "INFO")
+
+        level = getattr(logging, level_str.upper(), logging.INFO)
+
+        # 确保日志目录存在
+        log_dir = os.path.dirname(file_path)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+
+        # 创建独立 logger，不通过 getLogger 共享
+        self._logger = logging.Logger(name=f"EOR-{id(self)}", level=level)
+        handler = logging.handlers.RotatingFileHandler(
+            file_path, maxBytes=max_bytes, backupCount=backup_count, encoding='utf-8'
+        )
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        self._logger.addHandler(handler)
+        self._logger.propagate = False  # 防止日志传播到根 logger
+
+    def log_event(self, message: str, level: int = logging.INFO):
+        """
+        记录事件到内存日志，并写入文件日志（如果启用）
+        """
+        self._event_log.append(message)
+        if self._logger:
+            self._logger.log(level, message)
+
+    def close_logging(self):
+        """关闭日志处理器，释放文件句柄（主要用于测试）"""
+        if self._logger:
+            for handler in self._logger.handlers[:]:
+                handler.close()
+                self._logger.removeHandler(handler)
 
     def reset(self):
         """重置状态 - 实例方法，仅影响当前实例"""
@@ -99,7 +150,6 @@ class GameState:
     def create_for_testing(cls, test_config: Dict[str, Any]) -> 'GameState':
         """
         工厂方法: 创建测试专用实例
-
         绕过 __init__，直接注入测试配置，避免文件依赖
         """
         instance = cls.__new__(cls)
@@ -110,22 +160,27 @@ class GameState:
         instance._event_log = []
         instance._used_ids = set()
         instance._mortality_pool = []
-        instance._config = Config()  # 创建临时配置实例
-        instance._config._config = test_config  # 直接注入测试配置
+        instance._config = Config()
+        instance._config._config = test_config
         instance._war_system = None
         instance._military_system = None
-        instance._curia = Curia()  # 必须初始化 Curia
+        instance._curia = Curia()
         instance._contracts = []
         instance._executed_phases = set()
         instance._initialize_mortality_pool()
 
-        # ==================== MVP 0.5 初始化新增字段 ====================
+        # MVP 0.5 新增字段
         instance._provinces = {}
         instance._contracts_dict = {}
         instance._public_land_total = 0
         instance._contract_id_counter = 1
         instance._national_public_land = test_config.get("economic_rules", {}).get("initial_national_public_land", 1000)
-        instance._pending_land_acts = []  # 新增
+        instance._pending_land_acts = []
+
+        # ---------- 新增：日志记录器 ----------
+        instance._logger = None
+        instance._setup_logging()
+        # -----------------------------------
 
         return instance
 
@@ -339,9 +394,13 @@ class GameState:
 
     # ========== 日志 ==========
 
-    def log_event(self, message: str):
-        """记录事件"""
+    def log_event(self, message: str, level: int = logging.INFO):
+        """
+        记录事件到内存日志，并写入文件日志（如果启用）
+        """
         self._event_log.append(message)
+        if self._logger:
+            self._logger.log(level, message)
 
     def get_status_summary(self) -> str:
         """生成状态摘要"""

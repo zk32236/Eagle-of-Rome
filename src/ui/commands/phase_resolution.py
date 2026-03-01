@@ -53,17 +53,53 @@ class ResolutionCommand(Command):
         return True
 
     def _check_all_conditions(self, terms):
-        """检查所有胜利/失败条件，仅打印元老院主导派系"""
+        """检查所有胜利/失败条件，打印简洁信息"""
         print(f"\n   🏆 胜利/失败条件检查:")
 
-        # 计算元老院影响力
+        # 1. 国库连续赤字（共和覆灭条件）
+        if self.state.treasury < 0:
+            self.state.increment_treasury_deficit_turns()
+            deficit = self.state.treasury_deficit_turns
+            if deficit >= 3:
+                print(f"      💀 国库连续3回合赤字，共和覆灭！")
+            else:
+                print(f"      ⚠️ 国库赤字（第{deficit}回合），再持续{3 - deficit}回合将导致共和覆灭")
+        else:
+            self.state.reset_treasury_deficit_turns()
+
+        # 2. 军团全军覆没
+        ms = self.state.get_military_system()
+        if ms:
+            all_legions = ms.get_all_legions()
+            if all_legions and all(l.status.name == "DESTROYED" for l in all_legions):
+                print(f"      💀 所有军团已被消灭，共和覆灭！")
+
+        # 3. 行省大范围暴动（超过半数行省民怨≥3）
+        provinces = self.state.get_all_provinces()
+        if provinces:
+            revolt_provinces = [p for p in provinces if p.grievance >= 3]
+            if len(revolt_provinces) > len(provinces) // 2:
+                print(f"      💀 超过半数行省爆发起义，共和覆灭！")
+
+        # 4. 派系独裁（元老院影响力占比≥70%）
         total_senate_influence = 0
         faction_influences = {}
         for faction in self.state.factions.values():
             inf = faction.get_senate_influence(self.state)
             total_senate_influence += inf
             faction_influences[faction.id] = inf
+        if total_senate_influence > 0:
+            for faction in self.state.factions.values():
+                share = faction_influences[faction.id] / total_senate_influence
+                if share >= 0.7:
+                    print(f"      👑 {faction.name} 获得元老院 {share:.1%} 影响力，可能宣布独裁！")
 
+        # 5. 意大利本土民怨3级
+        italy = self.state.get_province(0)
+        if italy and italy.grievance == 3:
+            print(f"      💀 意大利本土民怨已达3级，若不在本年度内处理，共和国将面临覆灭！")
+
+        # 6. 元老院主导派系（按影响力百分比）
         if total_senate_influence > 0:
             top_faction_id = max(faction_influences, key=lambda fid: faction_influences[fid])
             top_faction = self.state.get_faction(top_faction_id)
@@ -71,10 +107,6 @@ class ResolutionCommand(Command):
             print(f"      📊 元老院主导派系: {top_faction.name} ({top_share:.1%} 影响力)")
         else:
             print(f"      📊 元老院无派系")
-
-        # 其他条件仍检查但不打印（可选，可保留逻辑但注释打印）
-        # 可保留但不输出
-        # 例如国库赤字、军团覆没等，如果需要保持逻辑，可以继续执行但不打印。
 
     def _process_contract_expiration(self, terms, verbose=False):
         """处理合同过期（无打印）"""
