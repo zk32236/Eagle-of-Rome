@@ -9,6 +9,7 @@ from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.contract import ContractStatus
 from src.ui.commands.func_status import get_progress_bar
+from src.core.entities.war import WarStatus
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -36,8 +37,8 @@ class ResolutionCommand(Command):
         terms = TerminologyService.get()
         print(f"\n--- {terms.phase_resolution} Phase (Year {abs(self.state.turn.year)} BC) ---")
 
-        # 1. 胜利条件检查
-        victory_check = self._check_victory_conditions(terms)
+        # 1. 胜负条件检查
+        self._check_all_conditions(terms)
 
         # 2. 革命/叛乱检查
         revolution_risk = self._check_revolution_risk(terms)
@@ -46,7 +47,7 @@ class ResolutionCommand(Command):
         self._process_contract_expiration(terms)
 
         # 4. 年度总结
-        self._generate_annual_report(terms, victory_check, revolution_risk)
+        self._generate_annual_report(terms, revolution_risk)
 
         # 5. 清理和准备下一年
         self._prepare_next_year()
@@ -70,23 +71,11 @@ class ResolutionCommand(Command):
         if hasattr(self.state.turn, 'current_phase'):
             self.state.turn.current_phase = "resolution"
 
-        self._check_italy_unrest_game_over(terms)
-
         self.state.mark_phase_executed("resolution")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
     # ---------- 私有方法 ----------
-
-    def _check_italy_unrest_game_over(self, terms):
-        """检查意大利本土民怨等级，若为3则触发游戏结束"""
-        italy = self.state.get_province(0)
-        if italy and italy.grievance == 3:
-            print(f"\n{'=' * 60}")
-            print(f"   💀 意大利本土爆发平民起义！政府倒台，共和国覆灭！")
-            print(f"{'=' * 60}")
-            print("游戏结束。")
-            sys.exit(0)
 
     def _process_temp_influence_decay(self):
         """处理所有存活人物的临时影响力衰减"""
@@ -105,23 +94,61 @@ class ResolutionCommand(Command):
         if not any_decay:
             print(f"      无临时影响力变化")
 
-    def _check_victory_conditions(self, terms) -> Dict:
-        """检查胜利条件（MVP 0.3简化版）"""
-        print(f"\n   🏆 Victory Conditions Check:")
+    def _check_all_conditions(self, terms):
+        """检查所有胜利/失败条件，仅打印信息，不结束游戏"""
+        print(f"\n   🏆 胜利/失败条件检查:")
 
-        max_influence = 0
-        dominant_faction = None
+        # 1. 国库连续赤字（共和覆灭条件）
+        if self.state.treasury < 0:
+            self.state.increment_treasury_deficit_turns()
+            deficit = self.state.treasury_deficit_turns
+            if deficit >= 3:
+                print(f"      💀 国库连续3回合赤字，共和覆灭！")
+            else:
+                print(f"      ⚠️ 国库赤字（第{deficit}回合），再持续{3 - deficit}回合将导致共和覆灭")
+        else:
+            self.state.reset_treasury_deficit_turns()
 
+        # 2. 军团全军覆没
+        ms = self.state.get_military_system()
+        if ms:
+            all_legions = ms.get_all_legions()
+            if all_legions and all(l.status.name == "DESTROYED" for l in all_legions):
+                print(f"      💀 所有军团已被消灭，共和覆灭！")
+
+        # 3. 行省大范围暴动（超过半数行省民怨≥3）
+        provinces = self.state.get_all_provinces()
+        if provinces:
+            revolt_provinces = [p for p in provinces if p.grievance >= 3]
+            if len(revolt_provinces) > len(provinces) // 2:
+                print(f"      💀 超过半数行省爆发起义，共和覆灭！")
+
+        # 4. 派系独裁（元老院影响力占比≥70%）
+        total_senate_influence = 0
+        faction_influences = {}
         for faction in self.state.factions.values():
-            influence = faction.get_total_influence(self.state)
-            if influence > max_influence:
-                max_influence = influence
-                dominant_faction = faction
+            inf = faction.get_senate_influence(self.state)
+            total_senate_influence += inf
+            faction_influences[faction.id] = inf
+        if total_senate_influence > 0:
+            for faction in self.state.factions.values():
+                share = faction_influences[faction.id] / total_senate_influence
+                if share >= 0.7:
+                    print(f"      👑 {faction.name} 获得元老院 {share:.1%} 影响力，可能宣布独裁！")
 
-        if dominant_faction:
-            print(f"      Leading: {dominant_faction.name} ({max_influence} {terms.influence})")
-            return {'dominant_faction': dominant_faction, 'influence': max_influence}
-        return {}
+        # 5. 意大利本土民怨3级
+        italy = self.state.get_province(0)
+        if italy and italy.grievance == 3:
+            print(f"      💀 意大利本土民怨已达3级，若不在本年度内处理，共和国将面临覆灭！")
+
+        # 6. 元老院主导派系（按影响力百分比）
+        if total_senate_influence > 0:
+            top_faction_id = max(faction_influences, key=lambda fid: faction_influences[fid])
+            top_faction = self.state.get_faction(top_faction_id)
+            top_share = faction_influences[top_faction_id] / total_senate_influence
+            print(f"      📊 元老院主导派系: {top_faction.name} ({top_share:.1%} 影响力)")
+        else:
+            print(f"      📊 元老院无派系")
 
     def _check_revolution_risk(self, terms) -> List[str]:
         """检查革命风险（框架预留）"""
@@ -173,8 +200,8 @@ class ResolutionCommand(Command):
             if completed:
                 print(f"      ✅ Completed this year: {len([c for c in completed if c.remaining_years == 0])}")
 
-    def _generate_annual_report(self, terms, victory: Dict, risks: List):
-        """生成年度总结报告"""
+    def _generate_annual_report(self, terms, risks: List):
+        """生成年度总结报告（移除胜利条件部分）"""
         print(f"\n{'=' * 50}")
         print(f"   📜 ANNUAL REPORT - Year {abs(self.state.turn.year)} BC")
         print(f"{'=' * 50}")
@@ -182,7 +209,7 @@ class ResolutionCommand(Command):
         # 国库状况
         print(f"\n   💰 Treasury: {self.state.treasury} {terms.currency}")
 
-        # 派系影响力排名
+        # 派系影响力排名（可保留，但不是胜利条件）
         print(f"\n   📊 {terms.faction} Standings:")
         standings = sorted(
             self.state.factions.values(),
@@ -191,7 +218,6 @@ class ResolutionCommand(Command):
         )
         for idx, faction in enumerate(standings, 1):
             influence = faction.get_total_influence(self.state)
-            # 检查是否有成员担任执政官或派系领袖
             leader = "👑" if any(
                 self.state.get_member(mid) and
                 (self.state.get_member(mid).is_faction_leader or self.state.get_member(mid).office == "consul")

@@ -33,6 +33,7 @@ class GameState:
         self._config = Config(config_path)
         Figure.load_config(self._config)
 
+
         # 所有状态改为实例属性，确保实例隔离
         self._members: Dict[int, 'Figure'] = {}
         self._factions: Dict[str, 'Faction'] = {}
@@ -56,6 +57,7 @@ class GameState:
         self._contracts_dict: Dict[int, Contract] = {}
         self._public_land_total: int = 0
         self._contract_id_counter: int = 1
+        self._treasury_deficit_turns = 0
 
         # 初始化时调用 reset，确保状态一致性
         self.reset()
@@ -199,6 +201,16 @@ class GameState:
         return True
 
     # ========== 国库管理 ==========
+
+    @property
+    def treasury_deficit_turns(self):
+        return self._treasury_deficit_turns
+
+    def reset_treasury_deficit_turns(self):
+        self._treasury_deficit_turns = 0
+
+    def increment_treasury_deficit_turns(self):
+        self._treasury_deficit_turns += 1
 
     @property
     def treasury(self):
