@@ -27,7 +27,7 @@ class DebugCLI:
 
         # 初始化命令注册器
         commands_dir = os.path.join(os.path.dirname(__file__), "commands")
-        print(f"[DEBUG] 命令目录: {commands_dir}")
+        # print(f"[DEBUG] 命令目录: {commands_dir}")
         self.registry = CommandRegistry(commands_dir)
 
         # 打印发现的命令（美化格式：主命令 + 别名）
@@ -38,8 +38,8 @@ class DebugCLI:
             info = self.registry.get_command_info(name)
             if info and info['name'] not in main_commands:
                 main_commands[info['name']] = info
-
-        print("📋 可用命令:")
+        """
+        # print("📋 可用命令:")
         # 按主命令名排序
         sorted_commands = sorted(main_commands.values(), key=lambda x: x['name'])
 
@@ -60,6 +60,8 @@ class DebugCLI:
                 line = ""
         if line:
             print(f"   {line}")
+            
+        """
 
         # 为特殊命令设置回调
         self._setup_special_commands()
@@ -112,9 +114,12 @@ class DebugCLI:
         print("\n🔄 自动加载默认场景...")
         self.registry.execute("load", self.state, [])
 
+        """
         print("\n" + "=" * 60)
         print("   Eagle of Rome - Debug CLI (整改后版本)")
         print("=" * 60)
+        """
+
         print("输入 'help' 查看可用命令，'exit' 退出游戏")
         print()
 

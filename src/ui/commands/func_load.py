@@ -19,6 +19,49 @@ class LoadCommand(Command):
     def __init__(self, state: "GameState"):
         super().__init__(state)
 
+    def execute(self, args: List[str]) -> bool:
+        scenario_file = args[0] if args else "mvp_test.json"
+
+        try:
+            # 加载场景
+            ScenarioLoader.load_scenario(self.state, scenario_file)
+
+            # 获取关键信息
+            year_display = f"{abs(self.state.turn.year)} BC" if self.state.turn.year < 0 else f"{self.state.turn.year} AD"
+            treasury = self.state.treasury
+
+            # 获取所有行省名称（意大利特殊处理）
+            provinces = self.state.get_all_provinces()
+            province_names = []
+            for p in provinces:
+                if p.province_id == 0:
+                    province_names.append("意大利(本土)")
+                else:
+                    province_names.append(p.name)
+            territory = ", ".join(province_names)
+
+            # 打印精简加载页面
+            print("\n" + "=" * 60)
+            print("               Eagle of Rome - MVP 0.5".center(60))
+            print("=" * 60)
+            print("游戏简介：基于罗马共和国历史背景的政治策略游戏")
+            print(f"开始年份：{year_display}")
+            print(f"国库资金：{treasury} Talents")
+            print(f"罗马领土：{territory}")
+            print("=" * 60)
+
+            return True
+
+        except FileNotFoundError as e:
+            print(f"\n❌ 场景文件不存在: {scenario_file}")
+            print(f"   错误信息: {e}")
+            return False
+        except Exception as e:
+            print(f"\n❌ 场景加载失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
     def _get_term_info(self) -> str:
         """获取术语信息字符串"""
         terms = TerminologyService.get()
@@ -117,36 +160,3 @@ class LoadCommand(Command):
         print("=" * 50)
         print("\n   Progress: [░░░░░░░] 0/7")
 
-    def execute(self, args: List[str]) -> bool:
-        """执行 load 命令"""
-        scenario_file = args[0] if args else "mvp_test.json"
-
-        # 显示术语信息
-        print(self._get_term_info())
-
-        try:
-            # 加载场景
-            ScenarioLoader.load_scenario(self.state, scenario_file)
-
-            # 获取存活人数
-            living_count = len(self.state.get_living_members())
-
-            # 显示场景加载成功信息
-            print(f"\n✅ Scenario loaded: {scenario_file}")
-            print(f"   Year: {abs(self.state.turn.year)} BC")
-            print(f"   Active figures: {living_count}/300")
-
-            # 显示派系详情
-            self._display_faction_details()
-
-            return True
-
-        except FileNotFoundError as e:
-            print(f"\n❌ 场景文件不存在: {scenario_file}")
-            print(f"   错误信息: {e}")
-            return False
-        except Exception as e:
-            print(f"\n❌ 场景加载失败: {e}")
-            import traceback
-            traceback.print_exc()
-            return False

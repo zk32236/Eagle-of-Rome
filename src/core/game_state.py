@@ -58,7 +58,6 @@ class GameState:
         self._public_land_total: int = 0
         self._contract_id_counter: int = 1
         self._treasury_deficit_turns = 0
-        self._pending_land_acts: List[Dict] = []
         self._pending_land_acts: List[Dict] = []  # 新增
 
         # 初始化时调用 reset，确保状态一致性

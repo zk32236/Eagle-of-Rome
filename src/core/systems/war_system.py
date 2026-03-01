@@ -121,7 +121,7 @@ class WarSystem:
             wars = self._create_default_wars()
 
         self._war_deck = wars
-        print(f"   📚 Loaded {len(wars)} wars into deck")
+        # print(f"   📚 Loaded {len(wars)} wars into deck")
         return wars
 
     def _parse_war_data(self, data: Dict[str, Any]) -> War:

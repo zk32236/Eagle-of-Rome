@@ -32,7 +32,7 @@ class MilitarySystem:
         for i in range(1, self.MAX_LEGIONS + 1):
             legion = Legion(number=i)
             self._legions.append(legion)
-        print(f"   ⚔️  Military system: {self.MAX_LEGIONS} legions ready")
+        # print(f"   ⚔️  Military system: {self.MAX_LEGIONS} legions ready")
 
     # ========== 查询方法 ==========
 
