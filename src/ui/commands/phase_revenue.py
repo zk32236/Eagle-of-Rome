@@ -1,9 +1,10 @@
 # src/ui/commands/phase_revenue.py
 """
 税收阶段命令 - 处理税收、派系津贴、军团维护费和合同收益
+优化打印格式：表格化显示派系资金和私地收益
 """
 
-from typing import List, Dict, TYPE_CHECKING
+from typing import List, Dict, Tuple, Optional, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.contract import ContractStatus, ContractType
@@ -41,64 +42,53 @@ class RevenueCommand(Command):
         stipend = self.state.get_economic_rule("faction_stipend", 10)
         tax_rate = self.state.get_economic_rule("faction_tax_rate", 0.1)  # 派系抽成比例
 
-        # 初始化派系抽成累计字典
+        # 初始化派系抽成累计字典和津贴记录
         faction_tax_collected: Dict[str, float] = {}
+        faction_stipend: Dict[str, int] = {}
         for faction in self.state.factions.values():
             faction_tax_collected[faction.id] = 0.0
+            faction_stipend[faction.id] = stipend
 
         # 1. 国家公地收益
         national_land = self.state.get_national_public_land()
         tax_income = int(round(national_land * land_price * national_tax_rate))
         self.state.add_treasury(tax_income)
-        print(f"   💰 国家公地收益: +{tax_income} {terms.currency}")
+        print(f"💰 国家公地收益: \t+{tax_income} {terms.currency}")
+        print(f"📊 国库现有资金: \t{self.state.treasury} {terms.currency}\n")
 
-        # 2. 派系津贴
-        for faction in self.state.factions.values():
-            self.state.add_faction_treasury(faction.id, stipend)
-            print(f"   {faction.name}: +{stipend} {terms.currency}")
+        # 2. 私地收益（同时计算抽成，并收集数据）
+        private_data = self._collect_private_land_income(terms, faction_tax_collected, tax_rate)
 
-        # 3. 私地收益（同时计算抽成）
-        self._process_private_land_income(terms, faction_tax_collected, tax_rate)
+        # 3. 合同收益结算（只执行，不打印）
+        self._collect_contract_revenues(terms, faction_tax_collected, tax_rate)
 
-        # 4. 军团维护费
+        # 4. 军团维护费（静默执行）
         ms = self.state.get_military_system()
         if ms:
-            success, msg = ms.apply_maintenance()
-            status = "✅" if success else "⚠️"
-            print(f"   {status} {msg}")
+            ms.apply_maintenance(verbose=False)
 
-        # 5. 合同收益结算（同时计算抽成）
-        self._process_contract_revenues(terms, faction_tax_collected, tax_rate)
-
-        # 6. 将累计抽成取整后加入派系金库
+        # 5. 将累计抽成取整后加入派系金库，同时记录各派系数据
+        faction_final = {}  # (stipend, tax, final_treasury)
         for faction_id, total_tax_float in faction_tax_collected.items():
-            tax_int = int(round(total_tax_float))  # 四舍五入取整
-            if tax_int > 0:
-                faction = self.state.get_faction(faction_id)
-                if faction:
-                    faction.treasury += tax_int
-                    print(f"   {faction.name} 派系金库 +{tax_int} {terms.currency}（成员贡献）")
-                    self.state.log_event(f"派系抽成: {faction.name} +{tax_int}")
+            tax_int = int(round(total_tax_float))
+            faction = self.state.get_faction(faction_id)
+            if faction:
+                old_treasury = faction.treasury
+                # 先加津贴，再加抽成
+                faction.treasury += faction_stipend[faction_id] + tax_int
+                faction_final[faction_id] = {
+                    'stipend': faction_stipend[faction_id],
+                    'tax': tax_int,
+                    'final': faction.treasury
+                }
 
-        # 7. 输出国库摘要
-        print(f"\n   📊 State Treasury: {self.state.treasury} {terms.currency}")
+        # 6. 打印派系金库表格
+        self._print_faction_table(terms, faction_final)
 
-        # 8. 军事摘要
-        if ms:
-            print(ms.get_military_summary())
+        # 7. 打印私地收益表格
+        self._print_private_land_table(private_data, terms)
 
-        # 9. 合同摘要
-        self._show_contract_summary(terms)
-
-        # 10. 显示私地状态
-        from src.ui.commands.func_status import StatusPrivateLandCommand
-        spr_cmd = StatusPrivateLandCommand(self.state)
-        spr_cmd.execute([])
-
-        # 11. 处理已完成工程合同的质保年限递减
-        self._process_warranty_decay(terms)
-
-        # 12. 兼容旧逻辑
+        # 8. 兼容旧逻辑
         if hasattr(self.state.turn, 'current_phase'):
             self.state.turn.current_phase = "revenue"
 
@@ -106,12 +96,16 @@ class RevenueCommand(Command):
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
-    def _process_private_land_income(self, terms, faction_tax_collected: Dict[str, float], tax_rate: float):
-        """处理私地收入，同时计算派系抽成"""
+    def _collect_private_land_income(self, terms, faction_tax_collected: Dict[str, float],
+                                      tax_rate: float) -> List[Tuple[int, str, int, int]]:
+        """
+        处理私地收入，返回 (人物ID, 姓名, 净收入, 更新后财富) 列表。
+        同时累计抽成到 faction_tax_collected。
+        """
         land_price = self.state.get_economic_rule("land_price_per_unit", 10)
         rate = self.state.get_economic_rule("private_land_income_rate", 0.05)
 
-        total_net = 0.0
+        data = []
         for fig in self.state.get_living_members():
             if fig.land_private <= 0:
                 continue
@@ -124,26 +118,17 @@ class RevenueCommand(Command):
             net_income_int = int(round(net_income_float))
             if net_income_int > 0:
                 fig.add_wealth(net_income_int)
-                total_net += net_income_float
                 if fig.faction_id and fig.faction_id in faction_tax_collected:
                     faction_tax_collected[fig.faction_id] += tax_float
+                data.append((fig.id, fig.get_formal_name(), net_income_int, fig.wealth))
+        return data
 
-        if total_net > 0:
-            print(f"\n   🌾 私地收益分配完成，总净收入约 {total_net:.1f} {terms.currency}")
-        else:
-            print(f"\n   🌾 无私地收益")
-
-    def _process_contract_revenues(self, terms, faction_tax_collected: Dict[str, float], tax_rate: float):
-        """处理合同收益，同时计算派系抽成"""
+    def _collect_contract_revenues(self, terms, faction_tax_collected: Dict[str, float], tax_rate: float):
+        """处理合同收益，只执行逻辑，不打印（可静默）"""
         from src.core.entities.contract import ContractType, ContractStatus
 
         active_contracts = [c for c in self.state.contracts
                             if c.status == ContractStatus.ACTIVE]
-
-        if not active_contracts:
-            return
-
-        print(f"\n   📜 Contract Revenues:")
 
         for contract in active_contracts:
             if contract.contract_type == ContractType.TAX_FARMING:
@@ -152,12 +137,10 @@ class RevenueCommand(Command):
                     continue
                 figure = self.state.get_member(winning_bid["bidder_id"])
                 if not figure or figure.is_dead:
-                    # 中标者已死亡，终止合同
                     contract.terminate()
                     province = self.state.get_province(contract.province_id)
                     if province:
                         province.unbind_tax_contract()
-                    print(f"      ⚠️  {contract.name}: 中标者已死亡，合同终止")
                     continue
 
                 annual_profit = contract.annual_profit
@@ -172,15 +155,10 @@ class RevenueCommand(Command):
                 if figure.faction_id and figure.faction_id in faction_tax_collected:
                     faction_tax_collected[figure.faction_id] += tax_float
 
-                print(
-                    f"      📊 {contract.name}: {figure.name} 获得 {net_profit_int} {terms.currency} 净收入，国库 +{winning_bid['amount']}")
-
                 if contract.remaining_years > 0:
                     contract.remaining_years -= 1
                     if contract.remaining_years == 0:
                         contract.set_extended(True)
-                        print(f"         📌 合同已延期，继续生效")
-
 
             elif contract.contract_type == ContractType.PUBLIC_WORKS:
                 figure = self.state.get_member(contract.awarded_to)
@@ -189,12 +167,11 @@ class RevenueCommand(Command):
                     province = self.state.get_province(contract.province_id)
                     if province:
                         province.unbind_project_contract()
-                    print(f"      ⚠️  {contract.name}: 中标者已死亡，合同终止")
                     continue
 
                 if contract.remaining_years > 0:
                     annual_income = contract.annual_income
-                    annual_cost = contract._annual_cost  # 直接访问私有字段
+                    annual_cost = contract._annual_cost
                     if contract.remaining_years == 1:
                         paid = contract.total_spent
                         total_bid = contract.base_cost
@@ -204,17 +181,13 @@ class RevenueCommand(Command):
                         payment = annual_income
                         cost = annual_cost
 
-                    # 计算利润（工程款 - 当年成本）
                     profit_float = float(payment - cost)
-
                     if profit_float > 0:
                         tax_float = profit_float * tax_rate
                         tax_int = int(round(tax_float))
                     else:
                         tax_float = 0.0
                         tax_int = 0
-
-                    # 骑士净收益 = 利润 - 抽成
 
                     knight_net_profit = profit_float - tax_float
                     knight_net_gain = int(round(knight_net_profit))
@@ -225,41 +198,65 @@ class RevenueCommand(Command):
 
                     if figure.faction_id and figure.faction_id in faction_tax_collected:
                         faction_tax_collected[figure.faction_id] += tax_float
-                    print(
-                        f"      🏗️ {contract.name}: Treasury -{payment}, {figure.name} +{knight_net_gain} (利润 {profit_float:.1f}, 税 {tax_float:.1f})")
+
                     if contract.remaining_years <= 0:
                         contract.mark_complete(self.state.turn.turn_number)
                         province = self.state.get_province(contract.province_id)
                         if province:
                             province.unbind_project_contract()
-                        print(f"         ✅ 工程竣工")
-                else:
-                    continue
 
-    def _process_warranty_decay(self, terms):
-        """遍历所有已完成的工程合同，减少其剩余质保年限"""
-        from src.core.entities.contract import ContractType, ContractStatus
-
-        for contract in self.state.contracts:
-            if (contract.contract_type == ContractType.PUBLIC_WORKS
-                    and contract.status == ContractStatus.COMPLETED
-                    and hasattr(contract, 'warranty_remaining') and contract.warranty_remaining > 0):
-                contract._warranty_remaining -= 1
-                if contract.warranty_remaining == 0:
-                    print(f"      ⚠️ {contract.name} 质保期结束，进入失修状态")
-
-    def _show_contract_summary(self, terms):
-        from src.core.entities.contract import ContractStatus
-
-        active = [c for c in self.state.contracts if c.status == ContractStatus.ACTIVE]
-        pending = [c for c in self.state.contracts if c.status == ContractStatus.PENDING]
-        completed = [c for c in self.state.contracts if c.status == ContractStatus.COMPLETED]
-        if not (active or pending or completed):
+    def _print_faction_table(self, terms, faction_data: Dict[str, dict]):
+        factions = list(self.state.factions.values())
+        if not factions:
             return
-        print(f"\n   📋 Contract Status:")
-        if active:
-            print(f"      ▶️  Active: {len(active)}")
-        if pending:
-            print(f"      ⏳ Pending: {len(pending)}")
-        if completed:
-            print(f"      ✅ Completed: {len(completed)}")
+        factions.sort(key=lambda f: f.name)
+
+        print("💰 派系金库收益 (Faction Treasury):")
+        # 表头
+        header = "        "
+        for f in factions:
+            header += f"{f.name:<12}"
+        print(header)
+
+        # 财政拨款
+        row = "财政拨款"
+        for f in factions:
+            stipend = faction_data[f.id]['stipend']
+            row += f"  +{stipend:<10}"
+        print(row)
+
+        # 会员贡献
+        row = "会员贡献"
+        for f in factions:
+            tax = faction_data[f.id]['tax']
+            row += f"  +{tax:<10}"
+        print(row)
+
+        # 现有资金
+        row = "现有资金"
+        for f in factions:
+            final = faction_data[f.id]['final']
+            row += f"  {final:<10}"
+        print(row)
+
+    def _print_private_land_table(self, data: List[Tuple[int, str, int, int]], terms):
+        if not data:
+            print("\n   🌾 无地主私人收益")
+            return
+
+        print("\n" + "=" * 70)
+        print("💰 地主私人收益 (Landowners' Private Income)")
+        print("=" * 70)
+        print(f"{'ID':<5} {'Name':<40} {'Income':<10} {'Wealth':<10}")
+        print("-" * 70)
+
+        total_income = 0
+        total_wealth = 0
+        for fig_id, name, income, wealth in data:
+            print(f"{fig_id:<5} {name:<40} {income:<10} {wealth:<10}")
+            total_income += income
+            total_wealth += wealth
+
+        print("-" * 70)
+        print(f"{'Total':<5} {'':<40} {total_income:<10} {total_wealth:<10}")
+        print("=" * 70)

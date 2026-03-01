@@ -228,22 +228,31 @@ class MilitarySystem:
 
         return total, breakdown
 
-    def apply_maintenance(self) -> Tuple[bool, str]:
-        """扣除维护费"""
+    def apply_maintenance(self, verbose: bool = True) -> Tuple[bool, str]:
+        """扣除维护费，verbose 控制是否打印详细消息"""
         terms = TerminologyService.get()
         total, breakdown = self.calculate_maintenance()
 
         if total == 0:
-            return True, f"No {terms.legion} maintenance needed"
+            if verbose:
+                return True, f"No {terms.legion} maintenance needed"
+            else:
+                return True, ""
 
         if self.state.treasury < total:
             # 国库不足，强制解散部分军团
             shortfall = total - self.state.treasury
             disbanded = self._auto_disband_for_funds(shortfall)
-            return False, f"Treasury shortfall! {disbanded} {terms.legion}(s) disbanded"
-
-        self.state.treasury -= total
-        return True, f"Paid {total} {terms.currency} for {terms.legion} maintenance"
+            if verbose:
+                return False, f"Treasury shortfall! {disbanded} {terms.legion}(s) disbanded"
+            else:
+                return False, ""
+        else:
+            self.state.treasury -= total
+            if verbose:
+                return True, f"Paid {total} {terms.currency} for {terms.legion} maintenance"
+            else:
+                return True, ""
 
     def _auto_disband_for_funds(self, shortfall: int) -> int:
         """自动解散军团以节省开支"""
