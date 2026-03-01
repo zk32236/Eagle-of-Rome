@@ -27,12 +27,12 @@ def main():
         # 导入并启动整改后的Debug CLI
         from src.ui.debug_cli import DebugCLI
 
-        print("\n" + "=" * 60)
-        print("   Eagle of Rome - MVP 0.5 （元老院阶段)")
-        print("=" * 60)
-        print("项目根目录:", current_dir)
-        print("Python路径:", src_path)
-        print("=" * 60)
+        # print("\n" + "=" * 60)
+        # print("   Eagle of Rome - MVP 0.5 （元老院阶段)")
+        # print("=" * 60)
+        # print("项目根目录:", current_dir)
+        # print("Python路径:", src_path)
+        # print("=" * 60)
 
         cli = DebugCLI()
         cli.run()
