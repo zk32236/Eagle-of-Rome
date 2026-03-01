@@ -24,8 +24,6 @@ from src.core.entities.legion import Legion, LegionStatus
 from src.core.entities.figure import Figure
 
 
-
-
 class TestCombatCommand(unittest.TestCase):
     """战斗阶段命令测试类"""
 
@@ -34,35 +32,25 @@ class TestCombatCommand(unittest.TestCase):
         test_config = {}
         self.state = GameState.create_for_testing(test_config)
 
-        # ===== 新增：设置回合 =====
         from src.core.entities.entities import GameTurn
         self.state.turn = GameTurn(turn_number=1, year=-264)
 
-        # ===== 新增：标记 senate 阶段已执行 =====
         self.state.mark_phase_executed("senate")
 
-        # 创建模拟的战争系统
         self.mock_war_system = MagicMock()
         self.state._war_system = self.mock_war_system
 
-        # 创建模拟的军事系统
         self.mock_military_system = MagicMock()
         self.state._military_system = self.mock_military_system
 
-        # 设置回合
-        from src.core.entities.entities import GameTurn
-        self.state.turn = GameTurn(turn_number=1, year=-264)
-
-        # 创建测试人物（用作指挥官）
         self.commander = Figure(id=1, name="Test Commander", faction_id="senate", age=40)
-        self.commander.military = 5
+        self.commander.martial = 5
         self.commander.influence = 10
         self.state.add_member(self.commander)
 
     def _create_mock_war(self, war_id="war1", name="Test War", strength=5,
                          commander_id=1, legions_assigned=2, fleets_assigned=0,
                          naval_support_required=False):
-        """创建模拟的战争对象"""
         war = MagicMock(spec=War)
         war.id = war_id
         war.name = name
@@ -74,7 +62,6 @@ class TestCombatCommand(unittest.TestCase):
         war.status = WarStatus.ACTIVE
         war.duration = 1
 
-        # 方法模拟
         war.get_total_strength.return_value = strength
         war.get_naval_strength_required.return_value = 3 if naval_support_required else 0
         war.is_disaster_roll.return_value = False
@@ -91,7 +78,7 @@ class TestCombatCommand(unittest.TestCase):
         legion.get_combat_strength.return_value = 2 + (1 if is_veteran else 0)
         legion.promote_to_veteran = MagicMock()
         legion.recall = MagicMock()
-        legion.mark_destroyed = MagicMock()  # 添加这一行
+        legion.mark_destroyed = MagicMock()
         return legion
 
     # ===== 测试用例 =====
@@ -99,9 +86,10 @@ class TestCombatCommand(unittest.TestCase):
     @patch('random.randint')
     def test_execute_success(self, mock_randint):
         """测试成功执行战斗阶段（小胜）"""
-        mock_randint.return_value = 6  # 固定骰子，确保 combat_total 达到 VICTORY 区间
-
-        war = self._create_mock_war()
+        # 设置敌方强度9，我方总战力9，骰子6 → combat_total = 6+9-9 = 6（胜利区间）
+        mock_randint.return_value = 6
+        war = self._create_mock_war(strength=9)
+        war.get_total_strength.return_value = 9
         self.mock_war_system.get_active_wars.return_value = [war]
 
         legions = [self._create_mock_legion(1), self._create_mock_legion(2)]
@@ -116,7 +104,29 @@ class TestCombatCommand(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertIn("Combat Phase", output)
+        self.assertIn("⚔️  Resolving Test War", output)
         self.mock_war_system.deactivate_war_to_threat.assert_called_once_with(war.id, threat_level=1)
+
+    def test_already_executed(self):
+        """测试阶段已执行时再次执行应返回False"""
+        self.state.mark_phase_executed("combat")
+        cmd = CombatCommand(self.state)
+        result = cmd.execute([])
+        self.assertFalse(result)
+
+    def test_no_active_wars(self):
+        """测试没有活跃战争时自动完成"""
+        self.mock_war_system.get_active_wars.return_value = []
+
+        cmd = CombatCommand(self.state)
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd.execute([])
+        output = f.getvalue()
+
+        self.assertTrue(result)
+        self.assertIn("No active conflicts", output)
+        self.assertTrue(self.state.is_phase_executed("combat"))
 
     def test_unassigned_wars(self):
         """测试有战争但未指派指挥官时跳过"""
@@ -138,48 +148,15 @@ class TestCombatCommand(unittest.TestCase):
         self.assertTrue(result)
         self.assertIn("1 war(s) without commanders!", output)
         self.assertIn("Unassigned War", output)
-        # 修改点：验证有指挥官的战斗执行
-        self.assertIn("Test Commander", output)  # 指挥官名称
-        self.assertIn("Forces: 1 Legion(s)", output)  # 军团信息
-
-    def test_already_executed(self):
-        """测试阶段已执行时再次执行应返回False"""
-        cmd = CombatCommand(self.state)
-
-        # 第一次执行（设置无战争，快速完成）
-        self.mock_war_system.get_active_wars.return_value = []
-        result1 = cmd.execute([])
-        self.assertTrue(result1)
-
-        # 第二次执行
-        f = io.StringIO()
-        with redirect_stdout(f):
-            result2 = cmd.execute([])
-        output = f.getvalue()
-
-        self.assertFalse(result2)
-        self.assertIn("战斗阶段在本回合已执行过", output)
-
-    def test_no_active_wars(self):
-        """测试没有活跃战争时自动完成"""
-        self.mock_war_system.get_active_wars.return_value = []
-
-        cmd = CombatCommand(self.state)
-        f = io.StringIO()
-        with redirect_stdout(f):
-            result = cmd.execute([])
-        output = f.getvalue()
-
-        self.assertTrue(result)
-        self.assertIn("No active conflicts", output)
-        self.assertTrue(self.state.is_phase_executed("combat"))
+        self.assertIn("Test Commander", output)
+        self.assertIn("Forces: 1 Legion(s)", output)
 
     @patch('random.randint')
     def test_battle_outcomes_triumph(self, mock_randint):
         """测试大胜结果"""
-        mock_randint.return_value = 10  # 骰子10
-
+        mock_randint.return_value = 12
         war = self._create_mock_war(strength=5)
+        war.get_total_strength.return_value = 5
         self.mock_war_system.get_active_wars.return_value = [war]
 
         legions = [self._create_mock_legion(1), self._create_mock_legion(2)]
@@ -193,9 +170,8 @@ class TestCombatCommand(unittest.TestCase):
         output = f.getvalue()
 
         self.assertTrue(result)
-        self.assertIn("RESULT: TRIUMPH", output)
-        self.assertIn("returns in triumph", output)
-
+        self.assertIn("TRIUMPH", output)
+        self.assertIn("0 losses", output)
         for leg in legions:
             leg.promote_to_veteran.assert_called_once()
             leg.recall.assert_called_once()
@@ -204,8 +180,10 @@ class TestCombatCommand(unittest.TestCase):
     @patch('random.randint')
     def test_battle_outcomes_victory(self, mock_randint):
         """测试胜利结果（小胜）"""
-        mock_randint.return_value = 6
-        war = self._create_mock_war(strength=5)
+        # 设置敌方强度12，我方总战力9，骰子9 → combat_total = 9+9-12 = 6（胜利区间）
+        mock_randint.return_value = 9
+        war = self._create_mock_war(strength=12)
+        war.get_total_strength.return_value = 12
         self.mock_war_system.get_active_wars.return_value = [war]
         legions = [self._create_mock_legion(1), self._create_mock_legion(2)]
         self.mock_military_system.get_legions_for_battle.return_value = legions
@@ -217,19 +195,18 @@ class TestCombatCommand(unittest.TestCase):
         output = f.getvalue()
 
         self.assertTrue(result)
-        self.assertIn("RESULT: VICTORY", output)
-        # 修改点：验证 deactivate_war_to_threat 被调用，而非 resolve_war
+        self.assertIn("VICTORY", output)
+        self.assertIn("0 losses", output)
         self.mock_war_system.deactivate_war_to_threat.assert_called_once_with("war1", threat_level=1)
-        # 可选：验证 resolve_war 未被调用
         self.mock_war_system.resolve_war.assert_not_called()
 
     @patch('random.randint')
     def test_battle_outcomes_stalemate(self, mock_randint):
         """测试僵持结果"""
-        # 设置骰子为2，敌方强度为12，使 combat_total = 2+9-12 = -1 (在僵持区间)
-        mock_randint.return_value = 2
-        war = self._create_mock_war(strength=12)
-        war.get_total_strength.return_value = 12
+        # 设置敌方强度15，我方总战力9（军团4 + 指挥官5），骰子5 → combat_total = 5+9-15 = -1（僵持区间）
+        mock_randint.return_value = 5
+        war = self._create_mock_war(strength=15)
+        war.get_total_strength.return_value = 15
         self.mock_war_system.get_active_wars.return_value = [war]
 
         legions = [self._create_mock_legion(1), self._create_mock_legion(2)]
@@ -242,15 +219,16 @@ class TestCombatCommand(unittest.TestCase):
         output = f.getvalue()
 
         self.assertTrue(result)
-        self.assertIn("RESULT: STALEMATE", output)
+        self.assertIn("STALEMATE", output)
+        self.assertIn("0 losses", output)
         self.assertEqual(war.duration, 2)  # 原1，僵持+1
         self.mock_war_system.resolve_war.assert_not_called()
+        self.mock_war_system.deactivate_war_to_threat.assert_not_called()
 
-    @patch('random.randint')
     @patch('random.random')
-    def test_battle_outcomes_defeat_fled(self, mock_random, mock_randint):
+    @patch('random.randint')
+    def test_battle_outcomes_defeat_fled(self, mock_randint, mock_random):
         """测试失败结果且将领逃跑"""
-        # 设置骰子为2，敌方强度为15，使 combat_total = 2+9-15 = -4 (< -3 触发失败)
         mock_randint.return_value = 2
         war = self._create_mock_war(strength=15)
         war.get_total_strength.return_value = 15
@@ -259,7 +237,6 @@ class TestCombatCommand(unittest.TestCase):
         legions = [self._create_mock_legion(1), self._create_mock_legion(2)]
         self.mock_military_system.get_legions_for_battle.return_value = legions
 
-        # 设置随机使得将领逃跑 (roll<0.3)
         mock_random.return_value = 0.2
 
         cmd = CombatCommand(self.state)
@@ -269,9 +246,9 @@ class TestCombatCommand(unittest.TestCase):
         output = f.getvalue()
 
         self.assertTrue(result)
-        self.assertIn("RESULT: DEFEAT", output)
+        self.assertIn("DEFEAT", output)
+        self.assertIn("1 Legion(s) destroyed", output)
 
-        # 验证军团损失一半（2个军团损失1个）
         self.assertEqual(legions[0].status, LegionStatus.DISBANDED)
         legions[0].recall.assert_called_once()
         self.assertFalse(legions[1].status == LegionStatus.DISBANDED)
@@ -296,10 +273,11 @@ class TestCombatCommand(unittest.TestCase):
         output = f.getvalue()
 
         self.assertTrue(result)
-        self.assertIn("RESULT: DISASTER", output)
+        self.assertIn("DISASTER", output)
+        self.assertIn("2 Legion(s) destroyed", output)
 
         for leg in legions:
-            leg.mark_destroyed.assert_called_once_with(1)  # 假设当前回合为1
+            leg.mark_destroyed.assert_called_once_with(1)
 
         self.assertTrue(self.commander.is_dead)
         war.report_commander_casualty.assert_called_once_with("killed", 1)
@@ -323,7 +301,7 @@ class TestCombatCommand(unittest.TestCase):
         output = f.getvalue()
 
         self.assertTrue(result)
-        self.assertIn("No Legions assigned!", output)  # 注意大小写
+        self.assertIn("No Legions assigned!", output)
         self.assertEqual(war.duration, 2)
 
     def test_commander_dead(self):
@@ -339,7 +317,7 @@ class TestCombatCommand(unittest.TestCase):
         output = f.getvalue()
 
         self.assertTrue(result)
-        self.assertIn("Commander unavailable!", output)  # 注意大小写
+        self.assertIn("Commander unavailable!", output)
         self.mock_war_system.recall_commander.assert_called_once_with("war1")
 
 

@@ -1,7 +1,5 @@
 # src/tests/test_commands/test_phase_resolution.py
-"""
-决议阶段命令单元测试
-"""
+"""决议阶段命令单元测试 - 适配精简打印"""
 
 import unittest
 import sys
@@ -17,12 +15,11 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.core.game_state import GameState
+from src.core.entities.entities import GameTurn, Faction
+from src.core.entities.figure import Figure
+from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.ui.commands.phase_resolution import ResolutionCommand
-from src.core.entities.entities import Faction, GameTurn
-from src.core.entities.figure import Figure, ClassTier
-from src.core.entities.contract import Contract, ContractStatus, ContractType
 from src.core.localization import TerminologyService
-from src.core.entities.entities import Province
 
 
 class TestResolutionCommand(unittest.TestCase):
@@ -32,55 +29,40 @@ class TestResolutionCommand(unittest.TestCase):
         """每个测试前创建测试用 GameState"""
         test_config = {}
         self.state = GameState.create_for_testing(test_config)
-
-        # 新增：标记 combat 阶段已执行
+        self.state.turn = GameTurn(turn_number=5, year=-260)
         self.state.mark_phase_executed("combat")
 
-        # 创建派系
+        # 添加测试派系
         self.faction1 = Faction(id="senate", name="元老院派", treasury=50)
-        self.faction2 = Faction(id="populares", name="平民派", treasury=30)
+        self.faction2 = Faction(id="plebs", name="平民派", treasury=30)
         self.state.add_faction(self.faction1)
         self.state.add_faction(self.faction2)
 
-        # 创建人物
+        # 添加测试人物
         self.fig1 = Figure(id=1, name="Marcus", faction_id="senate", age=40)
         self.fig1.loyalty = 8
-        self.fig1.power = 5
+        self.fig1.wealth = 100
         self.fig1.popularity = 10
         self.fig1.veterans = 4
-        self.fig1.apply_annual_decay = MagicMock()
+        self.state.add_member(self.fig1)
+        self.faction1.member_ids.append(1)
 
-        self.fig2 = Figure(id=2, name="Gaius", faction_id="populares", age=35)
+        self.fig2 = Figure(id=2, name="Gaius", faction_id="plebs", age=35)
         self.fig2.loyalty = 3
-        self.fig2.power = 4
+        self.fig2.wealth = 50
         self.fig2.popularity = 8
         self.fig2.veterans = 2
-        self.fig2.apply_annual_decay = MagicMock()
-
-        self.state.add_member(self.fig1)
         self.state.add_member(self.fig2)
+        self.faction2.member_ids.append(2)
 
-        self.faction1.member_ids = [1]
-        self.faction2.member_ids = [2]
+    # ========== 测试用例 ==========
 
-        # 设置回合
-        self.state.turn = GameTurn(turn_number=1, year=-264)
-
-        # 设置国库
-        self.state._treasury = 200
-
-    def _create_mock_contract(self, status=ContractStatus.PENDING, turns_pending=1):
-        """创建模拟的合同对象"""
-        contract = MagicMock(spec=Contract)
-        contract.status = status
-        contract.contract_type = ContractType.TAX_FARMING
-        contract.name = "Test Contract"
-        contract._created_turn = self.state.turn.turn_number - turns_pending
-        contract.expire = MagicMock()
-        contract.get_annual_revenue.return_value = 10
-        return contract
-
-    # ===== 测试用例 =====
+    def test_already_executed(self):
+        """测试阶段已执行时再次执行应返回False"""
+        self.state.mark_phase_executed("resolution")
+        cmd = ResolutionCommand(self.state)
+        result = cmd.execute([])
+        self.assertFalse(result)
 
     def test_execute_success(self):
         """测试成功执行决议阶段"""
@@ -92,45 +74,19 @@ class TestResolutionCommand(unittest.TestCase):
         output = f.getvalue()
 
         self.assertTrue(result)
-        # 修正：匹配实际输出的阶段名称 "Revolution Phase"
         self.assertIn("Revolution Phase", output)
-        self.assertIn("ANNUAL REPORT", output)
-        self.assertIn("Treasury: 200", output)
-        self.assertIn("Peace prevails", output)
-        self.assertIn("Annual Decay", output)
-
-        # 验证阶段被标记
-        self.assertTrue(self.state.is_phase_executed("resolution"))
-
-        # 验证人物 apply_annual_decay 被调用
-        self.fig1.apply_annual_decay.assert_called_once()
-        self.fig2.apply_annual_decay.assert_called_once()
-
-    def test_already_executed(self):
-        """测试阶段已执行时再次执行应返回False"""
-        cmd = ResolutionCommand(self.state)
-
-        # 第一次执行
-        result1 = cmd.execute([])
-        self.assertTrue(result1)
-
-        # 第二次执行
-        f = io.StringIO()
-        with redirect_stdout(f):
-            result2 = cmd.execute([])
-        output = f.getvalue()
-
-        self.assertFalse(result2)
-        self.assertIn("决议阶段在本回合已执行过", output)
+        self.assertIn("胜利/失败条件检查", output)
 
     def test_victory_conditions(self):
         """测试胜利条件检查"""
-        # 设置影响力：元老院派更高
-        self.fig1._influence = 10
-        self.fig2._influence = 5
-        # 新增：确保人物为贵族，以便计入元老院影响力
+        # 设置人物为贵族，使其影响力计入元老院
+        from src.core.entities.figure import ClassTier
         self.fig1.class_tier = ClassTier.NOBILE
         self.fig2.class_tier = ClassTier.NOBILE
+        self.fig1.faction_id = "senate"
+        self.fig2.faction_id = "senate"
+        self.fig1.influence = 10
+        self.fig2.influence = 5
 
         cmd = ResolutionCommand(self.state)
         f = io.StringIO()
@@ -140,14 +96,10 @@ class TestResolutionCommand(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertIn("元老院主导派系: 元老院派", output)
-        self.assertIn("% 影响力", output)
 
     def test_revolution_risk(self):
-        """测试革命风险评估"""
-        # 设置人物忠诚度：fig1高，fig2低
-        self.fig1.loyalty = 8
-        self.fig2.loyalty = 2
-
+        """测试革命风险评估（已移除，仅保留胜利条件）"""
+        # 此功能已移除，测试仅验证胜利条件输出存在
         cmd = ResolutionCommand(self.state)
         f = io.StringIO()
         with redirect_stdout(f):
@@ -155,15 +107,14 @@ class TestResolutionCommand(unittest.TestCase):
         output = f.getvalue()
 
         self.assertTrue(result)
-        self.assertIn("元老院派: LOW risk", output)
-        self.assertIn("平民派: HIGH risk", output)
+        self.assertIn("胜利/失败条件检查", output)
+        # 不再包含风险提示
+        self.assertNotIn("Revolution Risk Assessment", output)
 
     def test_contract_expiration(self):
-        """测试合同过期逻辑"""
-        from src.core.entities.contract import ContractType, ContractStatus
+        """测试合同过期逻辑（无输出）"""
         from src.core.entities.entities import Province
 
-        # 添加测试省份
         province1 = Province(1, "Province1", 1000)
         province2 = Province(2, "Province2", 1000)
         self.state.add_province(province1)
@@ -177,7 +128,6 @@ class TestResolutionCommand(unittest.TestCase):
             current_turn=self.state.turn.turn_number - 4
         )
         contract_expired.status = ContractStatus.PENDING
-        # 为兼容生产代码中错误的属性名 _created_turn，手动添加该属性
         contract_expired._created_turn = self.state.turn.turn_number - 4
 
         # 创建未过期合同（1回合前创建）
@@ -197,20 +147,19 @@ class TestResolutionCommand(unittest.TestCase):
         output = f.getvalue()
 
         self.assertTrue(result)
-        self.assertIn("1 contract(s) expired", output)
+        # 验证合同状态已改变（后台逻辑）
         self.assertEqual(contract_expired.status, ContractStatus.EXPIRED)
         self.assertEqual(contract_pending.status, ContractStatus.PENDING)
+        # 输出中不应包含过期信息
+        self.assertNotIn("expired", output.lower())
 
     def test_contract_summary(self):
-        """测试合同摘要显示"""
-        from src.core.entities.contract import ContractType, ContractStatus
+        """测试合同摘要（已移除）"""
         from src.core.entities.entities import Province
 
-        # 添加测试省份
         province = Province(1, "Province1", 1000)
         self.state.add_province(province)
 
-        # 创建活跃合同
         active_contract = self.state.create_contract(
             ContractType.TAX_FARMING,
             province_id=1,
@@ -219,19 +168,8 @@ class TestResolutionCommand(unittest.TestCase):
         )
         active_contract.status = ContractStatus.ACTIVE
         active_contract.remaining_years = 2
-        # 设置预期利润和期限，使 get_annual_revenue 返回 10
         active_contract.expected_profit = 20
         active_contract.duration_years = 2
-
-        # 创建已完成合同
-        completed_contract = self.state.create_contract(
-            ContractType.TAX_FARMING,
-            province_id=1,
-            base_cost=100,
-            current_turn=self.state.turn.turn_number - 5
-        )
-        completed_contract.status = ContractStatus.COMPLETED
-        completed_contract.remaining_years = 0
 
         cmd = ResolutionCommand(self.state)
         f = io.StringIO()
@@ -240,45 +178,51 @@ class TestResolutionCommand(unittest.TestCase):
         output = f.getvalue()
 
         self.assertTrue(result)
-        self.assertIn("Active Contracts: 1", output)
-        self.assertIn("Annual Revenue: 10", output)
-        self.assertIn("Completed this year: 1", output)
+        # 输出中不应包含合同摘要
+        self.assertNotIn("Active Contracts", output)
 
     def test_annual_decay(self):
-        """测试年度衰减"""
-        # 设置人物初始值
-        self.fig1.popularity = 10
-        self.fig1.veterans = 4
-        self.fig1.age = 40
-        self.fig2.popularity = 8
-        self.fig2.veterans = 2
-        self.fig2.age = 35
+        """测试年度衰减（后台执行，无输出）"""
+        # 记录初始值
+        pop1 = self.fig1.popularity
+        vet1 = self.fig1.veterans
+        age1 = self.fig1.age
+
+        pop2 = self.fig2.popularity
+        vet2 = self.fig2.veterans
+        age2 = self.fig2.age
 
         cmd = ResolutionCommand(self.state)
         f = io.StringIO()
         with redirect_stdout(f):
-            result = cmd.execute([])  # 执行完整命令
+            result = cmd.execute([])
         output = f.getvalue()
 
         self.assertTrue(result)
-        self.assertIn("Annual Decay", output)
-        # 根据实际输出中的格式进行断言（注意：vets 减少量显示为衰减后的 20%，与原代码行为一致）
-        self.assertIn("Marcus: vets-0, pop-5(-50%), age 41", output)
-        self.assertIn("Gaius: vets-0, pop-4(-50%), age 36", output)
+        # 验证衰减已发生（人气降50%，老兵降20%，年龄+1）
+        # 注意：由于取整，可能会有1的误差，我们使用近似检查
+        self.assertLess(self.fig1.popularity, pop1)
+        self.assertLess(self.fig1.veterans, vet1)
+        self.assertEqual(self.fig1.age, age1 + 1)
+
+        self.assertLess(self.fig2.popularity, pop2)
+        self.assertLess(self.fig2.veterans, vet2)
+        self.assertEqual(self.fig2.age, age2 + 1)
+
+        # 输出中不应包含衰减信息
+        self.assertNotIn("Annual Decay", output)
 
     def test_prepare_next_year(self):
-        """测试准备下一年的方法"""
+        """测试准备下一年（方法无输出，仅验证可调用）"""
         cmd = ResolutionCommand(self.state)
-        f = io.StringIO()
-        with redirect_stdout(f):
-            cmd._prepare_next_year()
-        output = f.getvalue()
-
-        self.assertIn("Preparing for next year", output)
+        # 直接调用私有方法，确保不抛出异常
+        try:
+            cmd._prepare_next_year(verbose=False)
+        except Exception as e:
+            self.fail(f"_prepare_next_year raised exception: {e}")
 
     def test_active_wars_in_report(self):
-        """测试年度报告中显示活跃战争"""
-        # 模拟有活跃战争
+        """测试年度报告中显示活跃战争（已移除）"""
         mock_war = MagicMock()
         mock_war.name = "Gallic War"
         self.state.get_active_wars = MagicMock(return_value=[mock_war])
@@ -290,9 +234,9 @@ class TestResolutionCommand(unittest.TestCase):
         output = f.getvalue()
 
         self.assertTrue(result)
-        # 修正：原代码只输出战争数量，不输出战争名称
-        self.assertIn("Ongoing Conflicts: 1", output)
-        # 移除对战争名称的断言，因为实际输出不包含名称
+        # 输出中不应包含战争信息
+        self.assertNotIn("Ongoing Conflicts", output)
+        self.assertNotIn("Gallic War", output)
 
 
 if __name__ == "__main__":
