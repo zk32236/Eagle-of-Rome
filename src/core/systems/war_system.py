@@ -1,14 +1,14 @@
 # src/core/systems/war_system.py
 import json
 import random
+import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Any, TYPE_CHECKING
+from src.core.entities.war import War, WarStatus, WarType
+from src.core.localization import TerminologyService
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
-
-from src.core.entities.war import War, WarStatus, WarType
-from src.core.localization import TerminologyService
 
 
 class WarSystem:
@@ -32,6 +32,186 @@ class WarSystem:
         self._active_wars: List[War] = []   # 已爆发的战争
         self._threats: List[War] = []        # 威胁中的战争（未爆发）
         self._legions_to_disband: List[int] = []  # 存储需要在人口阶段解散的军团编号
+
+    # ========== 日志操作 ==========
+
+    def activate_war(self, war_id: str, consul_id: int, legions: int) -> bool:
+        """将威胁战争激活，记录宣战者和批准军团数"""
+        war = self.get_war_by_id(war_id)
+        if not war or war.status != WarStatus.THREAT:
+            print(f"      ⚠️ 激活战争失败：战争 {war_id} 不存在或不是威胁状态")
+            return False
+        war.status = WarStatus.ACTIVE
+        war.declared_by = consul_id
+        war.proposed_legions = legions
+        war.activation_turn = self.state.turn.turn_number
+        # 从威胁列表移到活跃列表
+        if war in self._threats:
+            self._threats.remove(war)
+        self._active_wars.append(war)
+        print(f"      ✅ 战争 {war.name} 已激活，批准军团数 {legions}")
+        # ===== 新增日志 =====
+        self.state.log_event(
+            f"战争激活：{war.name}，批准军团 {legions}",
+            extra={"war_id": war.id, "consul_id": consul_id, "legions": legions}
+        )
+        return True
+
+    def deactivate_war_to_threat(self, war_id: str, threat_level: int = 1) -> bool:
+        """将活跃战争降级为威胁状态"""
+        war = self.get_war_by_id(war_id)
+        if not war or war.status != WarStatus.ACTIVE:
+            return False
+
+        war.status = WarStatus.THREAT
+        war.threat_level = threat_level
+        war.commander_id = None
+        war.legions_assigned = 0
+        war.fleets_assigned = 0
+
+        if war in self._active_wars:
+            self._active_wars.remove(war)
+        if war not in self._threats:
+            self._threats.append(war)
+
+        ms = self.state.get_military_system()
+        if ms:
+            ms.recall_from_war(war.id)
+            if war.legion_numbers:
+                self._legions_to_disband.extend(war.legion_numbers)
+            war.clear_legion_numbers()
+
+        # ===== 新增日志 =====
+        self.state.log_event(
+            f"战争降级为威胁：{war.name}，威胁等级 {threat_level}",
+            extra={"war_id": war.id, "threat_level": threat_level}
+        )
+        return True
+
+    def resolve_war(self, war_id: str, victory: bool) -> Dict[str, Any]:
+        """结算战争（胜利或失败），增加奖励分配逻辑"""
+        war = self.get_war_by_id(war_id)
+        if not war:
+            return {}
+
+        terms = TerminologyService.get()
+        result = {
+            'war_name': war.name,
+            'victory': victory,
+            'duration': war.duration,
+            'rewards': {},
+            'penalties_applied': [],
+        }
+
+        if victory:
+            war.status = WarStatus.RESOLVED
+            if war.commander_id:
+                war.set_triumph_commander(war.commander_id)
+            rewards = war.calculate_rewards()
+            result['rewards'] = rewards
+
+            treasury_share = self.state.config.get("combat_rules.treasury_share", 0.5)
+            faction_share = self.state.config.get("combat_rules.faction_share", 0.25)
+            commander_share = self.state.config.get("combat_rules.commander_share", 0.15)
+            soldier_share = self.state.config.get("combat_rules.soldier_share", 0.15)
+
+            total_treasury = rewards.get('treasury', 0)
+
+            treasury_part = int(total_treasury * treasury_share)
+            faction_part = int(total_treasury * faction_share)
+            commander_part = int(total_treasury * commander_share)
+            soldier_part = total_treasury - treasury_part - faction_part - commander_part
+
+            print(f"\n      📦 战利品分配 ({war.name}):")
+            print(f"        总额: {total_treasury} 塔兰特")
+            print(f"        国库: +{treasury_part}")
+            # ... 原有打印 ...
+
+            # --- 分配战利品 ---
+            if not war.commander_id:
+                self.state.add_treasury(total_treasury)
+                self.state.log_event(f"战争 {war.name} 战利品: 国库 +{total_treasury}（无指挥官）")
+                war.set_soldier_share(0)
+            else:
+                if treasury_part > 0:
+                    self.state.add_treasury(treasury_part)
+                    self.state.log_event(f"战争 {war.name} 战利品: 国库 +{treasury_part}")
+                if faction_part > 0:
+                    commander = self.state.get_member(war.commander_id)
+                    if commander and commander.faction_id:
+                        faction = self.state.get_faction(commander.faction_id)
+                        if faction:
+                            faction.treasury += faction_part
+                            self.state.log_event(f"战争 {war.name} 战利品: 派系 {faction.name} +{faction_part}")
+                if commander_part > 0:
+                    commander = self.state.get_member(war.commander_id)
+                    if commander:
+                        commander.wealth += commander_part
+                        self.state.log_event(f"战争 {war.name} 战利品: 指挥官 {commander.name} +{commander_part}")
+                if soldier_part > 0:
+                    war.set_soldier_share(soldier_part)
+                    self.state.log_event(f"战争 {war.name} 战利品: 士兵份额 {soldier_part} 待凯旋分配")
+
+            land_reward = rewards.get('land', 0)
+            if land_reward > 0:
+                self.state.add_national_public_land(land_reward)
+                self.state.log_event(f"战争 {war.name} 土地: 国家公地 +{land_reward}")
+
+            prestige_reward = rewards.get('family_prestige', 0)
+            if prestige_reward > 0 and war.commander_id:
+                commander = self.state.get_member(war.commander_id)
+                if commander:
+                    commander.family_prestige += prestige_reward
+                    self.state.log_event(f"战争 {war.name} 家族声望: {commander.name} +{prestige_reward}")
+
+            print(f"   ✅ {war.name} resolved! Victory!")
+            print(f"   🎁 Rewards: {result['rewards']}")
+
+            # ===== 新增日志：战争胜利摘要 =====
+            self.state.log_event(
+                f"战争胜利：{war.name}，战利品总额 {total_treasury}",
+                extra={"war_id": war.id, "victory": True, "treasury_gain": treasury_part}
+            )
+
+        else:
+            war.status = WarStatus.DEFEATED
+            print(f"   ❌ {war.name} lost! Defeat!")
+            # ===== 新增日志：战争失败 =====
+            self.state.log_event(
+                f"战争失败：{war.name}",
+                extra={"war_id": war.id, "victory": False}
+            )
+
+        # 清理战争数据
+        ms = self.state.get_military_system()
+        if ms:
+            ms.recall_from_war(war.id)
+
+        war.commander_id = None
+        war.legions_assigned = 0
+        war.fleets_assigned = 0
+
+        if war in self._active_wars:
+            self._active_wars.remove(war)
+        self._war_discard.append(war)
+
+        return result
+
+    def apply_turn_penalties(self) -> List[str]:
+        """应用所有活跃战争的拖延惩罚"""
+        events = []
+        for war in self._active_wars:
+            if war.status == WarStatus.ACTIVE:
+                war_events = war.apply_penalties(self.state)
+                events.extend(war_events)
+                war.duration += 1
+                # ===== 新增日志：记录战争拖延惩罚 =====
+                if war_events:
+                    self.state.log_event(
+                        f"战争 {war.name} 拖延惩罚",
+                        extra={"war_id": war.id, "duration": war.duration, "penalties": war_events}
+                    )
+        return events
 
     # ========== 数据加载 ==========
 

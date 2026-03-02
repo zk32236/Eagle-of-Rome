@@ -4,6 +4,7 @@
 """
 
 import random
+import logging
 from typing import List, TYPE_CHECKING, Optional
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
@@ -565,7 +566,8 @@ class ForumCommand(Command):
             amount = int(contract.base_cost * (1 + r))
 
             if knight.wealth < amount:
-                print(f"         {faction.name} 的 {knight.get_formal_name()} 财富不足 {knight.wealth} < {amount}，无法出价")
+                print(
+                    f"         {faction.name} 的 {knight.get_formal_name()} 财富不足 {knight.wealth} < {amount}，无法出价")
                 continue
             self.state.place_bid(contract.id, knight.id, amount, tax_rate=r)
             print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {amount} (加价 {r * 100:.0f}%)")
@@ -577,6 +579,16 @@ class ForumCommand(Command):
             winner_name = winner.get_formal_name() if winner else "未知"
             actual_inc = (contract.winning_bid['amount'] - contract.base_cost) / contract.base_cost * 100
             print(f"      ✅ 中标者: {winner_name}，中标价 {contract.winning_bid['amount']}，加价 {actual_inc:.0f}%")
+            # ===== 新增日志 =====
+            self.state.log_event(
+                f"包税合同中标: {contract.name} 中标者 {winner_name} 价格 {contract.winning_bid['amount']}",
+                extra={
+                    "type": "tax_contract_award",
+                    "contract_id": contract.id,
+                    "winner_id": contract.winning_bid["bidder_id"],
+                    "amount": contract.winning_bid['amount']
+                }
+            )
         else:
             print(f"      ❌ 流拍")
 
@@ -646,6 +658,16 @@ class ForumCommand(Command):
             r = contract.winning_bid.get("r", 0)
             discount_pct = r * 100
             print(f"      ✅ 中标者: {winner_name}，中标价 {contract.winning_bid['amount']}，降价 {discount_pct:.0f}%")
+            # ===== 新增日志 =====
+            self.state.log_event(
+                f"工程合同中标: {contract.name} 中标者 {winner_name} 价格 {contract.winning_bid['amount']}",
+                extra={
+                    "type": "works_contract_award",
+                    "contract_id": contract.id,
+                    "winner_id": contract.winning_bid["bidder_id"],
+                    "amount": contract.winning_bid['amount']
+                }
+            )
         else:
             print(f"      ❌ 流拍")
 
@@ -723,11 +745,18 @@ class ForumCommand(Command):
             print(f"\n   💱 自动土地交易执行成功：")
             for line in msg.split('\n'):
                 print(f"      {line}")
-            self.state.log_event(f"自动土地交易: 卖家 {seller_id} 买家 {buyer_id} 数量 {amount}")
-
+            # ===== 新增日志 =====
+            self.state.log_event(
+                f"土地交易成功: 卖家 {seller_id} 买家 {buyer_id} 数量 {amount}",
+                extra={"type": "land_trade", "seller_id": seller_id, "buyer_id": buyer_id, "amount": amount}
+            )
         else:
             seller = self.state.get_member(seller_id)
             buyer = self.state.get_member(buyer_id)
             seller_name = seller.get_formal_name() if seller else "Unknown"
             buyer_name = buyer.get_formal_name() if buyer else "Unknown"
             print(f"\n   ⚠️ 自动土地交易失败：{seller_name} → {buyer_name} {msg}")
+            self.state.log_event(
+                f"土地交易失败: 卖家 {seller_id} 买家 {buyer_id} 数量 {amount} - {msg}",
+                extra={"type": "land_trade_failure", "seller_id": seller_id, "buyer_id": buyer_id, "amount": amount}
+            )

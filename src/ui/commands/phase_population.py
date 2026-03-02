@@ -4,6 +4,7 @@
 """
 
 import random
+import logging
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.figure import OfficeTerm, Figure
@@ -143,7 +144,7 @@ class PopulationCommand(Command):
             print(f"      {faction.name}: {val}")
 
     def _process_legion_disbandment_and_triumphs(self):
-        """处理军团解散和凯旋式（内部统计，不逐条打印）"""
+        """处理军团解散和凯旋式"""
         ws = self.state.get_war_system()
         ms = self.state.get_military_system()
         if not ws or not ms:
@@ -160,12 +161,22 @@ class PopulationCommand(Command):
                 commander = self.state.get_member(commander_id) if commander_id else None
                 if commander and not commander.is_dead:
                     print(f"      🏛️ {commander.name} 的军团举行凯旋式！")
+                    self.state.log_event(
+                        f"凯旋式: {commander.name} 举行凯旋",
+                        extra={"type": "triumph", "commander_id": commander.id, "war_id": war.id}
+                    )
 
             # 解散参与该战争的所有军团
             if war.legion_numbers:
                 disbanded, errors = ms.disband_legions_for_war(war.legion_numbers)
                 if disbanded > 0:
                     print(f"      解散 {disbanded} 个参与 {war.name} 的军团")
+                    self.state.log_event(
+                        f"军团解散: 战争 {war.name} 解散 {disbanded} 个军团",
+                        extra={"type": "legion_disband", "war_id": war.id, "count": disbanded}
+                    )
+                for err in errors:
+                    print(f"      ⚠️ {err}")
                 war.clear_legion_numbers()
 
         # 处理小胜后需解散的军团
@@ -173,6 +184,10 @@ class PopulationCommand(Command):
             disbanded, errors = ms.disband_legions_for_war(ws._legions_to_disband)
             if disbanded > 0:
                 print(f"      解散 {disbanded} 个从降级战争返回的军团")
+                self.state.log_event(
+                    f"军团解散: 小胜返回军团 {disbanded} 个",
+                    extra={"type": "legion_disband", "count": disbanded}
+                )
             ws._legions_to_disband.clear()
 
     def _process_automatic_festivals(self, candidates_by_faction: Dict[str, List[Figure]]) -> (int, int):
@@ -233,6 +248,14 @@ class PopulationCommand(Command):
             faction = self.state.get_faction(winner.faction_id)
             if faction:
                 faction.update_faction_leader(self.state)
+
+        # ===== 新增日志 =====
+        self.state.log_event(
+            f"选举结果: {office_type} 当选者 {winner.name} (派系 {faction.name if faction else '无'})",
+            extra={"type": "election", "office": office_type, "figure_id": winner.id}
+        )
+
+
         return winner
 
     def _get_top_candidates_by_attribute(self, candidates: List['Figure'], office_type: str, n: int) -> List['Figure']:

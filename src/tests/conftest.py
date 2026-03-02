@@ -1,5 +1,13 @@
 import pytest
 import sys
+print("sys.path:", sys.path)
+core_modules = [name for name in list(sys.modules) if name.startswith('src.core')]
+for name in core_modules:
+    del sys.modules[name]
+import inspect
+from src.core.game_state import GameState
+print("GameState file:", inspect.getfile(GameState))
+print("log_event signature:", inspect.signature(GameState.log_event))
 from pathlib import Path
 
 # 将项目根目录加入 sys.path

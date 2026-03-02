@@ -3,6 +3,7 @@
 税收阶段命令 - 处理税收、派系津贴、军团维护费和合同收益
 优化打印格式：表格化显示派系资金和私地收益
 """
+import logging
 
 from typing import List, Dict, Tuple, Optional, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
@@ -45,52 +46,74 @@ class RevenueCommand(Command):
         # 初始化派系抽成累计字典和津贴记录
         faction_tax_collected: Dict[str, float] = {}
         faction_stipend: Dict[str, int] = {}
+        # 获取配置
+        land_price = self.state.get_economic_rule("land_price_per_unit", 10)
+        national_tax_rate = self.state.get_economic_rule("national_public_land_tax_rate", 0.02)
+        stipend = self.state.get_economic_rule("faction_stipend", 10)
+        tax_rate = self.state.get_economic_rule("faction_tax_rate", 0.1)
+
+        # 初始化派系抽成累计字典和津贴记录
+        faction_tax_collected: Dict[str, float] = {}
+        faction_stipend: Dict[str, int] = {}
         for faction in self.state.factions.values():
             faction_tax_collected[faction.id] = 0.0
             faction_stipend[faction.id] = stipend
 
-        # 1. 国家公地收益
+        # 1. 国家公地收益（只执行一次）
         national_land = self.state.get_national_public_land()
         tax_income = int(round(national_land * land_price * national_tax_rate))
         self.state.add_treasury(tax_income)
         print(f"💰 国家公地收益: \t+{tax_income} {terms.currency}")
         print(f"📊 国库现有资金: \t{self.state.treasury} {terms.currency}\n")
+        self.state.log_event(...)
 
-        # 2. 私地收益（同时计算抽成，并收集数据）
+        # 2. 私地收益（只执行一次）
         private_data = self._collect_private_land_income(terms, faction_tax_collected, tax_rate)
+        total_net_private = sum(d[2] for d in private_data)
+        if total_net_private > 0:
+            self.state.log_event(...)
 
-        # 3. 合同收益结算（只执行，不打印）
+        # 3. 合同收益结算（只执行一次）
         self._collect_contract_revenues(terms, faction_tax_collected, tax_rate)
 
-        # 4. 军团维护费（静默执行）
+        # 4. 军团维护费（只执行一次）
         ms = self.state.get_military_system()
         if ms:
-            ms.apply_maintenance(verbose=False)
+            success, msg = ms.apply_maintenance(verbose=False)
 
-        # 5. 将累计抽成取整后加入派系金库，同时记录各派系数据
-        faction_final = {}  # (stipend, tax, final_treasury)
+        # 5. 初始化 faction_final，为所有派系设置默认值
+        faction_final = {}
+        for faction in self.state.factions.values():
+            faction_final[faction.id] = {
+                'stipend': faction_stipend.get(faction.id, 0),
+                'tax': 0,
+                'final': faction.treasury
+            }
+
+        # 6. 处理派系抽成和更新国库
         for faction_id, total_tax_float in faction_tax_collected.items():
             tax_int = int(round(total_tax_float))
             faction = self.state.get_faction(faction_id)
             if faction:
-                old_treasury = faction.treasury
-                # 先加津贴，再加抽成
                 faction.treasury += faction_stipend[faction_id] + tax_int
                 faction_final[faction_id] = {
                     'stipend': faction_stipend[faction_id],
                     'tax': tax_int,
                     'final': faction.treasury
                 }
+                if tax_int > 0:
+                    self.state.log_event(...)
+                if faction_stipend[faction_id] > 0:
+                    self.state.log_event(...)
 
-        # 6. 打印派系金库表格
+        # 7. 打印派系表格（只执行一次）
         self._print_faction_table(terms, faction_final)
 
-        # 7. 打印私地收益表格
+        # 8. 打印私地收益表格（只执行一次）
         self._print_private_land_table(private_data, terms)
 
-        # 8. 兼容旧逻辑
-        if hasattr(self.state.turn, 'current_phase'):
-            self.state.turn.current_phase = "revenue"
+        # 9. 记录国库最终余额
+        self.state.log_event(...)
 
         self.state.mark_phase_executed("revenue")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
@@ -124,7 +147,7 @@ class RevenueCommand(Command):
         return data
 
     def _collect_contract_revenues(self, terms, faction_tax_collected: Dict[str, float], tax_rate: float):
-        """处理合同收益，只执行逻辑，不打印（可静默）"""
+        """处理合同收益，逐条记录"""
         from src.core.entities.contract import ContractType, ContractStatus
 
         active_contracts = [c for c in self.state.contracts
@@ -159,6 +182,18 @@ class RevenueCommand(Command):
                     contract.remaining_years -= 1
                     if contract.remaining_years == 0:
                         contract.set_extended(True)
+
+                # ===== 新增日志：包税合同收益 =====
+                self.state.log_event(
+                    f"包税合同收益: {figure.name} 净得 {net_profit_int}，国库 +{winning_bid['amount']}",
+                    extra={
+                        "type": "tax_contract_revenue",
+                        "contract_id": contract.id,
+                        "figure_id": figure.id,
+                        "net_profit": net_profit_int,
+                        "treasury_gain": winning_bid['amount']
+                    }
+                )
 
             elif contract.contract_type == ContractType.PUBLIC_WORKS:
                 figure = self.state.get_member(contract.awarded_to)
@@ -199,11 +234,27 @@ class RevenueCommand(Command):
                     if figure.faction_id and figure.faction_id in faction_tax_collected:
                         faction_tax_collected[figure.faction_id] += tax_float
 
+                    # ===== 新增日志：工程合同收益 =====
+                    self.state.log_event(
+                        f"工程合同收益: {figure.name} 净得 {knight_net_gain}，国库 -{payment}",
+                        extra={
+                            "type": "works_contract_revenue",
+                            "contract_id": contract.id,
+                            "figure_id": figure.id,
+                            "net_profit": knight_net_gain,
+                            "treasury_cost": payment
+                        }
+                    )
+
                     if contract.remaining_years <= 0:
                         contract.mark_complete(self.state.turn.turn_number)
                         province = self.state.get_province(contract.province_id)
                         if province:
                             province.unbind_project_contract()
+                        self.state.log_event(
+                            f"工程合同竣工: {contract.name}",
+                            extra={"type": "works_contract_complete", "contract_id": contract.id}
+                        )
 
     def _print_faction_table(self, terms, faction_data: Dict[str, dict]):
         factions = list(self.state.factions.values())

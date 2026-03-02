@@ -4,10 +4,10 @@
 """
 
 import random
+import logging
 from typing import List, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
-from src.core.entities.figure import ClassTier
 from src.ui.commands.func_status import get_progress_bar
 from src.core.entities.contract import ContractStatus, ContractType
 
@@ -79,7 +79,6 @@ class MortalityCommand(Command):
             print("   😇 无存活人物，死神空手而归")
             return
 
-        # 从所有存活人物中随机抽取
         victims = random.sample(living, min(death_count, len(living)))
 
         for victim in victims:
@@ -90,8 +89,7 @@ class MortalityCommand(Command):
                 for contract_id in victim.contract_ids:
                     contract = self.state.get_contract(contract_id)
                     if contract and contract.status == ContractStatus.ACTIVE:
-                        contract.terminate()  # 将合同状态设为 EXPIRED
-                        # 解绑行省
+                        contract.terminate()
                         province = self.state.get_province(contract.province_id)
                         if province:
                             if contract.contract_type == ContractType.TAX_FARMING:
@@ -100,7 +98,13 @@ class MortalityCommand(Command):
                                 province.unbind_project_contract()
                         print(f"      📜 {victim.name} 的合同 {contract.name} 已终止")
 
-            # 直接调用 mark_member_dead 统一处理资产回收
+            # 调用 mark_member_dead 统一处理资产回收
             self.state.mark_member_dead(victim.id, transfer_land=True, transfer_wealth=True)
+
+            # ===== 新增日志 =====
+            self.state.log_event(
+                f"人物死亡: {victim.name} (ID:{victim.id})",
+                extra={"type": "figure_death", "figure_id": victim.id, "name": victim.name}
+            )
 
         self.state.log_event(f"💀 死神来了：{len(victims)} 人死亡，财产归公")

@@ -3,6 +3,7 @@
 元老院阶段命令 - 处理合同、更新派系领袖、确定主持人
 """
 import random
+import logging
 from typing import List, TYPE_CHECKING, Optional
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
@@ -168,6 +169,10 @@ class SenateCommand(Command):
         if support_ratio > 0.5:
             print(f"          ✅ 法案通过！")
             self.state.add_pending_land_act(act)
+            self.state.log_event(
+                f"土地法案通过: {act['description']}",
+                extra={"type": "land_act", "act": act['type'], "percent": act['percent']}
+            )
         else:
             print(f"          ❌ 法案否决。")
 
@@ -333,6 +338,11 @@ class SenateCommand(Command):
             if support_ratio > 0.5:
                 success = ws.activate_war(war.id, consul_id, legions)
                 if success:
+                    # ===== 新增日志 =====
+                    self.state.log_event(
+                        f"宣战通过: {war.name}，批准军团 {legions}",
+                        extra={"type": "war_declaration", "war_id": war.id, "legions": legions}
+                    )
                     # ========== 自动征召军团并指派指挥官 ==========
                     # 1. 设置战争指挥官为执政官（已在 activate_war 中设置？为确保，再设一次）
                     war.commander_id = consul_id

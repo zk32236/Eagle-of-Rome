@@ -99,13 +99,21 @@ class GameState:
         self._logger.addHandler(handler)
         self._logger.propagate = False  # 防止日志传播到根 logger
 
-    def log_event(self, message: str, level: int = logging.INFO):
+    def log_event(self, message: str, level: int = logging.INFO, extra: dict = None):
         """
         记录事件到内存日志，并写入文件日志（如果启用）
+        Args:
+            message: 日志消息
+            level: 日志级别，默认为 INFO
+            extra: 附加的结构化字段，如 {"war_id": "war1", "amount": 100}
         """
         self._event_log.append(message)
         if self._logger:
-            self._logger.log(level, message)
+            log_msg = message
+            if extra:
+                extra_str = " ".join([f"{k}={v}" for k, v in extra.items()])
+                log_msg = f"{extra_str} - {message}"
+            self._logger.log(level, log_msg)
 
     def close_logging(self):
         """关闭日志处理器，释放文件句柄（主要用于测试）"""
@@ -394,13 +402,21 @@ class GameState:
 
     # ========== 日志 ==========
 
-    def log_event(self, message: str, level: int = logging.INFO):
+    def log_event(self, message: str, level: int = logging.INFO, extra: dict = None):
         """
         记录事件到内存日志，并写入文件日志（如果启用）
+        Args:
+            message: 日志消息
+            level: 日志级别，默认为 INFO
+            extra: 附加的结构化字段，如 {"war_id": "war1", "amount": 100}
         """
         self._event_log.append(message)
         if self._logger:
-            self._logger.log(level, message)
+            log_msg = message
+            if extra:
+                extra_str = " ".join([f"{k}={v}" for k, v in extra.items()])
+                log_msg = f"{extra_str} - {message}"
+            self._logger.log(level, log_msg)
 
     def get_status_summary(self) -> str:
         """生成状态摘要"""
