@@ -60,71 +60,79 @@ class LandTradingService:
     def execute_trade(self, seller_id: int, buyer_id: int, amount: int) -> Tuple[bool, str]:
         terms = TerminologyService.get()
 
-        seller = self.state.get_member(seller_id)
-        buyer = self.state.get_member(buyer_id)
+        try:
 
-        if not seller or not buyer:
-            return False, "Figure not found"
+            seller = self.state.get_member(seller_id)
+            buyer = self.state.get_member(buyer_id)
 
-        if seller.is_dead or buyer.is_dead:
-            return False, "Deceased figure cannot trade"
+            if not seller or not buyer:
+                return False, "Figure not found"
 
-        if seller_id == buyer_id:
-            return False, "Cannot trade with yourself"
+            if seller.is_dead or buyer.is_dead:
+                return False, "Deceased figure cannot trade"
 
-        if amount <= 0:
-            return False, "Invalid amount"
+            if seller_id == buyer_id:
+                return False, "Cannot trade with yourself"
 
-        # 检查卖方土地是否足够
-        if seller.land_private < amount:
-            return False, f"{seller.name} has insufficient land ({seller.land_private} < {amount})"
+            if amount <= 0:
+                return False, "Invalid amount"
 
-        # 计算价格
-        price_per_unit = self.calculate_land_price(seller, buyer)
-        total_cost = amount * price_per_unit
+            # 检查卖方土地是否足够
+            if seller.land_private < amount:
+                return False, f"{seller.name} has insufficient land ({seller.land_private} < {amount})"
 
-        if buyer.wealth < total_cost:
-            return False, f"{buyer.name} cannot afford {total_cost} {terms.currency} (has {buyer.wealth})"
+            # 计算价格
+            price_per_unit = self.calculate_land_price(seller, buyer)
+            total_cost = amount * price_per_unit
 
-        # 记录交易前状态（用于显示）
-        seller_land_before = seller.land_private
-        buyer_land_before = buyer.land_private
+            if buyer.wealth < total_cost:
+                return False, f"{buyer.name} cannot afford {total_cost} {terms.currency} (has {buyer.wealth})"
 
-        # 执行交易
-        earnings = seller.sell_land(amount, price_per_unit)  # 卖家土地减少，财富增加
-        if earnings == 0:
-            return False, "Seller failed to sell land"
-        success = buyer.buy_land(amount, price_per_unit)  # 买家财富减少，土地增加
-        if not success:
-            # 回滚卖家
-            seller.buy_land(amount, price_per_unit)  # 重新买回
-            return False, "Buyer failed to buy land"
+            # 记录交易前状态（用于显示）
+            seller_land_before = seller.land_private
+            buyer_land_before = buyer.land_private
 
-        # ========== 新增：更新人物影响力 ==========
-        seller.update_influence()
-        buyer.update_influence()
+            # 执行交易
+            earnings = seller.sell_land(amount, price_per_unit)  # 卖家土地减少，财富增加
+            if earnings == 0:
+                return False, "Seller failed to sell land"
+            success = buyer.buy_land(amount, price_per_unit)  # 买家财富减少，土地增加
+            if not success:
+                # 回滚卖家
+                seller.buy_land(amount, price_per_unit)  # 重新买回
+                return False, "Buyer failed to buy land"
 
-        # ========== 新增：更新派系总土地 ==========
-        # 卖方派系
-        if seller.faction_id:
-            faction = self.state.get_faction(seller.faction_id)
-            if faction:
-                faction.update_total_land(faction.get_members(self.state))
-        # 买方派系（可能与卖方不同）
-        if buyer.faction_id and buyer.faction_id != seller.faction_id:
-            faction = self.state.get_faction(buyer.faction_id)
-            if faction:
-                faction.update_total_land(faction.get_members(self.state))
+            # ========== 新增：更新人物影响力 ==========
+            seller.update_influence()
+            buyer.update_influence()
 
-        # 记录交易历史
-        self._record_trade(seller, buyer, amount, price_per_unit)
+            # ========== 新增：更新派系总土地 ==========
+            # 卖方派系
+            if seller.faction_id:
+                faction = self.state.get_faction(seller.faction_id)
+                if faction:
+                    faction.update_total_land(faction.get_members(self.state))
+            # 买方派系（可能与卖方不同）
+            if buyer.faction_id and buyer.faction_id != seller.faction_id:
+                faction = self.state.get_faction(buyer.faction_id)
+                if faction:
+                    faction.update_total_land(faction.get_members(self.state))
 
-        # 生成消息
-        msg = (f"Trade complete: {amount} land @ {price_per_unit}/unit = {total_cost} {terms.currency}\n"
-               f"   {seller.name}: land {seller_land_before}→{seller.land_private}, ")
+            # 记录交易历史
+            self._record_trade(seller, buyer, amount, price_per_unit)
 
-        return True, msg
+            # 生成消息
+            msg = (f"Trade complete: {amount} land @ {price_per_unit}/unit = {total_cost} {terms.currency}\n"
+                   f"   {seller.name}: land {seller_land_before}→{seller.land_private}, ")
 
+            return True, msg
+        except Exception as e:
+            self.state.log_exception(
+                e,
+                context=f"土地交易异常: 卖家 {seller_id} 买家 {buyer_id} 数量 {amount}",
+                extra={"seller_id": seller_id, "buyer_id": buyer_id, "amount": amount}
+            )
+            return False, f"Internal error during trade: {e}"
 
     def _record_trade(self, seller: Figure, buyer: Figure, amount: int, price: int):
         """记录交易历史"""

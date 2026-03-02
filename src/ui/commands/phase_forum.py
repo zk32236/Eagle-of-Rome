@@ -542,134 +542,144 @@ class ForumCommand(Command):
         return contracts
 
     def _auto_bid_for_contract(self, contract):
-        """为单个包税合同自动竞标并揭标"""
         if contract.contract_type != ContractType.TAX_FARMING:
             return
 
-        config = self.state.config
-        min_inc = config.get("economic_rules.tax_bid_increment_min", 0.05)
-        max_inc = config.get("economic_rules.tax_bid_increment_max", 0.20)
+        try:
+            config = self.state.config
+            min_inc = config.get("economic_rules.tax_bid_increment_min", 0.05)
+            max_inc = config.get("economic_rules.tax_bid_increment_max", 0.20)
 
-        factions = list(self.state.factions.values())
-        if not factions:
-            return
+            factions = list(self.state.factions.values())
+            if not factions:
+                return
 
-        print(f"\n      🔔 开始竞标 {contract.name} 底价 {contract.base_cost}")
-        for faction in factions:
-            equites = [m for m in faction.get_members(self.state)
-                       if m.class_tier == ClassTier.EQUES and not m.is_dead]
-            if not equites:
-                continue
-            knight = max(equites, key=lambda k: k.wealth)
+            print(f"\n      🔔 开始竞标 {contract.name} 底价 {contract.base_cost}")
+            for faction in factions:
+                equites = [m for m in faction.get_members(self.state)
+                           if m.class_tier == ClassTier.EQUES and not m.is_dead]
+                if not equites:
+                    continue
+                knight = max(equites, key=lambda k: k.wealth)
 
-            r = random.uniform(min_inc, max_inc)
-            amount = int(contract.base_cost * (1 + r))
+                r = random.uniform(min_inc, max_inc)
+                amount = int(contract.base_cost * (1 + r))
 
-            if knight.wealth < amount:
-                print(
-                    f"         {faction.name} 的 {knight.get_formal_name()} 财富不足 {knight.wealth} < {amount}，无法出价")
-                continue
-            self.state.place_bid(contract.id, knight.id, amount, tax_rate=r)
-            print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {amount} (加价 {r * 100:.0f}%)")
+                if knight.wealth < amount:
+                    print(
+                        f"         {faction.name} 的 {knight.get_formal_name()} 财富不足 {knight.wealth} < {amount}，无法出价")
+                    continue
+                self.state.place_bid(contract.id, knight.id, amount, tax_rate=r)
+                print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {amount} (加价 {r * 100:.0f}%)")
 
-        self.state.resolve_auction(contract.id)
+            self.state.resolve_auction(contract.id)
 
-        if contract.status == ContractStatus.ACTIVE and contract.winning_bid:
-            winner = self.state.get_member(contract.winning_bid["bidder_id"])
-            winner_name = winner.get_formal_name() if winner else "未知"
-            actual_inc = (contract.winning_bid['amount'] - contract.base_cost) / contract.base_cost * 100
-            print(f"      ✅ 中标者: {winner_name}，中标价 {contract.winning_bid['amount']}，加价 {actual_inc:.0f}%")
-            # ===== 新增日志 =====
-            self.state.log_event(
-                f"包税合同中标: {contract.name} 中标者 {winner_name} 价格 {contract.winning_bid['amount']}",
-                extra={
-                    "type": "tax_contract_award",
-                    "contract_id": contract.id,
-                    "winner_id": contract.winning_bid["bidder_id"],
-                    "amount": contract.winning_bid['amount']
-                }
+            if contract.status == ContractStatus.ACTIVE and contract.winning_bid:
+                winner = self.state.get_member(contract.winning_bid["bidder_id"])
+                winner_name = winner.get_formal_name() if winner else "未知"
+                actual_inc = (contract.winning_bid['amount'] - contract.base_cost) / contract.base_cost * 100
+                print(f"      ✅ 中标者: {winner_name}，中标价 {contract.winning_bid['amount']}，加价 {actual_inc:.0f}%")
+                self.state.log_event(
+                    f"包税合同中标: {contract.name} 中标者 {winner_name} 价格 {contract.winning_bid['amount']}",
+                    extra={
+                        "type": "tax_contract_award",
+                        "contract_id": contract.id,
+                        "winner_id": contract.winning_bid["bidder_id"],
+                        "amount": contract.winning_bid['amount']
+                    }
+                )
+            else:
+                print(f"      ❌ 流拍")
+        except Exception as e:
+            self.state.log_exception(
+                e,
+                context=f"包税合同自动竞标失败: 合同 {contract.id}",
+                extra={"contract_id": contract.id, "contract_name": contract.name}
             )
-        else:
-            print(f"      ❌ 流拍")
 
     def _auto_bid_for_works(self, contract):
-        """为单个工程合同自动竞标并揭标"""
         if contract.contract_type != ContractType.PUBLIC_WORKS:
             return
 
-        config = self.state.config
-        X = config.get("economic_rules.project_theoretical_construction", 5)
-        N = config.get("economic_rules.project_theoretical_warranty", 10)
-        min_discount = config.get("economic_rules.project_bid_discount_min", 0.05)
-        max_discount = config.get("economic_rules.project_bid_discount_max", 0.20)
-        land_price = config.get("economic_rules.land_price_per_unit", 10)
-        infra_rate = config.get("economic_rules.infrastructure_cost_rate", 0.001)
+        try:
+            config = self.state.config
+            X = config.get("economic_rules.project_theoretical_construction", 5)
+            N = config.get("economic_rules.project_theoretical_warranty", 10)
+            min_discount = config.get("economic_rules.project_bid_discount_min", 0.05)
+            max_discount = config.get("economic_rules.project_bid_discount_max", 0.20)
+            land_price = config.get("economic_rules.land_price_per_unit", 10)
+            infra_rate = config.get("economic_rules.infrastructure_cost_rate", 0.001)
 
-        province = self.state.get_province(contract.province_id)
-        if not province:
-            return
-        land_value = province.land_public * land_price
-        infra_cost = int(land_value * infra_rate)
+            province = self.state.get_province(contract.province_id)
+            if not province:
+                return
+            land_value = province.land_public * land_price
+            infra_cost = int(land_value * infra_rate)
 
-        factions = list(self.state.factions.values())
-        if not factions:
-            return
+            factions = list(self.state.factions.values())
+            if not factions:
+                return
 
-        print(f"\n      🔔 开始竞标 {contract.name} 预算 {contract._original_budget}")
-        original_budget = contract._original_budget
+            print(f"\n      🔔 开始竞标 {contract.name} 预算 {contract._original_budget}")
+            original_budget = contract._original_budget
 
-        for faction in factions:
-            knights = [m for m in faction.get_members(self.state)
-                       if m.class_tier == ClassTier.EQUES and not m.is_dead]
-            if not knights:
-                continue
-            knight = max(knights, key=lambda k: k.wealth)
+            for faction in factions:
+                knights = [m for m in faction.get_members(self.state)
+                           if m.class_tier == ClassTier.EQUES and not m.is_dead]
+                if not knights:
+                    continue
+                knight = max(knights, key=lambda k: k.wealth)
 
-            r = random.uniform(min_discount, max_discount)
-            bid_amount = int(original_budget * (1 - r))
-            construction = int(X * (1 + r) + 0.5)
-            if construction < 1:
-                construction = 1
-            warranty = int(N * (1 - r) + 0.5)
-            if warranty < 0:
-                warranty = 0
-            annual_income = bid_amount // construction
-            actual_cost = int(infra_cost * (1 - r))
-            annual_cost = actual_cost // construction
+                r = random.uniform(min_discount, max_discount)
+                bid_amount = int(original_budget * (1 - r))
+                construction = int(X * (1 + r) + 0.5)
+                if construction < 1:
+                    construction = 1
+                warranty = int(N * (1 - r) + 0.5)
+                if warranty < 0:
+                    warranty = 0
+                annual_income = bid_amount // construction
+                actual_cost = int(infra_cost * (1 - r))
+                annual_cost = actual_cost // construction
 
-            self.state.place_bid(
-                contract.id,
-                knight.id,
-                bid_amount,
-                r=r,
-                original_budget=original_budget,
-                construction=construction,
-                warranty=warranty,
-                annual_income=annual_income,
-                annual_cost=annual_cost
+                self.state.place_bid(
+                    contract.id,
+                    knight.id,
+                    bid_amount,
+                    r=r,
+                    original_budget=original_budget,
+                    construction=construction,
+                    warranty=warranty,
+                    annual_income=annual_income,
+                    annual_cost=annual_cost
+                )
+                print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {bid_amount} (降价 {r * 100:.0f}%)")
+
+            self.state.resolve_auction(contract.id)
+
+            if contract.status == ContractStatus.ACTIVE and contract.winning_bid:
+                winner = self.state.get_member(contract.winning_bid["bidder_id"])
+                winner_name = winner.get_formal_name() if winner else "未知"
+                r = contract.winning_bid.get("r", 0)
+                discount_pct = r * 100
+                print(f"      ✅ 中标者: {winner_name}，中标价 {contract.winning_bid['amount']}，降价 {discount_pct:.0f}%")
+                self.state.log_event(
+                    f"工程合同中标: {contract.name} 中标者 {winner_name} 价格 {contract.winning_bid['amount']}",
+                    extra={
+                        "type": "works_contract_award",
+                        "contract_id": contract.id,
+                        "winner_id": contract.winning_bid["bidder_id"],
+                        "amount": contract.winning_bid['amount']
+                    }
+                )
+            else:
+                print(f"      ❌ 流拍")
+        except Exception as e:
+            self.state.log_exception(
+                e,
+                context=f"工程合同自动竞标失败: 合同 {contract.id}",
+                extra={"contract_id": contract.id, "contract_name": contract.name}
             )
-            print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {bid_amount} (降价 {r * 100:.0f}%)")
-
-        self.state.resolve_auction(contract.id)
-
-        if contract.status == ContractStatus.ACTIVE and contract.winning_bid:
-            winner = self.state.get_member(contract.winning_bid["bidder_id"])
-            winner_name = winner.get_formal_name() if winner else "未知"
-            r = contract.winning_bid.get("r", 0)
-            discount_pct = r * 100
-            print(f"      ✅ 中标者: {winner_name}，中标价 {contract.winning_bid['amount']}，降价 {discount_pct:.0f}%")
-            # ===== 新增日志 =====
-            self.state.log_event(
-                f"工程合同中标: {contract.name} 中标者 {winner_name} 价格 {contract.winning_bid['amount']}",
-                extra={
-                    "type": "works_contract_award",
-                    "contract_id": contract.id,
-                    "winner_id": contract.winning_bid["bidder_id"],
-                    "amount": contract.winning_bid['amount']
-                }
-            )
-        else:
-            print(f"      ❌ 流拍")
 
     def _execute_pending_land_acts(self):
         """执行已通过的平民分地和贵族买地法案"""

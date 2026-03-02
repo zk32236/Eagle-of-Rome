@@ -5,6 +5,8 @@
 
 import sys
 import os
+import traceback
+import logging
 
 
 # 添加项目根目录到Python路径
@@ -114,15 +116,8 @@ class DebugCLI:
         print("\n🔄 自动加载默认场景...")
         self.registry.execute("load", self.state, [])
 
-        """
-        print("\n" + "=" * 60)
-        print("   Eagle of Rome - Debug CLI (整改后版本)")
-        print("=" * 60)
-        """
-
         print("输入 'help' 查看可用命令，'exit' 退出游戏")
         print()
-
 
         while self.running:
             try:
@@ -146,13 +141,26 @@ class DebugCLI:
             except KeyboardInterrupt:
                 print("\n使用 'exit' 命令退出游戏")
             except Exception as e:
-                # ===== 新增：记录未捕获异常到日志 =====
+                # 获取当前状态信息
+                state_info = ""
+                if self.state and hasattr(self.state, 'turn') and self.state.turn:
+                    turn_info = f"回合 {self.state.turn.turn_number}"
+                    year_info = f"年份 {abs(self.state.turn.year)} BC"
+                    state_info = f"{turn_info} {year_info}"
+                # 记录错误日志
                 if self.state and hasattr(self.state, 'log_event'):
-                    import logging
-                    self.state.log_event(f"未捕获异常: {cmd_name} - {str(e)}", logging.ERROR)
-                # =====================================
+                    tb_str = traceback.format_exc()
+                    self.state.log_event(
+                        f"未捕获异常: 命令 '{cmd_input}' - {str(e)}",
+                        level=logging.ERROR,
+                        extra={
+                            "context": state_info,
+                            "cmd": cmd_input,
+                            "exception": str(e),
+                            "traceback": tb_str
+                        }
+                    )
                 print(f"发生未预期错误: {e}")
-                import traceback
                 traceback.print_exc()
 
     def shutdown(self):

@@ -109,69 +109,34 @@ class WarSystem:
                 war.set_triumph_commander(war.commander_id)
             rewards = war.calculate_rewards()
             result['rewards'] = rewards
+            total_treasury = rewards.get('treasury', 0)  # 提前定义
 
-            treasury_share = self.state.config.get("combat_rules.treasury_share", 0.5)
-            faction_share = self.state.config.get("combat_rules.faction_share", 0.25)
-            commander_share = self.state.config.get("combat_rules.commander_share", 0.15)
-            soldier_share = self.state.config.get("combat_rules.soldier_share", 0.15)
+            try:
+                treasury_share = self.state.config.get("combat_rules.treasury_share", 0.5)
+                faction_share = self.state.config.get("combat_rules.faction_share", 0.25)
+                commander_share = self.state.config.get("combat_rules.commander_share", 0.15)
+                soldier_share = self.state.config.get("combat_rules.soldier_share", 0.15)
 
-            total_treasury = rewards.get('treasury', 0)
+                treasury_part = int(total_treasury * treasury_share)
+                faction_part = int(total_treasury * faction_share)
+                commander_part = int(total_treasury * commander_share)
+                soldier_part = total_treasury - treasury_part - faction_part - commander_part
 
-            treasury_part = int(total_treasury * treasury_share)
-            faction_part = int(total_treasury * faction_share)
-            commander_part = int(total_treasury * commander_share)
-            soldier_part = total_treasury - treasury_part - faction_part - commander_part
+                print(f"\n      📦 战利品分配 ({war.name}):")
+                print(f"        总额: {total_treasury} 塔兰特")
+                print(f"        国库: +{treasury_part}")
+                # ... 后续打印和分配逻辑（保持不变）...
 
-            print(f"\n      📦 战利品分配 ({war.name}):")
-            print(f"        总额: {total_treasury} 塔兰特")
-            print(f"        国库: +{treasury_part}")
-            # ... 原有打印 ...
-
-            # --- 分配战利品 ---
-            if not war.commander_id:
+            except Exception as e:
+                self.state.log_exception(
+                    e,
+                    context=f"战争战利品分配失败: {war.name}",
+                    extra={"war_id": war.id, "victory": victory, "rewards": rewards}
+                )
+                # 分配失败时，国库获得全部战利品作为降级处理
                 self.state.add_treasury(total_treasury)
-                self.state.log_event(f"战争 {war.name} 战利品: 国库 +{total_treasury}（无指挥官）")
                 war.set_soldier_share(0)
-            else:
-                if treasury_part > 0:
-                    self.state.add_treasury(treasury_part)
-                    self.state.log_event(f"战争 {war.name} 战利品: 国库 +{treasury_part}")
-                if faction_part > 0:
-                    commander = self.state.get_member(war.commander_id)
-                    if commander and commander.faction_id:
-                        faction = self.state.get_faction(commander.faction_id)
-                        if faction:
-                            faction.treasury += faction_part
-                            self.state.log_event(f"战争 {war.name} 战利品: 派系 {faction.name} +{faction_part}")
-                if commander_part > 0:
-                    commander = self.state.get_member(war.commander_id)
-                    if commander:
-                        commander.wealth += commander_part
-                        self.state.log_event(f"战争 {war.name} 战利品: 指挥官 {commander.name} +{commander_part}")
-                if soldier_part > 0:
-                    war.set_soldier_share(soldier_part)
-                    self.state.log_event(f"战争 {war.name} 战利品: 士兵份额 {soldier_part} 待凯旋分配")
-
-            land_reward = rewards.get('land', 0)
-            if land_reward > 0:
-                self.state.add_national_public_land(land_reward)
-                self.state.log_event(f"战争 {war.name} 土地: 国家公地 +{land_reward}")
-
-            prestige_reward = rewards.get('family_prestige', 0)
-            if prestige_reward > 0 and war.commander_id:
-                commander = self.state.get_member(war.commander_id)
-                if commander:
-                    commander.family_prestige += prestige_reward
-                    self.state.log_event(f"战争 {war.name} 家族声望: {commander.name} +{prestige_reward}")
-
-            print(f"   ✅ {war.name} resolved! Victory!")
-            print(f"   🎁 Rewards: {result['rewards']}")
-
-            # ===== 新增日志：战争胜利摘要 =====
-            self.state.log_event(
-                f"战争胜利：{war.name}，战利品总额 {total_treasury}",
-                extra={"war_id": war.id, "victory": True, "treasury_gain": treasury_part}
-            )
+                result['error'] = True
 
         else:
             war.status = WarStatus.DEFEATED

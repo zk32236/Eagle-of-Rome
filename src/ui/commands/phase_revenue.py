@@ -121,142 +121,154 @@ class RevenueCommand(Command):
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
-    def _collect_private_land_income(self, terms, faction_tax_collected: Dict[str, float],
-                                      tax_rate: float) -> List[Tuple[int, str, int, int]]:
-        """
-        处理私地收入，返回 (人物ID, 姓名, 净收入, 更新后财富) 列表。
-        同时累计抽成到 faction_tax_collected。
-        """
+    def _collect_private_land_income(self, terms, faction_tax_collected: Dict[str, float], tax_rate: float) -> List[
+        Tuple[int, str, int, int]]:
         land_price = self.state.get_economic_rule("land_price_per_unit", 10)
         rate = self.state.get_economic_rule("private_land_income_rate", 0.05)
 
         data = []
         for fig in self.state.get_living_members():
-            if fig.land_private <= 0:
-                continue
-            income_float = fig.land_private * land_price * rate
-            if income_float <= 0:
-                continue
+            try:
+                if fig.land_private <= 0:
+                    continue
+                income_float = fig.land_private * land_price * rate
+                if income_float <= 0:
+                    continue
 
-            tax_float = income_float * tax_rate
-            net_income_float = income_float - tax_float
-            net_income_int = int(round(net_income_float))
-            if net_income_int > 0:
-                fig.add_wealth(net_income_int)
-                if fig.faction_id and fig.faction_id in faction_tax_collected:
-                    faction_tax_collected[fig.faction_id] += tax_float
-                data.append((fig.id, fig.get_formal_name(), net_income_int, fig.wealth))
+                tax_float = income_float * tax_rate
+                net_income_float = income_float - tax_float
+                net_income_int = int(round(net_income_float))
+                if net_income_int > 0:
+                    fig.add_wealth(net_income_int)
+                    if fig.faction_id and fig.faction_id in faction_tax_collected:
+                        faction_tax_collected[fig.faction_id] += tax_float
+                    data.append((fig.id, fig.get_formal_name(), net_income_int, fig.wealth))
+            except Exception as e:
+                self.state.log_exception(
+                    e,
+                    context=f"私地收益处理失败: 人物 {fig.id} {fig.name}",
+                    extra={"figure_id": fig.id, "land_private": fig.land_private}
+                )
+                continue
         return data
 
     def _collect_contract_revenues(self, terms, faction_tax_collected: Dict[str, float], tax_rate: float):
-        """处理合同收益，逐条记录"""
+        """处理合同收益，逐条记录，包含异常处理"""
         from src.core.entities.contract import ContractType, ContractStatus
 
         active_contracts = [c for c in self.state.contracts
                             if c.status == ContractStatus.ACTIVE]
 
         for contract in active_contracts:
-            if contract.contract_type == ContractType.TAX_FARMING:
-                winning_bid = contract.winning_bid
-                if not winning_bid:
-                    continue
-                figure = self.state.get_member(winning_bid["bidder_id"])
-                if not figure or figure.is_dead:
-                    contract.terminate()
-                    province = self.state.get_province(contract.province_id)
-                    if province:
-                        province.unbind_tax_contract()
-                    continue
+            try:
+                if contract.contract_type == ContractType.TAX_FARMING:
+                    winning_bid = contract.winning_bid
+                    if not winning_bid:
+                        continue
+                    figure = self.state.get_member(winning_bid["bidder_id"])
+                    if not figure or figure.is_dead:
+                        contract.terminate()
+                        province = self.state.get_province(contract.province_id)
+                        if province:
+                            province.unbind_tax_contract()
+                        continue
 
-                annual_profit = contract.annual_profit
-                profit_float = float(annual_profit)
-                tax_float = profit_float * tax_rate
-                net_profit_int = int(round(profit_float - tax_float))
+                    annual_profit = contract.annual_profit
+                    profit_float = float(annual_profit)
+                    tax_float = profit_float * tax_rate
+                    net_profit_int = int(round(profit_float - tax_float))
 
-                self.state.add_treasury(winning_bid["amount"])
-                figure.add_wealth(net_profit_int)
-                contract.total_collected += annual_profit
-
-                if figure.faction_id and figure.faction_id in faction_tax_collected:
-                    faction_tax_collected[figure.faction_id] += tax_float
-
-                if contract.remaining_years > 0:
-                    contract.remaining_years -= 1
-                    if contract.remaining_years == 0:
-                        contract.set_extended(True)
-
-                # ===== 新增日志：包税合同收益 =====
-                self.state.log_event(
-                    f"包税合同收益: {figure.name} 净得 {net_profit_int}，国库 +{winning_bid['amount']}",
-                    extra={
-                        "type": "tax_contract_revenue",
-                        "contract_id": contract.id,
-                        "figure_id": figure.id,
-                        "net_profit": net_profit_int,
-                        "treasury_gain": winning_bid['amount']
-                    }
-                )
-
-            elif contract.contract_type == ContractType.PUBLIC_WORKS:
-                figure = self.state.get_member(contract.awarded_to)
-                if not figure or figure.is_dead:
-                    contract.terminate()
-                    province = self.state.get_province(contract.province_id)
-                    if province:
-                        province.unbind_project_contract()
-                    continue
-
-                if contract.remaining_years > 0:
-                    annual_income = contract.annual_income
-                    annual_cost = contract._annual_cost
-                    if contract.remaining_years == 1:
-                        paid = contract.total_spent
-                        total_bid = contract.base_cost
-                        payment = total_bid - paid
-                        cost = annual_cost
-                    else:
-                        payment = annual_income
-                        cost = annual_cost
-
-                    profit_float = float(payment - cost)
-                    if profit_float > 0:
-                        tax_float = profit_float * tax_rate
-                        tax_int = int(round(tax_float))
-                    else:
-                        tax_float = 0.0
-                        tax_int = 0
-
-                    knight_net_profit = profit_float - tax_float
-                    knight_net_gain = int(round(knight_net_profit))
-                    self.state.add_treasury(-payment)
-                    figure.add_wealth(knight_net_gain)
-                    contract.total_spent += payment
-                    contract.remaining_years -= 1
+                    self.state.add_treasury(winning_bid["amount"])
+                    figure.add_wealth(net_profit_int)
+                    contract.total_collected += annual_profit
 
                     if figure.faction_id and figure.faction_id in faction_tax_collected:
                         faction_tax_collected[figure.faction_id] += tax_float
 
-                    # ===== 新增日志：工程合同收益 =====
+                    if contract.remaining_years > 0:
+                        contract.remaining_years -= 1
+                        if contract.remaining_years == 0:
+                            contract.set_extended(True)
+
+                    # 日志：包税合同收益
                     self.state.log_event(
-                        f"工程合同收益: {figure.name} 净得 {knight_net_gain}，国库 -{payment}",
+                        f"包税合同收益: {figure.name} 净得 {net_profit_int}，国库 +{winning_bid['amount']}",
                         extra={
-                            "type": "works_contract_revenue",
+                            "type": "tax_contract_revenue",
                             "contract_id": contract.id,
                             "figure_id": figure.id,
-                            "net_profit": knight_net_gain,
-                            "treasury_cost": payment
+                            "net_profit": net_profit_int,
+                            "treasury_gain": winning_bid['amount']
                         }
                     )
 
-                    if contract.remaining_years <= 0:
-                        contract.mark_complete(self.state.turn.turn_number)
+                elif contract.contract_type == ContractType.PUBLIC_WORKS:
+                    figure = self.state.get_member(contract.awarded_to)
+                    if not figure or figure.is_dead:
+                        contract.terminate()
                         province = self.state.get_province(contract.province_id)
                         if province:
                             province.unbind_project_contract()
+                        continue
+
+                    if contract.remaining_years > 0:
+                        annual_income = contract.annual_income
+                        annual_cost = contract._annual_cost
+                        if contract.remaining_years == 1:
+                            paid = contract.total_spent
+                            total_bid = contract.base_cost
+                            payment = total_bid - paid
+                            cost = annual_cost
+                        else:
+                            payment = annual_income
+                            cost = annual_cost
+
+                        profit_float = float(payment - cost)
+                        if profit_float > 0:
+                            tax_float = profit_float * tax_rate
+                            tax_int = int(round(tax_float))
+                        else:
+                            tax_float = 0.0
+                            tax_int = 0
+
+                        knight_net_profit = profit_float - tax_float
+                        knight_net_gain = int(round(knight_net_profit))
+                        self.state.add_treasury(-payment)
+                        figure.add_wealth(knight_net_gain)
+                        contract.total_spent += payment
+                        contract.remaining_years -= 1
+
+                        if figure.faction_id and figure.faction_id in faction_tax_collected:
+                            faction_tax_collected[figure.faction_id] += tax_float
+
+                        # 日志：工程合同收益
                         self.state.log_event(
-                            f"工程合同竣工: {contract.name}",
-                            extra={"type": "works_contract_complete", "contract_id": contract.id}
+                            f"工程合同收益: {figure.name} 净得 {knight_net_gain}，国库 -{payment}",
+                            extra={
+                                "type": "works_contract_revenue",
+                                "contract_id": contract.id,
+                                "figure_id": figure.id,
+                                "net_profit": knight_net_gain,
+                                "treasury_cost": payment
+                            }
                         )
+
+                        if contract.remaining_years <= 0:
+                            contract.mark_complete(self.state.turn.turn_number)
+                            province = self.state.get_province(contract.province_id)
+                            if province:
+                                province.unbind_project_contract()
+                            self.state.log_event(
+                                f"工程合同竣工: {contract.name}",
+                                extra={"type": "works_contract_complete", "contract_id": contract.id}
+                            )
+            except Exception as e:
+                self.state.log_exception(
+                    e,
+                    context=f"合同收益处理失败: 合同 {contract.id}",
+                    extra={"contract_id": contract.id, "contract_type": contract.contract_type.value}
+                )
+                continue
 
     def _print_faction_table(self, terms, faction_data: Dict[str, dict]):
         factions = list(self.state.factions.values())

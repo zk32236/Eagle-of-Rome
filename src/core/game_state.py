@@ -76,6 +76,27 @@ class GameState:
 
     #========================= 功能函数 ===================================
 
+    def log_exception(self, e: Exception, context: str = "", extra: dict = None):
+        """
+        记录异常日志，包含异常类型、消息和可选的上下文信息。
+        Args:
+            e: 异常对象
+            context: 自定义上下文描述
+            extra: 额外的结构化字段
+        """
+        import traceback
+        tb_str = traceback.format_exc()
+        log_extra = {
+            "exception_type": type(e).__name__,
+            "exception_msg": str(e),
+            "traceback": tb_str,
+        }
+        if extra:
+            log_extra.update(extra)
+        if context:
+            log_extra["context"] = context
+        self.log_event(f"异常: {context} - {type(e).__name__}: {e}", level=logging.ERROR, extra=log_extra)
+
     def _setup_logging(self):
         """根据配置初始化文件日志（每个实例独立，但使用同一文件）"""
         log_config = self._config.get("logging", {})
