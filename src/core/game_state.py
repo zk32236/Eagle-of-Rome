@@ -289,15 +289,6 @@ class GameState:
 
     # ========== 新增：国库增减方法 ==========
     def add_treasury(self, amount: int) -> int:
-        """
-        增加/减少国库
-
-        Args:
-            amount: 增加金额（可为负）
-
-        Returns:
-            int: 修改后的国库金额
-        """
         self._treasury += amount
         return self._treasury
 

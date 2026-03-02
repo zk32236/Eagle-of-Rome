@@ -81,30 +81,32 @@ class RevenueCommand(Command):
         if ms:
             success, msg = ms.apply_maintenance(verbose=False)
 
-        # 5. 初始化 faction_final，为所有派系设置默认值
-        faction_final = {}
-        for faction in self.state.factions.values():
-            faction_final[faction.id] = {
-                'stipend': faction_stipend.get(faction.id, 0),
-                'tax': 0,
-                'final': faction.treasury
-            }
-
-        # 6. 处理派系抽成和更新国库
+        # 5. 先更新派系国库（处理抽成和津贴）
         for faction_id, total_tax_float in faction_tax_collected.items():
             tax_int = int(round(total_tax_float))
             faction = self.state.get_faction(faction_id)
             if faction:
                 faction.treasury += faction_stipend[faction_id] + tax_int
-                faction_final[faction_id] = {
-                    'stipend': faction_stipend[faction_id],
-                    'tax': tax_int,
-                    'final': faction.treasury
-                }
                 if tax_int > 0:
-                    self.state.log_event(...)
+                    self.state.log_event(
+                        f"派系抽成: {faction.name} +{tax_int}",
+                        extra={"type": "faction_tax", "faction_id": faction_id, "amount": tax_int}
+                    )
                 if faction_stipend[faction_id] > 0:
-                    self.state.log_event(...)
+                    self.state.log_event(
+                        f"派系津贴: {faction.name} +{faction_stipend[faction_id]}",
+                        extra={"type": "faction_stipend", "faction_id": faction_id,
+                               "amount": faction_stipend[faction_id]}
+                    )
+
+        # 6. 重新构建 faction_final（此时国库已更新）
+        faction_final = {}
+        for faction in self.state.factions.values():
+            faction_final[faction.id] = {
+                'stipend': faction_stipend.get(faction.id, 0),
+                'tax': int(round(faction_tax_collected.get(faction.id, 0.0))),
+                'final': faction.treasury
+            }
 
         # 7. 打印派系表格（只执行一次）
         self._print_faction_table(terms, faction_final)
