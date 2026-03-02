@@ -245,7 +245,40 @@ class Province:
         self._has_project = False                    # 是否有生效公共工程
         self._turns_since_last_land_distribution = 0  # 仅对意大利有效
 
+        # ==================行省:总督属性 ======================
+        self._governor_id: Optional[int] = None
+        self._old_governor_id: Optional[int] = None
+        self._governor_since: int = 0
+        self._governor_type: str = "proconsul"  # 默认，实际应由外部设置
+        self._governor_designate_id: Optional[int] = None  # 候任总督ID
+
     # --- 属性访问器（只读）---
+
+    @property
+    def governor_designate_id(self) -> Optional[int]:
+        return self._governor_designate_id
+
+    def set_governor(self, new_id: Optional[int], turn: int):
+        self._old_governor_id = self._governor_id
+        self._governor_id = new_id
+        self._governor_since = turn
+
+    @property
+    def governor_id(self) -> Optional[int]:
+        return self._governor_id
+
+    @property
+    def old_governor_id(self) -> Optional[int]:
+        return self._old_governor_id
+
+    @property
+    def governor_since(self) -> int:
+        return self._governor_since
+
+    @property
+    def governor_type(self) -> str:
+        return self._governor_type
+
     @property
     def province_id(self) -> int:
         return self._province_id

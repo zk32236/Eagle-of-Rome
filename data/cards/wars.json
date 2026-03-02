@@ -1,29 +1,6 @@
 {
   "wars": [
     {
-      "id": "first_punic_war",
-      "name": "First Punic War",
-      "description": "The great struggle with Carthage for control of Sicily and the Mediterranean",
-      "type": "foreign",
-      "strength": 10,
-      "naval_required": true,
-      "naval_strength": 5,
-      "land_battle": true,
-      "disaster_numbers": [2, 3],
-      "standoff_numbers": [4, 5, 6, 7, 8, 9, 10],
-      "rewards": {
-        "treasury": 100,
-        "influence": 5,
-        "unrest_reduction": 3,
-        "land_bill": true
-      },
-      "penalties": {
-        "unrest_per_turn": 2,
-        "treasury_cost": 20
-      },
-      "imminent": false
-    },
-    {
       "id": "gallic_raiders",
       "name": "Gallic Raiders",
       "description": "Barbarian tribes threaten northern borders",
@@ -61,26 +38,6 @@
       }
     },
     {
-      "id": "samnite_revolt",
-      "name": "Samnite Revolt",
-      "description": "Old allies rise against Roman rule",
-      "type": "provincial",
-      "strength": 8,
-      "naval_required": false,
-      "land_battle": true,
-      "disaster_numbers": [2, 3, 4],
-      "standoff_numbers": [5, 6, 7, 8, 9, 10],
-      "rewards": {
-        "treasury": 60,
-        "influence": 3,
-        "unrest_reduction": 2
-      },
-      "penalties": {
-        "unrest_per_turn": 2,
-        "treasury_cost": 5
-      }
-    },
-    {
       "id": "pyrrhic_war",
       "name": "皮洛士战争",
       "description": "希腊城邦塔伦图姆邀请伊庇鲁斯国王皮洛士介入意大利，与罗马争夺南意大利霸权。",
@@ -101,6 +58,174 @@
       "penalties": {
         "unrest_per_turn": 1,
         "treasury_cost": 5
+      },
+      "land_battle": true,
+      "disaster_numbers": [2, 3, 4],
+      "standoff_numbers": [5, 6, 7, 8, 9],
+      "is_imminent": false,
+      "matched_war_id": null
+    },
+    {
+      "id": "first_punic_war",
+      "name": "第一次布匿战争",
+      "description": "罗马与迦太基争夺西西里岛的控制权，最终罗马获胜，获得西西里。",
+      "type": "FOREIGN",
+      "start_year": -264,
+      "threat_level": 0,
+      "auto_escalate": true,
+      "escalate_rate": 1,
+      "strength": 10,
+      "naval_support_required": true,
+      "naval_strength": 5,
+      "rewards": {
+        "treasury": 3200,
+        "influence": 40,
+        "land": 400,
+        "family_prestige": 2
+      },
+      "penalties": {
+        "unrest_per_turn": 2,
+        "treasury_cost": 10
+      },
+      "land_battle": true,
+      "disaster_numbers": [2, 3, 4],
+      "standoff_numbers": [5, 6, 7, 8, 9],
+      "is_imminent": false,
+      "matched_war_id": null
+    },
+    {
+      "id": "second_punic_war",
+      "name": "第二次布匿战争",
+      "description": "汉尼拔率军翻越阿尔卑斯山入侵意大利，罗马经过长期战争最终获胜，获得西班牙。",
+      "type": "FOREIGN",
+      "start_year": -218,
+      "threat_level": 0,
+      "auto_escalate": true,
+      "escalate_rate": 1,
+      "strength": 12,
+      "naval_support_required": true,
+      "naval_strength": 6,
+      "rewards": {
+        "treasury": 10000,
+        "influence": 60,
+        "land": 500,
+        "family_prestige": 3
+      },
+      "penalties": {
+        "unrest_per_turn": 3,
+        "treasury_cost": 15
+      },
+      "land_battle": true,
+      "disaster_numbers": [2, 3, 4],
+      "standoff_numbers": [5, 6, 7, 8, 9],
+      "is_imminent": false,
+      "matched_war_id": null
+    },
+    {
+      "id": "third_punic_war",
+      "name": "第三次布匿战争",
+      "description": "罗马彻底摧毁迦太基，将其变为阿非利加行省。",
+      "type": "FOREIGN",
+      "start_year": -149,
+      "threat_level": 0,
+      "auto_escalate": true,
+      "escalate_rate": 1,
+      "strength": 10,
+      "naval_support_required": true,
+      "naval_strength": 5,
+      "rewards": {
+        "treasury": 100000,
+        "influence": 80,
+        "land": 1000,
+        "family_prestige": 4
+      },
+      "penalties": {
+        "unrest_per_turn": 4,
+        "treasury_cost": 20
+      },
+      "land_battle": true,
+      "disaster_numbers": [2, 3, 4],
+      "standoff_numbers": [5, 6, 7, 8, 9],
+      "is_imminent": false,
+      "matched_war_id": null
+    },
+    {
+      "id": "first_macedonian_war",
+      "name": "第一次马其顿战争",
+      "description": "罗马与马其顿国王腓力五世之间的冲突，以僵持告终。",
+      "type": "FOREIGN",
+      "start_year": -214,
+      "threat_level": 0,
+      "auto_escalate": true,
+      "escalate_rate": 1,
+      "strength": 6,
+      "naval_support_required": false,
+      "naval_strength": 0,
+      "rewards": {
+        "treasury": 300,
+        "influence": 20,
+        "land": 0,
+        "family_prestige": 1
+      },
+      "penalties": {
+        "unrest_per_turn": 1,
+        "treasury_cost": 5
+      },
+      "land_battle": true,
+      "disaster_numbers": [2, 3, 4],
+      "standoff_numbers": [5, 6, 7, 8, 9],
+      "is_imminent": false,
+      "matched_war_id": null
+    },
+    {
+      "id": "second_macedonian_war",
+      "name": "第二次马其顿战争",
+      "description": "罗马在弗拉米尼努斯指挥下击败腓力五世，宣布希腊自由。",
+      "type": "FOREIGN",
+      "start_year": -200,
+      "threat_level": 0,
+      "auto_escalate": true,
+      "escalate_rate": 1,
+      "strength": 8,
+      "naval_support_required": false,
+      "naval_strength": 0,
+      "rewards": {
+        "treasury": 1000,
+        "influence": 30,
+        "land": 0,
+        "family_prestige": 2
+      },
+      "penalties": {
+        "unrest_per_turn": 2,
+        "treasury_cost": 8
+      },
+      "land_battle": true,
+      "disaster_numbers": [2, 3, 4],
+      "standoff_numbers": [5, 6, 7, 8, 9],
+      "is_imminent": false,
+      "matched_war_id": null
+    },
+    {
+      "id": "third_macedonian_war",
+      "name": "第三次马其顿战争",
+      "description": "罗马击败马其顿国王珀尔修斯，马其顿沦为罗马行省。",
+      "type": "FOREIGN",
+      "start_year": -171,
+      "threat_level": 0,
+      "auto_escalate": true,
+      "escalate_rate": 1,
+      "strength": 9,
+      "naval_support_required": false,
+      "naval_strength": 0,
+      "rewards": {
+        "treasury": 80000,
+        "influence": 50,
+        "land": 800,
+        "family_prestige": 3
+      },
+      "penalties": {
+        "unrest_per_turn": 3,
+        "treasury_cost": 12
       },
       "land_battle": true,
       "disaster_numbers": [2, 3, 4],

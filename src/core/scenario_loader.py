@@ -44,13 +44,42 @@ class ScenarioLoader:
         state.add_province(italy)
 
         provinces_data = [
-            {"id": 1, "name": "西西里", "total_land": 1000},
-            {"id": 2, "name": "撒丁尼亚", "total_land": 800},
-            {"id": 3, "name": "科西嘉", "total_land": 600},
+            {"id": 1, "name": "西西里", "total_land": 1000, "type": "proconsul"},
+            {"id": 2, "name": "撒丁尼亚", "total_land": 800, "type": "propraetor"},
+            {"id": 3, "name": "科西嘉", "total_land": 600, "type": "propraetor"},
         ]
         for p in provinces_data:
             province = Province(p["id"], p["name"], p["total_land"])
+            province._governor_type = p["type"]  # 设置行省类型
             state.add_province(province)
+
+        ScenarioLoader._assign_initial_governors(state)
+
+    @staticmethod
+    def _assign_initial_governors(state: GameState):
+        print("\n🏛️ 初始化行省总督：")
+        for province in state.get_all_provinces():
+            if province.province_id == 0:
+                continue
+            office_type = "consul" if province.governor_type == "proconsul" else "praetor"
+            candidates = []
+            for fig in state.get_living_members():
+                if fig.is_absent or fig.office is not None:
+                    continue
+                for term in fig.office_history:
+                    if term.office_type == office_type and term.end_turn is not None:
+                        candidates.append(fig)
+                        break
+            if candidates:
+                governor = random.choice(candidates)
+                province._governor_id = governor.id
+                province._governor_since = state.turn.turn_number
+                governor.is_absent = True
+                governor.office = province.governor_type  # 设置官职
+                governor.update_influence()  # 更新影响力（包含官职加成）
+                print(f"   ✅ {province.name} ({province.governor_type}) 初始总督: {governor.get_formal_name()}")
+            else:
+                print(f"   ⚠️ {province.name} 无合格候选人，留空")
 
     @staticmethod
     def _get_default_config() -> dict:

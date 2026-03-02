@@ -169,7 +169,11 @@ class TestForumCommand(unittest.TestCase):
         self.state.add_member(eligible)
         self.faction1.member_ids.append(3)
 
-        cmd = ForumCommand(self.state)
+        # 创建模拟退休决策器，始终返回该人物ID
+        mock_retirement_decider = MagicMock()
+        mock_retirement_decider.decide_whom_to_retire.return_value = 3
+
+        cmd = ForumCommand(self.state, retirement_decider=mock_retirement_decider)
         f = io.StringIO()
         with redirect_stdout(f):
             cmd.execute([])

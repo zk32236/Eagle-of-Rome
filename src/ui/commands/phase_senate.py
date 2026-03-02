@@ -42,12 +42,12 @@ class SenateCommand(Command):
         self.vote_decider = vote_decider if vote_decider is not None else AutoSenateVoteDecider()
         self.budget_decider = AutoBudgetDecider()
         self.takeover_decider = takeover_decider if takeover_decider is not None else AutoWarTakeoverDecider()
-        # 关键：只有 land_proposal_deciders 为 None 时才使用默认值
         self.land_proposal_deciders = land_proposal_deciders if land_proposal_deciders is not None else [
             AutoLandProposalDecider("populares", "distribution"),
             AutoLandProposalDecider("optimates", "sale")
         ]
         self.veto_decider = veto_decider if veto_decider is not None else AutoTribuneVetoDecider()
+        self.proposed_governors = []   # 新增：存储总督任命提案
 
     def execute(self, args: List[str]) -> bool:
         if not self.state.is_phase_executed("population"):
@@ -84,9 +84,14 @@ class SenateCommand(Command):
         passed_contracts: List["Contract"] = []
         # 通过的土地法案列表
         passed_land_acts: List[dict] = []
+        # 通过的行省总督列表
+        self.proposed_governors = []  # 清空之前的提案
 
         # 3.1 宣战提案处理（只收集，不执行）
         self._process_war_proposals(passed_wars)
+
+        # 3.2 行省总督任命提案（新增）
+        self._process_governor_appointments(terms)
 
         # 3.2 预算审批（合同授权），收集通过的合同
         self._process_budget_proposals(terms, passed_contracts)
@@ -107,6 +112,25 @@ class SenateCommand(Command):
                 else:
                     new_wars.append((war, consul_id, legions))
             passed_wars = new_wars
+
+            # 总督否决
+            # 总督任命否决（新增）
+            new_governors = []
+            for gov in self.proposed_governors:
+                issue = {
+                    'type': 'governor_appointment',
+                    'province_id': gov['province_id'],
+                    'new_governor_id': gov['new_governor_id'],
+                    'old_governor_id': gov['old_governor_id']
+                }
+                if self.veto_decider.decide_veto(issue, tribune.id, self.state):
+                    province = self.state.get_province(gov['province_id'])
+                    prov_name = province.name if province else f"ID:{gov['province_id']}"
+                    print(f"      ❌ 保民官否决了行省 {prov_name} 的总督任命")
+                    self.state.log_event(f"保民官否决行省 {prov_name} 总督任命")
+                else:
+                    new_governors.append(gov)
+            self.proposed_governors = new_governors
 
             # 合同否决
             new_contracts = []
@@ -139,25 +163,165 @@ class SenateCommand(Command):
         for war, consul_id, legions in passed_wars:
             self._execute_war_declaration(war, consul_id, legions)
 
-        # 5.2 标记合同为 BUDGETED
+        # 5.2 战争接管处理（与原逻辑一致）
+        self._process_war_takeover()
+
+        # 5.3 执行总督任命（新增）
+        self._execute_governor_appointments()
+
+        # 5.4 标记合同为 BUDGETED
         for contract in passed_contracts:
             contract.status = ContractStatus.BUDGETED
             print(f"      ✅ {contract.name} 预算通过，状态变为 BUDGETED")
             self.state.log_event(f"合同预算通过：{contract.name}")
 
-        # 5.3 存入土地法案
+        # 5.5 存入土地法案
         for act in passed_land_acts:
             self.state.add_pending_land_act(act)
             print(f"      ✅ {act['description']} 通过，等待下回合执行")
-
-        # 5.4 战争接管处理（与原逻辑一致）
-        self._process_war_takeover()
 
         self.state.mark_phase_executed("senate")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
 # =================================== 方法函数 =============================================
+
+    def _execute_governor_appointments(self):
+        if not self.proposed_governors:
+            return
+        print("\n\t====================== 总督任命执行 ====================")
+        for gov in self.proposed_governors:
+            province = self.state.get_province(gov['province_id'])
+            if not province:
+                continue
+            new_fig = self.state.get_member(gov['new_governor_id'])
+            old_fig = self.state.get_member(gov['old_governor_id']) if gov['old_governor_id'] else None
+
+            # 记录旧总督，供决算阶段返回
+            province._old_governor_id = gov['old_governor_id']
+            # 设置候任总督
+            province._governor_designate_id = gov['new_governor_id']
+
+            if new_fig:
+                # 新总督离开罗马（在途），但暂不授予官职
+                new_fig.is_absent = True
+                new_fig_name = new_fig.get_formal_name()
+            else:
+                new_fig_name = "未知"
+
+            old_name = old_fig.get_formal_name() if old_fig else "无"
+            print(f"      ✅ {province.name} 任命新总督: {new_fig_name} (候任)，旧总督 {old_name} 仍在任")
+            self.state.log_event(
+                f"行省 {province.name} 任命候任总督 {new_fig_name}",
+                extra={
+                    'type': 'governor_appointed_designate',
+                    'province_id': province.province_id,
+                    'new_governor': gov['new_governor_id'],
+                    'old_governor': gov['old_governor_id']
+                }
+            )
+
+    def _process_governor_appointments(self, terms):
+        print("\n\t====================== 行省总督任命 ====================")
+
+        # 行省分类
+        proconsul_provinces = []
+        propraetor_provinces = []
+        for p in self.state.get_all_provinces():
+            if p.province_id == 1:
+                proconsul_provinces.append(p)
+            elif p.province_id in (2, 3):
+                propraetor_provinces.append(p)
+
+        # 候选人获取函数（不变）
+        def get_candidates(office_type: str):
+            cand_list = []
+            for fig in self.state.get_living_members():
+                if fig.is_absent:
+                    continue
+                # 排除现任官职（非 ex- 开头）
+                if fig.office is not None and not fig.office.startswith("ex-"):
+                    continue
+                last_end = None
+                for term in fig.office_history:
+                    if term.office_type == office_type and term.end_turn is not None:
+                        if last_end is None or term.end_turn > last_end:
+                            last_end = term.end_turn
+                if last_end is not None:
+                    cand_list.append((fig, last_end))
+            cand_list.sort(key=lambda x: -x[1])
+            return [c[0] for c in cand_list]
+
+        consuls = get_candidates('consul')
+        praetors = get_candidates('praetor')
+
+        # 修改 assign 函数，增加 used_set 参数
+        def assign(provinces, candidates, used_set):
+            remaining = list(provinces)
+            random.shuffle(remaining)
+            assignments = []
+            for cand in candidates:
+                if cand.id in used_set:
+                    continue
+                if not remaining:
+                    break
+                chosen = random.choice(remaining)
+                remaining.remove(chosen)
+                assignments.append((chosen, cand))
+                used_set.add(cand.id)
+            return assignments
+
+        used = set()
+        proconsul_assignments = assign(proconsul_provinces, consuls, used)
+        propraetor_assignments = assign(propraetor_provinces, praetors, used)
+
+        # 打印分配结果
+        def print_assignments(title, assignments):
+            print(f"\n   {title}:")
+            if not assignments:
+                print("      无行省需要任命")
+                return
+            for prov, cand in assignments:
+                # 计算卸任年份显示
+                last_year = None
+                req_office = 'consul' if title == '执政官行省' else 'praetor'
+                for term in cand.office_history:
+                    if term.office_type == req_office and term.end_turn is not None:
+                        last_year = term.end_turn
+                        break
+                if last_year is not None:
+                    year = self.state.turn.year + (last_year - self.state.turn.turn_number)
+                    year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
+                else:
+                    year_display = "未知"
+                print(f"      → {cand.get_formal_name()} (卸任 {year_display}) 抽中 {prov.name}")
+
+        print_assignments("执政官行省 (Proconsul)", proconsul_assignments)
+        print_assignments("大法官行省 (Propraetor)", propraetor_assignments)
+
+        # 提示未被分配的行省
+        all_provinces = set(proconsul_provinces + propraetor_provinces)
+        assigned_provinces = set(p for p, _ in proconsul_assignments + propraetor_assignments)
+        unassigned = all_provinces - assigned_provinces
+        if unassigned:
+            for p in unassigned:
+                print(f"      ⚠️ {p.name} 无合格候选人，现任总督留任一年")
+
+        # 构建提案
+        self.proposed_governors = []
+        for prov, cand in proconsul_assignments + propraetor_assignments:
+            self.proposed_governors.append({
+                'province_id': prov.province_id,
+                'new_governor_id': cand.id,
+                'old_governor_id': prov.governor_id,
+                'governor_type': prov.governor_type
+            })
+
+        self.state.log_event(
+            f"总督任命提案收集完成，共 {len(self.proposed_governors)} 项",
+            level=logging.DEBUG,
+            extra={"proposals": [p['province_id'] for p in self.proposed_governors]}
+        )
 
     def _get_tribune(self) -> Optional['Figure']:
         """获取当前保民官（假设只有一人）"""

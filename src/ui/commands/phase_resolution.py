@@ -37,12 +37,14 @@ class ResolutionCommand(Command):
 
         # 1. 胜利条件检查（精简打印）
         self._check_all_conditions(terms)
+        self._process_governor_return()
 
         # 2. 后台功能（不打印）
         self._process_contract_expiration(terms, verbose=False)
         self._prepare_next_year(verbose=False)
         self._apply_annual_decay(terms, verbose=False)
         self._process_temp_influence_decay(verbose=False)
+
 
         ms = self.state.get_military_system()
         if ms:
@@ -51,6 +53,33 @@ class ResolutionCommand(Command):
         self.state.mark_phase_executed("resolution")
         # 不打印进度条
         return True
+
+    def _process_governor_return(self):
+        for province in self.state.get_all_provinces():
+            # 先处理返回罗马的旧总督
+            old_id = province._old_governor_id
+            if old_id is not None:
+                old_fig = self.state.get_member(old_id)
+                if old_fig and not old_fig.is_dead:
+                    old_fig.is_absent = False
+                    old_fig.office = None  # 卸任总督官职
+                    old_fig.update_influence()
+                    print(f"      🔄 旧总督 {old_fig.get_formal_name()} 返回罗马")
+                    self.state.log_event(f"旧总督 {old_fig.get_formal_name()} 返回罗马")
+                province._old_governor_id = None
+
+            # 再处理候任总督上任
+            designate_id = province._governor_designate_id
+            if designate_id is not None:
+                new_fig = self.state.get_member(designate_id)
+                if new_fig and not new_fig.is_dead:
+                    # 新总督正式上任
+                    province._governor_id = designate_id
+                    new_fig.office = province.governor_type
+                    new_fig.update_influence()
+                    print(f"      👑 新总督 {new_fig.get_formal_name()} 正式上任 {province.name}")
+                    self.state.log_event(f"新总督 {new_fig.get_formal_name()} 正式上任 {province.name}")
+                province._governor_designate_id = None
 
     def _check_all_conditions(self, terms):
         """检查所有胜利/失败条件，打印简洁信息"""
@@ -140,3 +169,4 @@ class ResolutionCommand(Command):
             if fig.get_temp_influence() > 0:
                 fig.decay_temp_influence_tasks()
                 fig.update_influence()
+

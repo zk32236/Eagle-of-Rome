@@ -12,6 +12,8 @@ from typing import List, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.core.game_state import GameState
 
+# src/ui/commands/func_status.py
+
 class ProvinceCommand(Command):
     """显示行省状态命令"""
 
@@ -42,6 +44,14 @@ class ProvinceCommand(Command):
         else:
             return f"工程(预算 {contract.base_cost})"
 
+    def _get_governor_name(self, governor_id: Optional[int]) -> str:
+        if governor_id is None:
+            return "无"
+        fig = self.state.get_member(governor_id)
+        if fig is None:
+            return "缺失(数据异常)"
+        return fig.get_formal_name()
+
     def execute(self, args: List[str]) -> bool:
         if not args:
             # 显示所有行省概要
@@ -50,22 +60,24 @@ class ProvinceCommand(Command):
                 print("   📭 没有行省数据")
                 return True
 
-            print("\n" + "=" * 60)
+            print("\n" + "=" * 80)
             print("   🏛️ 行省状态一览")
-            print("=" * 60)
-            print(f"{'ID':<4} {'名称':<12} {'民怨':<4} {'包税合同':<12} {'工程合同':<12} {'控制派系':<12}")
-            print("-" * 60)
+            print("=" * 80)
+            print(f"{'ID':<4} {'名称':<12} {'类型':<10} {'总督':<16} {'民怨':<4} {'包税合同':<16} {'工程合同':<16} {'控制派系':<12}")
+            print("-" * 80)
 
             for p in provinces:
                 if p.province_id == 0:
                     name = "意大利(本土)"
                 else:
                     name = p.name
+                gov_name = self._get_governor_name(p.governor_id)
+                gov_type = p.governor_type if hasattr(p, 'governor_type') and p.governor_type else "未知"
                 tax_info = self._format_contract_info(p.tax_contract_id)
                 proj_info = self._format_contract_info(p.project_contract_id)
                 controller = self._get_controlling_faction(p.province_id) or "无"
-                print(f"{p.province_id:<4} {name:<12} {p.grievance:<4} {tax_info:<12} {proj_info:<12} {controller:<12}")
-            print("=" * 60)
+                print(f"{p.province_id:<4} {name:<12} {gov_type:<10} {gov_name:<16} {p.grievance:<4} {tax_info:<16} {proj_info:<16} {controller:<12}")
+            print("=" * 80)
             return True
 
         # 有参数：显示单个行省详情
@@ -90,6 +102,26 @@ class ProvinceCommand(Command):
         print(f"   总土地: {province.total_land} C")
         print(f"   公地: {province.land_public} C")
         print(f"   私地: {province.land_private} C")
+        print(f"   行省类型: {province.governor_type if hasattr(province, 'governor_type') else '未设置'}")
+        if province.governor_designate_id:
+            designate = self.state.get_member(province.governor_designate_id)
+            designate_name = designate.get_formal_name() if designate else "?"
+            print(f"   候任总督: {designate_name} (将在决算阶段上任)")
+
+        if province.governor_id:
+            gov = self.state.get_member(province.governor_id)
+            gov_name = gov.get_formal_name() if gov else "?"
+            # 计算上任年份
+            if hasattr(province, 'governor_since') and province.governor_since and self.state.turn:
+                since_year = self.state.turn.year + (province.governor_since - self.state.turn.turn_number)
+                since_display = f"{abs(since_year)} BC" if since_year < 0 else f"{since_year} AD"
+            else:
+                since_display = "未知"
+            print(f"   现任总督: {gov_name} (上任于 {since_display})")
+
+        else:
+            print(f"   现任总督: 无")
+
         print(f"   民怨等级: {province.grievance} (0=安居乐业,1=怨声载道,2=民不聊生,3=平民起义)")
 
         # 包税合同
@@ -350,6 +382,7 @@ class StatusFigureCommand(Command):
             print(f"持有合同: {fig.contract_ids if fig.contract_ids else '无'}")
             print(f"是否派系领袖: {'是' if fig.is_faction_leader else '否'}")
             print(f"是否死亡: {'是' if fig.is_dead else '否'}")
+            print(f"是否在罗马: {'否' if fig.is_absent else '是'}")  # 新增
             print("=" * 50)
 
 class FactionStatusCommand(Command):

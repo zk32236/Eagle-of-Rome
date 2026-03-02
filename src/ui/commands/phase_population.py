@@ -303,6 +303,8 @@ class PopulationCommand(Command):
         current_turn = self.state.turn.turn_number
         eligible = []
         for fig in self.state.get_living_members():
+            if fig.is_absent:  # 不在罗马不能参选
+                continue
             can_hold, _ = fig.can_hold_office(office_type, current_turn, self.state.config)
             if can_hold:
                 eligible.append(fig)

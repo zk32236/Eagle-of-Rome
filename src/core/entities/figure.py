@@ -302,6 +302,11 @@ class Figure:
 
     # 在 can_hold_office 方法中，增加监察官的特殊条件
     def can_hold_office(self, office_type: str, current_turn: int, config: Dict) -> Tuple[bool, str]:
+
+        # 如果当前担任任何非卸任官职（如 proconsul, propraetor 或现任 consul 等），则不能参选其他官职
+        if self.office and not self.office.startswith("ex-"):
+            return False, f"Currently holding office: {self.office}, cannot run for another"
+
         # 获取目标官职等级
         target_rank = self.__class__.OFFICE_RANK.get(office_type, 0)
         if target_rank == 0:

@@ -94,7 +94,7 @@ class TestFigure:
         fig_consul.office = "consul"
         can, reason = fig_consul.can_hold_office("praetor", current_turn, config)
         assert not can
-        assert "while holding higher office" in reason
+        assert "Currently holding office" in reason
 
         # 2. 现任执政官不能竞选财务官
         can, reason = fig_consul.can_hold_office("quaestor", current_turn, config)
@@ -105,7 +105,7 @@ class TestFigure:
         fig_praetor.office = "praetor"
         can, reason = fig_praetor.can_hold_office("quaestor", current_turn, config)
         assert not can
-        assert "while holding higher office" in reason
+        assert "Currently holding office" in reason
 
         # 4. 曾担任执政官不能竞选大法官
         fig_ex_consul = Figure(id=3, name="Ex-Consul", faction_id="f1", age=50)
