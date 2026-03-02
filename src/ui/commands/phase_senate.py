@@ -4,7 +4,7 @@
 """
 import random
 import logging
-from typing import List, TYPE_CHECKING, Optional
+from typing import List, TYPE_CHECKING, Optional, Tuple, Any
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.contract import ContractType, ContractStatus
@@ -17,11 +17,13 @@ from src.core.deciders.impl.auto_war_takeover_decider import AutoWarTakeoverDeci
 from src.core.deciders.war_takeover_decider import WarTakeoverDecider
 from src.core.deciders.impl.auto_land_proposal_decider import AutoLandProposalDecider
 from src.core.deciders.land_proposal_decider import LandProposalDecider
-
-
+from src.core.deciders.tribune_veto_decider import TribuneVetoDecider
+from src.core.deciders.impl.auto_tribune_veto_decider import AutoTribuneVetoDecider
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
+    from src.core.entities.war import War
+    from src.core.entities.contract import Contract
 
 
 class SenateCommand(Command):
@@ -34,16 +36,18 @@ class SenateCommand(Command):
     def __init__(self, state: "GameState",
                  vote_decider: Optional[SenateVoteDecider] = None,
                  takeover_decider: Optional[WarTakeoverDecider] = None,
-                 land_proposal_deciders: Optional[List[LandProposalDecider]] = None):  # 新增
+                 land_proposal_deciders: Optional[List[LandProposalDecider]] = None,
+                 veto_decider: Optional[TribuneVetoDecider] = None):
         super().__init__(state)
-        self.vote_decider = vote_decider or AutoSenateVoteDecider()
+        self.vote_decider = vote_decider if vote_decider is not None else AutoSenateVoteDecider()
         self.budget_decider = AutoBudgetDecider()
-        self.takeover_decider = takeover_decider or AutoWarTakeoverDecider()
-        # 默认添加两个派系的提案决策器
-        self.land_proposal_deciders = land_proposal_deciders or [
+        self.takeover_decider = takeover_decider if takeover_decider is not None else AutoWarTakeoverDecider()
+        # 关键：只有 land_proposal_deciders 为 None 时才使用默认值
+        self.land_proposal_deciders = land_proposal_deciders if land_proposal_deciders is not None else [
             AutoLandProposalDecider("populares", "distribution"),
             AutoLandProposalDecider("optimates", "sale")
         ]
+        self.veto_decider = veto_decider if veto_decider is not None else AutoTribuneVetoDecider()
 
     def execute(self, args: List[str]) -> bool:
         if not self.state.is_phase_executed("population"):
@@ -73,23 +77,81 @@ class SenateCommand(Command):
         office_display = presiding.office if presiding.office else "无"
         print(f"\n   🎤 Presiding Officer: {presiding.name} ({office_display})")
 
-        # 2.1 宣战提案处理（新增）
-        self._process_war_proposals()
+        # ========== 3. 收集所有通过的提案 ==========
+        # 宣战提案列表：每个元素为 (war, consul_id, legions)
+        passed_wars: List[Tuple["War", int, int]] = []
+        # 通过的合同列表（需要状态变为 BUDGETED）
+        passed_contracts: List["Contract"] = []
+        # 通过的土地法案列表
+        passed_land_acts: List[dict] = []
 
-        # 2.2 战争接管处理（新增）
+        # 3.1 宣战提案处理（只收集，不执行）
+        self._process_war_proposals(passed_wars)
+
+        # 3.2 预算审批（合同授权），收集通过的合同
+        self._process_budget_proposals(terms, passed_contracts)
+
+        # 3.3 土地法案，收集通过的提案
+        self._process_land_proposals(terms, passed_land_acts)
+
+        # ========== 4. 保民官否决 ==========
+        tribune = self._get_tribune()
+        if tribune:
+            print(f"\n   🛡️ 保民官 {tribune.name} 正在审查通过的提案...")
+            # 宣战否决
+            new_wars = []
+            for war, consul_id, legions in passed_wars:
+                if self.veto_decider.decide_veto(war, tribune.id, self.state):
+                    print(f"      ❌ 保民官否决了宣战：{war.name}")
+                    self.state.log_event(f"保民官否决宣战: {war.name}")
+                else:
+                    new_wars.append((war, consul_id, legions))
+            passed_wars = new_wars
+
+            # 合同否决
+            new_contracts = []
+            for contract in passed_contracts:
+                if self.veto_decider.decide_veto(contract, tribune.id, self.state):
+                    print(f"      ❌ 保民官否决了合同：{contract.name}")
+                    self.state.log_event(f"保民官否决合同: {contract.name} (ID:{contract.id})")
+                else:
+                    new_contracts.append(contract)
+            passed_contracts = new_contracts
+
+            # 土地法案否决
+            new_acts = []
+            for act in passed_land_acts:
+                if self.veto_decider.decide_veto(act, tribune.id, self.state):
+                    act_type = act['type']
+                    percent = act['percent']
+                    desc = self._get_land_act_description(act_type, percent)
+                    print(f"      ❌ 保民官否决了土地法案：{desc}")
+                    self.state.log_event(f"保民官否决土地法案: {desc}")
+                else:
+                    new_acts.append(act)
+            passed_land_acts = new_acts
+        else:
+            print(f"\n   🛡️ 当前无保民官，不行使否决权")
+
+        # ========== 5. 执行通过的提案 ==========
+
+        # 5.1 执行宣战
+        for war, consul_id, legions in passed_wars:
+            self._execute_war_declaration(war, consul_id, legions)
+
+        # 5.2 标记合同为 BUDGETED
+        for contract in passed_contracts:
+            contract.status = ContractStatus.BUDGETED
+            print(f"      ✅ {contract.name} 预算通过，状态变为 BUDGETED")
+            self.state.log_event(f"合同预算通过：{contract.name}")
+
+        # 5.3 存入土地法案
+        for act in passed_land_acts:
+            self.state.add_pending_land_act(act)
+            print(f"      ✅ {act['description']} 通过，等待下回合执行")
+
+        # 5.4 战争接管处理（与原逻辑一致）
         self._process_war_takeover()
-
-        # 2.3 任命总督处理（预留）
-
-        # 2.4 审判总督处理（预留）
-
-        # ========== 3.法案处理 ==========
-
-        # 3.1 预算审批（合同授权）
-        self._process_budget_proposals(terms)
-
-        # 3.2 土地法案
-        self._process_land_proposals(terms)
 
         self.state.mark_phase_executed("senate")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
@@ -97,17 +159,51 @@ class SenateCommand(Command):
 
 # =================================== 方法函数 =============================================
 
-    def _process_land_proposals(self, terms):
-        """处理土地法案提案"""
+    def _get_tribune(self) -> Optional['Figure']:
+        """获取当前保民官（假设只有一人）"""
+        for fig in self.state.get_living_members():
+            if fig.office == "tribune":
+                return fig
+        return None
+
+    def _execute_war_declaration(self, war: "War", consul_id: int, legions: int):
+        """实际执行宣战：激活战争、征召军团、指派指挥官"""
+        ws = self.state.get_war_system()
+        if not ws:
+            print(f"      ⚠️ 战争系统不可用，无法执行宣战")
+            return
+        success = ws.activate_war(war.id, consul_id, legions)
+        if not success:
+            print(f"      ⚠️ 激活战争失败")
+            return
+
+        consul = self.state.get_member(consul_id)
+        if not consul:
+            return
+
+        # 征召军团并指派
+        ms = self.state.get_military_system()
+        if ms:
+            # 原有自动征召逻辑（可复用 _auto_recruit_and_assign_legions_for_war）
+            self._auto_recruit_and_assign_legions_for_war(war, consul_id)
+
+        consul.is_absent = True
+        self.state.log_event(f"宣战通过：{war.name}，执政官 {consul.name} 出征，批准军团 {legions}")
+        print(f"      ✅ 宣战通过！执政官 {consul.name} 出征，影响力不再计入元老院。")
+        new_presiding = self.state.get_presiding_officer()
+        if new_presiding:
+            print(f"      元老院新主持人：{new_presiding.name}（官职 {new_presiding.office}）")
+
+    def _process_land_proposals(self, terms, passed_land_acts: List[dict]):
+        """处理土地法案提案，通过的放入 passed_land_acts"""
         land_rules = self.state.config.get("political_rules.land_proposal", {})
-        submit_chance = land_rules.get("submit_chance", 0.7)  # 执政官提交概率
+        submit_chance = land_rules.get("submit_chance", 0.7)
 
         presiding = self.state.get_presiding_officer()
         if not presiding:
             print(f"\n   ⚠️ 无主持人，无法处理土地法案。")
             return
 
-        # 收集所有派系提出的法案
         proposals = []
         for faction in self.state.factions.values():
             for decider in self.land_proposal_deciders:
@@ -126,10 +222,37 @@ class SenateCommand(Command):
             return
 
         for prop in proposals:
-            # 执政官决定是否提交
             if random.random() < submit_chance:
                 print(f"\n   📋 {prop['description']} 由执政官 {presiding.name} 提交元老院表决。")
-                self._vote_on_land_act(prop)
+                votes_for = 0
+                votes_against = 0
+                total_influence = 0
+
+                for faction in self.state.get_active_factions():
+                    influence = faction.get_senate_influence(self.state)
+                    if influence == 0:
+                        continue
+                    total_influence += influence
+
+                    support = self.vote_decider.decide_vote(prop, faction, self.state)
+                    if support:
+                        votes_for += influence
+                        print(f"          {faction.name} 支持，影响力 {influence}")
+                    else:
+                        votes_against += influence
+                        print(f"          {faction.name} 反对，影响力 {influence}")
+
+                if total_influence == 0:
+                    print(f"          无元老在场，法案未通过。")
+                    continue
+
+                support_ratio = votes_for / total_influence
+                print(f"          总影响力：{total_influence}，支持 {votes_for}，反对 {votes_against}，支持率 {support_ratio:.1%}")
+                if support_ratio > 0.5:
+                    passed_land_acts.append(prop)
+                    print(f"          ✅ 法案通过，等待保民官否决")
+                else:
+                    print(f"          ❌ 法案否决。")
             else:
                 print(f"\n   ⏳ 执政官 {presiding.name} 决定不提交 {prop['description']}。")
 
@@ -226,13 +349,12 @@ class SenateCommand(Command):
                         print(f"      ⏳ 执政官 {consul.name} 决定不接管 {war.name}，由 {old_cmd.name} 继续指挥")
 
     def _auto_recruit_and_assign_legions_for_war(self, war, consul_id):
-        """自动征召军团并指派给战争（用于执政官接管）"""
+        """自动征召军团并指派给战争（用于宣战和接管）"""
         ms = self.state.get_military_system()
         if not ms:
             print("      ⚠️ 军事系统不可用，无法征召军团")
             return
 
-        # 决定征召数量：优先使用 war.proposed_legions，否则随机生成
         if war.proposed_legions and war.proposed_legions > 0:
             legions = war.proposed_legions
         else:
@@ -241,35 +363,30 @@ class SenateCommand(Command):
             legions = random.randint(min_leg, max_leg)
             print(f"      ℹ️ 战争未指定军团数，自动分配 {legions} 个")
 
-        # 获取可用军团
         available = ms.get_available_legions()
         recruit_cost = self.state.get_economic_rule("legion_recruit_cost", 10)
 
-        # 检查国库资金
         max_affordable = self.state.treasury // recruit_cost
         recruit_count = min(legions, len(available), max_affordable)
         if recruit_count == 0:
             print("      ⚠️ 没有足够的国库资金或可用军团，无法征召")
             return
 
-        # 征召军团
         results = ms.recruit_multiple(recruit_count)
         recruited_numbers = [r[0] for r in results if r[1]]
         if not recruited_numbers:
             print("      ⚠️ 军团征召失败")
             return
 
-        # 指派到战争
         assigned, msg = ms.assign_to_war(recruited_numbers, war.id, consul_id)
         print(f"      {msg}")
         for num in recruited_numbers:
             war.add_legion_number(num)
 
-        # 记录日志
-        self.state.log_event(f"执政官接管 {war.name}，征召 {len(recruited_numbers)} 军团")
-        print(f"      ✅ 征召 {len(recruited_numbers)} 个军团并指派给 {war.name}")
+        self.state.log_event(f"宣战 {war.name}，征召 {len(recruited_numbers)} 军团")
 
-    def _process_war_proposals(self):
+    def _process_war_proposals(self, passed_wars: List[Tuple["War", int, int]]):
+        """处理宣战提案，通过的放入 passed_wars"""
         ws = self.state.get_war_system()
         if not ws:
             return
@@ -332,74 +449,21 @@ class SenateCommand(Command):
                 continue
 
             support_ratio = votes_for / total_influence
-            print(
-                f"          总影响力：{total_influence}，支持 {votes_for}，反对 {votes_against}，支持率 {support_ratio:.1%}")
+            print(f"          总影响力：{total_influence}，支持 {votes_for}，反对 {votes_against}，支持率 {support_ratio:.1%}")
 
             if support_ratio > 0.5:
-                success = ws.activate_war(war.id, consul_id, legions)
-                if success:
-                    # ===== 新增日志 =====
-                    self.state.log_event(
-                        f"宣战通过: {war.name}，批准军团 {legions}",
-                        extra={"type": "war_declaration", "war_id": war.id, "legions": legions}
-                    )
-                    # ========== 自动征召军团并指派指挥官 ==========
-                    # 1. 设置战争指挥官为执政官（已在 activate_war 中设置？为确保，再设一次）
-                    war.commander_id = consul_id
-
-                    # 2. 获取军事系统
-                    # 获取军事系统，如果为 None 则尝试创建（临时修复）
-                    ms = self.state.get_military_system()
-                    if ms is None:
-                        print("      ⚠️ 军事系统未初始化，正在创建临时实例...")
-                        from src.core.systems.military_system import MilitarySystem
-                        ms = MilitarySystem(self.state)
-                        # 临时赋值到 GameState 的私有字段（后续应修正 reset 方法）
-                        self.state._military_system = ms
-
-                    if ms:
-                        print(
-                            f"          军事系统可用，国库 {self.state.treasury}，可用军团数 {len(ms.get_available_legions())}")
-                        available_legions = ms.get_available_legions()
-                        recruit_count = min(legions, len(available_legions))
-                        print(f"          计划征召 {legions} 个军团，实际可征召 {recruit_count} 个")
-
-                        if recruit_count > 0:
-                            results = ms.recruit_multiple(recruit_count)
-                            recruited_numbers = [r[0] for r in results if r[1]]
-                            print(
-                                f"          征召结果：成功 {len(recruited_numbers)} 个，失败 {len(results) - len(recruited_numbers)} 个")
-
-                            if recruited_numbers:
-                                assigned, msg = ms.assign_to_war(recruited_numbers, war.id, consul_id)
-                                print(f"          指派结果：{msg}")
-                                if hasattr(war, 'add_legion_number'):
-                                    for num in recruited_numbers:
-                                        war.add_legion_number(num)
-                            else:
-                                print(f"          军团征召失败（可能国库不足）。")
-                        else:
-                            print(f"          警告：无可用军团或国库不足，无法征召！")
-
-                        if recruit_count < legions:
-                            print(f"          实际征召 {recruit_count}/{legions} 个军团。")
-                    else:
-                        print(f"          错误：无法获取军事系统，军团未征召！")
-
-                    # 3. 标记执政官出征
-                    consul.is_absent = True
-
-                    self.state.log_event(f"宣战通过：{war.name}，执政官 {consul.name} 出征，批准军团 {legions}")
-                    print(f"          ✅ 宣战通过！执政官 {consul.name} 出征，影响力不再计入元老院。")
-                    new_presiding = self.state.get_presiding_officer()
-                    if new_presiding:
-                        print(f"          元老院新主持人：{new_presiding.name}（官职 {new_presiding.office}）")
-                else:
-                    print(f"          ⚠️ 激活战争失败，请联系管理员。")
+                # 不立即激活，放入 passed_wars
+                passed_wars.append((war, consul_id, legions))
+                self.state.log_event(
+                    f"宣战通过 (待否决): {war.name}，批准军团 {legions}",
+                    extra={"type": "war_declaration_passed", "war_id": war.id, "legions": legions}
+                )
+                print(f"          ✅ 元老院批准宣战，等待保民官否决")
             else:
                 print(f"          ❌ 宣战被元老院否决。")
 
-    def _process_budget_proposals(self, terms):
+    def _process_budget_proposals(self, terms, passed_contracts: List["Contract"]):
+        """处理预算提案，通过的放入 passed_contracts"""
         pending = [c for c in self.state.contracts if c.status == ContractStatus.PENDING]
         if not pending:
             print(f"\n   📭 No pending contracts for budget.")
@@ -437,13 +501,11 @@ class SenateCommand(Command):
                 continue
 
             support_ratio = votes_for / total_influence
-            print(
-                f"          总影响力：{total_influence}，支持 {votes_for}，反对 {votes_against}，支持率 {support_ratio:.1%}")
+            print(f"          总影响力：{total_influence}，支持 {votes_for}，反对 {votes_against}，支持率 {support_ratio:.1%}")
 
             if support_ratio > 0.5:
-                contract.status = ContractStatus.BUDGETED
-                print(f"          ✅ 预算通过，状态变为 BUDGETED")
-                self.state.log_event(f"合同预算通过：{contract.name}")
+                passed_contracts.append(contract)
+                print(f"          ✅ 预算通过，等待保民官否决")
             else:
                 print(f"          ❌ 预算否决，保持 PENDING")
 

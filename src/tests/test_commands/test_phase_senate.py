@@ -9,6 +9,8 @@ import os
 import io
 from contextlib import redirect_stdout
 from src.core.deciders.impl.auto_budget_decider import AutoBudgetDecider
+from src.core.deciders.tribune_veto_decider import TribuneVetoDecider
+
 from unittest.mock import MagicMock
 
 # 添加项目根目录到路径
@@ -17,17 +19,22 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+from src.core.entities.figure import Figure, ClassTier
+
+import unittest
+from unittest.mock import MagicMock, patch
+
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 from src.core.game_state import GameState
 from src.ui.commands.phase_senate import SenateCommand
-from src.core.entities.figure import Figure, ClassTier
 from src.core.entities.entities import Faction, GameTurn
+from src.core.entities.figure import Figure
 from src.core.entities.contract import Contract, ContractType, ContractStatus
-from src.core.entities.war import WarStatus, War
-
-
-
-
-
+from src.core.entities.war import War, WarStatus
+from src.core.game_state import GameState
 
 class TestSenateCommand(unittest.TestCase):
     """元老院阶段命令测试类"""
@@ -243,6 +250,255 @@ class TestSenateCommand(unittest.TestCase):
         assert old_cmd.is_absent is False
         assert old_cmd.office == "ex-proconsul"
         mock_decider.decide_takeover.assert_called_once_with(war, consul, old_cmd, self.state)
+
+    """
+    测试元老院阶段保民官否决功能
+    """
+
+class TestTribuneVeto(unittest.TestCase):
+    """测试保民官否决功能"""
+
+    def setUp(self):
+        """每个测试前创建测试用 GameState"""
+        self.state = GameState.create_for_testing({})
+        self.state.turn = GameTurn(turn_number=1, year=-264)
+        self.state.mark_phase_executed("population")
+
+        # 初始化战争系统
+        from src.core.systems.war_system import WarSystem
+        self.state._war_system = WarSystem(self.state)
+
+        # 添加测试派系
+        self.faction1 = Faction(id="senate", name="元老院派", treasury=50, is_player=True)
+        self.faction2 = Faction(id="populares", name="平民派", treasury=30)
+        self.state.add_faction(self.faction1)
+        self.state.add_faction(self.faction2)
+
+        # 添加执政官（用于提案）
+        self.consul = Figure(id=101, name="执政官", faction_id="senate", age=40)
+        self.state.add_member(self.consul)
+        self.state.turn.leader_ids = [101]
+
+        # 添加保民官
+        self.tribune = Figure(id=102, name="保民官", faction_id="populares", age=35)
+        self.tribune.office = "tribune"
+        self.state.add_member(self.tribune)
+
+        # 添加一些元老（用于投票）
+        self.senator1 = Figure(id=201, name="元老1", faction_id="senate", age=50)
+        self.senator1.influence = 50
+        self.state.add_member(self.senator1)
+        self.faction1.member_ids.append(201)
+
+        self.senator2 = Figure(id=202, name="元老2", faction_id="populares", age=45)
+        self.senator2.influence = 40
+        self.state.add_member(self.senator2)
+        self.faction2.member_ids.append(202)
+
+        self.senator1.class_tier = ClassTier.NOBILE
+        self.senator2.class_tier = ClassTier.NOBILE
+
+        # 模拟投票决策器（始终支持）
+        self.mock_vote_decider = MagicMock()
+        self.mock_vote_decider.decide_vote.return_value = True
+
+        # 设置土地法案提交概率为100%
+        if "political_rules" not in self.state.config._config:
+            self.state.config._config["political_rules"] = {}
+        if "land_proposal" not in self.state.config._config["political_rules"]:
+            self.state.config._config["political_rules"]["land_proposal"] = {}
+        self.state.config._config["political_rules"]["land_proposal"]["submit_chance"] = 1.0
+
+        self.state.config._config["testing"] = {
+            "propose_war_chance": 1.0,
+            "always_declare": True,
+            "min_legions": 4,
+            "max_legions": 8
+        }
+
+    def _create_test_war(self):
+        """创建测试用战争"""
+        war = War(
+            id="test_war",
+            name="测试战争",
+            status=WarStatus.THREAT,
+            threat_level=2
+        )
+        return war
+
+    def _create_test_contract(self):
+        """创建测试用合同并添加到 state"""
+        contract = Contract(
+            id=1,
+            contract_type=ContractType.TAX_FARMING,
+            name="测试合同",
+            base_cost=100,
+            expected_profit=50,
+            status=ContractStatus.PENDING
+        )
+        self.state._contracts_dict[contract.id] = contract
+        return contract
+
+    # ========== 测试用例 ==========
+
+
+    def test_tribune_veto_war_passed(self):
+        """测试宣战提案被保民官否决"""
+        war = self._create_test_war()
+        ws = self.state.get_war_system()
+        ws._threats = [war]
+
+        mock_veto_decider = MagicMock(spec=TribuneVetoDecider)
+        mock_veto_decider.decide_veto.return_value = True
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[],  # 禁用土地法案
+            veto_decider=mock_veto_decider
+        )
+        cmd.execute([])
+
+        self.assertNotIn(war, ws.get_active_wars())
+        self.assertEqual(war.status, WarStatus.THREAT)
+        mock_veto_decider.decide_veto.assert_called_once()
+
+    def test_tribune_veto_war_rejected(self):
+        """测试宣战提案未被保民官否决，正常执行"""
+        war = self._create_test_war()
+        ws = self.state.get_war_system()
+        ws._threats = [war]
+
+        mock_veto_decider = MagicMock(spec=TribuneVetoDecider)
+        mock_veto_decider.decide_veto.return_value = False
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[],  # 禁用土地法案
+            veto_decider=mock_veto_decider
+        )
+        cmd.execute([])
+
+        self.assertIn(war, ws.get_active_wars())
+        self.assertEqual(war.status, WarStatus.ACTIVE)
+        self.assertEqual(war.commander_id, 101)
+        mock_veto_decider.decide_veto.assert_called_once()
+
+    def test_tribune_veto_contract_passed(self):
+        """测试合同被保民官否决"""
+        contract = self._create_test_contract()
+        ws = self.state.get_war_system()
+        ws._threats = []  # 确保没有战争威胁
+
+        mock_budget_decider = MagicMock()
+        mock_budget_decider.decide_proposals.return_value = [contract]
+
+        mock_veto_decider = MagicMock(spec=TribuneVetoDecider)
+        mock_veto_decider.decide_veto.return_value = True
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[],  # 禁用土地法案
+            veto_decider=mock_veto_decider
+        )
+        cmd.budget_decider = mock_budget_decider
+        cmd.execute([])
+
+        self.assertEqual(contract.status, ContractStatus.PENDING)
+        mock_veto_decider.decide_veto.assert_called_once()
+
+    def test_tribune_veto_contract_rejected(self):
+        """测试合同未被保民官否决，正常变为 BUDGETED"""
+        contract = self._create_test_contract()
+        ws = self.state.get_war_system()
+        ws._threats = []  # 确保没有战争威胁
+
+        mock_budget_decider = MagicMock()
+        mock_budget_decider.decide_proposals.return_value = [contract]
+
+        mock_veto_decider = MagicMock(spec=TribuneVetoDecider)
+        mock_veto_decider.decide_veto.return_value = False
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[],  # 禁用土地法案
+            veto_decider=mock_veto_decider
+        )
+        cmd.budget_decider = mock_budget_decider
+        cmd.execute([])
+
+        self.assertEqual(contract.status, ContractStatus.BUDGETED)
+        mock_veto_decider.decide_veto.assert_called_once()
+
+    def test_tribune_veto_land_act_passed(self):
+        """测试土地法案被保民官否决"""
+        mock_land_decider = MagicMock()
+        # 只对 populares 派系返回提案
+        mock_land_decider.decide_proposal.side_effect = lambda faction_id, state: ('distribution', 0.1) if faction_id == 'populares' else None
+
+        mock_veto_decider = MagicMock(spec=TribuneVetoDecider)
+        mock_veto_decider.decide_veto.return_value = True
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[mock_land_decider],
+            veto_decider=mock_veto_decider
+        )
+        cmd.execute([])
+
+        acts = self.state.get_pending_land_acts()
+        self.assertEqual(len(acts), 0)
+        mock_veto_decider.decide_veto.assert_called_once()
+
+    def test_tribune_veto_land_act_rejected(self):
+        """测试土地法案未被保民官否决，正常存入待执行列表"""
+        mock_land_decider = MagicMock()
+        mock_land_decider.decide_proposal.side_effect = lambda faction_id, state: ('distribution', 0.1) if faction_id == 'populares' else None
+
+        mock_veto_decider = MagicMock(spec=TribuneVetoDecider)
+        mock_veto_decider.decide_veto.return_value = False
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[mock_land_decider],
+            veto_decider=mock_veto_decider
+        )
+        cmd.execute([])
+
+        acts = self.state.get_pending_land_acts()
+        self.assertEqual(len(acts), 1)
+        self.assertEqual(acts[0]['type'], 'distribution')
+        self.assertAlmostEqual(acts[0]['percent'], 0.1)
+        mock_veto_decider.decide_veto.assert_called_once()
+
+    def test_no_tribune_no_veto(self):
+        """测试没有保民官时，提案直接执行"""
+        self.tribune.is_dead = True
+
+        war = self._create_test_war()
+        ws = self.state.get_war_system()
+        ws._threats = [war]
+
+        contract = self._create_test_contract()
+
+        mock_budget_decider = MagicMock()
+        mock_budget_decider.decide_proposals.return_value = [contract]
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[]  # 禁用土地法案
+        )
+        cmd.budget_decider = mock_budget_decider
+        cmd.execute([])
+
+        self.assertIn(war, ws.get_active_wars())
+        self.assertEqual(contract.status, ContractStatus.BUDGETED)
 
 if __name__ == "__main__":
     unittest.main()

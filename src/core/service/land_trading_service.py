@@ -123,7 +123,8 @@ class LandTradingService:
 
             # 生成消息
             msg = (f"Trade complete: {amount} land @ {price_per_unit}/unit = {total_cost} {terms.currency}\n"
-                   f"   {seller.name}: land {seller_land_before}→{seller.land_private}, ")
+                   f"   {seller.name}: land {seller_land_before}→{seller.land_private}, \n"
+                   f"   {buyer.name}: land {buyer_land_before}→{buyer.land_private}, \n")
 
             return True, msg
         except Exception as e:

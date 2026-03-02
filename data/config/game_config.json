@@ -4,8 +4,8 @@
   "testing": {
     "always_declare": false,
     "propose_war_chance": 0.7,
-    "min_legions": 4,
-    "max_legions": 8,
+    "min_legions": 1,
+    "max_legions": 4,
     "budget_always_pass": false,
     "war_always_pass": false,
     "force_battle_result": ""
@@ -92,7 +92,8 @@
       "Fabius": 3,
       "Aemilius": 2,
       "Servilius": 2
-    }
+    },
+    "tribune_veto_chance": 0.2
   },
   "forum_rules": {
     "new_figures_count": 3,
