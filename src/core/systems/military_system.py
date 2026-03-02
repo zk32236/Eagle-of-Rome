@@ -20,7 +20,7 @@ class MilitarySystem:
     5. 新增：军团恢复机制
     """
 
-    MAX_LEGIONS = 8
+    MAX_LEGIONS = 16
 
     def __init__(self, state: 'GameState'):
         self.state = state

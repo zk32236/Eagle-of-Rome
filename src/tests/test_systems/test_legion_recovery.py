@@ -41,7 +41,7 @@ class TestLegionRecovery:
     def test_initial_state(self, military_system):
         """测试初始所有军团为 UNRAISED"""
         legions = military_system.get_all_legions()
-        assert len(legions) == 8
+        assert len(legions) == 16
         for leg in legions:
             assert leg.status == LegionStatus.UNRAISED
             assert leg.destroyed_turn == 0

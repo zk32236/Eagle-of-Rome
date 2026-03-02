@@ -177,6 +177,8 @@ class SenateCommand(Command):
             print(f"      ⚠️ 激活战争失败")
             return
 
+        war.commander_id = consul_id
+
         consul = self.state.get_member(consul_id)
         if not consul:
             return

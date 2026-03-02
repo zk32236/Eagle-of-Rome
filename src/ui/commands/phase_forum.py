@@ -738,9 +738,9 @@ class ForumCommand(Command):
         if sold > 0:
             self.state.add_national_public_land(-sold)
             # === 新增调试输出 ===
-            print(f"      [DEBUG] 即将增加国库：{sold * land_price} Talents")
+            # print(f"      [DEBUG] 即将增加国库：{sold * land_price} Talents")
             self.state.add_treasury(sold * land_price)
-            print(f"      [DEBUG] 增加后国库：{self.state.treasury} Talents")
+            # print(f"      [DEBUG] 增加后国库：{self.state.treasury} Talents")
             print(
                 f"      共售出 {sold} C，国库 +{sold * land_price} Talents，国家公地剩余 {self.state.get_national_public_land()} C")
         else:

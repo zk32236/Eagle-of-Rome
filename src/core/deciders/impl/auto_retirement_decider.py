@@ -13,14 +13,17 @@ class AutoRetirementDecider(RetirementDecider):
         self.state = state
 
     def decide_whom_to_retire(self, faction: Faction) -> Optional[int]:
-        # 获取派系所有存活成员
+        # 读取配置，默认 0.3（30% 概率）
+        chance = self.state.config.get("political_rules.retirement_chance", 0.3)
+        if random.random() >= chance:
+            return None  # 本次不抛弃
+
         members = faction.get_members(self.state)
-        # 筛选条件：非领袖、无现任公职（允许ex-xxx）、无活跃合同
         eligible = [
             m for m in members
             if not m.is_faction_leader
-            and not (m.office and not m.office.startswith("ex-"))
-            and not m.has_active_contract
+               and not (m.office and not m.office.startswith("ex-"))
+               and not m.has_active_contract
         ]
 
         # ===== 新增 DEBUG 日志 =====

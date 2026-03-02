@@ -4,8 +4,8 @@
   "testing": {
     "always_declare": false,
     "propose_war_chance": 0.7,
-    "min_legions": 1,
-    "max_legions": 4,
+    "min_legions": 4,
+    "max_legions": 8,
     "budget_always_pass": false,
     "war_always_pass": false,
     "force_battle_result": ""
@@ -22,6 +22,7 @@
     "leaders_per_election": 2,
     "allow_consecutive_terms": false,
     "min_festival_age": 30,
+    "retirement_chance": 0.3,
     "land_proposal": {
     "distribution_chance": 0.3,
     "sale_chance": 0.3,
