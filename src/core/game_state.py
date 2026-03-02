@@ -3,7 +3,8 @@
 游戏状态容器 - 已移除单例模式，支持多实例独立创建
 集成 Config 配置管理
 """
-
+import logging.handlers
+from datetime import datetime
 import random
 import logging
 import logging.handlers
@@ -30,6 +31,7 @@ class GameState:
     """游戏状态容器 - 多实例独立版本"""
 
     MAX_MEMBER_ID = 300
+    _log_filename = None  # 新增：存储本次运行生成的日志文件名（所有实例共享）
 
     def __init__(self, config_path: Optional[str] = None):
         # 创建配置实例
@@ -66,18 +68,32 @@ class GameState:
         # ---------- 新增：日志记录器 ----------
         self._logger: Optional[logging.Logger] = None
         self._setup_logging()
+        self._log_filename = None
         # -----------------------------------
 
         # 初始化时调用 reset，确保状态一致性
         self.reset()
 
+    #========================= 功能函数 ===================================
+
     def _setup_logging(self):
-        """根据配置初始化文件日志（每个实例独立）"""
+        """根据配置初始化文件日志（每个实例独立，但使用同一文件）"""
         log_config = self._config.get("logging", {})
         if not log_config.get("enabled", False):
             return
 
-        file_path = log_config.get("file_path", "logs/game.log")
+        # 如果类变量未设置，则生成带时间戳的文件名
+        if GameState._log_filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            base_name = log_config.get("file_path", "logs/game.log")
+            # 分离目录和文件名，插入时间戳
+            dir_name = os.path.dirname(base_name)
+            base_file = os.path.basename(base_name)
+            name, ext = os.path.splitext(base_file)
+            new_name = f"{name}_{timestamp}{ext}"
+            GameState._log_filename = os.path.join(dir_name, new_name)
+
+        file_path = GameState._log_filename
         max_bytes = log_config.get("max_bytes", 10485760)
         backup_count = log_config.get("backup_count", 3)
         level_str = log_config.get("log_level", "INFO")

@@ -8,6 +8,9 @@ import os
 import importlib.util
 import tempfile
 import logging
+from src.core.entities.entities import GameTurn
+import tempfile
+import logging
 from src.core.game_state import GameState
 from src.core.entities.entities import GameTurn
 import src.core.game_state
@@ -32,55 +35,71 @@ class TestGameStateMultiInstance(unittest.TestCase):
 
     def test_logging_enabled_creates_file(self):
         """测试启用日志时生成文件并写入内容"""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            log_file = os.path.join(tmpdir, "test.log")
-            config = {
-                "logging": {
-                    "enabled": True,
-                    "file_path": log_file,
-                    "max_bytes": 10485760,
-                    "backup_count": 3,
-                    "log_level": "INFO"
+        original_log_filename = GameState._log_filename
+        GameState._log_filename = None  # 重置，确保新文件生成
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # 配置文件路径为目录下的 test.log，但实际会生成带时间戳的文件
+                config = {
+                    "logging": {
+                        "enabled": True,
+                        "file_path": os.path.join(tmpdir, "test.log"),
+                        "max_bytes": 10485760,
+                        "backup_count": 3,
+                        "log_level": "INFO"
+                    }
                 }
-            }
 
-            state = GameState.create_for_testing(config)
-            state.turn = GameTurn(turn_number=1, year=-264)
+                state = GameState.create_for_testing(config)
+                state.turn = GameTurn(turn_number=1, year=-264)
 
-            state.log_event("Test message 1")
-            state.log_event("Test message 2", logging.WARNING)
+                state.log_event("Test message 1")
+                state.log_event("Test message 2", logging.WARNING)
 
-            # 强制刷新并关闭日志处理器，释放文件
-            if state._logger:
-                for handler in state._logger.handlers:
-                    handler.flush()
-            state.close_logging()
+                # 强制刷新并关闭日志处理器，释放文件
+                if state._logger:
+                    for handler in state._logger.handlers:
+                        handler.flush()
+                state.close_logging()
 
-            assert os.path.exists(log_file)
-            with open(log_file, 'r', encoding='utf-8') as f:
-                content = f.read()
+                # 列出目录中的文件，应该有一个或多个以 test 开头的日志文件
+                files = os.listdir(tmpdir)
+                log_files = [f for f in files if f.startswith("test") and f.endswith(".log")]
+                assert len(log_files) > 0, "No log file generated"
+                # 取第一个文件
+                log_file_path = os.path.join(tmpdir, log_files[0])
+                with open(log_file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
 
-            assert "Test message 1" in content
-            assert "Test message 2" in content
-            assert "WARNING" in content
+                assert "Test message 1" in content
+                assert "Test message 2" in content
+                assert "WARNING" in content
+        finally:
+            GameState._log_filename = original_log_filename
 
     def test_logging_disabled_no_file(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            log_file = os.path.join(tmpdir, "test.log")
-            config = {
-                "logging": {
-                    "enabled": False,
-                    "file_path": log_file,
-                    "max_bytes": 10485760,
-                    "backup_count": 3,
-                    "log_level": "INFO"
+        """测试禁用日志时不生成文件"""
+        original_log_filename = GameState._log_filename
+        GameState._log_filename = None  # 重置
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                log_file = os.path.join(tmpdir, "test.log")
+                config = {
+                    "logging": {
+                        "enabled": False,
+                        "file_path": log_file,
+                        "max_bytes": 10485760,
+                        "backup_count": 3,
+                        "log_level": "INFO"
+                    }
                 }
-            }
-            state = GameState.create_for_testing(config)
-            state.turn = GameTurn(turn_number=1, year=-264)
-            state.log_event("This should not be written")
-            state.close_logging()  # 关闭（尽管没有 logger）
-            assert not os.path.exists(log_file)
+                state = GameState.create_for_testing(config)
+                state.turn = GameTurn(turn_number=1, year=-264)
+                state.log_event("This should not be written")
+                state.close_logging()
+                assert not os.path.exists(log_file)
+        finally:
+            GameState._log_filename = original_log_filename
 
     def test_multi_instance_creation(self):
         """验证可以创建多个独立实例"""

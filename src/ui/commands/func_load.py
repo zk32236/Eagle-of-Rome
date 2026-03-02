@@ -1,9 +1,9 @@
 # src/ui/commands/func_load.py
+import datetime
 from typing import List, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.scenario_loader import ScenarioLoader
 from src.core.localization import TerminologyService
-from src.core.entities.figure import ClassTier
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -39,6 +39,10 @@ class LoadCommand(Command):
                 else:
                     province_names.append(p.name)
             territory = ", ".join(province_names)
+
+            # 打印启动时间戳
+            start_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"\n📅 游戏启动时间：{start_time}")
 
             # 打印精简加载页面
             print("\n" + "=" * 60)
