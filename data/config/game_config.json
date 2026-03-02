@@ -15,7 +15,7 @@
     "file_path": "logs/game.log",
     "max_bytes": 10485760,
     "backup_count": 3,
-    "log_level": "INFO"
+    "log_level": "DEBUG"
   },
   "political_rules": {
     "leader_cooldown_years": 2,

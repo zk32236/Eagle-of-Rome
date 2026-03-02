@@ -4,6 +4,7 @@ from typing import List, Optional, Dict, Any, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
 from enum import Enum
 import random
+import logging
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -195,8 +196,14 @@ class Figure:
     _project_profit: int = 0
     _influence: int = field(default=0, init=False)
     _temp_influence_tasks: List[Dict] = field(default_factory=list)
+    _state = None  # 新增
 
     # ==================== 核心方法 ====================
+
+    def set_state(self, state):
+        """设置关联的 GameState 引用（用于日志记录）"""
+        self._state = state
+
     def add_temp_influence_task(self, per_turn: int, duration: int):
         """添加临时影响力任务"""
         self._temp_influence_tasks.append({"per_turn": per_turn, "remaining": duration})
@@ -214,12 +221,36 @@ class Figure:
                 remaining_tasks.append(task)
         self._temp_influence_tasks = remaining_tasks
 
+    def add_member(self, member: 'Figure'):
+        self._used_ids.add(member.id)
+        self._members[member.id] = member
+        member.set_state(self)  # 新增
+
     def update_influence(self) -> int:
-        """重写影响力计算，包含临时影响力"""
         base = self._land_private * 10 + self.veterans * 10 + self.popularity
         family_bonus = self.family_prestige * 10
         office_bonus = self.get_office_influence_bonus()
-        self._influence = base + family_bonus + office_bonus + self.get_temp_influence()
+        new_influence = base + family_bonus + office_bonus + self.get_temp_influence()
+        old_influence = self._influence
+        self._influence = new_influence
+
+        # 记录日志（仅当有 state 且影响力变化时）
+        if self._state and old_influence != new_influence:
+            self._state.log_event(
+                f"更新人物 {self.name} 影响力: {old_influence} → {new_influence}",
+                level=logging.DEBUG,
+                extra={
+                    "figure_id": self.id,
+                    "old": old_influence,
+                    "new": new_influence,
+                    "land": self._land_private,
+                    "veterans": self.veterans,
+                    "popularity": self.popularity,
+                    "family": self.family_prestige,
+                    "office_bonus": office_bonus,
+                    "temp": self.get_temp_influence()
+                }
+            )
         return self._influence
 
     def __post_init__(self):

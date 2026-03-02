@@ -1,4 +1,5 @@
 import random
+import logging
 from typing import Optional, Tuple, List
 from src.core.deciders.land_trade_decider import LandTradeDecider
 from src.core.entities.figure import ClassTier
@@ -12,6 +13,13 @@ class AutoLandTradeDecider(LandTradeDecider):
         # 获取所有存活人物
         living = state.get_living_members()
         if not living:
+            # ===== 新增 DEBUG 日志 =====
+            if state:
+                state.log_event(
+                    "LandTradeDecider: 无存活人物",
+                    level=logging.DEBUG,
+                    extra={}
+                )
             return None
 
         # 分离贵族和骑士
@@ -19,18 +27,39 @@ class AutoLandTradeDecider(LandTradeDecider):
         equites = [f for f in living if f.class_tier == ClassTier.EQUES]
 
         if not nobles or not equites:
-            return None
+            # ===== 新增 DEBUG 日志 =====
+            if state:
+                state.log_event(
+                    f"LandTradeDecider: 贵族 {len(nobles)} 人，骑士 {len(equites)} 人，不足",
+                    level=logging.DEBUG,
+                    extra={"noble_count": len(nobles), "equite_count": len(equites)}
+                )
+                return None
 
         # 随机选择贵族（卖家）和骑士（买家）
         seller = random.choice(nobles)
         buyer = random.choice(equites)
 
-        # 如果卖家无私地，尝试交换角色（贵族作为买家，骑士作为卖家）？
-        # 根据设计，应该是贵族卖地给骑士。如果贵族无私地，则无法交易，返回 None。
+        # 如果卖家无私地，无法交易
         if seller.land_private <= 0:
+            # ===== 新增 DEBUG 日志 =====
+            if state:
+                state.log_event(
+                    f"LandTradeDecider: 卖家 {seller.name} 无私地",
+                    level=logging.DEBUG,
+                    extra={"seller_id": seller.id}
+                )
             return None
 
         # 随机交易数量：1 到卖家土地之间
         amount = random.randint(1, seller.land_private)
+
+        # ===== 新增 DEBUG 日志 =====
+        if state:
+            state.log_event(
+                f"LandTradeDecider: 选择交易 卖家 {seller.name}(ID:{seller.id}) 买家 {buyer.name}(ID:{buyer.id}) 数量 {amount}",
+                level=logging.DEBUG,
+                extra={"seller_id": seller.id, "buyer_id": buyer.id, "amount": amount}
+            )
 
         return seller.id, buyer.id, amount
