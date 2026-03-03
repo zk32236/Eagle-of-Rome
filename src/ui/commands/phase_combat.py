@@ -5,6 +5,7 @@
 """
 
 import random
+import logging
 from typing import List, Optional, TYPE_CHECKING
 
 from src.ui.commands.sys_base import Command
@@ -12,6 +13,8 @@ from src.core.localization import TerminologyService
 from src.core.entities.war import WarStatus
 from src.core.entities.legion import LegionStatus
 from src.ui.commands.func_status import get_progress_bar
+from src.core.deciders.peace_treaty_decider import PeaceTreatyDecider
+from src.core.deciders.impl.auto_peace_treaty_decider import AutoPeaceTreatyDecider
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -25,8 +28,10 @@ class CombatCommand(Command):
     aliases = ["c"]
     description = "执行战斗阶段 (Combat Phase)"
 
-    def __init__(self, state: "GameState"):
+    def __init__(self, state: "GameState",
+                 peace_treaty_decider: Optional[PeaceTreatyDecider] = None):
         super().__init__(state)
+        self.peace_treaty_decider = peace_treaty_decider or AutoPeaceTreatyDecider()
 
     def execute(self, args: List[str]) -> bool:
         """
@@ -82,6 +87,10 @@ class CombatCommand(Command):
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
+    # ================================= MVP 0.7 ===========================================
+
+    # ======== MVP 0.7.1 停战议和 =======
+
     def _resolve_battle(self, war_system, war: "War", terms):
         """执行单场战斗（包含强制结果开关）"""
         if war.commander_id is None:
@@ -130,6 +139,8 @@ class CombatCommand(Command):
         if force_result:
             print(f"      ⚙️ 强制战斗结果: {force_result}")
             self._apply_battle_result(war_system, war, commander, force_result, terms, ms, legions, legion_strength)
+            # 强制结果后也尝试生成草案（如果需要）
+            self._maybe_generate_treaty(war_system, war, force_result, terms)
             return
 
         dice_roll = random.randint(2, 12)
@@ -140,6 +151,41 @@ class CombatCommand(Command):
 
         result = self._simplified_crt(dice_roll, combat_total, war)
         self._apply_battle_result(war_system, war, commander, result, terms, ms, legions, legion_strength)
+
+        # ===== 新增：草案生成 =====
+        self._maybe_generate_treaty(war_system, war, result, terms)
+
+    # ================================= MVP 0.1-0.5 =======================================
+
+    def _maybe_generate_treaty(self, war_system, war: "War", result: str, terms):
+        """根据战斗结果尝试生成停战草案"""
+        if result in ('TRIUMPH', 'DISASTER'):
+            return
+
+        treaty = self.peace_treaty_decider.decide_treaty(war, result, self.state)
+        if not treaty:
+            return
+
+        if war_system.enter_truce(war, treaty):
+            print(f"      📜 战争 {war.name} 达成停战草案，等待元老院审批。")
+            self.state.log_event(
+                f"战争 {war.name} 生成停战草案，赔款 {treaty['indemnity']}，有效期 {treaty['duration']} 回合",
+                extra={
+                    'type': 'peace_treaty_generated',
+                    'war_id': war.id,
+                    'result': result,
+                    'indemnity': treaty['indemnity'],
+                    'duration': treaty['duration'],
+                    'generated_turn': treaty['generated_turn']
+                }
+            )
+        else:
+            print(f"      ⚠️ 战争 {war.name} 无法进入停战状态，草案无效。")
+            self.state.log_event(
+                f"战争 {war.name} 草案生成失败：无法进入停战",
+                extra={'type': 'peace_treaty_failed', 'war_id': war.id},
+                level=logging.WARNING
+            )
 
     def _simplified_crt(self, dice_roll: int, combat_total: int, war) -> str:
         """简化版CRT判定"""

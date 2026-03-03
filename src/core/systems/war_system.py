@@ -38,6 +38,19 @@ class WarSystem:
 
     # ========== MVP 0.7-1 停战议和 ==========
 
+    def enter_truce(self, war: War, treaty: Dict) -> bool:
+        """
+        将战争置为停战状态，并设置草案。
+        返回 True 表示成功，False 表示战争无法进入停战（可能已在其他列表）。
+        """
+        if self._move_to_truce(war):
+            war.set_peace_treaty(treaty)
+            # 记录原指挥官及上任回合，用于人口阶段转换
+            if war.commander_id:
+                war.set_original_commander(war.commander_id, war.commander_assigned_turn)
+            return True
+        return False
+
     def _move_to_truce(self, war: War) -> bool:
         """将战争从当前列表移至 _truce_wars"""
         # 从所有可能的位置移除
