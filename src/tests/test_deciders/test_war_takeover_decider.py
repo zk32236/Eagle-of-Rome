@@ -14,7 +14,9 @@ class TestAutoWarTakeoverDecider:
         state = MagicMock()
         war = MagicMock(spec=War)
         new_consul = MagicMock(spec=Figure)
+        new_consul.id = 1
         old_commander = MagicMock(spec=Figure)
+        old_commander.id = 2
 
         # 概率 1.0
         state.config.get.return_value = 1.0
@@ -25,7 +27,7 @@ class TestAutoWarTakeoverDecider:
         state.config.get.return_value = 0.0
         assert decider.decide_takeover(war, new_consul, old_commander, state) is False
 
-        # 概率 0.5
+        # 概率 0.5，随机抽样
         state.config.get.return_value = 0.5
         results = [decider.decide_takeover(war, new_consul, old_commander, state) for _ in range(100)]
         true_count = sum(results)
@@ -35,10 +37,26 @@ class TestAutoWarTakeoverDecider:
         state = MagicMock()
         war = MagicMock(spec=War)
         new_consul = MagicMock(spec=Figure)
+        new_consul.id = 1
         old_commander = MagicMock(spec=Figure)
+        old_commander.id = 2
 
         state.config.get.return_value = 0.5
         decider = AutoWarTakeoverDecider()
         decider.decide_takeover(war, new_consul, old_commander, state)
 
         state.config.get.assert_called_with("combat_rules.war_takeover_chance", 1.0)
+
+    def test_same_commander_no_takeover(self):
+        """测试新旧指挥官为同一人时，不应接管"""
+        state = MagicMock()
+        war = MagicMock(spec=War)
+        new_consul = MagicMock(spec=Figure)
+        new_consul.id = 1
+        old_commander = MagicMock(spec=Figure)
+        old_commander.id = 1  # 相同ID
+
+        # 即使概率为1，也应返回False
+        state.config.get.return_value = 1.0
+        decider = AutoWarTakeoverDecider()
+        assert decider.decide_takeover(war, new_consul, old_commander, state) is False

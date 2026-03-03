@@ -83,6 +83,8 @@ class CombatCommand(Command):
         if hasattr(self.state.turn, 'current_phase'):
             self.state.turn.current_phase = "combat"
 
+        self._process_commanders_returning(war_system)
+
         self.state.mark_phase_executed("combat")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
@@ -90,6 +92,34 @@ class CombatCommand(Command):
     # ================================= MVP 0.7 ===========================================
 
     # ======== MVP 0.7.1 停战议和 =======
+
+    def _process_commanders_returning(self, war_system):
+        """处理元老院已批准停战的指挥官返回罗马"""
+        current_turn = self.state.turn.turn_number
+        # 获取所有 TRUCE 且草案为 approved 的战争
+        approved_wars = war_system.get_truce_wars_with_approved_treaty()
+        for war in approved_wars:
+            commander_id = war.original_commander_id or war.commander_id
+            if not commander_id:
+                continue
+            commander = self.state.get_member(commander_id)
+            if not commander or commander.is_dead:
+                continue
+
+            # 卸任前线官职
+            old_office = commander.office
+            if old_office in ('proconsul', 'propraetor'):
+                # 获取上任回合（从战争记录中获取）
+                assigned_turn = war.commander_assigned_turn or (current_turn - 1)
+                commander.add_office_history(old_office, assigned_turn, current_turn - 1)
+                commander.office = None
+                commander.is_absent = False
+                commander.update_influence()
+                print(f"      🔄 指挥官 {commander.name} 返回罗马，卸任 {old_office}")
+                self.state.log_event(
+                    f"指挥官 {commander.name} 返回罗马",
+                    extra={'type': 'commander_return', 'figure_id': commander.id, 'war_id': war.id}
+                )
 
     def _resolve_battle(self, war_system, war: "War", terms):
         """执行单场战斗（包含强制结果开关）"""

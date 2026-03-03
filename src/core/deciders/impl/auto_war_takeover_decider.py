@@ -10,6 +10,10 @@ class AutoWarTakeoverDecider(WarTakeoverDecider):
     """自动战争接管决策器：根据配置的概率随机决定"""
 
     def decide_takeover(self, war: War, new_consul: Figure, old_commander: Figure, state: GameState) -> bool:
+        # 如果新旧指挥官是同一人，则不接管
+        if old_commander and new_consul.id == old_commander.id:
+            return False
+
         chance = state.config.get("combat_rules.war_takeover_chance", 1.0)
         random_val = random.random()
         result = random_val < chance

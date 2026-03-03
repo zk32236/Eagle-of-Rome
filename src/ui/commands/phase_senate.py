@@ -1,6 +1,7 @@
 # src/ui/commands/phase_senate.py
 """
 元老院阶段命令 - 处理合同、更新派系领袖、确定主持人
+集成停战草案审批流程（MVP 0.7.1）
 """
 import random
 import logging
@@ -31,7 +32,7 @@ class SenateCommand(Command):
 
     name = "senate"
     aliases = ["s"]
-    description = "执行元老院阶段 (Senate Phase) - 处理合同、更新派系领袖、确定主持人"
+    description = "执行元老院阶段 (Senate Phase) - 处理合同、更新派系领袖、确定主持人、审批停战草案"
 
     def __init__(self, state: "GameState",
                  vote_decider: Optional[SenateVoteDecider] = None,
@@ -47,7 +48,9 @@ class SenateCommand(Command):
             AutoLandProposalDecider("optimates", "sale")
         ]
         self.veto_decider = veto_decider if veto_decider is not None else AutoTribuneVetoDecider()
-        self.proposed_governors = []   # 新增：存储总督任命提案
+        self.proposed_governors = []   # 存储总督任命提案
+        self.passed_peace_treaties = []  # 存储通过的停战草案
+        self.rejected_peace_treaties = []  # 存储被否决的停战草案（待恢复战争）
 
     def execute(self, args: List[str]) -> bool:
         if not self.state.is_phase_executed("population"):
@@ -73,7 +76,6 @@ class SenateCommand(Command):
         if not presiding:
             self.state.log_event("Error: No presiding officer!")
             return False
-
         office_display = presiding.office if presiding.office else "无"
         print(f"\n   🎤 Presiding Officer: {presiding.name} ({office_display})")
 
@@ -86,18 +88,27 @@ class SenateCommand(Command):
         passed_land_acts: List[dict] = []
         # 通过的行省总督列表
         self.proposed_governors = []  # 清空之前的提案
+        self.passed_peace_treaties = []  # 清空之前的停战草案
+        self.rejected_peace_treaties = []
 
-        # 3.1 宣战提案处理（只收集，不执行）
+        # 3.1 宣战提案处理
         self._process_war_proposals(passed_wars)
 
-        # 3.2 行省总督任命提案（新增）
+        # 3.2 停战草案处理（收集并自动提交）
+        peace_proposals = self._process_peace_proposals(terms)
+
+        # 3.3 行省总督任命提案
         self._process_governor_appointments(terms)
 
-        # 3.2 预算审批（合同授权），收集通过的合同
+        # 3.4 预算审批（合同授权），收集通过的合同
         self._process_budget_proposals(terms, passed_contracts)
 
-        # 3.3 土地法案，收集通过的提案
+        # 3.5 土地法案，收集通过的提案
         self._process_land_proposals(terms, passed_land_acts)
+
+        # 3.6 对停战草案进行投票（如果存在）
+        if peace_proposals:
+            self.passed_peace_treaties = self._vote_on_peace_proposals(peace_proposals)
 
         # ========== 4. 保民官否决 ==========
         tribune = self._get_tribune()
@@ -113,8 +124,24 @@ class SenateCommand(Command):
                     new_wars.append((war, consul_id, legions))
             passed_wars = new_wars
 
+            # 停战草案否决
+            new_peace = []
+            for war in self.passed_peace_treaties:
+                issue = {'type': 'peace', 'war_id': war.id, 'treaty': war.peace_treaty}
+                veto_result = self.veto_decider.decide_vote(issue, tribune.id, self.state)
+                print(f"DEBUG: 保民官对 {war.name} 的投票结果: {veto_result}")
+                if veto_result:
+                    print(f"      ❌ 保民官否决了 {war.name} 的停战草案")
+                    self.state.log_event(f"保民官否决停战草案: {war.name}")
+                    war.clear_peace_treaty()
+                    war_system = self.state.get_war_system()
+                    if war_system:
+                        war_system._move_to_active(war)
+                else:
+                    new_peace.append(war)
+            self.passed_peace_treaties = new_peace
+
             # 总督否决
-            # 总督任命否决（新增）
             new_governors = []
             for gov in self.proposed_governors:
                 issue = {
@@ -158,7 +185,6 @@ class SenateCommand(Command):
             print(f"\n   🛡️ 当前无保民官，不行使否决权")
 
         # ========== 5. 执行通过的提案 ==========
-
         # 5.1 执行宣战
         for war, consul_id, legions in passed_wars:
             self._execute_war_declaration(war, consul_id, legions)
@@ -166,16 +192,19 @@ class SenateCommand(Command):
         # 5.2 战争接管处理（与原逻辑一致）
         self._process_war_takeover()
 
-        # 5.3 执行总督任命（新增）
+        # 5.3 执行通过的停战草案
+        self._execute_passed_peace_treaties()
+
+        # 5.4 执行总督任命
         self._execute_governor_appointments()
 
-        # 5.4 标记合同为 BUDGETED
+        # 5.5 标记合同为 BUDGETED
         for contract in passed_contracts:
             contract.status = ContractStatus.BUDGETED
             print(f"      ✅ {contract.name} 预算通过，状态变为 BUDGETED")
             self.state.log_event(f"合同预算通过：{contract.name}")
 
-        # 5.5 存入土地法案
+        # 5.6 存入土地法案
         for act in passed_land_acts:
             self.state.add_pending_land_act(act)
             print(f"      ✅ {act['description']} 通过，等待下回合执行")
@@ -184,7 +213,115 @@ class SenateCommand(Command):
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
-# =================================== 方法函数 =============================================
+    # =================================== MVP 0.7 =============================================
+
+    # ==================== 新增：停战草案相关方法 ====================
+
+    def _process_peace_proposals(self, terms):
+        """收集所有待决停战草案，并自动提交给元老院"""
+        war_system = self.state.get_war_system()
+        if not war_system:
+            return []
+
+        pending_wars = war_system.get_truce_wars_with_pending_treaty()
+        if not pending_wars:
+            return []
+
+        print(f"\n\t====================== 停战草案审批 ====================")
+        proposals = []
+        for war in pending_wars:
+            treaty = war.peace_treaty
+            print(f"      📜 {war.name}：赔款 {treaty['indemnity']} 塔兰特，有效期 {treaty['duration']} 回合")
+            proposals.append(war)
+
+        # 标记为已提交
+        for war in proposals:
+            treaty = war.peace_treaty
+            if treaty:
+                war.set_peace_treaty_status('submitted')
+        return proposals
+
+    def _vote_on_peace_proposals(self, proposals: List["War"]):
+        """对提交的停战草案进行元老院投票"""
+        if not proposals:
+            return []
+
+        passed = []
+        for war in proposals:
+            print(f"\n      📜 表决停战：{war.name}")
+            treaty = war.peace_treaty
+
+            votes_for = 0
+            votes_against = 0
+            total_influence = 0
+
+            for faction in self.state.get_active_factions():
+                influence = faction.get_senate_influence(self.state)
+                if influence == 0:
+                    continue
+                total_influence += influence
+
+                issue = {'type': 'peace', 'war_id': war.id, 'treaty': treaty}
+                support = self.vote_decider.decide_vote(issue, faction, self.state)
+
+                if support:
+                    votes_for += influence
+                    print(f"          {faction.name} 支持，影响力 {influence}")
+                else:
+                    votes_against += influence
+                    print(f"          {faction.name} 反对，影响力 {influence}")
+
+            if total_influence == 0:
+                print(f"          无元老在场，草案未通过。")
+                continue
+
+            support_ratio = votes_for / total_influence
+            print(f"          总影响力：{total_influence}，支持 {votes_for}，反对 {votes_against}，支持率 {support_ratio:.1%}")
+
+            if support_ratio > 0.5:
+                passed.append(war)
+                print(f"          ✅ 停战草案通过，等待保民官否决")
+            else:
+                print(f"          ❌ 停战草案否决")
+                war.clear_peace_treaty()
+                war_system = self.state.get_war_system()
+                if war_system:
+                    war_system._move_to_active(war)
+
+        print(f"DEBUG: 通过投票的停战草案数量: {len(passed)}")
+        for war in passed:
+            print(f"  - {war.name}")
+
+        return passed
+
+    def _execute_passed_peace_treaties(self):
+        """执行通过的停战草案：记录赔款、待解散军团、到期回合"""
+        print("DEBUG: 进入 _execute_passed_peace_treaties")
+        war_system = self.state.get_war_system()
+        if not war_system or not self.passed_peace_treaties:
+            return
+
+        print(f"DEBUG: 待否决的停战草案数量: {len(self.passed_peace_treaties)}")
+        for war in self.passed_peace_treaties:
+            print(f"  - {war.name}")
+            treaty = war.peace_treaty
+            if not treaty or treaty.get('status') != 'submitted':
+                continue
+
+            war.set_peace_treaty_status('approved')
+            war.set_indemnity_due(treaty['indemnity'])
+            if war.legion_numbers:
+                war_system.add_legions_to_disband(war.legion_numbers)
+            end_turn = self.state.turn.turn_number + treaty['duration']
+            war.set_truce_end_turn(end_turn)
+
+            print(f"      ✅ {war.name} 停战草案已批准，赔款 {treaty['indemnity']}，有效期 {treaty['duration']} 回合")
+            self.state.log_event(
+                f"停战草案批准: {war.name} 赔款 {treaty['indemnity']}",
+                extra={'type': 'peace_treaty_approved', 'war_id': war.id}
+            )
+
+# =================================== MVP 0.1-0.5 =============================================
 
     def _execute_governor_appointments(self):
         if not self.proposed_governors:
@@ -471,6 +608,11 @@ class SenateCommand(Command):
         if not ws:
             return
 
+        # 只处理 ACTIVE 战争
+        active_wars = ws.get_active_wars()
+        if not active_wars:
+            return
+
         # 获取当前执政官（第一位）
         if not self.state.turn.leader_ids:
             return
@@ -479,18 +621,18 @@ class SenateCommand(Command):
         if not consul:
             return
 
-        # 获取所有活跃战争
-        active_wars = ws.get_active_wars()
         for war in active_wars:
+            # 确保战争是 ACTIVE 状态（二次确认）
+            if war.status != WarStatus.ACTIVE:
+                continue
+
             if war.commander_id is None:
                 # 无指挥官，由执政官接管（决策器决定）
                 if self.takeover_decider.decide_takeover(war, consul, None, self.state):
                     war.commander_id = consul.id
                     consul.is_absent = True
                     print(f"      ✅ 执政官 {consul.name} 接管战争 {war.name}")
-                    # ===== 新增：自动征召军团 =====
                     self._auto_recruit_and_assign_legions_for_war(war, consul.id)
-                    # =============================
                     self.state.log_event(f"执政官 {consul.name} 接管 {war.name}")
                 else:
                     print(f"      ⏳ 执政官 {consul.name} 决定不接管 {war.name}")
@@ -507,9 +649,7 @@ class SenateCommand(Command):
                         war.commander_id = consul.id
                         consul.is_absent = True
                         print(f"      🔄 执政官 {consul.name} 接管战争 {war.name}，原指挥官 {old_cmd.name} 返回罗马")
-                        # ===== 新增：自动征召补充军团 =====
                         self._auto_recruit_and_assign_legions_for_war(war, consul.id)
-                        # ===============================
                         self.state.log_event(f"执政官 {consul.name} 接管战争 {war.name}，原指挥官 {old_cmd.name} 返回")
                     else:
                         print(f"      ⏳ 执政官 {consul.name} 决定不接管 {war.name}，由 {old_cmd.name} 继续指挥")

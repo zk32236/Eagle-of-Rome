@@ -108,6 +108,16 @@ class War:
 
     # ===== MVP 0.7-1 停战议和方法 =====
 
+    def set_peace_treaty_status(self, status: str):
+        """设置停战草案的状态（pending/submitted/approved/rejected）"""
+        if self._peace_treaty:
+            self._peace_treaty['status'] = status
+
+    def set_peace_treaty_field(self, key: str, value):
+        """设置停战草案的特定字段（谨慎使用）"""
+        if self._peace_treaty:
+            self._peace_treaty[key] = value
+
     def assign_commander(self, commander_id: int, assigned_turn: int) -> None:
         """指派指挥官，记录上任回合"""
         self.commander_id = commander_id
