@@ -38,6 +38,13 @@ class WarSystem:
 
     # ========== MVP 0.7-1 停战议和 ==========
 
+    def get_war_by_commander(self, commander_id: int) -> Optional[War]:
+        """通过指挥官ID查找其指挥的战争（包括 ACTIVE 和 TRUCE 状态的）"""
+        for war in self._active_wars + self._truce_wars:
+            if war.commander_id == commander_id:
+                return war
+        return None
+
     def enter_truce(self, war: War, treaty: Dict) -> bool:
         """
         将战争置为停战状态，并设置草案。

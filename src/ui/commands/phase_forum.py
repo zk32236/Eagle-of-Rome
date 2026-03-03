@@ -75,7 +75,7 @@ class ForumCommand(Command):
     # ----------------------------------------------------------------------
 
     def _print_notice_board(self):
-        """安民告示：战争威胁、活跃战争、民变、凯旋"""
+        """安民告示：战争威胁、活跃战争、民变、凯旋、停战草案"""
         print("\n\t====================== 安民告示 ====================")
 
         # 战争威胁
@@ -94,6 +94,16 @@ class ForumCommand(Command):
                 print(f"\t\t{war.name}")
         else:
             print("   ⚔️ 当前无活跃战争")
+
+        # ===== 新增：显示待评议的停战草案 =====
+        if ws:
+            pending_treaties = ws.get_truce_wars_with_pending_treaty()
+            if pending_treaties:
+                print(f"   📜 停战草案待评议：")
+                for war in pending_treaties:
+                    treaty = war.peace_treaty
+                    indemnity = treaty['indemnity'] if treaty else 0
+                    print(f"\t\t{war.name} 赔款 {indemnity} 塔兰特")
 
         # 行省民变状态
         self._print_civil_unrest()

@@ -46,7 +46,7 @@
       "threat_level": 0,
       "auto_escalate": true,
       "escalate_rate": 1,
-      "strength": 8,
+      "strength": 16,
       "naval_support_required": true,
       "naval_strength": 3,
       "rewards": {

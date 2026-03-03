@@ -22,6 +22,7 @@ from src.ui.commands.phase_combat import CombatCommand
 from src.core.entities.war import War, WarStatus
 from src.core.entities.legion import Legion, LegionStatus
 from src.core.entities.figure import Figure
+from src.core.entities.entities import GameTurn
 
 
 class TestCombatCommand(unittest.TestCase):
@@ -32,9 +33,7 @@ class TestCombatCommand(unittest.TestCase):
         test_config = {}
         self.state = GameState.create_for_testing(test_config)
 
-        from src.core.entities.entities import GameTurn
         self.state.turn = GameTurn(turn_number=1, year=-264)
-
         self.state.mark_phase_executed("senate")
 
         self.mock_war_system = MagicMock()
@@ -47,6 +46,7 @@ class TestCombatCommand(unittest.TestCase):
         self.commander.martial = 5
         self.commander.influence = 10
         self.state.add_member(self.commander)
+        self.commander.is_absent = True
 
     def _create_mock_war(self, war_id="war1", name="Test War", strength=5,
                          commander_id=1, legions_assigned=2, fleets_assigned=0,
@@ -85,8 +85,7 @@ class TestCombatCommand(unittest.TestCase):
 
     @patch('random.randint')
     def test_execute_success(self, mock_randint):
-        """测试成功执行战斗阶段（小胜）"""
-        # 设置敌方强度9，我方总战力9，骰子6 → combat_total = 6+9-9 = 6（胜利区间）
+        """测试成功执行战斗阶段（小胜），应生成停战草案"""
         mock_randint.return_value = 6
         war = self._create_mock_war(strength=9)
         war.get_total_strength.return_value = 9
@@ -95,7 +94,15 @@ class TestCombatCommand(unittest.TestCase):
         legions = [self._create_mock_legion(1), self._create_mock_legion(2)]
         self.mock_military_system.get_legions_for_battle.return_value = legions
 
-        cmd = CombatCommand(self.state)
+        # 模拟和平决策器返回草案
+        mock_decider = MagicMock()
+        mock_decider.decide_treaty.return_value = {
+            'indemnity': 60,
+            'duration': 5,
+            'generated_turn': self.state.turn.turn_number
+        }
+
+        cmd = CombatCommand(self.state, peace_treaty_decider=mock_decider)
 
         f = io.StringIO()
         with redirect_stdout(f):
@@ -105,7 +112,15 @@ class TestCombatCommand(unittest.TestCase):
         self.assertTrue(result)
         self.assertIn("Combat Phase", output)
         self.assertIn("⚔️  Resolving Test War", output)
-        self.mock_war_system.deactivate_war_to_threat.assert_called_once_with(war.id, threat_level=1)
+        # 验证 enter_truce 被调用
+        self.mock_war_system.enter_truce.assert_called_once()
+        # 验证 deactivate_war_to_threat 未被调用
+        self.mock_war_system.deactivate_war_to_threat.assert_not_called()
+        # 验证指挥官仍然在前线（is_absent 保持 True）
+        commander = self.state.get_member(1)  # 假设指挥官ID为1
+        self.assertTrue(commander.is_absent)
+        # 验证草案生成日志
+        self.assertIn("达成停战草案", output)
 
     def test_already_executed(self):
         """测试阶段已执行时再次执行应返回False"""
@@ -179,8 +194,7 @@ class TestCombatCommand(unittest.TestCase):
 
     @patch('random.randint')
     def test_battle_outcomes_victory(self, mock_randint):
-        """测试胜利结果（小胜）"""
-        # 设置敌方强度12，我方总战力9，骰子9 → combat_total = 9+9-12 = 6（胜利区间）
+        """测试胜利结果（小胜），应生成停战草案"""
         mock_randint.return_value = 9
         war = self._create_mock_war(strength=12)
         war.get_total_strength.return_value = 12
@@ -188,7 +202,16 @@ class TestCombatCommand(unittest.TestCase):
         legions = [self._create_mock_legion(1), self._create_mock_legion(2)]
         self.mock_military_system.get_legions_for_battle.return_value = legions
 
-        cmd = CombatCommand(self.state)
+        # 模拟和平决策器返回草案
+        mock_decider = MagicMock()
+        mock_decider.decide_treaty.return_value = {
+            'indemnity': 60,
+            'duration': 5,
+            'generated_turn': self.state.turn.turn_number
+        }
+
+        cmd = CombatCommand(self.state, peace_treaty_decider=mock_decider)
+
         f = io.StringIO()
         with redirect_stdout(f):
             result = cmd.execute([])
@@ -197,9 +220,15 @@ class TestCombatCommand(unittest.TestCase):
         self.assertTrue(result)
         self.assertIn("VICTORY", output)
         self.assertIn("0 losses", output)
-        self.mock_war_system.deactivate_war_to_threat.assert_called_once_with("war1", threat_level=1)
-        self.mock_war_system.resolve_war.assert_not_called()
-
+        # 验证 enter_truce 被调用
+        self.mock_war_system.enter_truce.assert_called_once()
+        # 验证 deactivate_war_to_threat 未被调用
+        self.mock_war_system.deactivate_war_to_threat.assert_not_called()
+        # 验证指挥官仍然在前线（is_absent 保持 True）
+        commander = self.state.get_member(1)
+        self.assertTrue(commander.is_absent)
+        # 验证草案生成日志
+        self.assertIn("达成停战草案", output)
     @patch('random.randint')
     def test_battle_outcomes_stalemate(self, mock_randint):
         """测试僵持结果"""

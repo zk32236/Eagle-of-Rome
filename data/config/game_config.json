@@ -8,7 +8,7 @@
     "max_legions": 8,
     "budget_always_pass": false,
     "war_always_pass": false,
-    "force_battle_result": ""
+    "force_battle_result": "VICTORY"
   },
   "logging": {
     "enabled": true,
@@ -157,6 +157,6 @@
     "faction_initial_treasury": 10,
     "faction_tax_rate": 0.1,
     "faction_member_limit": 6,
-    "italy_unrest_trigger_turns": 3
+    "italy_unrest_trigger_turns": 99
   }
 }

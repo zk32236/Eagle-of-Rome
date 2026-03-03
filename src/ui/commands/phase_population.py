@@ -59,10 +59,13 @@ class PopulationCommand(Command):
         self._process_legion_disbandment_and_triumphs()
         print()
 
-        # ========== 2. 卸任所有现任官员 ==========
+        # ========== 2. 卸任所有现任官员（普通卸任） ==========
         election_order = ["consul", "censor", "praetor", "quaestor", "tribune"]
         for office_type in election_order:
             self._remove_office_holders(office_type)
+
+        # ===== MVP0.7.01 战场指挥官转换（在普通卸任后执行） =====
+        self._convert_battlefield_commanders()
 
         # ========== 3. 庆典盛况 ==========
         print("=" * 58)
@@ -109,6 +112,64 @@ class PopulationCommand(Command):
         self.state.mark_phase_executed("population")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
+
+    # ================================= MVP 0.7 ===========================================
+
+    # ======== MVP 0.7.1 停战议和 =======
+
+    def _convert_battlefield_commanders(self):
+        """
+        将战场上（is_absent=True）的执政官/大法官转为 proconsul/propraetor，
+        同时记录历史官职。
+        """
+        current_turn = self.state.turn.turn_number
+        war_system = self.state.get_war_system()
+        if not war_system:
+            return
+
+        # 获取所有存活人物中 is_absent=True 且 office 为 consul/praetor 的
+        for figure in self.state.get_living_members():
+            if not figure.is_absent:
+                continue
+            if figure.office not in ('consul', 'praetor'):
+                continue
+
+            old_office = figure.office
+            # 查找该人物指挥的战争
+            war = war_system.get_war_by_commander(figure.id)
+            if not war:
+                # 理论上不应发生，但若找不到则用当前回合-1作为上任回合的近似
+                assigned_turn = current_turn - 1
+                self.state.log_event(
+                    f"警告：战场指挥官 {figure.name} 找不到指挥的战争，使用默认上任回合",
+                    extra={'type': 'truce_conversion_warning', 'figure_id': figure.id},
+                    level=logging.WARNING
+                )
+            else:
+                assigned_turn = war.commander_assigned_turn or (current_turn - 1)
+
+            # 记录历史官职（卸任）
+            figure.add_office_history(old_office, assigned_turn, current_turn - 1)
+
+            # 授予前线官职
+            new_office = 'proconsul' if old_office == 'consul' else 'propraetor'
+            figure.office = new_office
+            figure.update_influence()
+
+            # 输出日志
+            print(f"      🔄 战场指挥官 {figure.name} 转为 {new_office}，继续指挥战争。")
+            self.state.log_event(
+                f"战场指挥官 {figure.name} 转为 {new_office}",
+                extra={
+                    'type': 'commander_conversion',
+                    'figure_id': figure.id,
+                    'old_office': old_office,
+                    'new_office': new_office,
+                    'assigned_turn': assigned_turn
+                }
+            )
+
+    # ================================= MVP 0.1-0.5 =======================================
 
     # ---------- 辅助方法 ----------
     def _get_faction_influences(self) -> Dict[str, int]:
@@ -211,14 +272,24 @@ class PopulationCommand(Command):
         return total_spent, total_boost
 
     def _remove_office_holders(self, office_type: str):
-        """卸任所有现任官员（不再打印）"""
+        """
+        卸任所有现任官员（不包括战场指挥官，由 _convert_battlefield_commanders 处理）。
+        """
         for fig in self.state.get_living_members():
-            if fig.office == office_type:
-                fig.add_office_history(office_type, self.state.turn.turn_number - 1, self.state.turn.turn_number)
-                fig.office = f"ex-{office_type}"
-                fig.update_influence()
-                if office_type == "consul" and fig.id in self.state.turn.leader_ids:
-                    self.state.turn.leader_ids.remove(fig.id)
+            if fig.office != office_type:
+                continue
+
+            # 战场指挥官由专门方法处理，这里跳过
+            if fig.is_absent and office_type in ('consul', 'praetor'):
+                continue
+
+            # 普通卸任
+            fig.add_office_history(office_type, self.state.turn.turn_number - 1, self.state.turn.turn_number)
+            fig.office = f"ex-{office_type}"
+            fig.update_influence()
+
+            if office_type == "consul" and fig.id in self.state.turn.leader_ids:
+                self.state.turn.leader_ids.remove(fig.id)
 
     def _elect_single_magistrate(self, office_type: str, terms) -> Optional['Figure']:
         """选举单个官员（不打印过程）"""
@@ -254,7 +325,6 @@ class PopulationCommand(Command):
             f"选举结果: {office_type} 当选者 {winner.name} (派系 {faction.name if faction else '无'})",
             extra={"type": "election", "office": office_type, "figure_id": winner.id}
         )
-
 
         return winner
 

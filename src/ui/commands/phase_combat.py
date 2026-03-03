@@ -224,6 +224,7 @@ class CombatCommand(Command):
                 legion.recall()
             war_system.resolve_war(war.id, victory=True)
 
+
         elif result == "VICTORY":
             print(f"\n      {emoji} RESULT: VICTORY (0 losses)")
             print(f"      ✓ Victory! {war.name} concluded, but enemy not destroyed.")
@@ -232,10 +233,6 @@ class CombatCommand(Command):
             for legion in legions:
                 legion.promote_to_veteran()
                 legion.recall()
-            if war_system.deactivate_war_to_threat(war.id, threat_level=1):
-                commander.is_absent = False
-                print(f"      🔄 {war.name} 降级为外交冲突（威胁等级1）。")
-                self.state.log_event(f"{war.name} 战果为小胜，威胁等级降至1。")
 
         elif result == "STALEMATE":
             print(f"\n      {emoji} RESULT: STALEMATE (0 losses)")
