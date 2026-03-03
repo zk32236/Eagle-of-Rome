@@ -120,6 +120,12 @@
     "popularity_annual_decay": 0.50
   },
   "combat_rules": {
+    "peace_treaty": {
+      "indemnity_base_multiplier": 10,
+      "indemnity_duration_multiplier": 5,
+      "duration_victory": 5,
+      "duration_stalemate": 3
+    },
     "triumph_threshold": 12,
     "victory_threshold": 6,
     "defeat_threshold": -3,
