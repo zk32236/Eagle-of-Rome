@@ -13,6 +13,7 @@ class WarStatus(Enum):
     RESOLVED = auto()      # 已解决（胜利）
     DEFEATED = auto()      # 失败
     STALEMATE = auto()     # 僵持（未分胜负）
+    TRUCE = auto()         # 新增：停战状态
 
 
 class WarType(Enum):
@@ -97,6 +98,71 @@ class War:
     battle_history: List[Dict] = field(default_factory=list)  # 战斗历史
     commander_status: str = "active"  # active/fled/killed/captured
     commander_casualty_turn: int = 0  # 伤亡回合
+
+    # ===== 停战议和 =====
+    _peace_treaty: Optional[Dict] = None  # 草案字典
+    _indemnity_due: int = 0  # 待结算赔款（正：收入，负：支出）
+    _truce_end_turn: int = 0  # 和约到期回合
+    _original_commander_id: Optional[int] = None  # 原指挥官ID（在停战期间保留）
+    _commander_assigned_turn: int = 0  # 指挥官上任回合（用于历史记录）
+
+    # ===== MVP 0.7-1 停战议和方法 =====
+
+    def assign_commander(self, commander_id: int, assigned_turn: int) -> None:
+        """指派指挥官，记录上任回合"""
+        self.commander_id = commander_id
+        self._commander_assigned_turn = assigned_turn
+
+    @property
+    def peace_treaty(self) -> Optional[Dict]:
+        """获取草案字典（只读）"""
+        return self._peace_treaty.copy() if self._peace_treaty else None
+
+    def set_peace_treaty(self, treaty: Dict) -> None:
+        """设置草案，必须包含 indemnity, duration, generated_turn 字段"""
+        required_keys = {'indemnity', 'duration', 'generated_turn'}
+        if not required_keys.issubset(treaty.keys()):
+            raise ValueError(f"Peace treaty must contain {required_keys}")
+        # 保证状态字段存在
+        treaty['status'] = treaty.get('status', 'pending')
+        self._peace_treaty = treaty
+
+    def clear_peace_treaty(self) -> None:
+        """清除草案"""
+        self._peace_treaty = None
+
+    @property
+    def indemnity_due(self) -> int:
+        return self._indemnity_due
+
+    def set_indemnity_due(self, amount: int) -> None:
+        self._indemnity_due = amount
+
+    @property
+    def truce_end_turn(self) -> int:
+        return self._truce_end_turn
+
+    def set_truce_end_turn(self, end_turn: int) -> None:
+        self._truce_end_turn = end_turn
+
+    def is_truce_expired(self, current_turn: int) -> bool:
+        """检查和约是否到期"""
+        return self._truce_end_turn > 0 and current_turn >= self._truce_end_turn
+
+    @property
+    def original_commander_id(self) -> Optional[int]:
+        return self._original_commander_id
+
+    def set_original_commander(self, commander_id: int, assigned_turn: int) -> None:
+        """设置原指挥官及其上任回合（用于停战后记录）"""
+        self._original_commander_id = commander_id
+        self._commander_assigned_turn = assigned_turn
+
+    @property
+    def commander_assigned_turn(self) -> int:
+        return self._commander_assigned_turn
+
+    #====================== MVP 0.5方法 =====================
 
     def __post_init__(self):
         """初始化后处理"""

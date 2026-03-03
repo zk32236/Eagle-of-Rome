@@ -32,6 +32,80 @@ class WarSystem:
         self._active_wars: List[War] = []   # 已爆发的战争
         self._threats: List[War] = []        # 威胁中的战争（未爆发）
         self._legions_to_disband: List[int] = []  # 存储需要在人口阶段解散的军团编号
+        self._truce_wars: List[War] = []  # 停战中的战争
+
+    # ========== 以下函数为 MVP 0.7 的内容 ==========
+
+    # ========== MVP 0.7-1 停战议和 ==========
+
+    def _move_to_truce(self, war: War) -> bool:
+        """将战争从当前列表移至 _truce_wars"""
+        # 从所有可能的位置移除
+        if war in self._active_wars:
+            self._active_wars.remove(war)
+        elif war in self._threats:
+            self._threats.remove(war)
+        elif war in self._war_deck:
+            self._war_deck.remove(war)
+        elif war in self._war_discard:
+            self._war_discard.remove(war)
+        else:
+            return False
+        if war not in self._truce_wars:
+            self._truce_wars.append(war)
+        war.status = WarStatus.TRUCE
+        return True
+
+    def _move_to_active(self, war: War) -> bool:
+        """将战争从 _truce_wars 移回 _active_wars"""
+        if war not in self._truce_wars:
+            return False
+        self._truce_wars.remove(war)
+        if war not in self._active_wars:
+            self._active_wars.append(war)
+        war.status = WarStatus.ACTIVE
+        return True
+
+    def _move_to_threat(self, war: War, threat_level: int = 1) -> bool:
+        """将战争从 _truce_wars 移至 _threats"""
+        if war not in self._truce_wars:
+            return False
+        self._truce_wars.remove(war)
+        if war not in self._threats:
+            self._threats.append(war)
+        war.status = WarStatus.THREAT
+        war.threat_level = threat_level
+        return True
+
+    # ===== 新增查询方法 =====
+    def get_truce_wars(self) -> List[War]:
+        """获取所有停战中的战争"""
+        return self._truce_wars.copy()
+
+    def get_truce_wars_with_pending_treaty(self) -> List[War]:
+        """获取所有停战中且草案为 pending 的战争"""
+        return [w for w in self._truce_wars
+                if w.peace_treaty and w.peace_treaty.get('status') == 'pending']
+
+    def get_truce_wars_with_approved_treaty(self) -> List[War]:
+        """获取所有停战中且草案为 approved 的战争"""
+        return [w for w in self._truce_wars
+                if w.peace_treaty and w.peace_treaty.get('status') == 'approved']
+
+    # ===== 军团待解散管理 =====
+    def add_legions_to_disband(self, legion_numbers: List[int]) -> None:
+        """添加需要解散的军团编号（用于和约批准后）"""
+        self._legions_to_disband.extend(legion_numbers)
+
+    def clear_legions_to_disband(self) -> List[int]:
+        """清空并返回待解散军团编号列表"""
+        result = self._legions_to_disband.copy()
+        self._legions_to_disband.clear()
+        return result
+
+
+
+    # ========== 以下函数为 MVP 0.5 之前（含）的内容 ==========
 
     # ========== 日志操作 ==========
 
