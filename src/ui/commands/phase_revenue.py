@@ -76,10 +76,15 @@ class RevenueCommand(Command):
         # 3. 合同收益结算（只执行一次）
         self._collect_contract_revenues(terms, faction_tax_collected, tax_rate)
 
-        # 4. 军团维护费（只执行一次）
+        # 4. 军团维护费（只执行一次） + 赔偿金处理
         ms = self.state.get_military_system()
         if ms:
+            total_maintenance, _ = ms.calculate_maintenance()
+            print(f"📊 军团维护费: \t{total_maintenance} {terms.currency}")
             success, msg = ms.apply_maintenance(verbose=False)
+
+
+        self._settle_indemnities()
 
         # 5. 先更新派系国库（处理抽成和津贴）
         for faction_id, total_tax_float in faction_tax_collected.items():
@@ -120,6 +125,54 @@ class RevenueCommand(Command):
         self.state.mark_phase_executed("revenue")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
+
+    # ================================= MVP 0.7 ===========================================
+
+    # ======== MVP 0.7.1 停战议和 =======
+
+    def _settle_indemnities(self):
+        """结算所有战争赔款（正：收入，负：支出）"""
+        war_system = self.state.get_war_system()
+        if not war_system:
+            return
+
+        all_wars = (war_system._war_deck + war_system._war_discard +
+                    war_system._active_wars + war_system._threats +
+                    war_system._truce_wars)
+        for war in all_wars:
+            amount = war.indemnity_due
+            if amount == 0:
+                continue
+
+            if amount > 0:
+                # 收入
+                self.state.add_treasury(amount)
+                print(f"      📦 战争赔款收入: {war.name} +{amount} Talents")
+                self.state.log_event(
+                    f"战争赔款收入: {war.name} +{amount}",
+                    extra={'type': 'indemnity_income', 'war_id': war.id, 'amount': amount}
+                )
+                war.set_indemnity_due(0)  # 清除赔款
+            else:
+                # 支出（amount为负）
+                if self.state.treasury < -amount:
+                    print(f"      💀 国库不足以支付战争赔款 {war.name} {-amount} Talents，共和覆灭！")
+                    self.state.log_event(
+                        f"国库不足支付赔款，共和覆灭",
+                        extra={'type': 'game_over', 'reason': 'indemnity', 'war_id': war.id, 'amount': -amount},
+                        level=logging.CRITICAL
+                    )
+                    # 国库不足，不清除赔款，等待下回合再次尝试
+                else:
+                    self.state.add_treasury(amount)
+                    print(f"      💸 战争赔款支出: {war.name} {-amount} Talents")
+                    self.state.log_event(
+                        f"战争赔款支出: {war.name} {-amount}",
+                        extra={'type': 'indemnity_expense', 'war_id': war.id, 'amount': -amount}
+                    )
+                    war.set_indemnity_due(0)  # 清除赔款
+
+    # ================================= MVP 0.1-0.5 =======================================
 
     def _collect_private_land_income(self, terms, faction_tax_collected: Dict[str, float], tax_rate: float) -> List[
         Tuple[int, str, int, int]]:

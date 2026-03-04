@@ -262,7 +262,6 @@ class CombatCommand(Command):
 
             for legion in legions:
                 legion.promote_to_veteran()
-                legion.recall()
 
         elif result == "STALEMATE":
             print(f"\n      {emoji} RESULT: STALEMATE (0 losses)")

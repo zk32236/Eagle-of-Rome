@@ -100,6 +100,30 @@ class WarsCommand(Command):
         else:
             print(f"\n   ☮️  No active wars")
 
+        # ===== 新增：显示停战中的战争 =====
+        truce_wars = ws.get_truce_wars()
+        if truce_wars:
+            print(f"\n   🕊️  Truce (停战期):")
+            for war in truce_wars:
+                treaty = war.peace_treaty
+                if treaty and treaty.get('status') == 'approved':
+                    # 已批准的和约，显示剩余回合
+                    remaining = war.truce_end_turn - self.state.turn.turn_number
+                    print(f"      {war.name} (和约剩余 {remaining} 回合，赔款 {treaty['indemnity']})")
+                else:
+                    # 草案待审批
+                    print(f"      {war.name} (停战草案待元老院审批)")
+        else:
+            print(f"\n   🕊️  No truce wars")
+
+        # 弃牌堆
+        discard_count = len(getattr(ws, '_war_discard', []))
+        if discard_count:
+            print(f"\n   ♻️  Resolved: {discard_count} war(s)")
+
+        print(f"{'=' * 55}")
+        return True
+
         # 弃牌堆
         discard_count = len(getattr(ws, '_war_discard', []))
         if discard_count:

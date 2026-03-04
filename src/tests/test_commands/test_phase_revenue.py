@@ -62,6 +62,7 @@ class TestRevenueCommand(unittest.TestCase):
         mock_ms = MagicMock()
         mock_ms.apply_maintenance.return_value = (True, "")
         mock_ms.get_military_summary.return_value = "Military summary"
+        mock_ms.calculate_maintenance.return_value = (0, {})  # 关键修复
         self.state._military_system = mock_ms
         return mock_ms
 
@@ -211,6 +212,7 @@ class TestRevenueCommand(unittest.TestCase):
         mock_ms = MagicMock()
         mock_ms.apply_maintenance.return_value = (False, "")
         mock_ms.get_military_summary.return_value = "Military summary"
+        mock_ms.calculate_maintenance.return_value = (0, {})
         self.state._military_system = mock_ms
 
         cmd = RevenueCommand(self.state)
@@ -229,6 +231,7 @@ class TestRevenueCommand(unittest.TestCase):
         mock_ms = MagicMock()
         mock_ms.apply_maintenance.return_value = (True, "")
         mock_ms.get_military_summary.return_value = "Military summary"
+        mock_ms.calculate_maintenance.return_value = (0, {})
         self.state._military_system = mock_ms
 
         cmd = RevenueCommand(self.state)
