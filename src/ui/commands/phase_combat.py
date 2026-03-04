@@ -186,29 +186,42 @@ class CombatCommand(Command):
             return
 
         treaty = self.peace_treaty_decider.decide_treaty(war, result, self.state)
+        print(f"DEBUG: treaty = {treaty}, type = {type(treaty)}")
         if not treaty:
+            print("DEBUG: no treaty generated")
             return
 
-        if war_system.enter_truce(war, treaty):
-            print(f"      📜 战争 {war.name} 达成停战草案，等待元老院审批。")
-            self.state.log_event(
-                f"战争 {war.name} 生成停战草案，赔款 {treaty['indemnity']}，有效期 {treaty['duration']} 回合",
-                extra={
-                    'type': 'peace_treaty_generated',
-                    'war_id': war.id,
-                    'result': result,
-                    'indemnity': treaty['indemnity'],
-                    'duration': treaty['duration'],
-                    'generated_turn': treaty['generated_turn']
-                }
-            )
-        else:
-            print(f"      ⚠️ 战争 {war.name} 无法进入停战状态，草案无效。")
-            self.state.log_event(
-                f"战争 {war.name} 草案生成失败：无法进入停战",
-                extra={'type': 'peace_treaty_failed', 'war_id': war.id},
-                level=logging.WARNING
-            )
+        required = {'indemnity', 'duration', 'generated_turn'}
+        missing = required - treaty.keys()
+        if missing:
+            print(f"ERROR: treaty missing keys: {missing}")
+            return
+
+        try:
+            if war_system.enter_truce(war, treaty):
+                print(f"      📜 战争 {war.name} 达成停战草案，等待元老院审批。")
+                self.state.log_event(
+                    f"战争 {war.name} 生成停战草案，赔款 {treaty['indemnity']}，有效期 {treaty['duration']} 回合",
+                    extra={
+                        'type': 'peace_treaty_generated',
+                        'war_id': war.id,
+                        'result': result,
+                        'indemnity': treaty['indemnity'],
+                        'duration': treaty['duration'],
+                        'generated_turn': treaty['generated_turn']
+                    }
+                )
+            else:
+                print(f"      ⚠️ 战争 {war.name} 无法进入停战状态，草案无效。")
+                self.state.log_event(
+                    f"战争 {war.name} 草案生成失败：无法进入停战",
+                    extra={'type': 'peace_treaty_failed', 'war_id': war.id},
+                    level=logging.WARNING
+                )
+        except Exception as e:
+            print(f"ERROR in enter_truce: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _simplified_crt(self, dice_roll: int, combat_total: int, war) -> str:
         """简化版CRT判定"""

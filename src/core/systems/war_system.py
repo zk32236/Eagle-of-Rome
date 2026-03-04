@@ -84,6 +84,8 @@ class WarSystem:
         if war not in self._active_wars:
             self._active_wars.append(war)
         war.status = WarStatus.ACTIVE
+        # 清除旧指挥官（新增修复）
+        war.commander_id = None
         return True
 
     def _move_to_threat(self, war: War, threat_level: int = 1) -> bool:
@@ -95,6 +97,8 @@ class WarSystem:
             self._threats.append(war)
         war.status = WarStatus.THREAT
         war.threat_level = threat_level
+        # 转为威胁时清除指挥官（确保无残留）
+        war.commander_id = None
         return True
 
     # ===== 新增查询方法 =====
@@ -123,8 +127,6 @@ class WarSystem:
         self._legions_to_disband.clear()
         return result
 
-
-
     # ========== 以下函数为 MVP 0.5 之前（含）的内容 ==========
 
     # ========== 日志操作 ==========
@@ -142,9 +144,9 @@ class WarSystem:
         # 从威胁列表移到活跃列表
         if war in self._threats:
             self._threats.remove(war)
-        self._active_wars.append(war)
+        if war not in self._active_wars:
+            self._active_wars.append(war)
         print(f"      ✅ 战争 {war.name} 已激活，批准军团数 {legions}")
-        # ===== 新增日志 =====
         self.state.log_event(
             f"战争激活：{war.name}，批准军团 {legions}",
             extra={"war_id": war.id, "consul_id": consul_id, "legions": legions}
@@ -175,393 +177,11 @@ class WarSystem:
                 self._legions_to_disband.extend(war.legion_numbers)
             war.clear_legion_numbers()
 
-        # ===== 新增日志 =====
         self.state.log_event(
             f"战争降级为威胁：{war.name}，威胁等级 {threat_level}",
             extra={"war_id": war.id, "threat_level": threat_level}
         )
         return True
-
-    def resolve_war(self, war_id: str, victory: bool) -> Dict[str, Any]:
-        """结算战争（胜利或失败），增加奖励分配逻辑"""
-        war = self.get_war_by_id(war_id)
-        if not war:
-            return {}
-
-        terms = TerminologyService.get()
-        result = {
-            'war_name': war.name,
-            'victory': victory,
-            'duration': war.duration,
-            'rewards': {},
-            'penalties_applied': [],
-        }
-
-        if victory:
-            war.status = WarStatus.RESOLVED
-            if war.commander_id:
-                war.set_triumph_commander(war.commander_id)
-            rewards = war.calculate_rewards()
-            result['rewards'] = rewards
-            total_treasury = rewards.get('treasury', 0)  # 提前定义
-
-            try:
-                treasury_share = self.state.config.get("combat_rules.treasury_share", 0.5)
-                faction_share = self.state.config.get("combat_rules.faction_share", 0.25)
-                commander_share = self.state.config.get("combat_rules.commander_share", 0.15)
-                soldier_share = self.state.config.get("combat_rules.soldier_share", 0.15)
-
-                treasury_part = int(total_treasury * treasury_share)
-                faction_part = int(total_treasury * faction_share)
-                commander_part = int(total_treasury * commander_share)
-                soldier_part = total_treasury - treasury_part - faction_part - commander_part
-
-                print(f"\n      📦 战利品分配 ({war.name}):")
-                print(f"        总额: {total_treasury} 塔兰特")
-                print(f"        国库: +{treasury_part}")
-                # ... 后续打印和分配逻辑（保持不变）...
-
-            except Exception as e:
-                self.state.log_exception(
-                    e,
-                    context=f"战争战利品分配失败: {war.name}",
-                    extra={"war_id": war.id, "victory": victory, "rewards": rewards}
-                )
-                # 分配失败时，国库获得全部战利品作为降级处理
-                self.state.add_treasury(total_treasury)
-                war.set_soldier_share(0)
-                result['error'] = True
-
-        else:
-            war.status = WarStatus.DEFEATED
-            print(f"   ❌ {war.name} lost! Defeat!")
-            # ===== 新增日志：战争失败 =====
-            self.state.log_event(
-                f"战争失败：{war.name}",
-                extra={"war_id": war.id, "victory": False}
-            )
-
-        # 清理战争数据
-        ms = self.state.get_military_system()
-        if ms:
-            ms.recall_from_war(war.id)
-
-        war.commander_id = None
-        war.legions_assigned = 0
-        war.fleets_assigned = 0
-
-        if war in self._active_wars:
-            self._active_wars.remove(war)
-        self._war_discard.append(war)
-
-        return result
-
-    def apply_turn_penalties(self) -> List[str]:
-        """应用所有活跃战争的拖延惩罚"""
-        events = []
-        for war in self._active_wars:
-            if war.status == WarStatus.ACTIVE:
-                war_events = war.apply_penalties(self.state)
-                events.extend(war_events)
-                war.duration += 1
-                # ===== 新增日志：记录战争拖延惩罚 =====
-                if war_events:
-                    self.state.log_event(
-                        f"战争 {war.name} 拖延惩罚",
-                        extra={"war_id": war.id, "duration": war.duration, "penalties": war_events}
-                    )
-        return events
-
-    # ========== 数据加载 ==========
-
-    def deactivate_war_to_threat(self, war_id: str, threat_level: int = 1) -> bool:
-        war = self.get_war_by_id(war_id)
-        if not war or war.status != WarStatus.ACTIVE:
-            return False
-
-        war.status = WarStatus.THREAT
-        war.threat_level = threat_level
-        war.commander_id = None
-        war.legions_assigned = 0
-        war.fleets_assigned = 0
-
-        # 从活跃列表移除
-        if war in self._active_wars:
-            self._active_wars.remove(war)
-        if war not in self._threats:
-            self._threats.append(war)
-
-        ms = self.state.get_military_system()
-        if ms:
-            ms.recall_from_war(war.id)
-            # 记录需要解散的军团编号
-            if war.legion_numbers:
-                self._legions_to_disband.extend(war.legion_numbers)  # ✅ 正确使用实例变量
-            war.clear_legion_numbers()
-
-        return True
-
-    def check_triggers(self, current_year: int):
-        """检查是否有战争到达触发年份，将其从 INACTIVE 转为 THREAT"""
-        if not self.state.config.get("enable_threats", True):
-            return
-        for war in self._war_deck[:]:
-            if war.status == WarStatus.INACTIVE and current_year >= war.start_year:
-                war.status = WarStatus.THREAT
-                war.threat_level = 1
-                war._triggered_this_turn = True  # 标记为刚触发
-                self._threats.append(war)
-                self._war_deck.remove(war)
-                print(f"   ⚠️ 外交冲突：{war.name} 开始威胁罗马")
-
-    def escalate_threats(self):
-        """处理威胁自动升级，返回升级事件列表"""
-        if not self.state.config.get("enable_threats", True):
-            return []
-        events = []
-        for war in self._threats[:]:
-            if war._triggered_this_turn:
-                # 刚触发的战争，当年不升级，清除标记
-                war._triggered_this_turn = False
-                continue
-            if war.auto_escalate:
-                war.threat_level += war.escalate_rate
-                if war.threat_level >= 3:
-                    war.status = WarStatus.ACTIVE
-                    war.activation_turn = self.state.turn.turn_number
-                    self._active_wars.append(war)
-                    self._threats.remove(war)
-                    events.append(f"⚔️ 战争爆发：{war.name}！")
-                else:
-                    level_names = ["", "外交冲突", "大军压境"]
-                    events.append(f"⚠️ {war.name} 升级至：{level_names[war.threat_level]}")
-        return events
-
-    def load_wars_from_json(self, filename: str = "wars.json") -> List[War]:
-        """从JSON加载战争卡数据"""
-        base_path = Path(__file__).parent.parent.parent.parent
-        file_path = base_path / "data" / "cards" / filename
-
-        wars = []
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-
-            for war_data in data.get('wars', []):
-                war = self._parse_war_data(war_data)
-                wars.append(war)
-
-        except FileNotFoundError:
-            print(f"   ⚠️  War data file not found: {file_path}")
-            # 创建默认测试战争
-            wars = self._create_default_wars()
-        except json.JSONDecodeError as e:
-            print(f"   ⚠️  JSON parse error: {e}")
-            wars = self._create_default_wars()
-
-        self._war_deck = wars
-        # print(f"   📚 Loaded {len(wars)} wars into deck")
-        return wars
-
-    def _parse_war_data(self, data: Dict[str, Any]) -> War:
-        # 解析战争类型
-        war_type_str = data.get('type', 'foreign').upper()
-        try:
-            war_type = WarType[war_type_str]
-        except KeyError:
-            war_type = WarType.FOREIGN
-
-        # 创建战争实体，并传入新字段
-        war = War(
-            id=data.get('id', f"war_{random.randint(1000, 9999)}"),
-            name=data.get('name', 'Unknown War'),
-            description=data.get('description', ''),
-            war_type=war_type,
-            start_year=data.get('start_year', 0),  # 新增
-            threat_level=data.get('threat_level', 0),  # 新增
-            auto_escalate=data.get('auto_escalate', True),  # 新增
-            escalate_rate=data.get('escalate_rate', 1),  # 新增
-            strength=data.get('strength', 5),
-            naval_support_required=data.get('naval_required', False),
-            naval_strength=data.get('naval_strength', 0),
-            land_battle=data.get('land_battle', True),
-            disaster_numbers=data.get('disaster_numbers', [2, 3, 4]),
-            standoff_numbers=data.get('standoff_numbers', [5, 6, 7, 8, 9]),
-            rewards=data.get('rewards', {}),
-            penalties=data.get('penalties', {}),
-            is_imminent=data.get('imminent', False),
-            matched_war_id=data.get('matched_war'),
-        )
-        return war
-
-    def _create_default_wars(self) -> List[War]:
-        """创建默认测试战争（当JSON加载失败时）"""
-        terms = TerminologyService.get()
-
-        return [
-            War(
-                id="test_war_1",
-                name=f"Gallic Raiders",
-                description="Barbarian incursion from the north",
-                war_type=WarType.BARBARIAN,
-                strength=4,
-                naval_support_required=False,
-                rewards={'treasury': 25, 'influence': 1},
-                penalties={'unrest_per_turn': 1},
-            ),
-            War(
-                id="test_war_2",
-                name=f"Pirate Fleet",
-                description="Mediterranean pirates threaten trade",
-                war_type=WarType.FOREIGN,
-                strength=6,
-                naval_support_required=True,
-                naval_strength=3,
-                rewards={'treasury': 40, 'influence': 2},
-                penalties={'treasury_cost': 5},
-            ),
-            War(
-                id="test_war_3",
-                name=f"Provincial Revolt",
-                description="Unrest in the provinces",
-                war_type=WarType.PROVINCIAL,
-                strength=8,
-                rewards={'treasury': 60, 'influence': 3, 'unrest_reduction': 3},
-                penalties={'unrest_per_turn': 2},
-            ),
-        ]
-
-    # ========== 牌堆管理 ==========
-
-    def shuffle_deck(self):
-        """洗牌"""
-        random.shuffle(self._war_deck)
-        print("   🔀 War deck shuffled")
-
-    def draw_war(self) -> Optional[War]:
-        """抽取战争卡"""
-        if not self._war_deck:
-            # 牌堆空时，弃牌堆重洗
-            if self._war_discard:
-                print("   ♻️  Reshuffling discard pile...")
-                self._war_deck = self._war_discard
-                self._war_discard = []
-                self.shuffle_deck()
-            else:
-                return None
-
-        war = self._war_deck.pop()
-        return war
-
-    def activate_war(self, war: War, turn: int) -> bool:
-        """激活战争"""
-        if war.status != WarStatus.INACTIVE:
-            return False
-
-        war.status = WarStatus.ACTIVE
-        war.activation_turn = turn
-        self._active_wars.append(war)
-
-        terms = TerminologyService.get()
-        print(f"   ⚔️  {terms.phase_combat} declared: {war.name}!")
-        print(f"      Strength: {war.strength}", end="")
-        if war.naval_support_required:
-            print(f" | Naval: {war.naval_strength} ⚓", end="")
-        print()
-
-        return True
-
-    def check_imminent_wars(self) -> List[War]:
-        """检查即将爆发的战争（预警）"""
-        return [w for w in self._war_deck if w.is_imminent]
-
-    # ========== 战争查询 ==========
-
-    def get_active_wars(self) -> List[War]:
-        """获取所有活跃战争"""
-        return [w for w in self._active_wars if w.status == WarStatus.ACTIVE]
-
-    def get_war_by_id(self, war_id: str) -> Optional[War]:
-        """通过ID查找战争（搜索所有战争列表）"""
-        all_wars = self._war_deck + self._war_discard + self._active_wars + self._threats
-        for war in all_wars:
-            if war.id == war_id:
-                return war
-        return None
-
-    def get_war_by_commander(self, commander_id: int) -> Optional[War]:
-        """查找将领指派的战争"""
-        for war in self._active_wars:
-            if war.commander_id == commander_id:
-                return war
-        return None
-
-    def get_active_wars_without_commander(self) -> List[War]:
-        """获取活跃战争中无指挥官的列表"""
-        return [w for w in self._active_wars if w.status == WarStatus.ACTIVE and w.commander_id is None]
-
-    # ========== 战争操作 ==========
-
-    def activate_war(self, war_id: str, consul_id: int, legions: int) -> bool:
-        """将威胁战争激活，记录宣战者和批准军团数"""
-        war = self.get_war_by_id(war_id)
-        if not war or war.status != WarStatus.THREAT:
-            print(f"      ⚠️ 激活战争失败：战争 {war_id} 不存在或不是威胁状态")
-            return False
-        war.status = WarStatus.ACTIVE
-        war.declared_by = consul_id
-        war.proposed_legions = legions
-        war.activation_turn = self.state.turn.turn_number
-        # 从威胁列表移到活跃列表
-        if war in self._threats:
-            self._threats.remove(war)
-        self._active_wars.append(war)
-        print(f"      ✅ 战争 {war.name} 已激活，批准军团数 {legions}")
-        return True
-
-    def assign_commander(self, war_id: str, commander_id: int, legions: int = 0, fleets: int = 0) -> bool:
-        """指派将领和军队到战争"""
-        war = self.get_war_by_id(war_id)
-        if not war or war.status != WarStatus.ACTIVE:
-            return False
-
-        # 检查是否已有将领（需要召回）
-        if war.commander_id is not None:
-            print(f"   ⚠️  Replacing commander on {war.name}")
-
-        war.commander_id = commander_id
-        war.legions_assigned = legions
-        war.fleets_assigned = fleets
-
-        terms = TerminologyService.get()
-        print(f"   🎖️  {terms.commander} assigned to {war.name}")
-        print(f"      Forces: {legions} {terms.legion}, {fleets} {terms.fleet}")
-
-        return True
-
-    def recall_commander(self, war_id: str) -> bool:
-        """召回将领"""
-        war = self.get_war_by_id(war_id)
-        if not war:
-            return False
-
-        war.commander_id = None
-        war.legions_assigned = 0
-        war.fleets_assigned = 0
-        return True
-
-    def apply_turn_penalties(self) -> List[str]:
-        """应用所有活跃战争的拖延惩罚"""
-        events = []
-        for war in self._active_wars:
-            if war.status == WarStatus.ACTIVE:
-                war_events = war.apply_penalties(self.state)
-                events.extend(war_events)
-                war.duration += 1
-
-        return events
-
-    # ========== 战争结算 ==========
 
     def resolve_war(self, war_id: str, victory: bool) -> Dict[str, Any]:
         """
@@ -606,7 +226,7 @@ class WarSystem:
             # 士兵份额使用剩余部分，确保总和等于 total_treasury
             soldier_part = total_treasury - treasury_part - faction_part - commander_part
 
-            # ========== 新增：详细打印战利品分配 ==========
+            # ========== 详细打印战利品分配 ==========
             print(f"\n      📦 战利品分配 ({war.name}):")
             print(f"        总额: {total_treasury} 塔兰特")
             print(f"        国库: +{treasury_part}")
@@ -682,25 +302,256 @@ class WarSystem:
         else:
             war.status = WarStatus.DEFEATED
             print(f"   ❌ {war.name} lost! Defeat!")
+            self.state.log_event(
+                f"战争失败：{war.name}",
+                extra={"war_id": war.id, "victory": False}
+            )
 
         # --- 清理战争数据（原有逻辑，放在分配之后）---
         ms = self.state.get_military_system()
         if ms:
             ms.recall_from_war(war.id)
 
+        if war in self._active_wars:
+            self._active_wars.remove(war)
+
+        self._war_discard.append(war)
+
         war.commander_id = None
         war.legions_assigned = 0
         war.fleets_assigned = 0
 
-        if war in self._active_wars:
-            self._active_wars.remove(war)
-        self._war_discard.append(war)
-
         return result
+
+    def apply_turn_penalties(self) -> List[str]:
+        """应用所有活跃战争的拖延惩罚"""
+        events = []
+        for war in self._active_wars:
+            if war.status == WarStatus.ACTIVE:
+                war_events = war.apply_penalties(self.state)
+                events.extend(war_events)
+                war.duration += 1
+                # ===== 新增日志：记录战争拖延惩罚 =====
+                if war_events:
+                    self.state.log_event(
+                        f"战争 {war.name} 拖延惩罚",
+                        extra={"war_id": war.id, "duration": war.duration, "penalties": war_events}
+                    )
+        return events
+
+    # ========== 数据加载 ==========
+
+    def check_triggers(self, current_year: int):
+        """检查是否有战争到达触发年份，将其从 INACTIVE 转为 THREAT"""
+        if not self.state.config.get("enable_threats", True):
+            return
+        for war in self._war_deck[:]:
+            if war.status == WarStatus.INACTIVE and current_year >= war.start_year:
+                war.status = WarStatus.THREAT
+                war.threat_level = 1
+                war._triggered_this_turn = True  # 标记为刚触发
+                self._threats.append(war)
+                self._war_deck.remove(war)
+                print(f"   ⚠️ 外交冲突：{war.name} 开始威胁罗马")
+
+    def escalate_threats(self):
+        """处理威胁自动升级，返回升级事件列表"""
+        if not self.state.config.get("enable_threats", True):
+            return []
+        events = []
+        for war in self._threats[:]:
+            if war._triggered_this_turn:
+                war._triggered_this_turn = False
+                continue
+            if war.auto_escalate:
+                war.threat_level += war.escalate_rate
+                if war.threat_level >= 3:
+                    war.status = WarStatus.ACTIVE
+                    war.activation_turn = self.state.turn.turn_number
+                    self._active_wars.append(war)
+                    self._threats.remove(war)
+                    # 清除旧指挥官（新增修复）
+                    war.commander_id = None
+                    events.append(f"⚔️ 战争爆发：{war.name}！")
+                else:
+                    level_names = ["", "外交冲突", "大军压境"]
+                    events.append(f"⚠️ {war.name} 升级至：{level_names[war.threat_level]}")
+        return events
+
+    def load_wars_from_json(self, filename: str = "wars.json") -> List[War]:
+        """从JSON加载战争卡数据"""
+        base_path = Path(__file__).parent.parent.parent.parent
+        file_path = base_path / "data" / "cards" / filename
+
+        wars = []
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            for war_data in data.get('wars', []):
+                war = self._parse_war_data(war_data)
+                wars.append(war)
+
+        except FileNotFoundError:
+            print(f"   ⚠️  War data file not found: {file_path}")
+            # 创建默认测试战争
+            wars = self._create_default_wars()
+        except json.JSONDecodeError as e:
+            print(f"   ⚠️  JSON parse error: {e}")
+            wars = self._create_default_wars()
+
+        self._war_deck = wars
+        return wars
+
+    def _parse_war_data(self, data: Dict[str, Any]) -> War:
+        # 解析战争类型
+        war_type_str = data.get('type', 'foreign').upper()
+        try:
+            war_type = WarType[war_type_str]
+        except KeyError:
+            war_type = WarType.FOREIGN
+
+        # 创建战争实体，并传入新字段
+        war = War(
+            id=data.get('id', f"war_{random.randint(1000, 9999)}"),
+            name=data.get('name', 'Unknown War'),
+            description=data.get('description', ''),
+            war_type=war_type,
+            start_year=data.get('start_year', 0),  # 新增
+            threat_level=data.get('threat_level', 0),  # 新增
+            auto_escalate=data.get('auto_escalate', True),  # 新增
+            escalate_rate=data.get('escalate_rate', 1),  # 新增
+            strength=data.get('strength', 5),
+            naval_support_required=data.get('naval_required', False),
+            naval_strength=data.get('naval_strength', 0),
+            land_battle=data.get('land_battle', True),
+            disaster_numbers=data.get('disaster_numbers', [2, 3, 4]),
+            standoff_numbers=data.get('standoff_numbers', [5, 6, 7, 8, 9]),
+            rewards=data.get('rewards', {}),
+            penalties=data.get('penalties', {}),
+            is_imminent=data.get('imminent', False),
+            matched_war_id=data.get('matched_war'),
+        )
+        return war
+
+    def _create_default_wars(self) -> List[War]:
+        """创建默认测试战争（当JSON加载失败时）"""
+        terms = TerminologyService.get()
+
+        return [
+            War(
+                id="test_war_1",
+                name="Gallic Raiders",
+                description="Barbarian incursion from the north",
+                war_type=WarType.BARBARIAN,
+                strength=4,
+                naval_support_required=False,
+                rewards={'treasury': 25, 'influence': 1},
+                penalties={'unrest_per_turn': 1},
+            ),
+            War(
+                id="test_war_2",
+                name="Pirate Fleet",
+                description="Mediterranean pirates threaten trade",
+                war_type=WarType.FOREIGN,
+                strength=6,
+                naval_support_required=True,
+                naval_strength=3,
+                rewards={'treasury': 40, 'influence': 2},
+                penalties={'treasury_cost': 5},
+            ),
+            War(
+                id="test_war_3",
+                name="Provincial Revolt",
+                description="Unrest in the provinces",
+                war_type=WarType.PROVINCIAL,
+                strength=8,
+                rewards={'treasury': 60, 'influence': 3, 'unrest_reduction': 3},
+                penalties={'unrest_per_turn': 2},
+            ),
+        ]
+
+    # ========== 牌堆管理 ==========
+
+    def shuffle_deck(self):
+        """洗牌"""
+        random.shuffle(self._war_deck)
+        print("   🔀 War deck shuffled")
+
+    def draw_war(self) -> Optional[War]:
+        """抽取战争卡"""
+        if not self._war_deck:
+            # 牌堆空时，弃牌堆重洗
+            if self._war_discard:
+                print("   ♻️  Reshuffling discard pile...")
+                self._war_deck = self._war_discard
+                self._war_discard = []
+                self.shuffle_deck()
+            else:
+                return None
+
+        war = self._war_deck.pop()
+        return war
+
+    def check_imminent_wars(self) -> List[War]:
+        """检查即将爆发的战争（预警）"""
+        return [w for w in self._war_deck if w.is_imminent]
+
+    # ========== 战争查询 ==========
+
+    def get_active_wars(self) -> List[War]:
+        """获取所有活跃战争"""
+        return [w for w in self._active_wars if w.status == WarStatus.ACTIVE]
+
+    def get_war_by_id(self, war_id: str) -> Optional[War]:
+        """通过ID查找战争（搜索所有战争列表）"""
+        all_wars = self._war_deck + self._war_discard + self._active_wars + self._threats
+        for war in all_wars:
+            if war.id == war_id:
+                return war
+        return None
+
+    def get_active_wars_without_commander(self) -> List[War]:
+        """获取活跃战争中无指挥官的列表"""
+        return [w for w in self._active_wars if w.status == WarStatus.ACTIVE and w.commander_id is None]
+
+    # ========== 战争操作 ==========
+
+    def assign_commander(self, war_id: str, commander_id: int, legions: int = 0, fleets: int = 0) -> bool:
+        """指派将领和军队到战争"""
+        war = self.get_war_by_id(war_id)
+        if not war or war.status != WarStatus.ACTIVE:
+            return False
+
+        # 检查是否已有将领（需要召回）
+        if war.commander_id is not None:
+            print(f"   ⚠️  Replacing commander on {war.name}")
+
+        war.commander_id = commander_id
+        war.legions_assigned = legions
+        war.fleets_assigned = fleets
+
+        terms = TerminologyService.get()
+        print(f"   🎖️  {terms.commander} assigned to {war.name}")
+        print(f"      Forces: {legions} {terms.legion}, {fleets} {terms.fleet}")
+
+        return True
+
+    def recall_commander(self, war_id: str) -> bool:
+        """召回将领"""
+        war = self.get_war_by_id(war_id)
+        if not war:
+            return False
+
+        war.commander_id = None
+        war.legions_assigned = 0
+        war.fleets_assigned = 0
+        return True
+
+    # ========== 战争结算 ==========
 
     def check_war_victory_condition(self, war: War) -> bool:
         """检查战争胜利条件（简化版）"""
-        # MVP 0.3：通过战斗阶段CRT判定，这里仅做状态检查
         return war.status == WarStatus.RESOLVED
 
     # ========== 与GameState集成 ==========
@@ -718,11 +569,6 @@ class WarSystem:
         """从GameState恢复战争状态"""
         # 第5阶段完善
         pass
-
-    def get_active_wars(self) -> List[War]:
-        """获取所有活跃战争（过滤掉已解决的）"""
-        return [w for w in self._active_wars
-                if w.status == WarStatus.ACTIVE]
 
     def get_wars_needing_reassignment(self) -> List[War]:
         """获取需要重新指派的战争（指挥官伤亡或0军团）"""

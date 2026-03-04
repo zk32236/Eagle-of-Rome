@@ -62,13 +62,10 @@ class Legion:
             base += 1  # 老兵+1
         return base
 
-    def get_maintenance_cost(self) -> int:
-        """计算维护费"""
-        if self.status in (LegionStatus.UNRAISED, LegionStatus.DISBANDED, LegionStatus.DESTROYED):
-            return 0
-        base = 2  # 基础维护费
+    def get_maintenance_cost(self, state):
+        base = state.get_economic_rule("legion_maintenance_base", 2)
         if self.is_veteran:
-            base += 1  # 老兵更贵
+            base += state.get_economic_rule("veteran_maintenance_bonus", 1)
         return base
 
     def can_be_recruited(self, state: 'GameState') -> bool:

@@ -114,37 +114,60 @@ class MilitarySystem:
     # ========== 军团操作 ==========
 
     def recruit_legion(self, legion_number: int) -> Tuple[bool, str]:
-        """征召指定军团（支持重新招募已解散的）"""
         terms = TerminologyService.get()
         legion = self.get_legion_by_number(legion_number)
 
         if not legion:
-            return False, f"Invalid {terms.legion} number"
+            return False, f"❌ 无效军团编号"
 
-        # 检查是否可以征召（UNRAISED 或 DISBANDED）
         if legion.status not in (LegionStatus.UNRAISED, LegionStatus.DISBANDED):
-            return False, f"{legion.name} already active"
+            return False, f"⚠️ {legion.name} 当前状态无法征召"
 
-        # 检查国库
         recruit_cost = self.state.get_economic_rule("legion_recruit_cost", 10)
+
         if self.state.treasury < recruit_cost:
-            return False, f"Insufficient treasury ({recruit_cost} needed)"
+            return False, f"⚠️ 国库资金不足，需要 {recruit_cost} {terms.currency}"
 
         # 执行征召
         legion.status = LegionStatus.ACTIVE
-        legion.is_veteran = False  # 重新招募不是老兵
+        legion.is_veteran = False
         self.state.treasury -= recruit_cost
 
-        return True, f"{legion.name} recruited for {recruit_cost} {terms.currency}"
+        success_msg = f"✅ 征召 {legion.name}，花费 {recruit_cost} {terms.currency}，国库剩余 {self.state.treasury} {terms.currency}"
+        return True, success_msg
 
     def recruit_multiple(self, count: int) -> List[Tuple[int, bool, str]]:
-        """征召多个军团"""
-        results = []
+        """
+        征召多个军团，返回每个征召尝试的结果，但控制台输出为汇总信息。
+        """
+        terms = TerminologyService.get()
         available = self.get_available_legions()
+        recruit_cost = self.state.get_economic_rule("legion_recruit_cost", 10)
+        total_cost = 0
+        recruited_count = 0
+        results = []
 
-        for i, legion in enumerate(available[:count], 1):
+        for legion in available[:count]:
+            # 检查国库是否足够支付当前军团的费用
+            if self.state.treasury < recruit_cost:
+                msg = f"国库资金不足，无法继续征召（还需 {recruit_cost} {terms.currency}）"
+                results.append((legion.number, False, msg))
+                break
+
+            # 执行征召（recruit_legion 会扣款并修改状态）
             success, msg = self.recruit_legion(legion.number)
             results.append((legion.number, success, msg))
+            if success:
+                recruited_count += 1
+                total_cost += recruit_cost
+
+        # 打印汇总信息
+        if recruited_count > 0:
+            print(
+                f"      ✅ 征召 {recruited_count} 个军团，总花费 {total_cost} {terms.currency}，国库剩余 {self.state.treasury} {terms.currency}")
+        if len(results) > recruited_count:
+            failed_count = len(results) - recruited_count
+            print(f"      ⚠️ 有 {failed_count} 个军团征召失败（国库不足或其他原因）")
 
         return results
 
@@ -222,7 +245,7 @@ class MilitarySystem:
         breakdown = {}
 
         for legion in self.get_active_legions():
-            cost = legion.get_maintenance_cost()
+            cost = legion.get_maintenance_cost(self.state)
             total += cost
             breakdown[legion.name] = cost
 
@@ -305,9 +328,8 @@ class MilitarySystem:
         """获取军事摘要（已包含 DESTROYED 统计）"""
         terms = TerminologyService.get()
 
-        unraised = len([l for l in self._legions if l.status == LegionStatus.UNRAISED])
+        available = len([l for l in self._legions if l.status in (LegionStatus.UNRAISED, LegionStatus.DISBANDED)])
         active = len([l for l in self._legions if l.status in (LegionStatus.ACTIVE, LegionStatus.VETERAN)])
-        disbanded = len([l for l in self._legions if l.status == LegionStatus.DISBANDED])
         destroyed = len([l for l in self._legions if l.status == LegionStatus.DESTROYED])
         assigned = len(self.get_assigned_legions())
 
@@ -315,7 +337,7 @@ class MilitarySystem:
 
         lines = [
             f"\n   🛡️  {terms.legion} Status:",
-            f"      Available: {unraised} | Active: {active} | Disbanded: {disbanded} | Destroyed: {destroyed}",
+            f"      Available: {available} | Active: {active} | Destroyed: {destroyed}",
             f"      Assigned to wars: {assigned}",
             f"      Maintenance: {total_cost} {terms.currency}/turn",
         ]

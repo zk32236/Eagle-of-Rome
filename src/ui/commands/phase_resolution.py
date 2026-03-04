@@ -37,9 +37,12 @@ class ResolutionCommand(Command):
 
         # 1. 胜利条件检查（精简打印）
         self._check_all_conditions(terms)
+        # 2. 和约到期检查（新增）
+        self._check_truce_expiry()
+        # 3. 总督返回处理
         self._process_governor_return()
 
-        # 2. 后台功能（不打印）
+        # 4. 后台功能（不打印）
         self._process_contract_expiration(terms, verbose=False)
         self._prepare_next_year(verbose=False)
         self._apply_annual_decay(terms, verbose=False)
@@ -53,6 +56,36 @@ class ResolutionCommand(Command):
         self.state.mark_phase_executed("resolution")
         # 不打印进度条
         return True
+
+    # ================================= MVP 0.7 ===========================================
+
+    # ======== MVP 0.7.1 停战议和 =======
+
+    def _check_truce_expiry(self):
+        """检查和约是否到期，若到期则转为威胁状态"""
+        war_system = self.state.get_war_system()
+        if not war_system:
+            return
+
+        current_turn = self.state.turn.turn_number
+        # 获取所有停战中且和约已批准的战争
+        truce_wars = war_system.get_truce_wars_with_approved_treaty()
+        expired = []
+        for war in truce_wars:
+            if war.is_truce_expired(current_turn):
+                # 将战争从停战列表移至威胁列表
+                war_system._move_to_threat(war, threat_level=1)
+                war.clear_peace_treaty()
+                expired.append(war.name)
+                print(f"      ⏰ {war.name} 和约到期，重启威胁！")
+                self.state.log_event(
+                    f"{war.name} 和约到期，重启威胁",
+                    extra={'type': 'truce_expired', 'war_id': war.id}
+                )
+        if expired:
+            print(f"      📢 {len(expired)} 场战争和约到期。")
+
+    # ================================= MVP 0.1-0.5 =======================================
 
     def _process_governor_return(self):
         for province in self.state.get_all_provinces():
