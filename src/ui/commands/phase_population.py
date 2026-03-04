@@ -253,6 +253,8 @@ class PopulationCommand(Command):
                     f"军团解散: 小胜返回军团 {disbanded} 个",
                     extra={"type": "legion_disband", "count": disbanded}
                 )
+            for err in errors:
+                print(f"      ⚠️ {err}")
             ws._legions_to_disband.clear()
 
     def _process_automatic_festivals(self, candidates_by_faction: Dict[str, List[Figure]]) -> (int, int):

@@ -301,7 +301,6 @@ class SenateCommand(Command):
 
     def _execute_passed_peace_treaties(self):
         """执行通过的停战草案：记录赔款、待解散军团、到期回合"""
-
         war_system = self.state.get_war_system()
         if not war_system or not self.passed_peace_treaties:
             return
@@ -314,8 +313,15 @@ class SenateCommand(Command):
 
             war.set_peace_treaty_status('approved')
             war.set_indemnity_due(treaty['indemnity'])
+
+            # ===== 新增：召回所有军团，解除与战争的关联 =====
+            ms = self.state.get_military_system()
+            if ms:
+                ms.recall_from_war(war.id)
+
             if war.legion_numbers:
                 war_system.add_legions_to_disband(war.legion_numbers)
+
             end_turn = self.state.turn.turn_number + treaty['duration']
             war.set_truce_end_turn(end_turn)
 
