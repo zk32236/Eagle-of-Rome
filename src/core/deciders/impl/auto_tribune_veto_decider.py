@@ -9,6 +9,11 @@ class AutoTribuneVetoDecider(TribuneVetoDecider):
     """自动随机否决决策器：根据配置的概率随机决定"""
 
     def decide_veto(self, issue: Any, tribune_id: int, state: GameState) -> bool:
+
+        print(f"DEBUG: 保民官决策器收到议题: {issue}, 类型: {type(issue)}")
+        if isinstance(issue, dict):
+            print(f"      议题内容: type={issue.get('type')}, war_id={issue.get('war_id')}")
+
         chance = state.config.get("political_rules.tribune_veto_chance", 0.2)
         random_val = random.random()
         result = random_val < chance

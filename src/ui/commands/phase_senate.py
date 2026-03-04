@@ -110,11 +110,16 @@ class SenateCommand(Command):
         if peace_proposals:
             self.passed_peace_treaties = self._vote_on_peace_proposals(peace_proposals)
 
+        for war in self.passed_peace_treaties:
+            print(f"  - {war.name}")
+
         # ========== 4. 保民官否决 ==========
         tribune = self._get_tribune()
         if tribune:
             print(f"\n   🛡️ 保民官 {tribune.name} 正在审查通过的提案...")
             # 宣战否决
+            for war in self.passed_peace_treaties:
+                print(f"  - {war.name}")
             new_wars = []
             for war, consul_id, legions in passed_wars:
                 if self.veto_decider.decide_veto(war, tribune.id, self.state):
@@ -128,8 +133,8 @@ class SenateCommand(Command):
             new_peace = []
             for war in self.passed_peace_treaties:
                 issue = {'type': 'peace', 'war_id': war.id, 'treaty': war.peace_treaty}
-                veto_result = self.veto_decider.decide_vote(issue, tribune.id, self.state)
-                print(f"DEBUG: 保民官对 {war.name} 的投票结果: {veto_result}")
+                veto_result = self.veto_decider.decide_veto(issue, tribune.id, self.state)  # 修正这里
+
                 if veto_result:
                     print(f"      ❌ 保民官否决了 {war.name} 的停战草案")
                     self.state.log_event(f"保民官否决停战草案: {war.name}")
@@ -288,7 +293,7 @@ class SenateCommand(Command):
                 if war_system:
                     war_system._move_to_active(war)
 
-        print(f"DEBUG: 通过投票的停战草案数量: {len(passed)}")
+
         for war in passed:
             print(f"  - {war.name}")
 
@@ -296,12 +301,11 @@ class SenateCommand(Command):
 
     def _execute_passed_peace_treaties(self):
         """执行通过的停战草案：记录赔款、待解散军团、到期回合"""
-        print("DEBUG: 进入 _execute_passed_peace_treaties")
+
         war_system = self.state.get_war_system()
         if not war_system or not self.passed_peace_treaties:
             return
 
-        print(f"DEBUG: 待否决的停战草案数量: {len(self.passed_peace_treaties)}")
         for war in self.passed_peace_treaties:
             print(f"  - {war.name}")
             treaty = war.peace_treaty
