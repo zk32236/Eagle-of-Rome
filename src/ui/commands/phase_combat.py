@@ -34,9 +34,6 @@ class CombatCommand(Command):
         self.peace_treaty_decider = peace_treaty_decider or AutoPeaceTreatyDecider()
 
     def execute(self, args: List[str]) -> bool:
-        """
-        执行战斗阶段
-        """
         if not self.state.is_phase_executed("senate"):
             print("⚠️ 必须先执行元老院阶段 (senate)")
             return False
@@ -58,32 +55,28 @@ class CombatCommand(Command):
 
         if not active_wars:
             print("   ☮️  No active conflicts - phase skipped")
-            self.state.mark_phase_executed("combat")
-            return True
+        else:
+            # 检查未指派指挥官的战争
+            unassigned_wars = [w for w in active_wars if w.commander_id is None]
+            if unassigned_wars:
+                print(f"   ⚠️  {len(unassigned_wars)} war(s) without commanders!")
+                for war in unassigned_wars:
+                    print(f"      • {war.name}")
+                print(f"   💀 Wars continue without leadership...")
 
-        # 检查未指派指挥官的战争
-        unassigned_wars = [w for w in active_wars if w.commander_id is None]
-        if unassigned_wars:
-            print(f"   ⚠️  {len(unassigned_wars)} war(s) without commanders!")
-            for war in unassigned_wars:
-                print(f"      • {war.name}")
-            print(f"   💀 Wars continue without leadership...")
+            assigned_wars = [w for w in active_wars if w.commander_id is not None]
+            if not assigned_wars:
+                print("   ⏸️  No wars ready for combat")
+            else:
+                print(f"\n   ⚔️  Resolving {len(assigned_wars)} active conflict(s)...")
+                for war in assigned_wars:
+                    self._resolve_battle(war_system, war, terms)
 
-        assigned_wars = [w for w in active_wars if w.commander_id is not None]
-        if not assigned_wars:
-            print("   ⏸️  No wars ready for combat")
-            self.state.mark_phase_executed("combat")
-            return True
-
-        print(f"\n   ⚔️  Resolving {len(assigned_wars)} active conflict(s)...")
-
-        for war in assigned_wars:
-            self._resolve_battle(war_system, war, terms)
+        # 处理指挥官返回（无论有无战斗）
+        self._process_commanders_returning(war_system)
 
         if hasattr(self.state.turn, 'current_phase'):
             self.state.turn.current_phase = "combat"
-
-        self._process_commanders_returning(war_system)
 
         self.state.mark_phase_executed("combat")
         print(f"\n   Progress: {get_progress_bar(self.state)}")

@@ -106,7 +106,13 @@ class War:
     _original_commander_id: Optional[int] = None  # 原指挥官ID（在停战期间保留）
     _commander_assigned_turn: int = 0  # 指挥官上任回合（用于历史记录）
 
-    # ===== MVP 0.7-1 停战议和方法 =====
+    # ================================= MVP 0.7 ===========================================
+
+    # =========MVP 0.7-1 停战议和方法 ===========
+
+    def set_commander_assigned_turn(self, turn: int):
+        """设置指挥官上任回合（用于人口阶段转换后更新）"""
+        self._commander_assigned_turn = turn
 
     def set_peace_treaty_status(self, status: str):
         """设置停战草案的状态（pending/submitted/approved/rejected）"""

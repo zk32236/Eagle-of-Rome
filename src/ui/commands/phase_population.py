@@ -156,6 +156,10 @@ class PopulationCommand(Command):
             figure.office = new_office
             figure.update_influence()
 
+            # ===== 新增：更新战争中的上任回合 =====
+            if war:
+                war.set_commander_assigned_turn(current_turn)
+
             # 输出日志
             print(f"      🔄 战场指挥官 {figure.name} 转为 {new_office}，继续指挥战争。")
             self.state.log_event(
