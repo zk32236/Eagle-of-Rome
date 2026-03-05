@@ -430,7 +430,7 @@ class ForumCommand(Command):
         pass
 
     def _generate_contracts(self) -> List[Contract]:
-        """生成包税权合同和公共工程合同，返回合同列表（不竞标）"""
+        """生成包税权合同和公共工程合同，返回合同列表（仅针对已征服行省）"""
         contracts = []
         config = self.state.config
         land_price = config.get("economic_rules.land_price_per_unit", 10)
@@ -438,12 +438,12 @@ class ForumCommand(Command):
         province_tax_rate = config.get("economic_rules.province_tax_rate", 0.1)
         auction_ratio = config.get("economic_rules.tax_auction_ratio", 0.8)
 
-        # 续约合同
+        # 续约合同（仅针对已征服行省）
         for contract in self.state.contracts:
             if contract.contract_type == ContractType.TAX_FARMING and contract.status == ContractStatus.ACTIVE:
                 if contract.remaining_years == 1:
                     province = self.state.get_province(contract.province_id)
-                    if not province:
+                    if not province or not province.conquered:
                         continue
                     existing = any(c for c in self.state.contracts
                                    if c.province_id == contract.province_id
@@ -472,7 +472,7 @@ class ForumCommand(Command):
             elif contract.contract_type == ContractType.PUBLIC_WORKS and contract.status == ContractStatus.COMPLETED:
                 if contract.warranty_remaining == 1:
                     province = self.state.get_province(contract.province_id)
-                    if not province:
+                    if not province or not province.conquered:
                         continue
                     existing = any(c for c in self.state.contracts
                                    if c.province_id == contract.province_id
@@ -498,13 +498,16 @@ class ForumCommand(Command):
                         new_contract._original_budget = budget
                         contracts.append(new_contract)
 
-        # 全新合同
+        # 全新合同（仅针对已征服行省）
         for province in self.state.get_all_provinces():
+            if not province.conquered:
+                continue
             if province.province_id != 0:
                 has_tax_active = any(c for c in self.state.contracts
                                      if c.province_id == province.province_id
                                      and c.contract_type == ContractType.TAX_FARMING
-                                     and c.status in (ContractStatus.ACTIVE, ContractStatus.PENDING, ContractStatus.BUDGETED))
+                                     and c.status in (
+                                     ContractStatus.ACTIVE, ContractStatus.PENDING, ContractStatus.BUDGETED))
                 if not has_tax_active and province.land_public > 0:
                     land_value = province.land_public * land_price
                     base_income = int(land_value * private_income_rate)

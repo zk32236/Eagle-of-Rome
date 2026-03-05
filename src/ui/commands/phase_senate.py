@@ -379,10 +379,13 @@ class SenateCommand(Command):
     def _process_governor_appointments(self, terms):
         print("\n\t====================== 行省总督任命 ====================")
 
-        # 行省分类
+        # 获取所有已征服的行省
+        all_provinces = [p for p in self.state.get_all_provinces() if p.conquered]
+
+        # 行省分类（仅基于已征服行省）
         proconsul_provinces = []
         propraetor_provinces = []
-        for p in self.state.get_all_provinces():
+        for p in all_provinces:
             if p.province_id == 1:
                 proconsul_provinces.append(p)
             elif p.province_id in (2, 3):
@@ -430,7 +433,7 @@ class SenateCommand(Command):
         proconsul_assignments = assign(proconsul_provinces, consuls, used)
         propraetor_assignments = assign(propraetor_provinces, praetors, used)
 
-        # 打印分配结果
+        # 打印分配结果（不变）
         def print_assignments(title, assignments):
             print(f"\n   {title}:")
             if not assignments:
@@ -454,15 +457,15 @@ class SenateCommand(Command):
         print_assignments("执政官行省 (Proconsul)", proconsul_assignments)
         print_assignments("大法官行省 (Propraetor)", propraetor_assignments)
 
-        # 提示未被分配的行省
-        all_provinces = set(proconsul_provinces + propraetor_provinces)
+        # 提示未被分配的行省（仅针对已征服行省）
+        all_provinces_set = set(proconsul_provinces + propraetor_provinces)
         assigned_provinces = set(p for p, _ in proconsul_assignments + propraetor_assignments)
-        unassigned = all_provinces - assigned_provinces
+        unassigned = all_provinces_set - assigned_provinces
         if unassigned:
             for p in unassigned:
                 print(f"      ⚠️ {p.name} 无合格候选人，现任总督留任一年")
 
-        # 构建提案
+        # 构建提案（仅针对已征服行省）
         self.proposed_governors = []
         for prov, cand in proconsul_assignments + propraetor_assignments:
             self.proposed_governors.append({
@@ -696,9 +699,15 @@ class SenateCommand(Command):
             print("      ⚠️ 军事系统不可用，无法征召军团")
             return
 
-        if war.proposed_legions and war.proposed_legions > 0:
-            legions = war.proposed_legions
-        else:
+        # 检查战争是否已有军团，如果有则直接使用现有军团，不再征召
+        existing_legions = ms.get_legions_for_battle(war.id) if ms else []
+        if existing_legions:
+            print(f"      ℹ️ 战争已有 {len(existing_legions)} 个军团，无需征召")
+            return
+
+        # 获取应征召的军团数量
+        legions = getattr(war, 'proposed_legions', 0)
+        if legions <= 0:
             min_leg = self.state.config.get("testing.min_legions", 4)
             max_leg = self.state.config.get("testing.max_legions", 8)
             legions = random.randint(min_leg, max_leg)
@@ -707,10 +716,10 @@ class SenateCommand(Command):
         available = ms.get_available_legions()
         recruit_cost = self.state.get_economic_rule("legion_recruit_cost", 10)
 
-        max_affordable = self.state.treasury // recruit_cost
-        recruit_count = min(legions, len(available), max_affordable)
+        # 移除国库资金限制，允许负债征召
+        recruit_count = min(legions, len(available))  # 只受可用军团数和需求数限制
         if recruit_count == 0:
-            print("      ⚠️ 没有足够的国库资金或可用军团，无法征召")
+            print("      ⚠️ 没有可用军团，无法征召")
             return
 
         results = ms.recruit_multiple(recruit_count)

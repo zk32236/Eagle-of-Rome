@@ -37,16 +37,21 @@ def state():
 
 @pytest.fixture
 def provinces(state):
-    # 添加意大利（ID 0）
+    # 创建测试用行省，包括意大利
     italy = Province(0, "意大利", 0)
-    italy._land_public = state.get_national_public_land()
-    state.add_province(italy)
-    # 添加两个行省
+    italy._land_public = 1000  # 匹配国家公地初始值
+    italy._conquered = True
     p1 = Province(1, "西西里", 1000)
-    p2 = Province(2, "撒丁尼亚", 800)
+    p1._conquered = True
+    p2 = Province(2, "撒丁岛", 800)
+    p2._conquered = True
+    p3 = Province(3, "科西嘉", 600)
+    p3._conquered = True
+    state.add_province(italy)
     state.add_province(p1)
     state.add_province(p2)
-    return [italy, p1, p2]
+    state.add_province(p3)
+    return [italy, p1, p2, p3]
 
 
 @pytest.fixture
@@ -78,17 +83,17 @@ class TestForumPhaseExt:
         contracts = cmd._generate_contracts()
         tax_contracts = [c for c in contracts if c.contract_type == ContractType.TAX_FARMING]
         works_contracts = [c for c in contracts if c.contract_type == ContractType.PUBLIC_WORKS]
-        # 意大利不生成包税合同，所以包税合同数量应为行省数-1（2个）
-        assert len(tax_contracts) == 2
+        # 意大利不生成包税合同，所以包税合同数量应为总行省数-1（4-1=3）
+        assert len(tax_contracts) == 3
         # 所有行省（包括意大利）都应生成工程合同，前提是 land_public > 0
-        # 意大利 land_public 初始1000，所以生成1个，加上两个行省共3个
-        assert len(works_contracts) == 3
+        # 意大利 land_public 为1000，所以生成1个，加上3个行省共4个
+        assert len(works_contracts) == 4
 
     def test_generate_contracts_values(self, state, provinces):
         """验证生成的合同基础数据正确"""
         cmd = ForumCommand(state)
         contracts = cmd._generate_contracts()
-        # 检查包税合同
+        # 检查包税合同（以西西里为例）
         tax = next(c for c in contracts if c.contract_type == ContractType.TAX_FARMING and c.province_id == 1)
         # 预期 base_cost 根据配置计算
         land_price = 10
@@ -103,7 +108,7 @@ class TestForumPhaseExt:
         assert tax.base_cost == base_cost
         assert tax.duration_years == 5
 
-        # 检查工程合同
+        # 检查工程合同（以意大利为例）
         works = next(c for c in contracts if c.contract_type == ContractType.PUBLIC_WORKS and c.province_id == 0)
         # 意大利工程预算
         infra_rate = 0.01

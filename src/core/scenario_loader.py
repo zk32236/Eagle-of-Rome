@@ -92,7 +92,7 @@ class ScenarioLoader:
     def _assign_initial_governors(state: GameState):
         print("\n🏛️ 初始化行省总督：")
         for province in state.get_all_provinces():
-            if province.province_id == 0:
+            if province.province_id == 0 or not province.conquered:  # 跳过意大利和未征服行省
                 continue
             office_type = "consul" if province.governor_type == "proconsul" else "praetor"
             candidates = []
@@ -108,8 +108,8 @@ class ScenarioLoader:
                 province._governor_id = governor.id
                 province._governor_since = state.turn.turn_number
                 governor.is_absent = True
-                governor.office = province.governor_type  # 设置官职
-                governor.update_influence()  # 更新影响力（包含官职加成）
+                governor.office = province.governor_type
+                governor.update_influence()
                 print(f"   ✅ {province.name} ({province.governor_type}) 初始总督: {governor.get_formal_name()}")
             else:
                 print(f"   ⚠️ {province.name} 无合格候选人，留空")

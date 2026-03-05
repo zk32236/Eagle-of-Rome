@@ -66,7 +66,7 @@
       "standoff_numbers": [5, 6, 7, 8, 9],
       "is_imminent": false,
       "matched_war_id": null,
-      "unlocked_provinces": []
+      "unlocked_provinces": [1]
     },
     {
       "id": "first_punic_war",

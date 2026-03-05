@@ -4,6 +4,7 @@ from typing import List, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.scenario_loader import ScenarioLoader
 from src.core.localization import TerminologyService
+from src.core.entities.figure import ClassTier
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -34,10 +35,11 @@ class LoadCommand(Command):
             provinces = self.state.get_all_provinces()
             province_names = []
             for p in provinces:
-                if p.province_id == 0:
-                    province_names.append("意大利(本土)")
-                else:
-                    province_names.append(p.name)
+                if p.conquered:
+                    if p.province_id == 0:
+                        province_names.append("意大利(本土)")
+                    else:
+                        province_names.append(p.name)
             territory = ", ".join(province_names)
 
             # 打印启动时间戳

@@ -1,5 +1,4 @@
 # src/core/entities/legion.py
-# 修改内容：增加 DESTROYED 状态，添加 destroyed_turn 字段和 mark_destroyed 方法
 
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
@@ -7,12 +6,12 @@ from enum import Enum, auto
 
 
 class LegionStatus(Enum):
-    """军团状态"""
-    UNRAISED = auto()      # 未征召（在兵营中）
-    ACTIVE = auto()         # 活跃（已指派）
-    VETERAN = auto()        # 老兵（经历过战斗）
-    DISBANDED = auto()      # 已解散
-    DESTROYED = auto()      # 新增：被摧毁（等待恢复）
+    UNRAISED = "unraised"      # 尚未征召
+    AVAILABLE = "available"    # 可用（已征召但未指派）
+    ACTIVE = "active"          # 在战争中
+    RECALLING = "recalling"    # 召回中
+    DISBANDED = "disbanded"    # 已解散
+    DESTROYED = "destroyed"    # 被摧毁
 
 
 @dataclass
@@ -69,7 +68,7 @@ class Legion:
         return base
 
     def can_be_recruited(self, state: 'GameState') -> bool:
-        """检查是否可以征召（允许从 DISBANDED 恢复的军团征召）"""
+        """检查是否可以征召（允许从 UNRAISED 或 DISBANDED 征召）"""
         return self.status in (LegionStatus.UNRAISED, LegionStatus.DISBANDED)
 
     def can_be_disbanded(self, state: 'GameState') -> bool:
@@ -77,35 +76,41 @@ class Legion:
         # 不能在战斗中解散
         if self.war_id:
             return False
-        return self.status in (LegionStatus.ACTIVE, LegionStatus.VETERAN)
+        # 已解散或摧毁的不能再次解散
+        if self.status in (LegionStatus.DISBANDED, LegionStatus.DESTROYED):
+            return False
+        return self.status in (LegionStatus.ACTIVE, LegionStatus.AVAILABLE, LegionStatus.RECALLING)
 
     def recruit(self, state: 'GameState') -> bool:
         """征召军团"""
         if not self.can_be_recruited(state):
             return False
-        self.status = LegionStatus.ACTIVE
+        self.status = LegionStatus.AVAILABLE
         return True
 
     def assign_to_war(self, war_id: str, commander_id: int) -> bool:
         """指派到战争"""
-        if self.status not in (LegionStatus.ACTIVE, LegionStatus.VETERAN):
+        if self.status not in (LegionStatus.AVAILABLE, LegionStatus.ACTIVE):
             return False
         self.war_id = war_id
         self.commander_id = commander_id
+        self.status = LegionStatus.ACTIVE
         return True
 
     def recall(self) -> bool:
         """从战争召回"""
         self.war_id = None
         self.commander_id = None
+        self.status = LegionStatus.AVAILABLE
         return True
 
     def disband(self) -> bool:
         """解散军团"""
         if not self.can_be_disbanded(None):
             return False
+        self.war_id = None
+        self.commander_id = None
         self.status = LegionStatus.DISBANDED
-        self.recall()
         return True
 
     def promote_to_veteran(self):
@@ -134,45 +139,48 @@ class Legion:
 
     def recover(self):
         """
-        恢复军团（由外部调用，将 DESTROYED 转为 DISBANDED）。
+        恢复军团（由外部调用，将 DESTROYED 转为 AVAILABLE 或 DISBANDED）。
         返回 True 表示恢复成功。
         """
         if self.status != LegionStatus.DESTROYED:
             return False
-        self.status = LegionStatus.DISBANDED
+        self.status = LegionStatus.DISBANDED  # 或 AVAILABLE，根据设计决定
         self._destroyed_turn = 0
         return True
 
-    def to_display_dict(self) -> Dict[str, Any]:
-        """转换为显示字典（已包含 DESTROYED 状态）"""
-        from src.core.localization import TerminologyService
-        terms = TerminologyService.get()
-
+    def to_display_dict(self, state=None):
+        """返回用于显示的字典（可传入 state 用于计算维护费）"""
+        # 使用状态值（字符串）映射 emoji
         status_emoji = {
-            LegionStatus.UNRAISED: "⚪",
-            LegionStatus.ACTIVE: "🟢",
-            LegionStatus.VETERAN: "⭐",
-            LegionStatus.DISBANDED: "⚫",
-            LegionStatus.DESTROYED: "💀",  # 新增
-        }.get(self.status, "❓")
+            "unraised": "⚪",
+            "available": "🟢",
+            "active": "⚔️",
+            "recalling": "🔙",
+            "disbanded": "💀",
+            "destroyed": "💀",
+        }.get(self.status.value, "❓")
 
         return {
-            'name': self.name,
             'number': self.number,
-            'status': self.status.name,
-            'emoji': status_emoji,
+            'name': self.name,
+            'status': self.status.value,
+            'status_emoji': status_emoji,
+            'is_veteran': self.is_veteran,
+            'experience': getattr(self, 'experience', 0),  # 防止没有 experience 属性
+            'war_id': self.war_id,
+            'destroyed_turn': self.destroyed_turn,
+            'cost': self.get_maintenance_cost(state) if state else 0,
             'strength': self.get_combat_strength(),
-            'cost': self.get_maintenance_cost(),
-            'veteran': self.is_veteran,
             'assigned': self.war_id is not None,
         }
 
     def __repr__(self) -> str:
         status_emoji = {
             LegionStatus.UNRAISED: "⚪",
-            LegionStatus.ACTIVE: "🟢",
-            LegionStatus.VETERAN: "⭐",
-            LegionStatus.DISBANDED: "⚫",
+            LegionStatus.AVAILABLE: "🟢",
+            LegionStatus.ACTIVE: "⚔️",
+            LegionStatus.RECALLING: "🔙",
+            LegionStatus.DISBANDED: "💀",
             LegionStatus.DESTROYED: "💀",
         }.get(self.status, "❓")
 

@@ -68,6 +68,8 @@ def figures(state):
     return [fig1, fig2, fig3, fig4, fig5]
 
 def test_governor_appointment_order(state, provinces, figures):
+    for p in provinces:
+        p._conquered = True
     cmd = SenateCommand(state)
     # 清除保民官
     for fig in state.get_living_members():
@@ -94,6 +96,8 @@ def test_governor_appointment_order(state, provinces, figures):
 
 def test_tribune_veto_some(state, provinces, figures):
     """测试保民官否决部分任命"""
+    for p in provinces:
+        p._conquered = True
     cmd = SenateCommand(state)
     # 添加保民官
     tribune = Figure(id=301, name="Tribune", faction_id="plebs", age=35)

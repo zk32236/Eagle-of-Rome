@@ -54,16 +54,17 @@ class ProvinceCommand(Command):
 
     def execute(self, args: List[str]) -> bool:
         if not args:
-            # 显示所有行省概要
-            provinces = self.state.get_all_provinces()
+            # 显示所有已征服行省概要
+            provinces = [p for p in self.state.get_all_provinces() if p.conquered]
             if not provinces:
-                print("   📭 没有行省数据")
+                print("   📭 没有已征服的行省数据")
                 return True
 
             print("\n" + "=" * 80)
-            print("   🏛️ 行省状态一览")
+            print("   🏛️ 已征服行省状态一览")
             print("=" * 80)
-            print(f"{'ID':<4} {'名称':<12} {'类型':<10} {'总督':<16} {'民怨':<4} {'包税合同':<16} {'工程合同':<16} {'控制派系':<12}")
+            print(
+                f"{'ID':<4} {'名称':<12} {'类型':<10} {'总督':<16} {'民怨':<4} {'包税合同':<16} {'工程合同':<16} {'控制派系':<12}")
             print("-" * 80)
 
             for p in provinces:
@@ -76,7 +77,8 @@ class ProvinceCommand(Command):
                 tax_info = self._format_contract_info(p.tax_contract_id)
                 proj_info = self._format_contract_info(p.project_contract_id)
                 controller = self._get_controlling_faction(p.province_id) or "无"
-                print(f"{p.province_id:<4} {name:<12} {gov_type:<10} {gov_name:<16} {p.grievance:<4} {tax_info:<16} {proj_info:<16} {controller:<12}")
+                print(
+                    f"{p.province_id:<4} {name:<12} {gov_type:<10} {gov_name:<16} {p.grievance:<4} {tax_info:<16} {proj_info:<16} {controller:<12}")
             print("=" * 80)
             return True
 
@@ -90,6 +92,9 @@ class ProvinceCommand(Command):
         province = self.state.get_province(pid)
         if not province:
             print(f"❌ 行省ID {pid} 不存在")
+            return False
+        if not province.conquered:
+            print(f"❌ 行省ID {pid} 尚未征服")
             return False
 
         print("\n" + "=" * 60)

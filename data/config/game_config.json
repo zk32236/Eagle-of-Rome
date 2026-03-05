@@ -8,7 +8,7 @@
     "max_legions": 8,
     "budget_always_pass": false,
     "war_always_pass": false,
-    "force_battle_result": ""
+    "force_battle_result": "TRIUMPH"
   },
   "logging": {
     "enabled": true,

@@ -46,9 +46,8 @@ class MilitarySystem:
                 if l.status in (LegionStatus.UNRAISED, LegionStatus.DISBANDED)]
 
     def get_active_legions(self) -> List[Legion]:
-        """获取已征召的活跃军团（ACTIVE 和 VETERAN）"""
-        return [l for l in self._legions
-                if l.status in (LegionStatus.ACTIVE, LegionStatus.VETERAN)]
+        """获取已征召的活跃军团（ACTIVE 状态）"""
+        return [l for l in self._legions if l.status == LegionStatus.ACTIVE]
 
     def get_assigned_legions(self) -> List[Legion]:
         """获取已指派到战争的军团"""
@@ -205,7 +204,7 @@ class MilitarySystem:
                 errors.append(f"Invalid {terms.legion} {num}")
                 continue
 
-            if legion.status not in (LegionStatus.ACTIVE, LegionStatus.VETERAN):
+            if legion.status != LegionStatus.ACTIVE:  # 修改：只有 ACTIVE 才能指派
                 errors.append(f"{legion.name} not active")
                 continue
 
@@ -329,7 +328,7 @@ class MilitarySystem:
         terms = TerminologyService.get()
 
         available = len([l for l in self._legions if l.status in (LegionStatus.UNRAISED, LegionStatus.DISBANDED)])
-        active = len([l for l in self._legions if l.status in (LegionStatus.ACTIVE, LegionStatus.VETERAN)])
+        active = len([l for l in self._legions if l.status == LegionStatus.ACTIVE])  # 修改：只统计 ACTIVE
         destroyed = len([l for l in self._legions if l.status == LegionStatus.DESTROYED])
         assigned = len(self.get_assigned_legions())
 
@@ -350,13 +349,13 @@ class MilitarySystem:
         print(f"\n   🛡️  {terms.legion} Status (10 total):")
 
         for legion in self._legions:
-            info = legion.to_display_dict()
-            status = info['emoji']
-            vet = "⭐" if info['veteran'] else " "
+            info = legion.to_display_dict(self.state)
+            status_emoji = info['status_emoji']  # 修改：从 status_emoji 获取
+            vet = "⭐" if info['is_veteran'] else " "  # 修改：使用 is_veteran
             cost = info['cost']
             war = f"→War" if info['assigned'] else ""
             destroyed_info = f" (摧毁于{legion.destroyed_turn})" if legion.status == LegionStatus.DESTROYED else ""
-            print(f"      {status} {info['name']}{vet}[Cost:{cost}] {war}{destroyed_info}")
+            print(f"      {status_emoji} {info['name']}{vet}[Cost:{cost}] {war}{destroyed_info}")
 
     # ========== 新增：解散军团（用于战争结束） ==========
     def disband_legions_for_war(self, legion_numbers: List[int]) -> Tuple[int, List[str]]:

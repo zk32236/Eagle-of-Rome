@@ -9,6 +9,8 @@ from src.core.game_state import GameState
 print("GameState file:", inspect.getfile(GameState))
 print("log_event signature:", inspect.signature(GameState.log_event))
 from pathlib import Path
+import pytest
+from src.core.entities.entities import Province
 
 # 将项目根目录加入 sys.path
 project_root = Path(__file__).parent.parent.parent
@@ -24,7 +26,8 @@ from src.core.game_state import GameState
 
 @pytest.fixture
 def sample_province():
-    return Province(1, "西西里", 1000)
+    """创建一个测试用行省"""
+    return Province(province_id=1, name="西西里", total_land=1000)
 
 @pytest.fixture
 def sample_knight():
