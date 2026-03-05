@@ -213,7 +213,7 @@ class TestWarRewards:
     def test_rewards_with_land(self, state, war_system, war, commander):
         """测试土地奖励加入国家公地"""
         # 添加土地奖励
-        war.rewards["land"] = 500
+        war._rewards["land"] = 500  # 直接修改内部字典，而非 war.rewards
         war_system._active_wars.append(war)
 
         national_land_before = state.get_national_public_land()
@@ -227,7 +227,7 @@ class TestWarRewards:
         """测试家族声望增加"""
         # 初始声望
         commander.family_prestige = 3
-        war.rewards["family_prestige"] = 2
+        war._rewards["family_prestige"] = 2  # 直接修改内部字典
 
         war_system._active_wars.append(war)
 

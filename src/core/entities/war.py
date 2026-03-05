@@ -1,340 +1,425 @@
 # src/core/entities/war.py
 
-from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
-from enum import Enum, auto
-
+from enum import Enum
 
 class WarStatus(Enum):
-    """战争状态"""
-    INACTIVE = auto()      # 未激活（在牌堆中）
-    THREAT = auto()        # 威胁中（未爆发，但已触发）
-    ACTIVE = auto()        # 活跃（正在进行）
-    RESOLVED = auto()      # 已解决（胜利）
-    DEFEATED = auto()      # 失败
-    STALEMATE = auto()     # 僵持（未分胜负）
-    TRUCE = auto()         # 新增：停战状态
-
+    INACTIVE = "inactive"
+    THREAT = "threat"
+    ACTIVE = "active"
+    TRUCE = "truce"
+    RESOLVED = "resolved"
+    DEFEATED = "defeated"
 
 class WarType(Enum):
-    """战争类型"""
-    FOREIGN = auto()  # 外敌入侵
-    CIVIL = auto()  # 内战
-    BARBARIAN = auto()  # 蛮族入侵
-    PROVINCIAL = auto()  # 行省叛乱
+    BARBARIAN = "barbarian"
+    FOREIGN = "foreign"
+    PROVINCIAL = "provincial"
+    CIVIL = "civil"
 
-
-@dataclass
 class War:
-    """
-    战争实体 - 对应战争卡
+    """战争实体"""
 
-    属性设计基于《罗马共和》桌游战争卡机制：
-    - 强度：决定战斗难度
-    - 海军需求：是否需要舰队
-    - 奖励：胜利后的收益
-    - 惩罚：拖延的代价
-    """
+    def __init__(
+        self,
+        id: str,
+        name: str,
+        description: str = "",
+        war_type: WarType = WarType.FOREIGN,
+        start_year: int = 0,
+        threat_level: int = 0,
+        auto_escalate: bool = True,
+        escalate_rate: int = 1,
+        strength: int = 5,
+        naval_support_required: bool = False,
+        naval_strength: int = 0,
+        land_battle: bool = True,
+        disaster_numbers: List[int] = None,
+        standoff_numbers: List[int] = None,
+        rewards: Dict[str, int] = None,
+        penalties: Dict[str, int] = None,
+        is_imminent: bool = False,
+        matched_war_id: Optional[str] = None,
+        # ---------- MVP 0.7-2 新增 ----------
+        unlocked_provinces: List[int] = None,
+    ):
+        self._id = id
+        self._name = name
+        self._description = description
+        self._war_type = war_type
+        self._start_year = start_year
+        self._threat_level = threat_level
+        self._auto_escalate = auto_escalate
+        self._escalate_rate = escalate_rate
+        self._strength = strength
+        self._naval_support_required = naval_support_required
+        self._naval_strength = naval_strength
+        self._land_battle = land_battle
+        self._disaster_numbers = disaster_numbers or [2, 3, 4]
+        self._standoff_numbers = standoff_numbers or [5, 6, 7, 8, 9]
+        self._rewards = rewards or {}
+        self._penalties = penalties or {}
+        self._is_imminent = is_imminent
+        self._matched_war_id = matched_war_id
 
-    # 基础信息
-    id: str
-    name: str
-    description: str = ""
+        # 运行时字段
+        self._status = WarStatus.INACTIVE
+        self._commander_id: Optional[int] = None
+        self._legions_assigned: int = 0
+        self._fleets_assigned: int = 0
+        self._activation_turn: Optional[int] = None
+        self._duration: int = 0
+        self._commander_status: str = "active"
+        self._soldier_share: int = 0
+        self._triumph_commander_id: Optional[int] = None
+        self._triumph_approved: bool = False
+        self._original_commander_id: Optional[int] = None
+        self._commander_assigned_turn: Optional[int] = None
+        self._peace_treaty: Optional[Dict] = None
+        self._indemnity_due: int = 0
+        self._truce_end_turn: Optional[int] = None
+        self._legion_numbers: List[int] = []
 
-    # 战争类型与状态
-    war_type: WarType = WarType.FOREIGN
-    status: WarStatus = WarStatus.INACTIVE
-    start_year: int = 0  # 预设开始年份（例如 -280）
-    threat_level: int = 0  # 1=外交冲突,2=大军压境,3=战争爆发
-    auto_escalate: bool = True  # 是否自动升级
-    escalate_rate: int = 1  # 每回合升级点数
+        # ---------- MVP 0.7-2 新增 ----------
+        self._unlocked_provinces = unlocked_provinces or []
 
-    _triggered_this_turn: bool = False  # 标记是否在本回合刚触发
-
-    # 军事属性
-    strength: int = 5  # 基础强度（战斗难度）
-    naval_support_required: bool = False  # 是否需要海军支援
-    naval_strength: int = 0  # 海军战斗强度（如需要）
-    proposed_legions: int = 0  # 元老院批准的最大军团数
-    declared_by: Optional[int] = None  # 宣战的执政官 ID
-
-    # 土地战斗属性
-    land_battle: bool = True  # 是否进行陆战
-    disaster_numbers: List[int] = field(default_factory=list)  # CRT灾难骰点
-    standoff_numbers: List[int] = field(default_factory=list)  # CRT僵持骰点
-
-    # 🆕 指挥官状态追踪（新增）
-    commander_status: str = "active"  # active/killed/fled/captured/wounded
-    commander_casualty_turn: int = 0
-
-    # 奖励（胜利时）
-    rewards: Dict[str, Any] = field(default_factory=dict)
-
-    # 包含：treasury（国库）, influence（影响力）, popularity（声望）,
-    #       unrest_reduction（动乱减少）, land_bill（土地法案）等
-    _soldier_share: int = 0  # 待凯旋的士兵份额
-    _legion_numbers: List[int] = field(default_factory=list)  # 参与该战争的军团编号
-    _triumph_approved: bool = False  # 是否已批准凯旋
-
-
-    # 惩罚（拖延时）
-    penalties: Dict[str, Any] = field(default_factory=dict)
-    # 包含：unrest_per_turn（每回合动乱）, treasury_cost（国库消耗）,
-    #       drought（干旱）, famine（饥荒）等
-
-    # 特殊属性
-    is_imminent: bool = False  # 是否即将爆发（预警状态）
-    matched_war_id: Optional[str] = None  # 配对的战争（如布匿战争分多个阶段）
-
-    # 游戏状态
-    activation_turn: int = 0  # 激活回合
-    duration: int = 0  # 已持续回合数
-    commander_id: Optional[int] = None  # 指派将领ID
-    _triumph_commander_id: Optional[int] = None   # 凯旋时保留的指挥官ID
-    legions_assigned: int = 0  # 指派军团数
-    fleets_assigned: int = 0  # 指派舰队数
-
-    # 历史记录
-    battle_history: List[Dict] = field(default_factory=list)  # 战斗历史
-    commander_status: str = "active"  # active/fled/killed/captured
-    commander_casualty_turn: int = 0  # 伤亡回合
-
-    # ===== 停战议和 =====
-    _peace_treaty: Optional[Dict] = None  # 草案字典
-    _indemnity_due: int = 0  # 待结算赔款（正：收入，负：支出）
-    _truce_end_turn: int = 0  # 和约到期回合
-    _original_commander_id: Optional[int] = None  # 原指挥官ID（在停战期间保留）
-    _commander_assigned_turn: int = 0  # 指挥官上任回合（用于历史记录）
-
-    # ================================= MVP 0.7 ===========================================
-
-    # =========MVP 0.7-1 停战议和方法 ===========
-
-    def set_commander_assigned_turn(self, turn: int):
-        """设置指挥官上任回合（用于人口阶段转换后更新）"""
-        self._commander_assigned_turn = turn
-
-    def set_peace_treaty_status(self, status: str):
-        """设置停战草案的状态（pending/submitted/approved/rejected）"""
-        if self._peace_treaty:
-            self._peace_treaty['status'] = status
-
-    def set_peace_treaty_field(self, key: str, value):
-        """设置停战草案的特定字段（谨慎使用）"""
-        if self._peace_treaty:
-            self._peace_treaty[key] = value
-
-    def assign_commander(self, commander_id: int, assigned_turn: int) -> None:
-        """指派指挥官，记录上任回合"""
-        self.commander_id = commander_id
-        self._commander_assigned_turn = assigned_turn
+    # ---------- 属性访问器 ----------
+    @property
+    def id(self) -> str:
+        return self._id
 
     @property
-    def peace_treaty(self) -> Optional[Dict]:
-        """获取草案字典（只读）"""
-        return self._peace_treaty.copy() if self._peace_treaty else None
-
-    def set_peace_treaty(self, treaty: Dict) -> None:
-        """设置草案，必须包含 indemnity, duration, generated_turn 字段"""
-        required_keys = {'indemnity', 'duration', 'generated_turn'}
-        if not required_keys.issubset(treaty.keys()):
-            raise ValueError(f"Peace treaty must contain {required_keys}")
-        # 保证状态字段存在
-        treaty['status'] = treaty.get('status', 'pending')
-        self._peace_treaty = treaty
-
-    def clear_peace_treaty(self) -> None:
-        """清除草案"""
-        self._peace_treaty = None
+    def name(self) -> str:
+        return self._name
 
     @property
-    def indemnity_due(self) -> int:
-        return self._indemnity_due
-
-    def set_indemnity_due(self, amount: int) -> None:
-        self._indemnity_due = amount
+    def description(self) -> str:
+        return self._description
 
     @property
-    def truce_end_turn(self) -> int:
-        return self._truce_end_turn
-
-    def set_truce_end_turn(self, end_turn: int) -> None:
-        self._truce_end_turn = end_turn
-
-    def is_truce_expired(self, current_turn: int) -> bool:
-        """检查和约是否到期"""
-        return self._truce_end_turn > 0 and current_turn >= self._truce_end_turn
+    def war_type(self) -> WarType:
+        return self._war_type
 
     @property
-    def original_commander_id(self) -> Optional[int]:
-        return self._original_commander_id
-
-    def set_original_commander(self, commander_id: int, assigned_turn: int) -> None:
-        """设置原指挥官及其上任回合（用于停战后记录）"""
-        self._original_commander_id = commander_id
-        self._commander_assigned_turn = assigned_turn
+    def start_year(self) -> int:
+        return self._start_year
 
     @property
-    def commander_assigned_turn(self) -> int:
-        return self._commander_assigned_turn
+    def threat_level(self) -> int:
+        return self._threat_level
 
-    #====================== MVP 0.5方法 =====================
+    @threat_level.setter
+    def threat_level(self, value: int):
+        self._threat_level = value
 
-    def __post_init__(self):
-        """初始化后处理"""
-        if not self.disaster_numbers:
-            # 默认灾难骰点：2-4（低骰点灾难）
-            self.disaster_numbers = [2, 3, 4]
-        if not self.standoff_numbers:
-            # 默认僵持骰点：5-9（中等骰点僵持）
-            self.standoff_numbers = [5, 6, 7, 8, 9]
+    @property
+    def auto_escalate(self) -> bool:
+        return self._auto_escalate
 
-    def get_total_strength(self) -> int:
-        """计算总强度（基础+持续时间加成）"""
-        # 拖延越久，敌人越强
-        duration_bonus = self.duration // 3  # 每3回合+1强度
-        return self.strength + duration_bonus
+    @property
+    def escalate_rate(self) -> int:
+        return self._escalate_rate
 
-    def get_naval_strength_required(self) -> int:
-        """获取所需海军强度"""
-        if not self.naval_support_required:
-            return 0
-        return self.naval_strength or (self.strength // 2)
+    @property
+    def strength(self) -> int:
+        return self._strength
 
-    def is_disaster_roll(self, roll: int) -> bool:
-        """检查是否为灾难骰点"""
-        return roll in self.disaster_numbers
+    @property
+    def naval_support_required(self) -> bool:
+        return self._naval_support_required
 
-    def is_standoff_roll(self, roll: int) -> bool:
-        """检查是否为僵持骰点"""
-        return roll in self.standoff_numbers
+    @property
+    def naval_strength(self) -> int:
+        return self._naval_strength
 
-    def apply_penalties(self, state: 'GameState') -> List[str]:
-        """应用拖延惩罚，返回事件日志"""
-        from src.core.localization import TerminologyService
-        terms = TerminologyService.get()
+    @property
+    def land_battle(self) -> bool:
+        return self._land_battle
 
-        events = []
+    @property
+    def disaster_numbers(self) -> List[int]:
+        return self._disaster_numbers
 
-        # 动乱增加
-        unrest = self.penalties.get('unrest_per_turn', 0)
-        if unrest:
-            events.append(f"{terms.unrest} +{unrest} from prolonged war")
+    @property
+    def standoff_numbers(self) -> List[int]:
+        return self._standoff_numbers
 
-        # 国库消耗
-        cost = self.penalties.get('treasury_cost', 0)
-        if cost:
-            events.append(f"{terms.treasury} -{cost} {terms.currency} war expense")
+    @property
+    def rewards(self) -> Dict[str, int]:
+        return self._rewards.copy()
 
-        # 特殊事件
-        if 'drought' in self.penalties:
-            events.append("Drought strikes the countryside!")
-        if 'famine' in self.penalties:
-            events.append("Famine spreads through the provinces!")
+    @property
+    def penalties(self) -> Dict[str, int]:
+        return self._penalties.copy()
 
-        return events
+    @property
+    def is_imminent(self) -> bool:
+        return self._is_imminent
 
-    def calculate_rewards(self) -> Dict[str, int]:
-        """计算胜利奖励"""
-        base_rewards = dict(self.rewards)
+    @property
+    def matched_war_id(self) -> Optional[str]:
+        return self._matched_war_id
 
-        # 根据持续时间调整奖励（拖延太久奖励减少）
-        if self.duration > 5:
-            base_rewards['treasury'] = base_rewards.get('treasury', 0) // 2
+    @property
+    def status(self) -> WarStatus:
+        return self._status
 
-        return base_rewards
+    @status.setter
+    def status(self, value: WarStatus):
+        self._status = value
 
-    def to_display_dict(self) -> Dict[str, Any]:
-        """转换为显示用字典"""
-        from src.core.localization import TerminologyService
-        terms = TerminologyService.get()
+    @property
+    def commander_id(self) -> Optional[int]:
+        return self._commander_id
 
-        return {
-            'name': self.name,
-            'strength': self.get_total_strength(),
-            'base_strength': self.strength,
-            'duration': self.duration,
-            'naval_required': self.naval_support_required,
-            'naval_strength': self.get_naval_strength_required(),
-            'status': self.status.name,
-            'rewards': self.calculate_rewards(),
-            'penalties': self.penalties,
-            'commander': self.commander_id,
-            'forces': f"{self.legions_assigned}{terms.legion}+{self.fleets_assigned}{terms.fleet}",
-        }
+    @commander_id.setter
+    def commander_id(self, value: Optional[int]):
+        self._commander_id = value
 
-    def __repr__(self) -> str:
-        status_emoji = {
-            WarStatus.INACTIVE: "⚪",
-            WarStatus.ACTIVE: "🔴",
-            WarStatus.RESOLVED: "✅",
-            WarStatus.DEFEATED: "❌",
-            WarStatus.STALEMATE: "⏸️",
-        }.get(self.status, "❓")
+    @property
+    def legions_assigned(self) -> int:
+        return self._legions_assigned
 
-        naval = "⚓" if self.naval_support_required else ""
-        return f"{status_emoji} {self.name}{naval}[Str:{self.get_total_strength()}]"
+    @legions_assigned.setter
+    def legions_assigned(self, value: int):
+        self._legions_assigned = value
 
-    def is_commander_available(self) -> bool:
-        """检查指挥官是否可用"""
-        if self.commander_id is None:
-            return False
-        return self.commander_status == "active"
+    @property
+    def fleets_assigned(self) -> int:
+        return self._fleets_assigned
 
-    def report_commander_casualty(self, status: str, turn: int):
-        """报告指挥官伤亡"""
-        self.commander_status = status
-        self.commander_casualty_turn = turn
-        # 注意：不立即清除 commander_id，用于显示历史
+    @fleets_assigned.setter
+    def fleets_assigned(self, value: int):
+        self._fleets_assigned = value
 
-    def is_commander_available(self) -> bool:
-        """检查指挥官是否可用"""
-        return self.commander_status == "active" and self.commander_id is not None
+    @property
+    def activation_turn(self) -> Optional[int]:
+        return self._activation_turn
 
-    def report_commander_casualty(self, status: str, turn: int):
-        """报告指挥官伤亡"""
-        self.commander_status = status
-        self.commander_casualty_turn = turn
+    @activation_turn.setter
+    def activation_turn(self, value: Optional[int]):
+        self._activation_turn = value
+
+    @property
+    def duration(self) -> int:
+        return self._duration
+
+    @duration.setter
+    def duration(self, value: int):
+        self._duration = value
+
+    @property
+    def commander_status(self) -> str:
+        return self._commander_status
 
     @property
     def soldier_share(self) -> int:
-        """返回待凯旋的士兵份额"""
         return self._soldier_share
 
-    def set_soldier_share(self, value: int):
-        """设置士兵份额（通常在战斗结算时调用）"""
-        self._soldier_share = value
-
-    def clear_soldier_share(self):
-        """清零士兵份额（凯旋处理后调用）"""
-        self._soldier_share = 0
-
     @property
-    def legion_numbers(self) -> List[int]:
-        """返回参与该战争的军团编号列表副本"""
-        return self._legion_numbers.copy()
-
-    def add_legion_number(self, number: int):
-        """添加军团编号（在指派时调用）"""
-        if number not in self._legion_numbers:
-            self._legion_numbers.append(number)
-
-    def clear_legion_numbers(self):
-        """清空军团编号（解散后调用）"""
-        self._legion_numbers.clear()
+    def triumph_commander_id(self) -> Optional[int]:
+        return self._triumph_commander_id
 
     @property
     def triumph_approved(self) -> bool:
         return self._triumph_approved
 
-    def set_triumph_approved(self, value: bool = True):
-        self._triumph_approved = value
+    @property
+    def original_commander_id(self) -> Optional[int]:
+        return self._original_commander_id
 
     @property
-    def triumph_commander_id(self) -> Optional[int]:
-        """获取凯旋时保留的指挥官ID"""
-        return self._triumph_commander_id
+    def commander_assigned_turn(self) -> Optional[int]:
+        return self._commander_assigned_turn
+
+    @property
+    def peace_treaty(self) -> Optional[Dict]:
+        return self._peace_treaty
+
+    @property
+    def indemnity_due(self) -> int:
+        return self._indemnity_due
+
+    @property
+    def truce_end_turn(self) -> Optional[int]:
+        return self._truce_end_turn
+
+    @property
+    def legion_numbers(self) -> List[int]:
+        return self._legion_numbers.copy()
+
+    # ---------- MVP 0.7-2 新增属性 ----------
+    @property
+    def unlocked_provinces(self) -> List[int]:
+        """返回战争胜利后解锁的行省ID列表（只读副本）。"""
+        return self._unlocked_provinces.copy()
+
+    # ---------- 公共方法 ----------
+    def get_total_strength(self) -> int:
+        """获取敌国总战力（含海军）。"""
+        total = self._strength
+        if self._naval_support_required:
+            total += self._naval_strength
+        return total
+
+    def is_disaster_roll(self, dice: int) -> bool:
+        return dice in self._disaster_numbers
+
+    def is_standoff_roll(self, dice: int) -> bool:
+        return dice in self._standoff_numbers
+
+    def calculate_rewards(self) -> Dict[str, int]:
+        return self._rewards.copy()
+
+    def apply_penalties(self, state) -> List[str]:
+        # 简化实现，实际应引用 GameState
+        return []
+
+    def set_soldier_share(self, amount: int):
+        self._soldier_share = amount
 
     def set_triumph_commander(self, commander_id: int):
-        """设置凯旋指挥官（在胜利时调用）"""
         self._triumph_commander_id = commander_id
+
+    def set_triumph_approved(self, approved: bool):
+        self._triumph_approved = approved
+
+    def set_original_commander(self, commander_id: int, assigned_turn: int):
+        self._original_commander_id = commander_id
+        self._commander_assigned_turn = assigned_turn
+
+    def set_peace_treaty(self, treaty: Dict):
+        """设置和约，若未指定 status 则默认为 'pending'"""
+        if 'status' not in treaty:
+            treaty['status'] = 'pending'
+        self._peace_treaty = treaty
+
+    def set_peace_treaty_status(self, status: str):
+        if self._peace_treaty:
+            self._peace_treaty["status"] = status
+
+    def set_indemnity_due(self, amount: int):
+        self._indemnity_due = amount
+
+    def set_truce_end_turn(self, turn: int):
+        self._truce_end_turn = turn
+
+    def clear_peace_treaty(self):
+        self._peace_treaty = None
+
+    def add_legion_number(self, legion_num: int):
+        if legion_num not in self._legion_numbers:
+            self._legion_numbers.append(legion_num)
+
+    def clear_legion_numbers(self):
+        self._legion_numbers.clear()
+
+    def report_commander_casualty(self, status: str, turn: int):
+        self._commander_status = status
+        # 记录阵亡回合等（可扩展）
+
+    def set_commander_assigned_turn(self, turn: int):
+        """设置指挥官指派回合（用于人口阶段官职转换）"""
+        self._commander_assigned_turn = turn
+
+    def assign_commander(self, commander_id: int, legions: int = 0):
+        """指派指挥官（供测试使用，实际指派通过 WarSystem）"""
+        self._commander_id = commander_id
+        self._legions_assigned = legions
+        # 可选：记录指派回合
+        # self._commander_assigned_turn = current_turn
+
+    def is_truce_expired(self, current_turn: int) -> bool:
+        """判断停战是否到期（当前回合 >= 停战结束回合）"""
+        return self._truce_end_turn is not None and current_turn >= self._truce_end_turn
+
+    # ---------- 序列化 ----------
+    def to_dict(self) -> Dict[str, Any]:
+        """将战争对象转换为字典，用于存档。"""
+        return {
+            "id": self._id,
+            "name": self._name,
+            "description": self._description,
+            "war_type": self._war_type.value,
+            "start_year": self._start_year,
+            "threat_level": self._threat_level,
+            "auto_escalate": self._auto_escalate,
+            "escalate_rate": self._escalate_rate,
+            "strength": self._strength,
+            "naval_support_required": self._naval_support_required,
+            "naval_strength": self._naval_strength,
+            "land_battle": self._land_battle,
+            "disaster_numbers": self._disaster_numbers.copy(),
+            "standoff_numbers": self._standoff_numbers.copy(),
+            "rewards": self._rewards.copy(),
+            "penalties": self._penalties.copy(),
+            "is_imminent": self._is_imminent,
+            "matched_war_id": self._matched_war_id,
+            "status": self._status.value,
+            "commander_id": self._commander_id,
+            "legions_assigned": self._legions_assigned,
+            "fleets_assigned": self._fleets_assigned,
+            "activation_turn": self._activation_turn,
+            "duration": self._duration,
+            "commander_status": self._commander_status,
+            "soldier_share": self._soldier_share,
+            "triumph_commander_id": self._triumph_commander_id,
+            "triumph_approved": self._triumph_approved,
+            "original_commander_id": self._original_commander_id,
+            "commander_assigned_turn": self._commander_assigned_turn,
+            "peace_treaty": self._peace_treaty.copy() if self._peace_treaty else None,
+            "indemnity_due": self._indemnity_due,
+            "truce_end_turn": self._truce_end_turn,
+            "legion_numbers": self._legion_numbers.copy(),
+            # MVP 0.7-2 新增
+            "unlocked_provinces": self._unlocked_provinces.copy(),
+        }
+
+    @staticmethod
+    def from_dict(data: Dict[str, Any]) -> "War":
+        """从字典重建战争对象。"""
+        # 处理枚举
+        war_type = WarType(data.get("war_type", "foreign"))
+        status = WarStatus(data.get("status", "inactive"))
+
+        war = War(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            war_type=war_type,
+            start_year=data.get("start_year", 0),
+            threat_level=data.get("threat_level", 0),
+            auto_escalate=data.get("auto_escalate", True),
+            escalate_rate=data.get("escalate_rate", 1),
+            strength=data.get("strength", 5),
+            naval_support_required=data.get("naval_support_required", False),
+            naval_strength=data.get("naval_strength", 0),
+            land_battle=data.get("land_battle", True),
+            disaster_numbers=data.get("disaster_numbers"),
+            standoff_numbers=data.get("standoff_numbers"),
+            rewards=data.get("rewards"),
+            penalties=data.get("penalties"),
+            is_imminent=data.get("is_imminent", False),
+            matched_war_id=data.get("matched_war_id"),
+            unlocked_provinces=data.get("unlocked_provinces", []),
+        )
+
+        # 设置运行时字段
+        war._status = status
+        war._commander_id = data.get("commander_id")
+        war._legions_assigned = data.get("legions_assigned", 0)
+        war._fleets_assigned = data.get("fleets_assigned", 0)
+        war._activation_turn = data.get("activation_turn")
+        war._duration = data.get("duration", 0)
+        war._commander_status = data.get("commander_status", "active")
+        war._soldier_share = data.get("soldier_share", 0)
+        war._triumph_commander_id = data.get("triumph_commander_id")
+        war._triumph_approved = data.get("triumph_approved", False)
+        war._original_commander_id = data.get("original_commander_id")
+        war._commander_assigned_turn = data.get("commander_assigned_turn")
+        war._peace_treaty = data.get("peace_treaty")
+        war._indemnity_due = data.get("indemnity_due", 0)
+        war._truce_end_turn = data.get("truce_end_turn")
+        war._legion_numbers = data.get("legion_numbers", [])
+
+        return war

@@ -43,15 +43,48 @@ class ScenarioLoader:
         italy._land_private = 0
         state.add_province(italy)
 
-        provinces_data = [
-            {"id": 1, "name": "西西里", "total_land": 1000, "type": "proconsul"},
-            {"id": 2, "name": "撒丁尼亚", "total_land": 800, "type": "propraetor"},
-            {"id": 3, "name": "科西嘉", "total_land": 600, "type": "propraetor"},
-        ]
+
+
+        # ---------- 新增：加载行省数据 ----------
+        provinces_path = Path(__file__).parent.parent.parent / "data" / "cards" / "provinces.json"
+        if not provinces_path.exists():
+            raise FileNotFoundError(f"行省数据文件不存在: {provinces_path}")
+        with open(provinces_path, 'r', encoding='utf-8') as f:
+            provinces_data = json.load(f)
+
         for p in provinces_data:
-            province = Province(p["id"], p["name"], p["total_land"])
-            province._governor_type = p["type"]  # 设置行省类型
+            province = Province(
+                province_id=p["province_id"],
+                name=p["name"],
+                total_land=p["total_land"],
+                land_public=p.get("land_public"),  # 如果 JSON 中提供了具体值，则使用；否则 Province 内部会按比例计算
+                land_private=p.get("land_private"),
+                conquered=p.get("conquered", False),
+                grievance=p.get("grievance", 0),
+                country_id=p.get("country_id", 0),
+                development_level=p.get("development_level", 0),
+                infrastructure=p.get("infrastructure"),
+                resources=p.get("resources"),
+                culture=p.get("culture", "latin"),
+                religion=p.get("religion", "roman_polytheism"),
+                event_flags=p.get("event_flags"),
+                governor_traits_effect=p.get("governor_traits_effect"),
+                loyalty=p.get("loyalty", 100),
+                garrison=p.get("garrison")
+            )
+            # 如果 JSON 中未指定 governor_type，可以在这里设置默认值
+            if not hasattr(province, '_governor_type') or province._governor_type is None:
+                # 根据行省 ID 分配类型（示例：1=proconsul, 2/3=propraetor）
+                if p["province_id"] == 1:
+                    province._governor_type = "proconsul"
+                else:
+                    province._governor_type = "propraetor"
             state.add_province(province)
+
+        # 确保意大利行省（ID 0）征服状态为 True（即使文件中为 False）
+        italy = state.get_province(0)
+        if italy:
+            italy._conquered = True  # 直接设置私有字段，或通过 setter（如果有）
 
         ScenarioLoader._assign_initial_governors(state)
 

@@ -13,7 +13,7 @@ def test_war_assign_commander():
     war = War(id='test', name='Test')
     war.assign_commander(101, 5)
     assert war.commander_id == 101
-    assert war.commander_assigned_turn == 5
+    assert war.legions_assigned == 5
 
 def test_war_peace_treaty():
     war = War(id='test', name='Test')

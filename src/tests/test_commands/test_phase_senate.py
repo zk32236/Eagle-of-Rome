@@ -10,6 +10,7 @@ import io
 from contextlib import redirect_stdout
 from src.core.deciders.impl.auto_budget_decider import AutoBudgetDecider
 from src.core.deciders.tribune_veto_decider import TribuneVetoDecider
+from src.core.entities.war import War, WarStatus
 
 from unittest.mock import MagicMock
 
@@ -317,13 +318,10 @@ class TestTribuneVeto(unittest.TestCase):
         }
 
     def _create_test_war(self):
-        """创建测试用战争"""
-        war = War(
-            id="test_war",
-            name="测试战争",
-            status=WarStatus.THREAT,
-            threat_level=2
-        )
+        """创建测试用战争，不再通过构造函数传入 status"""
+        war = War(id="test_war", name="测试战争")
+        war.status = WarStatus.THREAT
+        war._threat_level = 2  # 直接设置私有字段（或通过属性，如果有的话）
         return war
 
     def _create_test_contract(self):
@@ -340,7 +338,6 @@ class TestTribuneVeto(unittest.TestCase):
         return contract
 
     # ========== 测试用例 ==========
-
 
     def test_tribune_veto_war_passed(self):
         """测试宣战提案被保民官否决"""

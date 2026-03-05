@@ -96,7 +96,7 @@ class WarSystem:
         if war not in self._threats:
             self._threats.append(war)
         war.status = WarStatus.THREAT
-        war.threat_level = threat_level
+        war.threat_level = threat_level  # 现在可以通过 setter 赋值
         # 转为威胁时清除指挥官（确保无残留）
         war.commander_id = None
         return True
@@ -348,7 +348,7 @@ class WarSystem:
         for war in self._war_deck[:]:
             if war.status == WarStatus.INACTIVE and current_year >= war.start_year:
                 war.status = WarStatus.THREAT
-                war.threat_level = 1
+                war.threat_level = 1  # 现在可以通过 setter 赋值
                 war._triggered_this_turn = True  # 标记为刚触发
                 self._threats.append(war)
                 self._war_deck.remove(war)

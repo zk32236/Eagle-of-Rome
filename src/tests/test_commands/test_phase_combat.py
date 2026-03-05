@@ -2,14 +2,19 @@
 """
 战斗阶段命令单元测试
 """
-
+import pytest
 import unittest
 import sys
 import os
-import random
-from unittest.mock import MagicMock, patch, call
 import io
 from contextlib import redirect_stdout
+from src.core.game_state import GameState
+from src.core.entities.legion import Legion, LegionStatus
+from src.core.entities.figure import Figure
+from src.core.entities.entities import GameTurn
+from unittest.mock import MagicMock, patch
+from src.core.entities.war import War, WarStatus
+from src.ui.commands.phase_combat import CombatCommand
 
 # 添加项目根目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -17,12 +22,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.core.game_state import GameState
-from src.ui.commands.phase_combat import CombatCommand
-from src.core.entities.war import War, WarStatus
-from src.core.entities.legion import Legion, LegionStatus
-from src.core.entities.figure import Figure
-from src.core.entities.entities import GameTurn
+
 
 
 class TestCombatCommand(unittest.TestCase):
@@ -48,25 +48,33 @@ class TestCombatCommand(unittest.TestCase):
         self.state.add_member(self.commander)
         self.commander.is_absent = True
 
-    def _create_mock_war(self, war_id="war1", name="Test War", strength=5,
-                         commander_id=1, legions_assigned=2, fleets_assigned=0,
-                         naval_support_required=False):
-        war = MagicMock(spec=War)
+    def _create_mock_war(self, war_id="war1", name="Test War", strength=10,
+                         naval_support_required=False, commander_id=1, **kwargs):  # <-- 默认改为1
+        """
+        创建一个模拟的战争对象，用于测试。
+        """
+        war = MagicMock()  # 不指定 spec，允许动态添加属性
         war.id = war_id
         war.name = name
-        war.strength = strength
-        war.commander_id = commander_id
-        war.legions_assigned = legions_assigned
-        war.fleets_assigned = fleets_assigned
+        war._strength = strength
         war.naval_support_required = naval_support_required
+        war.naval_strength = 3 if naval_support_required else 0
+        war.commander_id = commander_id
+        war.duration = 0
         war.status = WarStatus.ACTIVE
-        war.duration = 1
 
-        war.get_total_strength.return_value = strength
-        war.get_naval_strength_required.return_value = 3 if naval_support_required else 0
+        # 模拟常用方法
+        war.get_total_strength.return_value = strength + (3 if naval_support_required else 0)
         war.is_disaster_roll.return_value = False
         war.is_standoff_roll.return_value = False
         war.report_commander_casualty = MagicMock()
+        war.add_legion_number = MagicMock()
+        war.set_commander_assigned_turn = MagicMock()  # 新增方法
+
+        # 允许通过 kwargs 覆盖默认值
+        for key, value in kwargs.items():
+            setattr(war, key, value)
+
         return war
 
     def _create_mock_legion(self, number=1, is_veteran=False):
@@ -229,6 +237,7 @@ class TestCombatCommand(unittest.TestCase):
         self.assertTrue(commander.is_absent)
         # 验证草案生成日志
         self.assertIn("达成停战草案", output)
+
     @patch('random.randint')
     def test_battle_outcomes_stalemate(self, mock_randint):
         """测试僵持结果"""
@@ -250,7 +259,7 @@ class TestCombatCommand(unittest.TestCase):
         self.assertTrue(result)
         self.assertIn("STALEMATE", output)
         self.assertIn("0 losses", output)
-        self.assertEqual(war.duration, 2)  # 原1，僵持+1
+        self.assertEqual(war.duration, 1)  #原为2，修改为1
         self.mock_war_system.resolve_war.assert_not_called()
         self.mock_war_system.deactivate_war_to_threat.assert_not_called()
 
@@ -331,7 +340,7 @@ class TestCombatCommand(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertIn("No Legions assigned!", output)
-        self.assertEqual(war.duration, 2)
+        self.assertEqual(war.duration, 1)
 
     def test_commander_dead(self):
         """测试指挥官已死亡的情况"""

@@ -16,7 +16,8 @@
       },
       "penalties": {
         "unrest_per_turn": 1
-      }
+      },
+      "unlocked_provinces": []
     },
     {
       "id": "illyrian_pirates",
@@ -35,7 +36,8 @@
       },
       "penalties": {
         "treasury_cost": 10
-      }
+      },
+      "unlocked_provinces": []
     },
     {
       "id": "pyrrhic_war",
@@ -63,7 +65,8 @@
       "disaster_numbers": [2, 3, 4],
       "standoff_numbers": [5, 6, 7, 8, 9],
       "is_imminent": false,
-      "matched_war_id": null
+      "matched_war_id": null,
+      "unlocked_provinces": []
     },
     {
       "id": "first_punic_war",
@@ -91,7 +94,8 @@
       "disaster_numbers": [2, 3, 4],
       "standoff_numbers": [5, 6, 7, 8, 9],
       "is_imminent": false,
-      "matched_war_id": null
+      "matched_war_id": null,
+      "unlocked_provinces": [1, 2]
     },
     {
       "id": "second_punic_war",
@@ -119,7 +123,8 @@
       "disaster_numbers": [2, 3, 4],
       "standoff_numbers": [5, 6, 7, 8, 9],
       "is_imminent": false,
-      "matched_war_id": null
+      "matched_war_id": null,
+      "unlocked_provinces": [4, 5]
     },
     {
       "id": "third_punic_war",
@@ -147,7 +152,8 @@
       "disaster_numbers": [2, 3, 4],
       "standoff_numbers": [5, 6, 7, 8, 9],
       "is_imminent": false,
-      "matched_war_id": null
+      "matched_war_id": null,
+      "unlocked_provinces": [6]
     },
     {
       "id": "first_macedonian_war",
@@ -175,7 +181,8 @@
       "disaster_numbers": [2, 3, 4],
       "standoff_numbers": [5, 6, 7, 8, 9],
       "is_imminent": false,
-      "matched_war_id": null
+      "matched_war_id": null,
+      "unlocked_provinces": []
     },
     {
       "id": "second_macedonian_war",
@@ -203,7 +210,8 @@
       "disaster_numbers": [2, 3, 4],
       "standoff_numbers": [5, 6, 7, 8, 9],
       "is_imminent": false,
-      "matched_war_id": null
+      "matched_war_id": null,
+      "unlocked_provinces": []
     },
     {
       "id": "third_macedonian_war",
@@ -231,7 +239,8 @@
       "disaster_numbers": [2, 3, 4],
       "standoff_numbers": [5, 6, 7, 8, 9],
       "is_imminent": false,
-      "matched_war_id": null
+      "matched_war_id": null,
+      "unlocked_provinces": [7]
     }
   ]
 }
