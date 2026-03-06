@@ -186,10 +186,6 @@ class CombatCommand(Command):
             return
 
         treaty = self.peace_treaty_decider.decide_treaty(war, result, self.state)
-        print(f"DEBUG: treaty = {treaty}, type = {type(treaty)}")
-        if not treaty:
-            print("DEBUG: no treaty generated")
-            return
 
         required = {'indemnity', 'duration', 'generated_turn'}
         missing = required - treaty.keys()

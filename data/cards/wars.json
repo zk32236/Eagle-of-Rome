@@ -54,7 +54,7 @@
       "rewards": {
         "treasury": 500,
         "influence": 30,
-        "land": 200,
+        "land": 2000,
         "family_prestige": 1
       },
       "penalties": {
@@ -83,7 +83,7 @@
       "rewards": {
         "treasury": 3200,
         "influence": 40,
-        "land": 400,
+        "land": 0,
         "family_prestige": 2
       },
       "penalties": {
@@ -112,7 +112,7 @@
       "rewards": {
         "treasury": 10000,
         "influence": 60,
-        "land": 500,
+        "land": 0,
         "family_prestige": 3
       },
       "penalties": {
@@ -141,7 +141,7 @@
       "rewards": {
         "treasury": 100000,
         "influence": 80,
-        "land": 1000,
+        "land": 0,
         "family_prestige": 4
       },
       "penalties": {
@@ -228,7 +228,7 @@
       "rewards": {
         "treasury": 80000,
         "influence": 50,
-        "land": 800,
+        "land": 0,
         "family_prestige": 3
       },
       "penalties": {

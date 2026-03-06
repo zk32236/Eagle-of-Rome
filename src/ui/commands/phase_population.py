@@ -32,11 +32,6 @@ class PopulationCommand(Command):
 
     def execute(self, args: List[str]) -> bool:
 
-        print("DEBUG: Population phase start")
-        ws = self.state.get_war_system()
-        if ws:
-            print(f"DEBUG: active_wars at population start: {[w.name for w in ws.get_active_wars()]}")
-
         if not self.state.is_phase_executed("forum"):
             print("⚠️ 必须先执行广场阶段 (forum)")
             return False
@@ -114,11 +109,6 @@ class PopulationCommand(Command):
         # 打印选举后各派系影响力
         post_election_influences = self._get_faction_influences()
         self._print_faction_summary("选举后", post_election_influences)
-
-        print("DEBUG: Population phase end")
-        ws = self.state.get_war_system()
-        if ws:
-            print(f"DEBUG: active_wars at population end: {[w.name for w in ws.get_active_wars()]}")
 
         self.state.mark_phase_executed("population")
         print(f"\n   Progress: {get_progress_bar(self.state)}")

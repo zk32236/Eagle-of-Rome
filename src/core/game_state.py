@@ -579,6 +579,29 @@ class GameState:
         self._pending_land_acts.clear()
 
     # ---------- 行省管理 ----------
+    def conquer_provinces(self, war_id: str) -> None:
+        """根据战争胜利解锁行省"""
+        war_system = self.get_war_system()
+        if not war_system:
+            return
+        war = war_system.get_war_by_id(war_id)
+        if not war:
+            self.log_event(f"征服失败：找不到战争 {war_id}", level=logging.WARNING)
+            return
+
+        for province_id in war.unlocked_provinces:
+            province = self.get_province(province_id)
+            if not province:
+                self.log_event(f"警告：战争 {war.name} 尝试解锁不存在的行省 ID {province_id}", level=logging.WARNING)
+                continue
+            if province.conquered:
+                self.log_event(f"行省 {province.name} 已征服，忽略重复解锁", level=logging.WARNING)
+                continue
+            # 标记征服并设置民怨
+            province._conquered = True
+            province.set_grievance(3)
+            self.log_event(f"行省扩张：通过 {war.name} 的胜利，罗马征服了 {province.name}！当地民怨高涨（等级3）。")
+
     def add_province(self, province: Province) -> None:
         """
         向行省注册表添加行省对象，并更新全局公地总数。

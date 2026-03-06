@@ -132,7 +132,6 @@ class WarSystem:
     # ========== 日志操作 ==========
 
     def activate_war(self, war_id: str, consul_id: int, legions: int) -> bool:
-        """将威胁战争激活，记录宣战者和批准军团数"""
         war = self.get_war_by_id(war_id)
         if not war or war.status != WarStatus.THREAT:
             print(f"      ⚠️ 激活战争失败：战争 {war_id} 不存在或不是威胁状态")
@@ -141,6 +140,8 @@ class WarSystem:
         war.declared_by = consul_id
         war.proposed_legions = legions
         war.activation_turn = self.state.turn.turn_number
+        # 使用 setter 方法
+        war.set_commander_assigned_turn(self.state.turn.turn_number)
         # 从威胁列表移到活跃列表
         if war in self._threats:
             self._threats.remove(war)
@@ -296,6 +297,30 @@ class WarSystem:
                     commander.family_prestige += prestige_reward
                     self.state.log_event(f"战争 {war.name} 家族声望: {commander.name} +{prestige_reward}")
 
+            # ===== 新增：处理指挥官返回 =====
+            if war.commander_id:
+                commander = self.state.get_member(war.commander_id)
+                if commander and not commander.is_dead:
+                    old_office = commander.office
+                    # 获取指派回合，若未记录则使用当前回合减1
+                    assigned_turn = war.commander_assigned_turn or (self.state.turn.turn_number - 1)
+                    # 如果指挥官有前线官职，则记录历史并卸任
+                    if old_office in ('proconsul', 'propraetor', 'consul', 'praetor'):
+                        commander.add_office_history(old_office, assigned_turn, self.state.turn.turn_number)
+                        commander.office = None
+                        commander.is_absent = False
+                        commander.update_influence()
+                        self.state.log_event(
+                            f"指挥官 {commander.name} 从战争 {war.name} 返回罗马",
+                            extra={'type': 'commander_return', 'war_id': war.id, 'figure_id': commander.id}
+                        )
+                        print(f"      🔄 指挥官 {commander.name} 返回罗马")
+
+            # ===== 新增：占领解锁的行省 =====
+
+            if war.unlocked_provinces:
+                self.state.conquer_provinces(war.id)
+
             print(f"   ✅ {war.name} resolved! Victory!")
             print(f"   🎁 Rewards: {result['rewards']}")
 
@@ -411,16 +436,18 @@ class WarSystem:
         except KeyError:
             war_type = WarType.FOREIGN
 
-        # 创建战争实体，并传入新字段
+        # 读取解锁行省列表
+        unlocked_provinces = data.get('unlocked_provinces', [])
+
         war = War(
             id=data.get('id', f"war_{random.randint(1000, 9999)}"),
             name=data.get('name', 'Unknown War'),
             description=data.get('description', ''),
             war_type=war_type,
-            start_year=data.get('start_year', 0),  # 新增
-            threat_level=data.get('threat_level', 0),  # 新增
-            auto_escalate=data.get('auto_escalate', True),  # 新增
-            escalate_rate=data.get('escalate_rate', 1),  # 新增
+            start_year=data.get('start_year', 0),
+            threat_level=data.get('threat_level', 0),
+            auto_escalate=data.get('auto_escalate', True),
+            escalate_rate=data.get('escalate_rate', 1),
             strength=data.get('strength', 5),
             naval_support_required=data.get('naval_required', False),
             naval_strength=data.get('naval_strength', 0),
@@ -431,6 +458,7 @@ class WarSystem:
             penalties=data.get('penalties', {}),
             is_imminent=data.get('imminent', False),
             matched_war_id=data.get('matched_war'),
+            unlocked_provinces=unlocked_provinces,  # 传入
         )
         return war
 
@@ -518,23 +546,18 @@ class WarSystem:
     # ========== 战争操作 ==========
 
     def assign_commander(self, war_id: str, commander_id: int, legions: int = 0, fleets: int = 0) -> bool:
-        """指派将领和军队到战争"""
         war = self.get_war_by_id(war_id)
         if not war or war.status != WarStatus.ACTIVE:
             return False
-
-        # 检查是否已有将领（需要召回）
         if war.commander_id is not None:
             print(f"   ⚠️  Replacing commander on {war.name}")
-
         war.commander_id = commander_id
         war.legions_assigned = legions
         war.fleets_assigned = fleets
-
+        war.set_commander_assigned_turn(self.state.turn.turn_number)  # 使用 setter
         terms = TerminologyService.get()
         print(f"   🎖️  {terms.commander} assigned to {war.name}")
         print(f"      Forces: {legions} {terms.legion}, {fleets} {terms.fleet}")
-
         return True
 
     def recall_commander(self, war_id: str) -> bool:

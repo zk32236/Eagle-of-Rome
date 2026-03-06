@@ -7,6 +7,7 @@ import sys
 import os
 import traceback
 import logging
+import datetime
 
 
 # 添加项目根目录到Python路径
@@ -19,6 +20,26 @@ from src.ui.commands.sys_registry import CommandRegistry
 from src.core.game_state import GameState
 
 
+class Tee:
+    """将输出同时写入文件和原始 stdout"""
+    def __init__(self, filename, mode='a', encoding='utf-8'):
+        self.file = open(filename, mode, encoding=encoding)
+        self.stdout = sys.stdout
+
+    def write(self, message):
+        self.stdout.write(message)
+        self.file.write(message)
+        self.file.flush()
+
+    def flush(self):
+        self.stdout.flush()
+        self.file.flush()
+
+    def close(self):
+        self.file.close()
+        sys.stdout = self.stdout
+
+
 class DebugCLI:
     """调试命令行界面"""
 
@@ -29,41 +50,7 @@ class DebugCLI:
 
         # 初始化命令注册器
         commands_dir = os.path.join(os.path.dirname(__file__), "commands")
-        # print(f"[DEBUG] 命令目录: {commands_dir}")
         self.registry = CommandRegistry(commands_dir)
-
-        # 打印发现的命令（美化格式：主命令 + 别名）
-        cmd_names = self.registry.get_command_names()
-        # 收集所有主命令（去重）
-        main_commands = {}
-        for name in cmd_names:
-            info = self.registry.get_command_info(name)
-            if info and info['name'] not in main_commands:
-                main_commands[info['name']] = info
-        """
-        # print("📋 可用命令:")
-        # 按主命令名排序
-        sorted_commands = sorted(main_commands.values(), key=lambda x: x['name'])
-
-        # 生成显示字符串列表
-        display_items = []
-        for cmd in sorted_commands:
-            if cmd['aliases']:
-                display_items.append(f"{cmd['name']} ({', '.join(cmd['aliases'])})")
-            else:
-                display_items.append(cmd['name'])
-
-        # 每行显示4个命令，左对齐宽度30
-        line = ""
-        for i, item in enumerate(display_items, 1):
-            line += f"{item:<30}"
-            if i % 4 == 0:
-                print(f"   {line}")
-                line = ""
-        if line:
-            print(f"   {line}")
-            
-        """
 
         # 为特殊命令设置回调
         self._setup_special_commands()
@@ -111,57 +98,72 @@ class DebugCLI:
         self.running = False
 
     def run(self):
-        """运行CLI主循环"""
-        # 自动加载默认场景
-        print("\n🔄 自动加载默认场景...")
-        self.registry.execute("load", self.state, [])
+        """运行CLI主循环，同时将输出保存到日志文件"""
+        # ---------- 设置 CLI 输出日志 ----------
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_dir = os.path.join(project_root, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        cli_log_path = os.path.join(log_dir, f"cli_{timestamp}.log")
+        tee = Tee(cli_log_path)
+        sys.stdout = tee
+        # ---------------------------------------
 
-        print("输入 'help' 查看可用命令，'exit' 退出游戏")
-        print()
+        try:
+            # 自动加载默认场景
+            print("\n🔄 自动加载默认场景...")
+            self.registry.execute("load", self.state, [])
 
-        while self.running:
-            try:
-                cmd_input = input("> ").strip()
-                if not cmd_input:
-                    continue
+            print("输入 'help' 查看可用命令，'exit' 退出游戏")
+            print()
 
-                parts = cmd_input.split()
-                cmd_name = parts[0].lower()
-                args = parts[1:] if len(parts) > 1 else []
+            while self.running:
+                try:
+                    cmd_input = input("> ").strip()
+                    if not cmd_input:
+                        continue
 
-                cmd_instance = self._create_command_instance(cmd_name)
-                if cmd_instance:
-                    result = cmd_instance.execute(args)
-                    if cmd_name in ["exit", "quit"] and not result:
-                        self._stop()
-                else:
-                    print(f"未知命令: {cmd_name}")
-                    print("输入 'help' 查看可用命令")
+                    parts = cmd_input.split()
+                    cmd_name = parts[0].lower()
+                    args = parts[1:] if len(parts) > 1 else []
 
-            except KeyboardInterrupt:
-                print("\n使用 'exit' 命令退出游戏")
-            except Exception as e:
-                # 获取当前状态信息
-                state_info = ""
-                if self.state and hasattr(self.state, 'turn') and self.state.turn:
-                    turn_info = f"回合 {self.state.turn.turn_number}"
-                    year_info = f"年份 {abs(self.state.turn.year)} BC"
-                    state_info = f"{turn_info} {year_info}"
-                # 记录错误日志
-                if self.state and hasattr(self.state, 'log_event'):
-                    tb_str = traceback.format_exc()
-                    self.state.log_event(
-                        f"未捕获异常: 命令 '{cmd_input}' - {str(e)}",
-                        level=logging.ERROR,
-                        extra={
-                            "context": state_info,
-                            "cmd": cmd_input,
-                            "exception": str(e),
-                            "traceback": tb_str
-                        }
-                    )
-                print(f"发生未预期错误: {e}")
-                traceback.print_exc()
+                    cmd_instance = self._create_command_instance(cmd_name)
+                    if cmd_instance:
+                        result = cmd_instance.execute(args)
+                        if cmd_name in ["exit", "quit"] and not result:
+                            self._stop()
+                    else:
+                        print(f"未知命令: {cmd_name}")
+                        print("输入 'help' 查看可用命令")
+
+                except KeyboardInterrupt:
+                    print("\n使用 'exit' 命令退出游戏")
+                except Exception as e:
+                    # 获取当前状态信息
+                    state_info = ""
+                    if self.state and hasattr(self.state, 'turn') and self.state.turn:
+                        turn_info = f"回合 {self.state.turn.turn_number}"
+                        year_info = f"年份 {abs(self.state.turn.year)} BC"
+                        state_info = f"{turn_info} {year_info}"
+                    # 记录错误日志
+                    if self.state and hasattr(self.state, 'log_event'):
+                        tb_str = traceback.format_exc()
+                        self.state.log_event(
+                            f"未捕获异常: 命令 '{cmd_input}' - {str(e)}",
+                            level=logging.ERROR,
+                            extra={
+                                "context": state_info,
+                                "cmd": cmd_input,
+                                "exception": str(e),
+                                "traceback": tb_str
+                            }
+                        )
+                    print(f"发生未预期错误: {e}")
+                    traceback.print_exc()
+        finally:
+            # 恢复原始 stdout 并关闭文件
+            sys.stdout = tee.stdout
+            tee.close()
+            print("CLI 输出日志已保存至:", cli_log_path)
 
     def shutdown(self):
         """关闭CLI"""

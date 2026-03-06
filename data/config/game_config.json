@@ -8,7 +8,7 @@
     "max_legions": 8,
     "budget_always_pass": false,
     "war_always_pass": false,
-    "force_battle_result": "TRIUMPH"
+    "force_battle_result": ""
   },
   "logging": {
     "enabled": true,
@@ -135,20 +135,20 @@
     "war_takeover_chance": 1.0
   },
   "economic_rules": {
-    "faction_stipend": 10,
+    "faction_stipend": 1,
     "legion_recruit_cost": 4,
     "legion_maintenance_base": 8,
     "veteran_maintenance_bonus": 1,
     "land_price_per_unit": 10,
     "private_land_income_rate": 0.05,
-    "national_public_land_tax_rate": 0.02,
-    "initial_national_public_land": 1000,
+    "national_public_land_tax_rate": 0.001,
+    "initial_national_public_land": 6000,
     "province_tax_rate": 0.1,
     "tax_auction_ratio": 0.8,
     "tax_contract_duration": 5,
     "tax_bid_increment_min": 0.05,
     "tax_bid_increment_max": 0.20,
-    "infrastructure_cost_rate": 0.01,
+    "infrastructure_cost_rate": 0.0001,
     "project_budget_margin": 0.2,
     "project_theoretical_construction": 3,
     "project_theoretical_warranty": 10,

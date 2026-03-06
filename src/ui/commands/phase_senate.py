@@ -54,11 +54,6 @@ class SenateCommand(Command):
 
     def execute(self, args: List[str]) -> bool:
 
-        print("DEBUG: Senate phase start")
-        ws = self.state.get_war_system()
-        if ws:
-            print(f"DEBUG: active_wars at senate start: {[w.name for w in ws.get_active_wars()]}")
-
         if not self.state.is_phase_executed("population"):
             print("⚠️ 必须先执行人口阶段 (population)")
             return False
@@ -195,7 +190,6 @@ class SenateCommand(Command):
         else:
             print(f"\n   🛡️ 当前无保民官，不行使否决权")
 
-        print("DEBUG: Entering execution of passed proposals...")
 
         # ========== 5. 执行通过的提案 ==========
         # 5.1 执行宣战
@@ -625,7 +619,6 @@ class SenateCommand(Command):
 
     def _process_war_takeover(self):
         """处理战争接管：为无指挥官的活跃战争指派指挥官，以及处理 proconsul 机制"""
-        print("DEBUG: _process_war_takeover START")
 
         ws = self.state.get_war_system()
         if not ws:
@@ -645,10 +638,10 @@ class SenateCommand(Command):
             return
 
         # ===== 新增调试打印 =====
-        print(f"DEBUG: _process_war_takeover called, active_wars count: {len(active_wars)}")
+
         for war in active_wars:
             print(f"  - {war.name}, status: {war.status}, commander_id: {war.commander_id}")
-        print(f"DEBUG: consul: {consul.name} (ID: {consul.id})")
+
         # ========================
 
         for war in active_wars:
@@ -659,9 +652,7 @@ class SenateCommand(Command):
             if war.commander_id is None:
                 # 无指挥官，由执政官接管（决策器决定）
                 # ===== 新增调试打印 =====
-                print(f"DEBUG: war {war.name} has no commander, deciding takeover...")
                 takeover_decision = self.takeover_decider.decide_takeover(war, consul, None, self.state)
-                print(f"DEBUG: takeover decision returned {takeover_decision}")
                 # ========================
                 if takeover_decision:
                     war.commander_id = consul.id
@@ -673,8 +664,6 @@ class SenateCommand(Command):
                     print(f"      ⏳ 执政官 {consul.name} 决定不接管 {war.name}")
             else:
                 # 已有指挥官，检查是否为前任执政官（proconsul 机制）
-                # ===== 新增调试打印 =====
-                print(f"DEBUG: war {war.name} has commander {war.commander_id}, checking proconsul...")
                 # ========================
                 old_cmd = self.state.get_member(war.commander_id)
                 if not old_cmd:
