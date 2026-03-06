@@ -2,7 +2,7 @@
 """
 决议阶段命令 - 精简打印，只显示胜利条件
 """
-
+import logging
 from typing import List, Dict, Optional, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
@@ -54,7 +54,7 @@ class ResolutionCommand(Command):
             ms.process_legion_recovery(self.state.turn.turn_number)  # 该方法内部已无打印或需修改
 
         self.state.mark_phase_executed("resolution")
-        # 不打印进度条
+        print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
 
     # ================================= MVP 0.7 ===========================================
@@ -116,34 +116,42 @@ class ResolutionCommand(Command):
 
     def _check_all_conditions(self, terms):
         """检查所有胜利/失败条件，打印简洁信息"""
-        print(f"\n   🏆 胜利/失败条件检查:")
-
-        # 1. 国库连续赤字（共和覆灭条件）
+        # ====== 新增：更新赤字计数 ======
         if self.state.treasury < 0:
             self.state.increment_treasury_deficit_turns()
-            deficit = self.state.treasury_deficit_turns
-            if deficit >= 3:
-                print(f"      💀 国库连续3回合赤字，共和覆灭！")
-            else:
-                print(f"      ⚠️ 国库赤字（第{deficit}回合），再持续{3 - deficit}回合将导致共和覆灭")
         else:
             self.state.reset_treasury_deficit_turns()
 
-        # 2. 军团全军覆没
+        deficit = self.state.treasury_deficit_turns
+        limit = self.state.get_economic_rule("national_opex_deficit_limit", 3)
+        if deficit >= limit:
+            print(f"      💀 国库连续{limit}回合赤字，共和覆灭！（调试模式仅提示）")
+            self.state.log_event(
+                f"国库连续{limit}回合赤字，共和覆灭",
+                extra={"type": "game_over", "reason": "bankruptcy", "deficit_turns": deficit},
+                level=logging.CRITICAL
+            )
+        elif deficit > 0:
+            print(f"      ⚠️ 国库赤字（第{deficit}回合），再持续{limit - deficit}回合将导致共和覆灭")
+
+        # 原有其他胜利条件检查（军团、行省起义、派系独裁等）保持不变
+        print(f"\n   🏆 胜利/失败条件检查:")
+
+        # 1. 军团全军覆没（原代码已存在，此处仅示意）
         ms = self.state.get_military_system()
         if ms:
             all_legions = ms.get_all_legions()
             if all_legions and all(l.status.name == "DESTROYED" for l in all_legions):
                 print(f"      💀 所有军团已被消灭，共和覆灭！")
 
-        # 3. 行省大范围暴动（超过半数行省民怨≥3）
+        # 2. 行省大范围暴动
         provinces = self.state.get_all_provinces()
         if provinces:
             revolt_provinces = [p for p in provinces if p.grievance >= 3]
             if len(revolt_provinces) > len(provinces) // 2:
                 print(f"      💀 超过半数行省爆发起义，共和覆灭！")
 
-        # 4. 派系独裁（元老院影响力占比≥70%）
+        # 3. 派系独裁（元老院影响力占比≥70%）
         total_senate_influence = 0
         faction_influences = {}
         for faction in self.state.factions.values():
@@ -156,12 +164,12 @@ class ResolutionCommand(Command):
                 if share >= 0.7:
                     print(f"      👑 {faction.name} 获得元老院 {share:.1%} 影响力，可能宣布独裁！")
 
-        # 5. 意大利本土民怨3级
+        # 4. 意大利本土民怨3级
         italy = self.state.get_province(0)
         if italy and italy.grievance == 3:
             print(f"      💀 意大利本土民怨已达3级，若不在本年度内处理，共和国将面临覆灭！")
 
-        # 6. 元老院主导派系（按影响力百分比）
+        # 5. 元老院主导派系
         if total_senate_influence > 0:
             top_faction_id = max(faction_influences, key=lambda fid: faction_influences[fid])
             top_faction = self.state.get_faction(top_faction_id)

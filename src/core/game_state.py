@@ -221,6 +221,7 @@ class GameState:
         instance._contract_id_counter = 1
         instance._national_public_land = test_config.get("economic_rules", {}).get("initial_national_public_land", 1000)
         instance._pending_land_acts = []
+        instance._treasury_deficit_turns = 0   # 新增：初始化赤字计数
 
         # ---------- 新增：日志记录器 ----------
         instance._logger = None

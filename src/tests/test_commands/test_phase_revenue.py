@@ -57,6 +57,60 @@ class TestRevenueCommand(unittest.TestCase):
         italy._land_public = 1000
         self.state.add_province(italy)
 
+    def test_national_opex_deduction(self):
+        """测试国家运营费正常扣除"""
+        self._setup_mock_military_system()
+
+        # 创建两个已征服行省
+        province1 = Province(1, "西西里", total_land=1000)
+        province1._conquered = True
+        province2 = Province(2, "撒丁岛", total_land=2000)
+        province2._conquered = True
+        self.state.add_province(province1)
+        self.state.add_province(province2)
+
+        self.state.treasury = 1000  # 手动设置国库，避免其他收入干扰
+        cmd = RevenueCommand(self.state)
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd.execute([])
+        output = f.getvalue()
+
+        land_price = 10
+        rate = 0.003
+        expected_opex = int((1000 + 2000) * land_price * rate)  # 90
+        # 国家公地收益：1000 * 10 * 0.02 = 200
+        expected_treasury = 1000 + 200 - expected_opex  # 1110
+        self.assertEqual(self.state.treasury, expected_treasury)
+        self.assertIn("国家运营费计算", output)
+        self.assertIn(f"运营费 = {expected_opex}", output)
+        self.assertEqual(self.state.treasury_deficit_turns, 0)  # 赤字计数不变
+
+    def test_no_conquered_provinces(self):
+        """测试无已征服行省时运营费为0"""
+        self._setup_mock_military_system()
+
+        # 创建两个未征服行省
+        province1 = Province(1, "未征服1", total_land=1000)
+        province1._conquered = False
+        province2 = Province(2, "未征服2", total_land=2000)
+        province2._conquered = False
+        self.state.add_province(province1)
+        self.state.add_province(province2)
+
+        self.state.treasury = 1000
+        cmd = RevenueCommand(self.state)
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd.execute([])
+        output = f.getvalue()
+
+        # 国家公地初始1000，收益200，因此最终国库应为 1000 + 200 = 1200
+        self.assertEqual(self.state.treasury, 1200)
+        self.assertIn("无已征服行省，国家运营费为 0", output)
+
     def _setup_mock_military_system(self):
         """创建并设置模拟的军事系统"""
         mock_ms = MagicMock()

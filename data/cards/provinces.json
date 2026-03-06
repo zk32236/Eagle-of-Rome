@@ -2,9 +2,9 @@
   {
     "province_id": 0,
     "name": "意大利",
-    "total_land": 40000,
+    "total_land": 24000,
     "land_public": 6000,
-    "land_private": 32000,
+    "land_private": 18000,
     "conquered": true,
     "grievance": 0,
     "country_id": 0,

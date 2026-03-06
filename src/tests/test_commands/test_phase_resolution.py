@@ -56,6 +56,47 @@ class TestResolutionCommand(unittest.TestCase):
         self.faction2.member_ids.append(2)
 
     # ========== 测试用例 ==========
+    def test_deficit_increment(self):
+        """国库为负时赤字计数增加"""
+        self.state.treasury = -10
+        self.state._treasury_deficit_turns = 1
+        cmd = ResolutionCommand(self.state)
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd.execute([])
+        output = f.getvalue()
+
+        self.assertEqual(self.state.treasury_deficit_turns, 2)
+        self.assertIn("国库赤字（第2回合）", output)
+
+    def test_deficit_reset(self):
+        """国库非负时赤字计数重置"""
+        self.state.treasury = 100
+        self.state._treasury_deficit_turns = 2
+        cmd = ResolutionCommand(self.state)
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd.execute([])
+        output = f.getvalue()
+
+        self.assertEqual(self.state.treasury_deficit_turns, 0)
+        self.assertNotIn("国库赤字", output)
+
+    def test_bankruptcy_threshold(self):
+        """赤字达到阈值时触发破产提示"""
+        self.state.treasury = -10
+        self.state._treasury_deficit_turns = 2  # 假设阈值为3
+        cmd = ResolutionCommand(self.state)
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd.execute([])
+        output = f.getvalue()
+
+        self.assertEqual(self.state.treasury_deficit_turns, 3)
+        self.assertIn("国库连续3回合赤字", output)
 
     def test_already_executed(self):
         """测试阶段已执行时再次执行应返回False"""

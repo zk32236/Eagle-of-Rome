@@ -5,7 +5,7 @@ import random
 from pathlib import Path
 from src.core.game_state import GameState
 from src.core.entities.figure import Figure, ClassTier
-from src.core.entities.entities import Faction, GameTurn,Province
+from src.core.entities.entities import Faction, GameTurn, Province
 
 
 class ScenarioLoader:
@@ -35,14 +35,6 @@ class ScenarioLoader:
         state.treasury = config.get("initial_state", {}).get("treasury", 100)
         state._national_public_land = state.config.get("economic_rules.initial_national_public_land", 1000)
         ScenarioLoader._initialize_faction_leaders(state)
-
-        # 意大利（国家公地） - ID 0
-        italy = Province(0, "意大利", 0)  # total_land 设为0，后续手动设置公地
-        italy._land_public = state.get_national_public_land()  # 从 state 获取当前国家公地
-        italy._land_private = 0
-        state.add_province(italy)
-
-
 
         # ---------- 新增：加载行省数据 ----------
         provinces_path = Path(__file__).parent.parent.parent / "data" / "cards" / "provinces.json"

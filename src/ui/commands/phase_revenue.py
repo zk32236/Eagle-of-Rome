@@ -83,6 +83,8 @@ class RevenueCommand(Command):
             print(f"📊 军团维护费: \t{total_maintenance} {terms.currency}")
             success, msg = ms.apply_maintenance(verbose=False)
 
+        # 5. 国家运营费扣除
+        self._deduct_national_opex()
 
         self._settle_indemnities()
 
@@ -127,6 +129,49 @@ class RevenueCommand(Command):
         return True
 
     # ================================= MVP 0.7 ===========================================
+
+    # ======== MVP 0.7.3 国家运营 =======
+
+    def _deduct_national_opex(self):
+        """扣除国家运营费（仅对已征服行省）"""
+        land_price = self.state.get_economic_rule("land_price_per_unit", 10)
+        rate = self.state.get_economic_rule("national_opex_rate", 0.003)
+
+        provinces = self.state.get_all_provinces()
+        conquered = [p for p in provinces if p.conquered]
+
+        if not conquered:
+            print("   🏛️ 无已征服行省，国家运营费为 0")
+            return
+
+        total_land = 0
+        print("\n   🏛️ 国家运营费计算：")
+        for p in conquered:
+            total_land += p.total_land
+            print(f"      行省 {p.name}: total_land={p.total_land}")
+
+        opex_float = total_land * land_price * rate
+        opex = int(opex_float)  # 向下取整
+
+        if opex > 0:
+            self.state.treasury -= opex
+            print(f"      土地单价: {land_price} Talents/单位, 费率: {rate}")
+            print(f"      总土地: {total_land}, 运营费 = {opex} Talents")
+            print(f"      国库扣除后余额: {self.state.treasury}")
+
+            self.state.log_event(
+                f"国家运营费扣除: {opex} Talents",
+                extra={
+                    "type": "national_opex",
+                    "amount": opex,
+                    "treasury_after": self.state.treasury,
+                    "total_land": total_land,
+                    "land_price": land_price,
+                    "rate": rate
+                }
+            )
+        else:
+            print(f"      运营费为 0，不扣除")
 
     # ======== MVP 0.7.1 停战议和 =======
 
