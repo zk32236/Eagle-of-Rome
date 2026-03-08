@@ -9,6 +9,7 @@ import importlib.util
 import tempfile
 import logging
 from src.core.entities.entities import GameTurn
+from src.core.systems.naval_system import NavalSystem  # 在文件顶部添加导入
 import tempfile
 import logging
 from src.core.game_state import GameState
@@ -476,16 +477,15 @@ def test_game_state_new_fields_setters():
     assert state._tax_refund_due == 50
 
 def test_game_state_reset_clears_new_fields():
-    """测试 reset 重置新增字段"""
     state = GameState.create_for_testing({})
-    state.naval_system = "dummy"
+    state.naval_system = "dummy"  # 设置一个非 NavalSystem 对象
     state.pyrrhic_war_won = True
     state._wartime_tax_collected = 100
     state._tax_refund_due = 50
 
-    state.reset()  # reset 内部会重新创建 war_system 等，但新增字段应被重置
+    state.reset()
 
-    assert state.naval_system is None
+    assert isinstance(state.naval_system, NavalSystem)  # 检查是新实例
     assert state.pyrrhic_war_won is False
     assert state._wartime_tax_collected == 0
     assert state._tax_refund_due == 0

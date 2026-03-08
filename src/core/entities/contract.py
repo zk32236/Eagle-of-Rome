@@ -40,6 +40,10 @@ class Contract:
 
     status: ContractStatus = ContractStatus.PENDING
 
+    # === MVP 0.7-4 舰队合同 ===
+    _is_fleet_construction: bool = False  # 是否为舰队建造合同
+    _warranty_remaining: int = 0  # 质保剩余年限（默认0）
+
     # 基本信息
     name: str = ""
     description: str = ""
@@ -88,6 +92,14 @@ class Contract:
 
         return (f"{type_emoji}{status_icon} {self.name} "
                 f"[成本:{self.base_cost} 收益:{self.expected_profit}]")
+
+    @property
+    def is_fleet_construction(self) -> bool:
+        return self._is_fleet_construction
+
+    @is_fleet_construction.setter
+    def is_fleet_construction(self, value: bool):
+        self._is_fleet_construction = value
 
     @classmethod
     def create_tax_farming(cls, id: int, province: str, base_cost: int, expected_profit: int) -> "Contract":

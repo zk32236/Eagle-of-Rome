@@ -57,6 +57,12 @@ class ForumCommand(Command):
         # ========== 1. 安民告示 ==========
         self._print_notice_board()
 
+        if self.state.naval_system:
+            construction_contracts = self.state.naval_system.generate_construction_contracts(
+                self.state.turn.turn_number)
+            if construction_contracts:
+                print(f"\n   ⚓ 检测到海战威胁，生成 {len(construction_contracts)} 个舰队建造合同")
+
         # ========== 2. 人才市场 ==========
         self._print_labor_market()
 
@@ -65,6 +71,13 @@ class ForumCommand(Command):
 
         # ========== 4. 土地交易 ==========
         self._print_land_deals()
+
+        # 新增：检查舰队建造完成
+        if self.state.naval_system:
+            completed_fleets = self.state.naval_system.process_fleet_construction(self.state.turn.turn_number)
+            if completed_fleets:
+                print(f"   ⚓ 舰队 {completed_fleets} 建造完成！")
+
 
         self.state.mark_phase_executed("forum")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
@@ -166,7 +179,8 @@ class ForumCommand(Command):
             if tax_contracts:
                 print("\n      📊 Tax Farming:")
                 for c in tax_contracts:
-                    print(f"         ID:{c.id} {c.name}\t预付:{c.base_cost} 年收益:{c.expected_profit} 期限:{c.duration_years}年")
+                    print(
+                        f"         ID:{c.id} {c.name}\t预付:{c.base_cost} 年收益:{c.expected_profit} 期限:{c.duration_years}年")
             if works_contracts:
                 print("\n      🏗️ Public Works:")
                 for c in works_contracts:
@@ -182,9 +196,90 @@ class ForumCommand(Command):
                 if contract.contract_type == ContractType.TAX_FARMING:
                     self._auto_bid_for_contract(contract)
                 elif contract.contract_type == ContractType.PUBLIC_WORKS:
-                    self._auto_bid_for_works(contract)
+                    # 判断是否为舰队建造合同
+                    if getattr(contract, '_is_fleet_construction', False):
+                        self._auto_bid_for_fleet_construction(contract)
+                    else:
+                        self._auto_bid_for_works(contract)
         else:
             print("\n   📭 没有待竞标的预算合同。")
+
+    def _auto_bid_for_fleet_construction(self, contract):
+        """舰队建造合同的自动竞标（独立逻辑）"""
+        if contract.contract_type != ContractType.PUBLIC_WORKS:
+            return
+
+        try:
+            # 获取舰队类型和配置
+            fleet_type = getattr(contract, '_fleet_type', 'trireme')
+            fleet_config = self.state.config.get("economic_rules.fleet_types", {}).get(fleet_type, {})
+            build_cost = fleet_config.get("build_cost", 20)
+            build_time = fleet_config.get("build_time", 1)
+            min_discount = self.state.config.get("economic_rules.project_bid_discount_min", 0.05)
+            max_discount = self.state.config.get("economic_rules.project_bid_discount_max", 0.20)
+
+            factions = list(self.state.factions.values())
+            if not factions:
+                return
+
+            print(f"\n      🔔 开始竞标 {contract.name} 预算 {build_cost}")
+
+            for faction in factions:
+                knights = [m for m in faction.get_members(self.state)
+                           if m.class_tier == ClassTier.EQUES and not m.is_dead]
+                if not knights:
+                    continue
+                knight = max(knights, key=lambda k: k.wealth)
+
+                r = random.uniform(min_discount, max_discount)
+                bid_amount = int(build_cost * (1 - r))
+                if bid_amount < 0:
+                    bid_amount = 0
+
+                # 舰队建造合同工期固定为 build_time，无质保期
+                construction = build_time
+                warranty = 0
+                annual_income = 0
+                annual_cost = 0
+
+                self.state.place_bid(
+                    contract.id,
+                    knight.id,
+                    bid_amount,
+                    r=r,
+                    original_budget=build_cost,
+                    construction=construction,
+                    warranty=warranty,
+                    annual_income=annual_income,
+                    annual_cost=annual_cost
+                )
+                print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {bid_amount} (降价 {r*100:.0f}%)")
+
+            self.state.resolve_auction(contract.id)
+
+            if contract.status == ContractStatus.ACTIVE and contract.winning_bid:
+                winner = self.state.get_member(contract.winning_bid["bidder_id"])
+                winner_name = winner.get_formal_name() if winner else "未知"
+                r = contract.winning_bid.get("r", 0)
+                discount_pct = r * 100
+                print(f"      ✅ 中标者: {winner_name}，中标价 {contract.winning_bid['amount']}，降价 {discount_pct:.0f}%")
+                self.state.log_event(
+                    f"舰队建造合同中标: {contract.name} 中标者 {winner_name} 价格 {contract.winning_bid['amount']}",
+                    extra={
+                        "type": "fleet_contract_award",
+                        "contract_id": contract.id,
+                        "winner_id": contract.winning_bid["bidder_id"],
+                        "amount": contract.winning_bid['amount']
+                    }
+                )
+            else:
+                print(f"      ❌ 流拍")
+        except Exception as e:
+            self.state.log_exception(
+                e,
+                context=f"舰队建造合同自动竞标失败: 合同 {contract.id}",
+                extra={"contract_id": contract.id, "contract_name": contract.name}
+            )
 
     def _print_land_deals(self):
         """土地交易：土地法案执行、自动土地交易"""
@@ -551,6 +646,12 @@ class ForumCommand(Command):
                 contract.description = f"{province.name}公共建设项目"
                 contract._original_budget = budget
                 contracts.append(contract)
+
+        if self.state.naval_system:
+            construction_contracts = self.state.naval_system.generate_construction_contracts(
+                self.state.turn.turn_number)
+            if construction_contracts:
+                print(f"\n   ⚓ 检测到海战威胁，生成 {len(construction_contracts)} 个舰队建造合同")
 
         return contracts
 

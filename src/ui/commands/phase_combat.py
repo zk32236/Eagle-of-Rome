@@ -127,13 +127,27 @@ class CombatCommand(Command):
             return
 
         ms = self.state.get_military_system()
+
+        if war.naval_required and self.state.naval_system:
+            print(f"\n      ⚓ 进行海战...")
+            naval_result, losses = self.state.naval_system.resolve_naval_battle(war)
+            print(f"      海战结果: {naval_result}, 罗马损失 {losses.get('roman_losses', 0)} 艘战舰")
+            if naval_result in ("DISASTER", "DEFEAT"):
+                # 海战失败，无法登陆，战争继续但无陆战
+                print(f"      海战失败，无法登陆，战争持续")
+                war.duration += 1
+                return
+            # 海战胜利或僵持，继续陆战（但敌军海军可能削弱，影响陆战？当前简化处理）
+
         legions = ms.get_legions_for_battle(war.id) if ms else []
         legion_count = len(legions)
+
 
         if legion_count == 0:
             print(f"      ❌ No {terms.legion}s assigned!")
             war.duration += 1
             return
+
 
         # 打印战斗标题
         print(f"\n   ⚔️  Resolving {war.name}:")
@@ -145,10 +159,6 @@ class CombatCommand(Command):
         legion_strength = sum(l.get_combat_strength() for l in legions)
         print(f"      🛡️  Roma Forces: {legion_count} Legion(s) (+{legion_strength})")
 
-        # 显示军团详情（可选，精简时可不打印）
-        # for legion in legions:
-        #     vet = "⭐" if legion.is_veteran else ""
-        #     print(f"         • {legion.name}{vet} [Str:{legion.get_combat_strength()}]")
 
         # 计算总战力（使用 martial）
         military_bonus = commander.martial if hasattr(commander, 'martial') else 0

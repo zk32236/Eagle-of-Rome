@@ -9,7 +9,7 @@ class TestFleet:
         fleet = Fleet(number=1, name="Test Fleet")
         assert fleet.number == 1
         assert fleet.name == "Test Fleet"
-        assert fleet.status == FleetStatus.AVAILABLE
+        assert fleet.status == FleetStatus.BUILDING  # 默认状态为 BUILDING
         assert fleet.commander_id is None
         assert fleet.experience == 0
         assert fleet.is_veteran is False
@@ -22,15 +22,20 @@ class TestFleet:
 
     def test_fleet_assign_to_war(self):
         fleet = Fleet(number=2)
-        fleet.assign_to_war(war_id="war1", mission_type="escort", commander_id=101)
+        # 需要先使舰队可用（测试中直接设置状态）
+        fleet._status = FleetStatus.AVAILABLE
+        result = fleet.assign_to_war(war_id="war1", mission_type="escort", commander_id=101)
+        assert result is True
         assert fleet.status == FleetStatus.ON_MISSION
         assert fleet.assigned_war_id == "war1"
         assert fleet.commander_id == 101
-        assert fleet._assigned_mission_type == "escort"  # 私有字段仅用于测试
+        assert fleet._assigned_mission_type == "escort"
 
     def test_fleet_recall(self):
         fleet = Fleet(number=3)
-        fleet.assign_to_war(war_id="war2", mission_type="patrol")
+        fleet._status = FleetStatus.ON_MISSION
+        fleet._assigned_war_id = "war2"
+        fleet._commander_id = 102
         fleet.recall()
         assert fleet.status == FleetStatus.AVAILABLE
         assert fleet.assigned_war_id is None
@@ -75,19 +80,27 @@ class TestFleet:
     def test_fleet_get_maintenance_cost(self):
         """测试维护费计算"""
         state = Mock()
-        state.get_economic_rule.side_effect = lambda key, default: {
-            "fleet_maintenance_cost": 5
-        }.get(key, default)
+        # 模拟 config.get 返回正确的配置
+        def config_get(key, default=None):
+            if key == "economic_rules.fleet_types":
+                return {
+                    "trireme": {"maintenance_cost": 5}
+                }
+            return default
+        state.config.get.side_effect = config_get
 
-        fleet = Fleet(number=8)
+        fleet = Fleet(number=8, fleet_type="trireme")
         cost = fleet.get_maintenance_cost(state)
         assert cost == 5
 
     def test_fleet_to_dict_and_from_dict(self):
         fleet = Fleet(number=9, name="Invincible")
-        fleet.assign_to_war(war_id="war3", mission_type="blockade", commander_id=202)
+        fleet._status = FleetStatus.ON_MISSION
+        fleet._commander_id = 202
         fleet._experience = 3
         fleet._is_veteran = True
+        fleet._assigned_war_id = "war3"
+        fleet._assigned_mission_type = "blockade"
         fleet._location_zone_id = 2
 
         d = fleet.to_dict()
@@ -101,6 +114,5 @@ class TestFleet:
         assert reconstructed.is_veteran == fleet.is_veteran
         assert reconstructed.assigned_war_id == fleet.assigned_war_id
         assert reconstructed.destroyed_turn == fleet.destroyed_turn
-        # 私有字段在序列化/反序列化后应保持一致
         assert reconstructed._assigned_mission_type == fleet._assigned_mission_type
         assert reconstructed._location_zone_id == fleet._location_zone_id

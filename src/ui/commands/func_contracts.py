@@ -81,7 +81,10 @@ class ContractsCommand(Command):
                 total = c.total_collected + c.total_spent
                 warranty_info = ""
                 if c.contract_type == ContractType.PUBLIC_WORKS and hasattr(c, 'warranty_remaining'):
-                    if c.warranty_remaining > 0:
+                    if getattr(c, '_is_fleet_construction', False):
+                        # 舰队建造合同，不显示额外信息
+                        pass
+                    elif c.warranty_remaining > 0:
                         warranty_info = f" (质保剩余 {c.warranty_remaining} 年)"
                     else:
                         warranty_info = f" (已失修)"

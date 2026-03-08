@@ -22,6 +22,7 @@ from src.core.systems.military_system import MilitarySystem
 from src.core.systems.naval_system import NavalSystem
 
 
+
 if TYPE_CHECKING:
     from src.core.entities import Faction, GameTurn
     from src.core.systems.war_system import WarSystem
@@ -197,6 +198,88 @@ class GameState:
         self._pyrrhic_war_won = False
         self._wartime_tax_collected = 0
         self._tax_refund_due = 0
+
+        self._naval_system = NavalSystem(self)
+
+
+    # ========== 序列化 ==========
+    def to_dict(self) -> Dict[str, Any]:
+        """将游戏状态序列化为字典，用于存档。"""
+        data = {
+            "_treasury": self._treasury,
+            "_national_public_land": self._national_public_land,
+            "_turn": self._turn.to_dict() if self._turn else None,
+            "_executed_phases": list(self._executed_phases),
+            "_contract_id_counter": self._contract_id_counter,
+            "_treasury_deficit_turns": self._treasury_deficit_turns,
+            "_pending_land_acts": self._pending_land_acts.copy(),
+            "_pyrrhic_war_won": self._pyrrhic_war_won,
+            "_wartime_tax_collected": self._wartime_tax_collected,
+            "_tax_refund_due": self._tax_refund_due,
+            # 实体集合
+            "_members": {mid: member.to_dict() for mid, member in self._members.items()},
+            "_factions": {fid: faction.to_dict() for fid, faction in self._factions.items()},
+            "_provinces": {pid: province.to_dict() for pid, province in self._provinces.items()},
+            "_contracts_dict": {cid: contract.to_dict() for cid, contract in self._contracts_dict.items()},
+            # 海军系统
+            "_naval_system": self._naval_system.to_dict() if self._naval_system else None,
+            # 其他系统（如 war_system, military_system, curia）暂未序列化，若有需要可类似添加
+        }
+        return data
+
+    def load_from_dict(self, data: Dict[str, Any]) -> None:
+        """从字典加载游戏状态，覆盖当前状态。"""
+        # 先重置当前状态（清空所有）
+        self.reset()
+
+        # 恢复基础字段
+        self._treasury = data.get("_treasury", 0)
+        self._national_public_land = data.get("_national_public_land", 0)
+        if data.get("_turn") and self._turn:
+            self._turn.load_from_dict(data["_turn"])
+        self._executed_phases = set(data.get("_executed_phases", []))
+        self._contract_id_counter = data.get("_contract_id_counter", 1)
+        self._treasury_deficit_turns = data.get("_treasury_deficit_turns", 0)
+        self._pending_land_acts = data.get("_pending_land_acts", []).copy()
+        self._pyrrhic_war_won = data.get("_pyrrhic_war_won", False)
+        self._wartime_tax_collected = data.get("_wartime_tax_collected", 0)
+        self._tax_refund_due = data.get("_tax_refund_due", 0)
+
+        # 恢复人物
+        self._members.clear()
+        self._used_ids.clear()
+        from src.core.entities.figure import Figure
+        for mid, member_data in data.get("_members", {}).items():
+            member = Figure.from_dict(member_data)
+            self._members[int(mid)] = member
+            self._used_ids.add(member.id)
+
+        # 恢复派系
+        self._factions.clear()
+        from src.core.entities.entities import Faction
+        for fid, faction_data in data.get("_factions", {}).items():
+            faction = Faction.from_dict(faction_data)
+            self._factions[fid] = faction
+
+        # 恢复行省
+        self._provinces.clear()
+        for pid, prov_data in data.get("_provinces", {}).items():
+            province = Province.from_dict(prov_data)
+            self._provinces[int(pid)] = province
+
+        # 恢复合同
+        self._contracts_dict.clear()
+        from src.core.entities.contract import Contract
+        for cid, contract_data in data.get("_contracts_dict", {}).items():
+            contract = Contract.from_dict(contract_data)
+            self._contracts_dict[int(cid)] = contract
+
+        # 恢复海军系统
+        if data.get("_naval_system") and self._naval_system:
+            self._naval_system.load_from_dict(data["_naval_system"])
+
+        # 更新全局公地总数
+        self._update_global_public_land()
 
     def _initialize_mortality_pool(self):
         """初始化天命池"""
@@ -855,5 +938,10 @@ class GameState:
             province = self.get_province(contract.province_id)
             if province:
                 province.bind_project_contract(contract_id)
+
+        # 如果是舰队建造合同，通知海军系统
+        if hasattr(contract, '_is_fleet_construction') and contract._is_fleet_construction:
+            if self._naval_system:
+                self._naval_system.on_contract_awarded(contract, winner["bidder_id"])
 
         return True

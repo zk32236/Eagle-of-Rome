@@ -750,7 +750,17 @@ class SenateCommand(Command):
         min_legions = self.state.config.get("testing.min_legions", 4)
         max_legions = self.state.config.get("testing.max_legions", 8)
 
+        # 获取海军系统（用于检查舰队）
+        naval_system = self.state.naval_system
+
         for war in threats:
+            # 如果战争需要海战，检查是否有可用舰队
+            if war.naval_required:
+                if not naval_system or not naval_system.get_available_fleets():
+                    print(f"\n      📋 战争威胁：{war.name}（需要海战）")
+                    print(f"         当前无可用舰队，无法宣战。")
+                    continue
+
             print(f"\n      📋 战争威胁：{war.name}")
             print(f"         威胁等级：{war.threat_level}")
 

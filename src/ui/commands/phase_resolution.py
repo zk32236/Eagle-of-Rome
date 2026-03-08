@@ -6,8 +6,8 @@ import logging
 from typing import List, Dict, Optional, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
-from src.core.entities.contract import ContractStatus
 from src.ui.commands.func_status import get_progress_bar
+from src.core.entities.contract import Contract, ContractType, ContractStatus
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -181,7 +181,10 @@ class ResolutionCommand(Command):
     def _process_contract_expiration(self, terms, verbose=False):
         """处理合同过期（无打印）"""
         expired_count = 0
+
         for contract in self.state.contracts:
+            if getattr(contract, '_is_fleet_construction', False):
+                continue
             if contract.status == ContractStatus.PENDING:
                 turns_pending = self.state.turn.turn_number - getattr(contract, '_created_turn', self.state.turn.turn_number)
                 if turns_pending >= 3:
