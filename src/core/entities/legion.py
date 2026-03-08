@@ -38,7 +38,18 @@ class Legion:
     battles_won: int = 0
 
     # ========== 新增字段 ==========
+
     _destroyed_turn: int = 0  # 被摧毁时的回合数（仅在 status == DESTROYED 时有效）
+
+    # 军团类型 “波利比乌斯（共和国早期）”/“马略（共和国晚期）”/“奥古斯都（帝国早期）”
+    _legion_type: str = "polybian"  # 默认波利比乌斯
+
+    @property
+    def legion_type(self) -> str:
+        return self._legion_type
+
+    def set_legion_type(self, legion_type: str) -> None:
+        self._legion_type = legion_type
 
     def __post_init__(self):
         if not self.name:

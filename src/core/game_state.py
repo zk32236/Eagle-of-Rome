@@ -15,10 +15,11 @@ from typing import TYPE_CHECKING
 from src.core.config import Config
 from src.core.entities.curia import Curia
 from src.core.entities.contract import Contract, ContractType, ContractStatus
-from src.core.entities.entities import Province
+from src.core.entities.province import Province
 from src.core.entities.figure import Figure
 from src.core.systems.war_system import WarSystem
 from src.core.systems.military_system import MilitarySystem
+from src.core.systems.naval_system import NavalSystem
 
 
 if TYPE_CHECKING:
@@ -69,7 +70,14 @@ class GameState:
         self._logger: Optional[logging.Logger] = None
         self._setup_logging()
         self._log_filename = None
-        # -----------------------------------
+
+        # ---------- 新增：战争系统 MVP0.7-4 ----------
+
+        self._naval_system: Optional['NavalSystem'] = None   # 海军系统实例（稍后赋值）
+        self._pyrrhic_war_won: bool = False                   # 皮洛士战争胜利标记
+        self._wartime_tax_collected: int = 0                  # 财产税已收总额（预留）
+        self._tax_refund_due: int = 0                          # 待返还财产税（预留）
+        self._naval_system = NavalSystem(self)
 
         # 初始化时调用 reset，确保状态一致性
         self.reset()
@@ -185,6 +193,10 @@ class GameState:
         self._contract_id_counter = 1
 
         self._pending_land_acts.clear()  # 新增
+        self._naval_system = None
+        self._pyrrhic_war_won = False
+        self._wartime_tax_collected = 0
+        self._tax_refund_due = 0
 
     def _initialize_mortality_pool(self):
         """初始化天命池"""
@@ -226,7 +238,12 @@ class GameState:
         # ---------- 新增：日志记录器 ----------
         instance._logger = None
         instance._setup_logging()
-        # -----------------------------------
+
+        # ----------新增：MVP 0.7-4 战争系统------------
+        instance._naval_system = None
+        instance._pyrrhic_war_won = False
+        instance._wartime_tax_collected = 0
+        instance._tax_refund_due = 0
 
         return instance
 
@@ -397,6 +414,25 @@ class GameState:
 
     # ========== 战争/军事系统 ==========
 
+    # ---------- MVP0.7-4 战争类访问方法 ----------
+    @property
+    def naval_system(self) -> Optional['NavalSystem']:
+        return self._naval_system
+
+    @naval_system.setter
+    def naval_system(self, value):
+        self._naval_system = value
+
+    @property
+    def pyrrhic_war_won(self) -> bool:
+        return self._pyrrhic_war_won
+
+    @pyrrhic_war_won.setter
+    def pyrrhic_war_won(self, value: bool):
+        self._pyrrhic_war_won = value
+
+    # ---------- 其他战争类 ----------
+
     def get_war_system(self) -> Optional['WarSystem']:
         """获取战争系统"""
         return self._war_system
@@ -514,6 +550,8 @@ class GameState:
         return True
 
     # ========== 属性访问 ==========
+
+
 
     @property
     def members(self):

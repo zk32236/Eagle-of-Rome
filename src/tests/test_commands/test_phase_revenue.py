@@ -34,7 +34,8 @@ class TestRevenueCommand(unittest.TestCase):
                 "faction_stipend": 10,
                 "faction_tax_rate": 0.1,
                 "private_land_income_rate": 0.05,
-                "base_tax": 100
+                "base_tax": 100,
+                "public_land_income_rate": 0.01
             }
         }
         self.state = GameState.create_for_testing(test_config)
@@ -81,7 +82,7 @@ class TestRevenueCommand(unittest.TestCase):
         rate = 0.003
         expected_opex = int((1000 + 2000) * land_price * rate)  # 90
         # 国家公地收益：1000 * 10 * 0.02 = 200
-        expected_treasury = 1000 + 200 - expected_opex  # 1110
+        expected_treasury = 1000 + 2 - expected_opex  # 912
         self.assertEqual(self.state.treasury, expected_treasury)
         self.assertIn("国家运营费计算", output)
         self.assertIn(f"运营费 = {expected_opex}", output)
@@ -107,8 +108,7 @@ class TestRevenueCommand(unittest.TestCase):
             result = cmd.execute([])
         output = f.getvalue()
 
-        # 国家公地初始1000，收益200，因此最终国库应为 1000 + 200 = 1200
-        self.assertEqual(self.state.treasury, 1200)
+        self.assertEqual(self.state.treasury, 1002)  # 1000 + 2
         self.assertIn("无已征服行省，国家运营费为 0", output)
 
     def _setup_mock_military_system(self):
@@ -214,7 +214,7 @@ class TestRevenueCommand(unittest.TestCase):
         self.assertEqual(figure.wealth, initial_wealth + expected_wealth_increase)
 
         # 国库变化：初始0 + 国家公地200 + 包税国库收入80 - 工程支付267 = 13
-        self.assertEqual(self.state.treasury, initial_treasury + 200 + 80 - 267)
+        self.assertEqual(self.state.treasury, initial_treasury + 2 + 80 - 267)
 
         # 验证工程合同的成本设置正确
         self.assertEqual(works_contract._annual_cost, 200)

@@ -10,14 +10,58 @@ import tempfile
 import os
 import sys
 from pathlib import Path
+from src.core.config import Config
+
 
 # 添加项目根目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
+
+config_path = Path(__file__).parent.parent.parent / "data" / "config" / "game_config.json"
+config = Config(str(config_path))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.core.config import Config
+# MVP 0.7-4 战争系统新增
+def test_game_config_has_new_economic_rules():
+    """测试配置文件包含新增的经济规则字段"""
+    # 构建正确的配置文件路径（项目根目录 / data/config/game_config.json）
+    config_path = Path(__file__).parent.parent.parent.parent / "data" / "config" / "game_config.json"
+    assert config_path.exists(), f"配置文件不存在: {config_path}"
+
+    config = Config(str(config_path))
+    # 检查新增的舰队配置
+    assert config.get("economic_rules.fleet_build_cost") is not None
+    assert config.get("economic_rules.fleet_maintenance_cost") is not None
+    assert config.get("economic_rules.fleet_strength_base") is not None
+    assert config.get("economic_rules.naval_commander_bonus_per_martial") is not None
+    assert config.get("economic_rules.fleet_recovery_interval") is not None
+    # 军团类型配置
+    assert config.get("economic_rules.legion_strength_polybian") is not None
+    assert config.get("economic_rules.legion_maintenance_polybian") is not None
+    # 起义强度
+    assert config.get("combat_rules.rebellion_strength") is not None
+
+
+def test_wars_json_has_new_fields():
+    """测试战争卡文件包含新增海战字段"""
+    from src.core.systems.war_system import WarSystem
+    from src.core.game_state import GameState
+
+    state = GameState.create_for_testing({})
+    ws = WarSystem(state)
+    # 确保加载的是正确的 wars.json 文件
+    wars = ws.load_wars_from_json("wars.json")
+    # 检查至少有一个战争包含 naval_required 字段
+    naval_wars = [w for w in wars if w._naval_required]
+    assert len(naval_wars) > 0, "没有战争包含 naval_required=True 的字段"
+    # 检查第一个有海战字段的战争是否包含其他必要字段
+    if naval_wars:
+        war = naval_wars[0]
+        assert hasattr(war, '_enemy_naval_current')
+        assert hasattr(war, '_enemy_naval_max')
+
+# MVP 0.7-4 战争系统结束
 
 
 class TestConfig(unittest.TestCase):
@@ -26,7 +70,7 @@ class TestConfig(unittest.TestCase):
     def setUp(self):
         """每个测试前创建临时文件"""
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.config_path = os.path.join(self.temp_dir.name, "test_config.json")
+        self.config_path = os.path.join(self.temp_dir.name, "game_config.json")
 
     def tearDown(self):
         """清理临时文件"""

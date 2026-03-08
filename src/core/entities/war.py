@@ -1,6 +1,6 @@
 # src/core/entities/war.py
 
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any,Tuple
 from enum import Enum
 
 class WarStatus(Enum):
@@ -21,27 +21,39 @@ class War:
     """战争实体"""
 
     def __init__(
-        self,
-        id: str,
-        name: str,
-        description: str = "",
-        war_type: WarType = WarType.FOREIGN,
-        start_year: int = 0,
-        threat_level: int = 0,
-        auto_escalate: bool = True,
-        escalate_rate: int = 1,
-        strength: int = 5,
-        naval_support_required: bool = False,
-        naval_strength: int = 0,
-        land_battle: bool = True,
-        disaster_numbers: List[int] = None,
-        standoff_numbers: List[int] = None,
-        rewards: Dict[str, int] = None,
-        penalties: Dict[str, int] = None,
-        is_imminent: bool = False,
-        matched_war_id: Optional[str] = None,
-        # ---------- MVP 0.7-2 新增 ----------
-        unlocked_provinces: List[int] = None,
+            self,
+            id: str,
+            name: str,
+            description: str = "",
+            war_type: WarType = WarType.FOREIGN,
+            start_year: int = 0,
+            threat_level: int = 0,
+            auto_escalate: bool = True,
+            escalate_rate: int = 1,
+            strength: int = 5,
+            naval_support_required: bool = False,
+            naval_strength: int = 0,
+            land_battle: bool = True,
+            disaster_numbers: List[int] = None,
+            standoff_numbers: List[int] = None,
+            rewards: Dict[str, int] = None,
+            penalties: Dict[str, int] = None,
+            is_imminent: bool = False,
+            matched_war_id: Optional[str] = None,
+            # ---------- MVP 0.7-2 新增 ----------
+            unlocked_provinces: List[int] = None,
+            # ---------- MVP 0.7-4 新增 ----------
+            naval_required: bool = False,
+            enemy_naval_current: int = 0,
+            enemy_naval_max: int = 0,
+            enemy_land_current: int = 0,
+            enemy_land_max: int = 0,
+            enemy_budget_initial: int = 0,
+            enemy_recovery_per_turn: int = 0,
+            enemy_maintenance_cost_per_unit: int = 0,
+            sea_zone_id: Optional[int] = None,
+            mission_type: str = "JOINT_INVASION",
+            rebellion_province_id: Optional[int] = None
     ):
         self._id = id
         self._name = name
@@ -83,7 +95,48 @@ class War:
         # ---------- MVP 0.7-2 新增 ----------
         self._unlocked_provinces = unlocked_provinces or []
 
+        # ---------- MVP 0.7-4 新增字段 ----------
+        self._naval_required = naval_required
+        self._enemy_naval_current = enemy_naval_current
+        self._enemy_naval_max = enemy_naval_max
+        self._enemy_land_current = enemy_land_current
+        self._enemy_land_max = enemy_land_max
+        self._enemy_budget_initial = enemy_budget_initial
+        self._enemy_budget_remaining = enemy_budget_initial  # 初始值与预算相同
+        self._enemy_recovery_per_turn = enemy_recovery_per_turn
+        self._enemy_maintenance_cost_per_unit = enemy_maintenance_cost_per_unit
+        self._sea_zone_id = sea_zone_id
+        self._mission_type = mission_type
+        self._rebellion_province_id = rebellion_province_id
+
+        # 以下字段没有参数传入，直接初始化为默认值
+        self._assigned_fleet_ids: List[int] = []  # 我方指派舰队编号
+        self._unanswered_turns: int = 0  # 连续未应战回合数
+        self._indemnity_schedule: List[Tuple[int, int]] = []  # 战争赔款分期
+        self._sea_control_ratio: float = 1.0  # 当前制海权比例
+
     # ---------- 属性访问器 ----------
+
+    # ---------- MVP 0.7-4 新增字段开始----------
+    @property
+    def naval_required(self) -> bool: return self._naval_required
+    @property
+    def enemy_naval_current(self) -> int: return self._enemy_naval_current
+    @property
+    def assigned_fleet_ids(self) -> List[int]: return self._assigned_fleet_ids.copy()
+    @property
+    def sea_zone_id(self) -> Optional[int]: return self._sea_zone_id
+    @property
+    def unanswered_turns(self) -> int: return self._unanswered_turns
+    @property
+    def indemnity_schedule(self) -> List[Tuple[int, int]]: return self._indemnity_schedule.copy()
+    @property
+    def sea_control_ratio(self) -> float: return self._sea_control_ratio
+    @property
+    def rebellion_province_id(self) -> Optional[int]: return self._rebellion_province_id
+
+    # ---------- MVP 0.7-4 新增字段结束 ----------
+
     @property
     def id(self) -> str:
         return self._id
@@ -248,6 +301,7 @@ class War:
     def legion_numbers(self) -> List[int]:
         return self._legion_numbers.copy()
 
+
     # ---------- MVP 0.7-2 新增属性 ----------
     @property
     def unlocked_provinces(self) -> List[int]:
@@ -333,10 +387,45 @@ class War:
         """判断停战是否到期（当前回合 >= 停战结束回合）"""
         return self._truce_end_turn is not None and current_turn >= self._truce_end_turn
 
+    # ---------- MVP 0.7-4 新增方法开始----------
+
+    def assign_fleet(self, fleet_id: int) -> None:
+        if fleet_id not in self._assigned_fleet_ids:
+            self._assigned_fleet_ids.append(fleet_id)
+
+    def remove_fleet(self, fleet_id: int) -> None:
+        if fleet_id in self._assigned_fleet_ids:
+            self._assigned_fleet_ids.remove(fleet_id)
+
+    def apply_naval_losses(self, result: str, fleet_ids: List[int], enemy_naval_loss: int) -> None:
+        """应用海战损失（当前版本占位）"""
+        # 具体实现留空，仅保留接口
+        pass
+
+    def apply_land_losses(self, result: str, legion_numbers: List[int], enemy_land_loss: int) -> None:
+        """应用陆战损失（当前版本占位）"""
+        pass
+
+    def increment_unanswered_turns(self) -> None:
+        self._unanswered_turns += 1
+
+    def reset_unanswered_turns(self) -> None:
+        self._unanswered_turns = 0
+
+    def process_enemy_reinforcements(self, state) -> None:
+        """处理敌军增援（预留，当前版本留空）"""
+        pass
+
+    def set_indemnity_schedule(self, schedule: List[Tuple[int, int]]) -> None:
+        self._indemnity_schedule = schedule
+
+    # ---------- MVP 0.7-4 新增方法结束----------
+
+
     # ---------- 序列化 ----------
     def to_dict(self) -> Dict[str, Any]:
         """将战争对象转换为字典，用于存档。"""
-        return {
+        data = {
             "id": self._id,
             "name": self._name,
             "description": self._description,
@@ -373,7 +462,26 @@ class War:
             "legion_numbers": self._legion_numbers.copy(),
             # MVP 0.7-2 新增
             "unlocked_provinces": self._unlocked_provinces.copy(),
+
+            # MVP 0.7-4 战争系统新增
+            "_naval_required": self._naval_required,
+            "_enemy_naval_current": self._enemy_naval_current,
+            "_assigned_fleet_ids": self._assigned_fleet_ids.copy(),
+            "_sea_zone_id": self._sea_zone_id,
+            "_enemy_naval_max": self._enemy_naval_max,
+            "_enemy_land_current": self._enemy_land_current,
+            "_enemy_land_max": self._enemy_land_max,
+            "_enemy_budget_initial": self._enemy_budget_initial,
+            "_enemy_budget_remaining": self._enemy_budget_remaining,
+            "_enemy_recovery_per_turn": self._enemy_recovery_per_turn,
+            "_enemy_maintenance_cost_per_unit": self._enemy_maintenance_cost_per_unit,
+            "_mission_type": self._mission_type,
+            "_unanswered_turns": self._unanswered_turns,
+            "_indemnity_schedule": self._indemnity_schedule.copy(),
+            "_sea_control_ratio": self._sea_control_ratio,
+            "_rebellion_province_id": self._rebellion_province_id,
         }
+        return data
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "War":
@@ -421,5 +529,23 @@ class War:
         war._indemnity_due = data.get("indemnity_due", 0)
         war._truce_end_turn = data.get("truce_end_turn")
         war._legion_numbers = data.get("legion_numbers", [])
+
+        # MVP 0.7-4 设置新增字段
+        war._naval_required = data.get("_naval_required", False)
+        war._enemy_naval_current = data.get("_enemy_naval_current", 0)
+        war._assigned_fleet_ids = data.get("_assigned_fleet_ids", []).copy()
+        war._sea_zone_id = data.get("_sea_zone_id")
+        war._enemy_naval_max = data.get("_enemy_naval_max", 0)
+        war._enemy_land_current = data.get("_enemy_land_current", 0)
+        war._enemy_land_max = data.get("_enemy_land_max", 0)
+        war._enemy_budget_initial = data.get("_enemy_budget_initial", 0)
+        war._enemy_budget_remaining = data.get("_enemy_budget_remaining", 0)
+        war._enemy_recovery_per_turn = data.get("_enemy_recovery_per_turn", 0)
+        war._enemy_maintenance_cost_per_unit = data.get("_enemy_maintenance_cost_per_unit", 0)
+        war._mission_type = data.get("_mission_type", "JOINT_INVASION")
+        war._unanswered_turns = data.get("_unanswered_turns", 0)
+        war._indemnity_schedule = data.get("_indemnity_schedule", [])
+        war._sea_control_ratio = data.get("_sea_control_ratio", 1.0)
+        war._rebellion_province_id = data.get("_rebellion_province_id")
 
         return war

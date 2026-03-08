@@ -450,6 +450,56 @@ class TestGameStateMVP05(unittest.TestCase):
         self.assertEqual(self.state._public_land_total, 0)
         self.assertEqual(self.state._contract_id_counter, 1)
 
+#===============MVP 0.7-4 战争系统新增测试 =========================
+
+def test_game_state_new_fields():
+    """测试 GameState 新增字段默认值"""
+    state = GameState.create_for_testing({})
+    assert state.naval_system is None
+    assert state.pyrrhic_war_won is False
+    # _wartime_tax_collected 和 _tax_refund_due 是私有属性，通过访问器？目前没有访问器，但可通过 state._wartime_tax_collected 测试
+    # 为了封装，建议添加属性访问器，但这里可以直接访问私有字段（测试允许）
+    assert state._wartime_tax_collected == 0
+    assert state._tax_refund_due == 0
+
+def test_game_state_new_fields_setters():
+    """测试 GameState 新增字段的 setter"""
+    state = GameState.create_for_testing({})
+    state.naval_system = "dummy"  # 实际应为 NavalSystem 对象，测试仅验证赋值
+    state.pyrrhic_war_won = True
+    state._wartime_tax_collected = 100
+    state._tax_refund_due = 50
+
+    assert state.naval_system == "dummy"
+    assert state.pyrrhic_war_won is True
+    assert state._wartime_tax_collected == 100
+    assert state._tax_refund_due == 50
+
+def test_game_state_reset_clears_new_fields():
+    """测试 reset 重置新增字段"""
+    state = GameState.create_for_testing({})
+    state.naval_system = "dummy"
+    state.pyrrhic_war_won = True
+    state._wartime_tax_collected = 100
+    state._tax_refund_due = 50
+
+    state.reset()  # reset 内部会重新创建 war_system 等，但新增字段应被重置
+
+    assert state.naval_system is None
+    assert state.pyrrhic_war_won is False
+    assert state._wartime_tax_collected == 0
+    assert state._tax_refund_due == 0
+
+def test_game_state_create_for_testing_includes_new_fields():
+    """测试 create_for_testing 工厂方法正确初始化新增字段"""
+    test_config = {"economic_rules": {"initial_national_public_land": 500}}
+    state = GameState.create_for_testing(test_config)
+    assert state.naval_system is None
+    assert state.pyrrhic_war_won is False
+    assert state._wartime_tax_collected == 0
+    assert state._tax_refund_due == 0
+
+
 
 if __name__ == "__main__":
     unittest.main()

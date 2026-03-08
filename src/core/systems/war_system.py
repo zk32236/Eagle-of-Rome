@@ -36,7 +36,22 @@ class WarSystem:
 
     # ========== 以下函数为 MVP 0.7 的内容 ==========
 
-    # ========== MVP 0.7-1 停战议和 ==========
+    # -------------- MVP 0.7-4 战争系统 -----------
+    def get_wars_with_naval(self) -> List[War]:
+        """返回所有需要海战的战争（当前版本空实现）"""
+        return [w for w in self._active_wars if w.naval_required]
+
+    def create_rebellion_war(self, province) -> Optional[War]:
+        """创建起义战争（占位）"""
+        # 实际实现在后续子任务中完成，这里返回 None 表示暂不支持
+        return None
+
+    def process_enemy_reinforcements(self) -> None:
+        """处理敌军增援（预留）"""
+        pass
+
+
+    # -------------- MVP 0.7-1 停战议和 -----------
 
     def get_war_by_commander(self, commander_id: int) -> Optional[War]:
         """通过指挥官ID查找其指挥的战争（包括 ACTIVE 和 TRUCE 状态的）"""
@@ -429,15 +444,11 @@ class WarSystem:
         return wars
 
     def _parse_war_data(self, data: Dict[str, Any]) -> War:
-        # 解析战争类型
         war_type_str = data.get('type', 'foreign').upper()
         try:
             war_type = WarType[war_type_str]
         except KeyError:
             war_type = WarType.FOREIGN
-
-        # 读取解锁行省列表
-        unlocked_provinces = data.get('unlocked_provinces', [])
 
         war = War(
             id=data.get('id', f"war_{random.randint(1000, 9999)}"),
@@ -449,7 +460,7 @@ class WarSystem:
             auto_escalate=data.get('auto_escalate', True),
             escalate_rate=data.get('escalate_rate', 1),
             strength=data.get('strength', 5),
-            naval_support_required=data.get('naval_required', False),
+            naval_support_required=data.get('naval_required', False),  # 注意：这里可能复用原有字段，但为了清晰，使用原有字段名
             naval_strength=data.get('naval_strength', 0),
             land_battle=data.get('land_battle', True),
             disaster_numbers=data.get('disaster_numbers', [2, 3, 4]),
@@ -458,7 +469,19 @@ class WarSystem:
             penalties=data.get('penalties', {}),
             is_imminent=data.get('imminent', False),
             matched_war_id=data.get('matched_war'),
-            unlocked_provinces=unlocked_provinces,  # 传入
+            unlocked_provinces=data.get('unlocked_provinces', []),
+            # 新增字段
+            naval_required=data.get('naval_required', False),
+            enemy_naval_current=data.get('enemy_naval_current', 0),
+            enemy_naval_max=data.get('enemy_naval_max', 0),
+            enemy_land_current=data.get('enemy_land_current', 0),
+            enemy_land_max=data.get('enemy_land_max', 0),
+            enemy_budget_initial=data.get('enemy_budget', 0),  # 注意 JSON 中是 enemy_budget
+            enemy_recovery_per_turn=data.get('enemy_recovery_per_turn', 0),
+            enemy_maintenance_cost_per_unit=data.get('enemy_maintenance_cost_per_unit', 0),
+            sea_zone_id=data.get('sea_zone'),
+            mission_type=data.get('mission_type', 'JOINT_INVASION'),
+            rebellion_province_id=None,  # 起义战争没有此项
         )
         return war
 

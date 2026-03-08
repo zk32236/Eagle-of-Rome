@@ -58,6 +58,7 @@ class RevenueCommand(Command):
         # 1. 国家公地收益（只执行一次）
         national_land = self.state.get_national_public_land()
         tax_income = int(round(national_land * land_price* public_income_rate * national_tax_rate))
+
         self.state.add_treasury(tax_income)
         print(f"💰 国家公地收益: \t+{tax_income} {terms.currency}")
         print(f"📊 国库现有资金: \t{self.state.treasury} {terms.currency}\n")

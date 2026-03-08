@@ -7,6 +7,7 @@
     "land_private": 0,
     "conquered": true,
     "grievance": 0,
+    "adjacent_provinces": [1,3],
     "country_id": 0,
     "development_level": 30,
     "infrastructure": {
@@ -31,6 +32,7 @@
     "land_private": 8000,
     "conquered": false,
     "grievance": 0,
+    "adjacent_provinces": [0, 2],
     "country_id": 0,
     "development_level": 20,
     "infrastructure": {
@@ -55,6 +57,7 @@
     "land_private": 12800,
     "conquered": false,
     "grievance": 0,
+    "adjacent_provinces": [1, 3],
     "country_id": 0,
     "development_level": 15,
     "infrastructure": {
@@ -79,6 +82,7 @@
     "land_private": 100000,
     "conquered": false,
     "grievance": 0,
+    "adjacent_provinces": [1],
     "country_id": 0,
     "development_level": 10,
     "infrastructure": {
@@ -103,6 +107,7 @@
     "land_private": 43500,
     "conquered": false,
     "grievance": 0,
+    "adjacent_provinces": [5],
     "country_id": 0,
     "development_level": 12,
     "infrastructure": {
@@ -127,6 +132,7 @@
     "land_private": 80000,
     "conquered": false,
     "grievance": 0,
+    "adjacent_provinces": [4],
     "country_id": 0,
     "development_level": 15,
     "infrastructure": {
