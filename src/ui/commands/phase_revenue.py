@@ -73,12 +73,17 @@ class RevenueCommand(Command):
         # 3. 合同收益结算（只执行一次）
         self._collect_contract_revenues(terms, faction_tax_collected, tax_rate)
 
-        # 4. 军团维护费（只执行一次） + 赔偿金处理
+        # 4.1 军团维护费（只执行一次） + 赔偿金处理
         ms = self.state.get_military_system()
         if ms:
             total_maintenance, _ = ms.calculate_maintenance()
             print(f"📊 军团维护费: \t{total_maintenance} {terms.currency}")
             success, msg = ms.apply_maintenance(verbose=False)
+
+        # 4.2 海军维护费（只执行一次）
+        if self.state.naval_system:
+            success, msg = self.state.naval_system.apply_maintenance()
+            print(f"      ⚓ {msg}")  # 显示舰队维护费信息
 
         # 5. 国家运营费扣除
         self._deduct_national_opex()

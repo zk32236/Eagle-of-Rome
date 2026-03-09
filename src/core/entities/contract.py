@@ -42,7 +42,9 @@ class Contract:
 
     # === MVP 0.7-4 舰队合同 ===
     _is_fleet_construction: bool = False  # 是否为舰队建造合同
-    _warranty_remaining: int = 0  # 质保剩余年限（默认0）
+    _recommended_fleet_composition: List[Dict[str, Any]] = field(default_factory=list)
+    _enemy_strength: int = 0  # 敌方海军强度（用于参考）
+    _total_budget: int = 0  # 总预算（所有舰队建造成本之和）
 
     # 基本信息
     name: str = ""
@@ -92,6 +94,24 @@ class Contract:
 
         return (f"{type_emoji}{status_icon} {self.name} "
                 f"[成本:{self.base_cost} 收益:{self.expected_profit}]")
+
+    @property
+    def recommended_fleet_composition(self) -> List[Dict[str, Any]]:
+        return self._recommended_fleet_composition.copy()
+
+    @property
+    def enemy_strength(self) -> int:
+        return self._enemy_strength
+
+    @property
+    def total_budget(self) -> int:
+        return self._total_budget
+
+    def set_fleet_composition(self, composition: List[Dict[str, Any]], enemy_strength: int, total_budget: int):
+        """设置舰队组成建议"""
+        self._recommended_fleet_composition = composition
+        self._enemy_strength = enemy_strength
+        self._total_budget = total_budget
 
     @property
     def is_fleet_construction(self) -> bool:

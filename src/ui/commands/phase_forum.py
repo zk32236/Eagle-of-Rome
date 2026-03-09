@@ -205,16 +205,15 @@ class ForumCommand(Command):
             print("\n   📭 没有待竞标的预算合同。")
 
     def _auto_bid_for_fleet_construction(self, contract):
-        """舰队建造合同的自动竞标（独立逻辑）"""
         if contract.contract_type != ContractType.PUBLIC_WORKS:
             return
 
         try:
-            # 获取舰队类型和配置
-            fleet_type = getattr(contract, '_fleet_type', 'trireme')
-            fleet_config = self.state.config.get("economic_rules.fleet_types", {}).get(fleet_type, {})
-            build_cost = fleet_config.get("build_cost", 20)
-            build_time = fleet_config.get("build_time", 1)
+            # 使用合同存储的总预算
+            total_budget = contract.total_budget
+            if total_budget <= 0:
+                total_budget = getattr(contract, "base_cost", 20)  # 兼容旧数据
+
             min_discount = self.state.config.get("economic_rules.project_bid_discount_min", 0.05)
             max_discount = self.state.config.get("economic_rules.project_bid_discount_max", 0.20)
 
@@ -222,7 +221,7 @@ class ForumCommand(Command):
             if not factions:
                 return
 
-            print(f"\n      🔔 开始竞标 {contract.name} 预算 {build_cost}")
+            print(f"\n      🔔 开始竞标 {contract.name} 预算 {total_budget}")
 
             for faction in factions:
                 knights = [m for m in faction.get_members(self.state)
@@ -232,11 +231,12 @@ class ForumCommand(Command):
                 knight = max(knights, key=lambda k: k.wealth)
 
                 r = random.uniform(min_discount, max_discount)
-                bid_amount = int(build_cost * (1 - r))
+                bid_amount = int(total_budget * (1 - r))
                 if bid_amount < 0:
                     bid_amount = 0
 
-                # 舰队建造合同工期固定为 build_time，无质保期
+                # 舰队建造合同工期固定为配置中的 build_time，无质保期
+                build_time = getattr(contract, "_build_time", 1)
                 construction = build_time
                 warranty = 0
                 annual_income = 0
@@ -247,13 +247,13 @@ class ForumCommand(Command):
                     knight.id,
                     bid_amount,
                     r=r,
-                    original_budget=build_cost,
+                    original_budget=total_budget,
                     construction=construction,
                     warranty=warranty,
                     annual_income=annual_income,
                     annual_cost=annual_cost
                 )
-                print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {bid_amount} (降价 {r*100:.0f}%)")
+                print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {bid_amount} (降价 {r * 100:.0f}%)")
 
             self.state.resolve_auction(contract.id)
 
@@ -652,6 +652,12 @@ class ForumCommand(Command):
                 self.state.turn.turn_number)
             if construction_contracts:
                 print(f"\n   ⚓ 检测到海战威胁，生成 {len(construction_contracts)} 个舰队建造合同")
+
+            # 新增：为激活战争生成补充合同
+            replacement_contracts = self.state.naval_system.generate_replacement_contracts(
+                self.state.turn.turn_number)
+            if replacement_contracts:
+                print(f"\n   ⚓ 罗马舰队不足，为激活战争生成 {len(replacement_contracts)} 个补充舰队建造合同")
 
         return contracts
 

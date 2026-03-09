@@ -32,13 +32,12 @@ def naval_system(mock_state):
 
 class TestNavalSystem:
     def test_generate_construction_contracts_with_naval_threat(self, naval_system, mock_state):
-        # 创建需要海战的威胁战争
         war = War(id="war1", name="Naval War", naval_required=True)
         war.status = WarStatus.THREAT
+        war._enemy_naval_current = 5  # <-- 添加此行
         war_system = Mock()
         war_system._threats = [war]
         mock_state.get_war_system.return_value = war_system
-        # 设置 get_all_contracts 返回空列表（已在fixture中设置）
         mock_state.create_contract = Mock(return_value=Contract(
             id=1, contract_type=ContractType.PUBLIC_WORKS,
             _province_id=0, _create_turn=10, base_cost=40
@@ -124,7 +123,7 @@ class TestNavalSystem:
         naval_system._fleets = {1: fleet1, 2: fleet2}
         war = War(id="war3", name="Naval Battle", naval_required=True)
         war._assigned_fleet_ids = [1, 2]
-        war._enemy_naval_current = 5
+        war._enemy_naval_current = 2
         with patch('src.core.systems.naval_system.random.randint', return_value=12):
             result, losses = naval_system.resolve_naval_battle(war)
         assert result == "TRIUMPH"

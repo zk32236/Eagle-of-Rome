@@ -150,12 +150,6 @@ class Fleet:
         self._commander_id = None
         self._assigned_war_id = None
 
-    def recover(self):
-        """恢复被摧毁的舰队（预留）"""
-        if self._status == FleetStatus.DESTROYED:
-            self._status = FleetStatus.AVAILABLE
-            self._destroyed_turn = 0
-
     def to_dict(self) -> Dict[str, Any]:
         return {
             "_number": self._number,

@@ -7,6 +7,7 @@ from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.core.entities.war import WarStatus
 
 
+
 class NavalSystem:
     """海军系统：管理舰队、建造合同、海战"""
 
@@ -33,51 +34,62 @@ class NavalSystem:
 
     # ---------- 建造合同生成 ----------
     def generate_construction_contracts(self, current_turn: int) -> List[Contract]:
-        """
-        根据需要海战的战争威胁生成舰队建造合同。
-        返回生成的合同列表。
-        """
         war_system = self.state.get_war_system()
         if not war_system:
             return []
 
-        # 获取所有需要海战的威胁战争
         threatening_wars = [w for w in war_system._threats if w.naval_required]
         if not threatening_wars:
             return []
 
         contracts = []
-        # 每个需要海战的威胁生成一个舰队建造合同（简单处理：每个战争一个合同，建造一支舰队）
         for war in threatening_wars:
-            # 检查是否已有针对该战争的建造合同（未决或执行中）
             if self._has_active_contract_for_war(war.id):
                 continue
 
-            # 确定舰队类型（可配置，暂时用默认）
-            fleet_type = self.state.config.get("economic_rules.default_fleet_type", "trireme")
-            fleet_config = self.state.config.get("economic_rules.fleet_types", {}).get(fleet_type, {})
-            build_cost = fleet_config.get("build_cost", 40)
-            build_time = fleet_config.get("build_time", 1)
+            # 获取敌方海军强度
+            enemy_strength = war.enemy_naval_current
+            if enemy_strength <= 0:
+                continue
 
-            # 创建合同（作为公共工程合同的一种，但标识为舰队建造）
+            # 从配置获取默认舰队类型和战力
+            default_type = self.state.config.get("economic_rules.default_fleet_type", "trireme")
+            fleet_configs = self.state.config.get("economic_rules.fleet_types", {})
+            if default_type not in fleet_configs:
+                continue
+            base_strength = fleet_configs[default_type].get("strength_base", 3)
+            build_cost_per_ship = fleet_configs[default_type].get("build_cost", 20)
+
+            # 计算所需舰队数量（向上取整）
+            needed_ships = (enemy_strength + base_strength - 1) // base_strength  # 简单按单舰战力匹配
+            if needed_ships < 1:
+                needed_ships = 1
+
+            # 总预算
+            total_budget = needed_ships * build_cost_per_ship
+            composition = [{"type": default_type, "count": needed_ships}]
+
+            # 创建合同
             contract = self.state.create_contract(
-                contract_type=ContractType.PUBLIC_WORKS,  # 复用公共工程合同类型
-                province_id=0,  # 意大利本土
-                base_cost=build_cost,
+                contract_type=ContractType.PUBLIC_WORKS,
+                province_id=0,
+                base_cost=total_budget,  # 注意这里 base_cost 设为总预算
                 current_turn=current_turn
             )
-            # 标记为舰队建造合同，并存储战争ID和舰队类型
             contract._is_fleet_construction = True
             contract._target_war_id = war.id
-            contract._fleet_type = fleet_type
-            contract._build_time = build_time
+            contract._fleet_type = default_type  # 保留原有字段，但可忽略
+            contract._build_time = fleet_configs[default_type].get("build_time", 1)
             contract.name = f"舰队建造（{war.name}）"
-            # 确保质保年限为0
             contract._warranty_remaining = 0
+
+            # 存储舰队组成建议
+            contract.set_fleet_composition(composition, enemy_strength, total_budget)
+
             contracts.append(contract)
 
             self.state.log_event(
-                f"生成舰队建造合同：{contract.name}，预算 {build_cost}，工期 {build_time} 年",
+                f"生成舰队建造合同：{contract.name}，预算 {total_budget}，需建造 {needed_ships} 艘 {default_type}，工期 {contract._build_time} 年",
                 extra={"contract_id": contract.id, "war_id": war.id}
             )
 
@@ -93,69 +105,99 @@ class NavalSystem:
 
     # ---------- 建造过程管理 ----------
     def on_contract_awarded(self, contract: Contract, winner_id: int):
-        """
-        当建造合同中标后调用，创建舰队并标记为建造中。
-        """
-        if not getattr(contract, "_is_fleet_construction", False):
+        if not contract._is_fleet_construction:
             return
 
-        fleet_type = getattr(contract, "_fleet_type", "trireme")
-        build_time = getattr(contract, "_build_time", 1)
-        target_war_id = getattr(contract, "_target_war_id", None)
+        # 获取舰队组成建议
+        composition = contract.recommended_fleet_composition
+        if not composition:
+            # 兼容旧数据：按原逻辑建一艘
+            fleet_type = getattr(contract, "_fleet_type", "trireme")
+            build_time = getattr(contract, "_build_time", 1)
+            target_war_id = getattr(contract, "_target_war_id", None)
 
-        # 创建舰队
-        fleet = Fleet(
-            number=self._next_fleet_number,
-            fleet_type=fleet_type,
-            name=f"舰队 {self._next_fleet_number} ({fleet_type})"
-        )
-        fleet.set_strength_from_config(
-            self.state.config.get("economic_rules.fleet_types", {}).get(fleet_type, {})
-        )
-        fleet._target_war_id = target_war_id  # 记录目标战争ID
-        self._fleets[self._next_fleet_number] = fleet
-        self._next_fleet_number += 1
+            fleet = Fleet(
+                number=self._next_fleet_number,
+                fleet_type=fleet_type,
+                name=f"舰队 {self._next_fleet_number} ({fleet_type})"
+            )
+            fleet.set_strength_from_config(
+                self.state.config.get("economic_rules.fleet_types", {}).get(fleet_type, {})
+            )
+            fleet._target_war_id = target_war_id
+            self._fleets[self._next_fleet_number] = fleet
+            self._next_fleet_number += 1
 
-        # 标记为建造中
-        fleet.start_building(
-            start_turn=self.state.turn.turn_number,
-            contract_id=contract.id,
-            build_time=build_time
-        )
+            fleet.start_building(
+                start_turn=self.state.turn.turn_number,
+                contract_id=contract.id,
+                build_time=build_time
+            )
 
-        # 设置合同剩余年限（用于显示），但质保年限保持0
-        contract.remaining_years = build_time
-        contract.duration_years = build_time
-        contract._warranty_remaining = 0  # 确保为0
+            contract.remaining_years = build_time
+            contract.duration_years = build_time
+            self._construction_contracts[contract.id] = fleet.number
 
-        # 记录合同与舰队的关联
-        self._construction_contracts[contract.id] = fleet.number
+            self.state.log_event(
+                f"舰队建造合同 {contract.id} 中标，开始建造 {fleet.name}，预计 {fleet.build_end_turn} 回合完工",
+                extra={"fleet_number": fleet.number, "contract_id": contract.id}
+            )
+        else:
+            # 按建议组成建造多艘舰队
+            target_war_id = getattr(contract, "_target_war_id", None)
+            build_time = getattr(contract, "_build_time", 1)  # 所有舰艇建造时间相同
+            fleet_configs = self.state.config.get("economic_rules.fleet_types", {})
 
-        self.state.log_event(
-            f"舰队建造合同 {contract.id} 中标，开始建造 {fleet.name}，预计 {fleet.build_end_turn} 回合完工",
-            extra={"fleet_number": fleet.number, "contract_id": contract.id}
-        )
+            built_fleets = []
+            for item in composition:
+                fleet_type = item["type"]
+                count = item["count"]
+                config = fleet_configs.get(fleet_type, {})
+                for i in range(count):
+                    fleet = Fleet(
+                        number=self._next_fleet_number,
+                        fleet_type=fleet_type,
+                        name=f"舰队 {self._next_fleet_number} ({fleet_type})"
+                    )
+                    fleet.set_strength_from_config(config)
+                    fleet._target_war_id = target_war_id
+                    self._fleets[self._next_fleet_number] = fleet
+                    self._next_fleet_number += 1
+
+                    fleet.start_building(
+                        start_turn=self.state.turn.turn_number,
+                        contract_id=contract.id,
+                        build_time=build_time
+                    )
+                    built_fleets.append(fleet.number)
+
+            # 记录合同与舰队的关联（可存储所有舰队编号，这里简化）
+            self._construction_contracts[contract.id] = built_fleets[0]  # 只存第一个，但实际需要存储列表
+
+            contract.remaining_years = build_time
+            contract.duration_years = build_time
+
+            self.state.log_event(
+                f"舰队建造合同 {contract.id} 中标，开始建造 {len(built_fleets)} 艘舰队，预计 {build_time} 回合完工",
+                extra={"contract_id": contract.id, "fleet_count": len(built_fleets)}
+            )
 
     def process_fleet_construction(self, current_turn: int) -> List[int]:
-        """
-        每回合调用，检查建造中的舰队是否完成。
-        返回本回合完成的舰队编号列表。
-        """
         completed = []
         for fleet in self._fleets.values():
             if fleet.is_building and fleet.build_end_turn == current_turn:
                 fleet.complete_building()
-                # 自动指派到目标战争（如果存在且战争仍活跃）
                 if fleet._target_war_id:
                     war_system = self.state.get_war_system()
                     if war_system:
                         war = war_system.get_war_by_id(fleet._target_war_id)
-                        if war and war.status == WarStatus.ACTIVE and war.naval_required:
+                        # 使用字符串比较，避免直接引用 WarStatus 枚举
+                        if war and war.status.value == "active" and war.naval_required:
                             self.assign_fleet_to_war(
                                 fleet.number,
                                 fleet._target_war_id,
                                 "naval",
-                                commander_id=None  # 无指挥官，可后续指派
+                                commander_id=None
                             )
                 completed.append(fleet.number)
                 self.state.log_event(
@@ -269,6 +311,79 @@ class NavalSystem:
             if fleet.status not in (FleetStatus.DESTROYED, FleetStatus.BUILDING):
                 total += fleet.get_maintenance_cost(self.state)
         return total
+
+    # ---------- 舰队恢复 ----------
+
+    def generate_replacement_contracts(self, current_turn: int) -> List[Contract]:
+        """为活跃的需要海战且罗马无可用舰队的战争生成补充舰队建造合同"""
+        war_system = self.state.get_war_system()
+        if not war_system:
+            return []
+        active_wars = war_system.get_active_wars()
+        if not active_wars:
+            return []
+        # 如果有任何可用舰队，则无需补充
+        if self.get_available_fleets():
+            return []
+
+        contracts = []
+        for war in active_wars:
+            if not war.naval_required:
+                continue
+            # 检查是否有针对该战争的活跃合同（PENDING/BUDGETED/ACTIVE）
+            if self._has_active_contract_for_war(war.id):
+                continue
+            # 检查是否有针对该战争的舰队正在建造
+            building_fleets = [f for f in self._fleets.values()
+                               if f.is_building and f._target_war_id == war.id]
+            if building_fleets:
+                continue
+
+            # 获取敌方海军强度
+            enemy_strength = war.enemy_naval_current
+            if enemy_strength <= 0:
+                continue
+
+            # 从配置获取默认舰队类型和战力
+            default_type = self.state.config.get("economic_rules.default_fleet_type", "trireme")
+            fleet_configs = self.state.config.get("economic_rules.fleet_types", {})
+            if default_type not in fleet_configs:
+                continue
+            base_strength = fleet_configs[default_type].get("strength_base", 3)
+            build_cost_per_ship = fleet_configs[default_type].get("build_cost", 20)
+
+            # 计算所需舰队数量（向上取整）
+            needed_ships = (enemy_strength + base_strength - 1) // base_strength
+            if needed_ships < 1:
+                needed_ships = 1
+
+            total_budget = needed_ships * build_cost_per_ship
+            composition = [{"type": default_type, "count": needed_ships}]
+
+            # 创建合同
+            contract = self.state.create_contract(
+                contract_type=ContractType.PUBLIC_WORKS,
+                province_id=0,
+                base_cost=total_budget,
+                current_turn=current_turn
+            )
+            contract._is_fleet_construction = True
+            contract._target_war_id = war.id
+            contract._fleet_type = default_type
+            contract._build_time = fleet_configs[default_type].get("build_time", 1)
+            contract.name = f"舰队建造（{war.name}）"
+            contract._warranty_remaining = 0
+            contract.set_fleet_composition(composition, enemy_strength, total_budget)
+            contracts.append(contract)
+
+            self.state.log_event(
+                f"为激活战争生成补充舰队建造合同：{contract.name}，预算 {total_budget}，需建造 {needed_ships} 艘 {default_type}，工期 {contract._build_time} 年",
+                extra={"contract_id": contract.id, "war_id": war.id}
+            )
+        return contracts
+
+
+
 
     def apply_maintenance(self) -> Tuple[bool, str]:
         """扣除维护费，国库不足时尝试解散"""

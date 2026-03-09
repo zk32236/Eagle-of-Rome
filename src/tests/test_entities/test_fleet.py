@@ -51,13 +51,6 @@ class TestFleet:
         assert fleet.commander_id is None
         assert fleet.assigned_war_id is None
 
-    def test_fleet_recover(self):
-        fleet = Fleet(number=6)
-        fleet.mark_destroyed(current_turn=15)
-        fleet.recover()
-        assert fleet.status == FleetStatus.AVAILABLE
-        assert fleet.destroyed_turn == 0
-
     def test_fleet_get_combat_strength(self):
         """测试战力计算"""
         state = Mock()

@@ -35,7 +35,6 @@ def test_game_config_has_new_economic_rules():
     assert config.get("economic_rules.fleet_maintenance_cost") is not None
     assert config.get("economic_rules.fleet_strength_base") is not None
     assert config.get("economic_rules.naval_commander_bonus_per_martial") is not None
-    assert config.get("economic_rules.fleet_recovery_interval") is not None
     # 军团类型配置
     assert config.get("economic_rules.legion_strength_polybian") is not None
     assert config.get("economic_rules.legion_maintenance_polybian") is not None
