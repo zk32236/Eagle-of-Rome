@@ -18,6 +18,12 @@ class BuildFleetCommand(Command):
             print("❌ 海军系统未就绪")
             return False
 
+        # ===== 新增：检查技术解锁 =====
+        if not self.state.pyrrhic_war_won:
+            print("❌ 舰队技术尚未解锁（需要皮洛士战争胜利）")
+            return False
+        # =============================
+
         fleet_type = "trireme"
         commander_id = None
         if len(args) >= 1:

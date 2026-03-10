@@ -1,4 +1,5 @@
 # src/tests/test_systems/test_fleet_construction.py
+
 import pytest
 from unittest.mock import Mock, patch
 from src.core.systems.naval_system import NavalSystem
@@ -18,11 +19,14 @@ def test_fleet_construction_lifecycle():
         }
     })
 
+    # 解锁舰队技术
+    state.pyrrhic_war_won = True
+
     state._war_system = WarSystem(state)
     war = War(id="war1", name="Test Naval War", naval_required=True)
-    war.status = WarStatus.ACTIVE
-    war._enemy_naval_current = 2  # <-- 添加此行
-    state.get_war_system()._threats = [war]
+    war.status = WarStatus.ACTIVE  # 改为 ACTIVE，以触发自动指派
+    war._enemy_naval_current = 2
+    state.get_war_system()._threats = [war]  # 注意：生成合同时需要战争在 _threats 中，但建造完成后检查时 war 应来自 _active_wars
 
     state.turn = Mock()
     state.turn.turn_number = 1

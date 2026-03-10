@@ -220,6 +220,16 @@ class WarSystem:
 
         if victory:
             war.status = WarStatus.RESOLVED
+
+            # ===== 新增：如果战争是皮洛士战争，解锁舰队建造 =====
+            if war.id == "pyrrhic_war":
+                self.state.pyrrhic_war_won = True
+                self.state.log_event(
+                    "皮洛士战争胜利！罗马解锁舰队建造能力。",
+                    extra={"type": "tech_unlock", "feature": "naval"}
+                )
+            # ===================================================
+
             # ===== 新增：保存凯旋指挥官ID =====
             if war.commander_id:
                 war.set_triumph_commander(war.commander_id)

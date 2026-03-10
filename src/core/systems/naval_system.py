@@ -18,6 +18,10 @@ class NavalSystem:
         self._construction_contracts: Dict[int, int] = {}  # 合同ID -> 舰队编号（建造中）
 
     # ---------- 舰队管理 ----------
+    def _can_build_fleet(self) -> bool:
+        """检查是否允许建造舰队（皮洛士战争胜利后方可）"""
+        return getattr(self.state, "pyrrhic_war_won", False)
+
     def get_fleet(self, number: int) -> Optional[Fleet]:
         return self._fleets.get(number)
 
@@ -34,6 +38,8 @@ class NavalSystem:
 
     # ---------- 建造合同生成 ----------
     def generate_construction_contracts(self, current_turn: int) -> List[Contract]:
+        if not self._can_build_fleet():
+            return []   # 未解锁，不生成合同
         war_system = self.state.get_war_system()
         if not war_system:
             return []
@@ -315,6 +321,8 @@ class NavalSystem:
     # ---------- 舰队恢复 ----------
 
     def generate_replacement_contracts(self, current_turn: int) -> List[Contract]:
+        if not self._can_build_fleet():
+            return []
         """为活跃的需要海战且罗马无可用舰队的战争生成补充舰队建造合同"""
         war_system = self.state.get_war_system()
         if not war_system:
