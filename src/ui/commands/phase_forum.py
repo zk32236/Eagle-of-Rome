@@ -338,6 +338,26 @@ class ForumCommand(Command):
         for province in provinces:
             if province.province_id == 0:
                 continue
+
+            # ===== 新增：检查是否达到起义条件 =====
+            if province.grievance >= 3 and not province.event_flags.get("rebellion_active"):
+                war_system = self.state.get_war_system()
+                if war_system:
+                    rebellion_war = war_system.create_rebellion_war(province)
+                    # 将战争加入活跃列表（立即爆发）
+                    war_system._active_wars.append(rebellion_war)
+                    print(f"DEBUG: province type = {type(province)}")
+                    print(f"DEBUG: province dir (first 20) = {dir(province)[:20]}")
+                    print(f"DEBUG: has set_event_flag? {'set_event_flag' in dir(province)}")
+                    province.set_event_flag("rebellion_active", True)
+                    print(f"      ⚔️ 行省 {province.name} 爆发起义！战争 {rebellion_war.name} 已激活。")
+                    self.state.log_event(
+                        f"行省起义：{province.name}",
+                        extra={"type": "rebellion", "province_id": province.province_id}
+                    )
+                    any_change = True
+            # ======================================
+
             if 0 < province.grievance < 3:
                 old = province.grievance
                 province.set_grievance(old + 1)

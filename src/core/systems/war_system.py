@@ -37,14 +37,24 @@ class WarSystem:
     # ========== 以下函数为 MVP 0.7 的内容 ==========
 
     # -------------- MVP 0.7-4 战争系统 -----------
+
+    def create_rebellion_war(self, province) -> War:
+        """为起义行省创建战争对象"""
+        rebellion_strength = self.state.config.get("combat_rules.rebellion_strength", 5)
+        war = War(
+            id=f"rebellion_{province.province_id}_{self.state.turn.turn_number}",
+            name=f"{province.name} 起义",
+            war_type=WarType.PROVINCIAL,
+            strength=rebellion_strength,
+            naval_required=False,
+            rebellion_province_id=province.province_id,
+        )
+        war.status = WarStatus.ACTIVE
+        return war
+
     def get_wars_with_naval(self) -> List[War]:
         """返回所有需要海战的战争（当前版本空实现）"""
         return [w for w in self._active_wars if w.naval_required]
-
-    def create_rebellion_war(self, province) -> Optional[War]:
-        """创建起义战争（占位）"""
-        # 实际实现在后续子任务中完成，这里返回 None 表示暂不支持
-        return None
 
     def process_enemy_reinforcements(self) -> None:
         """处理敌军增援（预留）"""
@@ -200,10 +210,6 @@ class WarSystem:
         return True
 
     def resolve_war(self, war_id: str, victory: bool) -> Dict[str, Any]:
-        """
-        结算战争（胜利或失败），增加奖励分配逻辑。
-        返回结果字典，包含战利品分配详情。
-        """
         war = self.get_war_by_id(war_id)
         if not war:
             return {}
@@ -221,115 +227,134 @@ class WarSystem:
         if victory:
             war.status = WarStatus.RESOLVED
 
-            # ===== 新增：如果战争是皮洛士战争，解锁舰队建造 =====
+            # === 起义战争特殊处理 ===
+            is_rebellion = False
+            if war.rebellion_province_id is not None:
+                is_rebellion = True
+                province = self.state.get_province(war.rebellion_province_id)
+                if province:
+                    province.set_grievance(0)
+                    province.clear_event_flag("rebellion_active")
+                    if war.commander_id:
+                        commander = self.state.get_member(war.commander_id)
+                        if commander:
+                            commander.family_prestige += 1
+                            self.state.log_event(
+                                f"指挥官 {commander.name} 因镇压起义获得声望+1",
+                                extra={"figure_id": commander.id}
+                            )
+                    print(f"      ✅ 起义镇压成功，{province.name} 民怨归零。")
+            # =========================
+
+            # 皮洛士战争解锁舰队（无论是否起义，但起义战争不会是皮洛士战争）
             if war.id == "pyrrhic_war":
                 self.state.pyrrhic_war_won = True
                 self.state.log_event(
                     "皮洛士战争胜利！罗马解锁舰队建造能力。",
                     extra={"type": "tech_unlock", "feature": "naval"}
                 )
-            # ===================================================
 
-            # ===== 新增：保存凯旋指挥官ID =====
-            if war.commander_id:
-                war.set_triumph_commander(war.commander_id)
-            # 获取战利品奖励字典
-            rewards = war.calculate_rewards()
-            result['rewards'] = rewards
+            # 如果不是起义战争，执行正常战利品分配
+            if not is_rebellion:
+                # 保存凯旋指挥官ID
+                if war.commander_id:
+                    war.set_triumph_commander(war.commander_id)
+                # 获取战利品奖励字典
+                rewards = war.calculate_rewards()
+                result['rewards'] = rewards
 
-            # 从配置读取分配比例
-            treasury_share = self.state.config.get("combat_rules.treasury_share", 0.5)
-            faction_share = self.state.config.get("combat_rules.faction_share", 0.25)
-            commander_share = self.state.config.get("combat_rules.commander_share", 0.15)
-            soldier_share = self.state.config.get("combat_rules.soldier_share", 0.15)
+                # 从配置读取分配比例
+                treasury_share = self.state.config.get("combat_rules.treasury_share", 0.5)
+                faction_share = self.state.config.get("combat_rules.faction_share", 0.25)
+                commander_share = self.state.config.get("combat_rules.commander_share", 0.15)
+                soldier_share = self.state.config.get("combat_rules.soldier_share", 0.15)
 
-            total_treasury = rewards.get('treasury', 0)
+                total_treasury = rewards.get('treasury', 0)
 
-            # 计算各项份额（取整）
-            treasury_part = int(total_treasury * treasury_share)
-            faction_part = int(total_treasury * faction_share)
-            commander_part = int(total_treasury * commander_share)
-            # 士兵份额使用剩余部分，确保总和等于 total_treasury
-            soldier_part = total_treasury - treasury_part - faction_part - commander_part
+                # 计算各项份额（取整）
+                treasury_part = int(total_treasury * treasury_share)
+                faction_part = int(total_treasury * faction_share)
+                commander_part = int(total_treasury * commander_share)
+                soldier_part = total_treasury - treasury_part - faction_part - commander_part
 
-            # ========== 详细打印战利品分配 ==========
-            print(f"\n      📦 战利品分配 ({war.name}):")
-            print(f"        总额: {total_treasury} 塔兰特")
-            print(f"        国库: +{treasury_part}")
-            if war.commander_id:
-                commander = self.state.get_member(war.commander_id)
-                commander_name = commander.name if commander else "未知"
-                print(f"        指挥官 {commander_name} 私库: +{commander_part}")
-                if commander and commander.faction_id:
-                    faction = self.state.get_faction(commander.faction_id)
-                    if faction:
-                        print(f"        派系 {faction.name} 金库: +{faction_part}")
-                    else:
-                        print(f"        派系金库: +{faction_part} (无派系)")
-                else:
-                    print(f"        派系金库: +{faction_part} (指挥官无派系)")
-            else:
-                print(f"        指挥官私库部分 (无指挥官) 归国库: +{commander_part + faction_part}")
-            print(f"        士兵份额: {soldier_part} (将转换为老兵支持)")
-            # ============================================
-
-            # --- 保护逻辑：如果没有指挥官，所有份额归国库 ---
-            if not war.commander_id:
-                # 国库获得全部战利品
-                self.state.add_treasury(total_treasury)
-                self.state.log_event(f"战争 {war.name} 战利品: 国库 +{total_treasury}（无指挥官）")
-                # 士兵份额为0，其他不分配
-                war.set_soldier_share(0)
-            else:
-                # 有指挥官，正常分配
-                # 分配国库
-                if treasury_part > 0:
-                    self.state.add_treasury(treasury_part)
-                    self.state.log_event(f"战争 {war.name} 战利品: 国库 +{treasury_part}")
-
-                # 分配派系金库
-                if faction_part > 0:
+                # 打印战利品分配
+                print(f"\n      📦 战利品分配 ({war.name}):")
+                print(f"        总额: {total_treasury} 塔兰特")
+                print(f"        国库: +{treasury_part}")
+                if war.commander_id:
                     commander = self.state.get_member(war.commander_id)
+                    commander_name = commander.name if commander else "未知"
+                    print(f"        指挥官 {commander_name} 私库: +{commander_part}")
                     if commander and commander.faction_id:
                         faction = self.state.get_faction(commander.faction_id)
                         if faction:
-                            faction.treasury += faction_part
-                            self.state.log_event(f"战争 {war.name} 战利品: 派系 {faction.name} +{faction_part}")
+                            print(f"        派系 {faction.name} 金库: +{faction_part}")
+                        else:
+                            print(f"        派系金库: +{faction_part} (无派系)")
+                    else:
+                        print(f"        派系金库: +{faction_part} (指挥官无派系)")
+                else:
+                    print(f"        指挥官私库部分 (无指挥官) 归国库: +{commander_part + faction_part}")
+                print(f"        士兵份额: {soldier_part} (将转换为老兵支持)")
 
-                # 分配指挥官私库
-                if commander_part > 0:
+                # 实际分配
+                if not war.commander_id:
+                    self.state.add_treasury(total_treasury)
+                    self.state.log_event(f"战争 {war.name} 战利品: 国库 +{total_treasury}（无指挥官）")
+                    war.set_soldier_share(0)
+                else:
+                    if treasury_part > 0:
+                        self.state.add_treasury(treasury_part)
+                        self.state.log_event(f"战争 {war.name} 战利品: 国库 +{treasury_part}")
+
+                    if faction_part > 0:
+                        commander = self.state.get_member(war.commander_id)
+                        if commander and commander.faction_id:
+                            faction = self.state.get_faction(commander.faction_id)
+                            if faction:
+                                faction.treasury += faction_part
+                                self.state.log_event(f"战争 {war.name} 战利品: 派系 {faction.name} +{faction_part}")
+
+                    if commander_part > 0:
+                        commander = self.state.get_member(war.commander_id)
+                        if commander:
+                            commander.wealth += commander_part
+                            self.state.log_event(f"战争 {war.name} 战利品: 指挥官 {commander.name} +{commander_part}")
+
+                    if soldier_part > 0:
+                        war.set_soldier_share(soldier_part)
+                        self.state.log_event(f"战争 {war.name} 战利品: 士兵份额 {soldier_part} 待凯旋分配")
+
+                # 土地奖励
+                land_reward = rewards.get('land', 0)
+                if land_reward > 0:
+                    self.state.add_national_public_land(land_reward)
+                    self.state.log_event(f"战争 {war.name} 土地: 国家公地 +{land_reward}")
+
+                # 家族声望
+                prestige_reward = rewards.get('family_prestige', 0)
+                if prestige_reward > 0 and war.commander_id:
                     commander = self.state.get_member(war.commander_id)
                     if commander:
-                        commander.wealth += commander_part
-                        self.state.log_event(f"战争 {war.name} 战利品: 指挥官 {commander.name} +{commander_part}")
+                        commander.family_prestige += prestige_reward
+                        self.state.log_event(f"战争 {war.name} 家族声望: {commander.name} +{prestige_reward}")
 
-                # 存储士兵份额
-                if soldier_part > 0:
-                    war.set_soldier_share(soldier_part)
-                    self.state.log_event(f"战争 {war.name} 战利品: 士兵份额 {soldier_part} 待凯旋分配")
+                # 占领行省
+                if war.unlocked_provinces:
+                    self.state.conquer_provinces(war.id)
 
-            # 处理土地奖励（无论是否有指挥官，土地都归国家）
-            land_reward = rewards.get('land', 0)
-            if land_reward > 0:
-                self.state.add_national_public_land(land_reward)
-                self.state.log_event(f"战争 {war.name} 土地: 国家公地 +{land_reward}")
+                print(f"   ✅ {war.name} resolved! Victory!")
+                print(f"   🎁 Rewards: {result['rewards']}")
+            else:
+                # 起义战争胜利，不分配战利品，简单打印
+                print(f"   ✅ {war.name} resolved! Victory (rebellion suppressed).")
 
-            # 处理家族声望（需要指挥官存在）
-            prestige_reward = rewards.get('family_prestige', 0)
-            if prestige_reward > 0 and war.commander_id:
-                commander = self.state.get_member(war.commander_id)
-                if commander:
-                    commander.family_prestige += prestige_reward
-                    self.state.log_event(f"战争 {war.name} 家族声望: {commander.name} +{prestige_reward}")
-
-            # ===== 新增：处理指挥官返回 =====
+            # === 通用处理：指挥官返回（所有胜利战争都需要） ===
             if war.commander_id:
                 commander = self.state.get_member(war.commander_id)
                 if commander and not commander.is_dead:
                     old_office = commander.office
-                    # 获取指派回合，若未记录则使用当前回合减1
                     assigned_turn = war.commander_assigned_turn or (self.state.turn.turn_number - 1)
-                    # 如果指挥官有前线官职，则记录历史并卸任
                     if old_office in ('proconsul', 'propraetor', 'consul', 'praetor'):
                         commander.add_office_history(old_office, assigned_turn, self.state.turn.turn_number)
                         commander.office = None
@@ -341,15 +366,7 @@ class WarSystem:
                         )
                         print(f"      🔄 指挥官 {commander.name} 返回罗马")
 
-            # ===== 新增：占领解锁的行省 =====
-
-            if war.unlocked_provinces:
-                self.state.conquer_provinces(war.id)
-
-            print(f"   ✅ {war.name} resolved! Victory!")
-            print(f"   🎁 Rewards: {result['rewards']}")
-
-        else:
+        else:  # 战败
             war.status = WarStatus.DEFEATED
             print(f"   ❌ {war.name} lost! Defeat!")
             self.state.log_event(
@@ -357,7 +374,7 @@ class WarSystem:
                 extra={"war_id": war.id, "victory": False}
             )
 
-        # --- 清理战争数据（原有逻辑，放在分配之后）---
+        # --- 清理战争数据（无论胜负）---
         ms = self.state.get_military_system()
         if ms:
             ms.recall_from_war(war.id)

@@ -77,6 +77,8 @@ class Province:
         self._loyalty = loyalty
         self._garrison = garrison or {}
 
+        print(f"[DEBUG] Province {self._name} (ID:{self._province_id}) governor_type = {self._governor_type}")
+
     # ---------- 基础属性 ----------
     @property
     def province_id(self) -> int:

@@ -24,6 +24,18 @@ class ProvinceCommand(Command):
     def __init__(self, state: "GameState"):
         super().__init__(state)
 
+    def _get_display_governor_type(self, province):
+        """获取用于显示的行省类型，若未设置则根据ID推断"""
+        if province.governor_type:
+            return province.governor_type
+        # 根据行省ID提供默认类型（仅用于显示）
+        if province.province_id == 1:
+            return "proconsul"
+        elif province.province_id == 2:
+            return "propraetor"
+        # 其他行省可按需添加
+        return "未知"
+
     def _get_controlling_faction(self, province_id: int) -> Optional[str]:
         """返回控制该行省的派系名称，若无则返回 None"""
         for faction in self.state.factions.values():
@@ -73,7 +85,7 @@ class ProvinceCommand(Command):
                 else:
                     name = p.name
                 gov_name = self._get_governor_name(p.governor_id)
-                gov_type = p.governor_type if hasattr(p, 'governor_type') and p.governor_type else "未知"
+                gov_type = self._get_display_governor_type(p)  # 使用新方法
                 tax_info = self._format_contract_info(p.tax_contract_id)
                 proj_info = self._format_contract_info(p.project_contract_id)
                 controller = self._get_controlling_faction(p.province_id) or "无"
@@ -107,7 +119,8 @@ class ProvinceCommand(Command):
         print(f"   总土地: {province.total_land} C")
         print(f"   公地: {province.land_public} C")
         print(f"   私地: {province.land_private} C")
-        print(f"   行省类型: {province.governor_type if hasattr(province, 'governor_type') else '未设置'}")
+        gov_type = self._get_display_governor_type(province)  # 使用新方法
+        print(f"   行省类型: {gov_type}")
         if province.governor_designate_id:
             designate = self.state.get_member(province.governor_designate_id)
             designate_name = designate.get_formal_name() if designate else "?"

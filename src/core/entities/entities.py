@@ -222,9 +222,15 @@ class GameTurn:
 from typing import List, Optional, Dict, Any
 
 class Province:
+
+    # ⚠️注意：此类定义已废弃，请勿在此添加新功能！
+    # 行省实体的正式定义位于 src/core/entities/province.py 中
+    # 后续版本将逐渐将次模块的功能迁移统一到province.py中，所有新功能请基于 Province.py 开发。
+
     """
     行省实体 - MVP 0.5 新增，MVP 0.7-2 扩展征服状态及预留字段
     """
+
 
     def __init__(
         self,
@@ -301,6 +307,14 @@ class Province:
         self._garrison = garrison or {}
 
     # ---------- 属性访问器（只读）----------
+    def set_event_flag(self, key: str, value: Any) -> None:
+        """设置事件标记"""
+        self._event_flags[key] = value
+
+    def clear_event_flag(self, key: str) -> None:
+        """清除事件标记"""
+        self._event_flags.pop(key, None)
+
     @property
     def province_id(self) -> int:
         return self._province_id
