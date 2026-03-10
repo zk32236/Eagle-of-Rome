@@ -10,6 +10,18 @@ class AutoWarTakeoverDecider(WarTakeoverDecider):
     """自动战争接管决策器：根据配置的概率随机决定"""
 
     def decide_takeover(self, war: War, new_consul: Figure, old_commander: Figure, state: GameState) -> bool:
+        # ===== 新增：起义战争不由执政官接管 =====
+        if war.rebellion_province_id is not None:
+            # 记录日志（可选）
+            if state:
+                state.log_event(
+                    f"WarTakeoverDecider: 战争 {war.name} 是起义战争，执政官不接管",
+                    level=logging.DEBUG,
+                    extra={"war_id": war.id, "result": False}
+                )
+            return False
+        # =====================================
+
         # 如果新旧指挥官是同一人，则不接管
         if old_commander and new_consul.id == old_commander.id:
             return False
@@ -18,7 +30,7 @@ class AutoWarTakeoverDecider(WarTakeoverDecider):
         random_val = random.random()
         result = random_val < chance
 
-        # ===== 安全记录 DEBUG 日志 =====
+        # 安全记录 DEBUG 日志
         if state:
             war_name = getattr(war, 'name', '未知战争') if war else '无'
             new_consul_name = getattr(new_consul, 'name', '未知执政官') if new_consul else '无'

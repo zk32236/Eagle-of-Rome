@@ -13,6 +13,7 @@ class TestAutoWarTakeoverDecider:
     def test_takeover_by_chance(self):
         state = MagicMock()
         war = MagicMock(spec=War)
+        war.rebellion_province_id = None  # 新增：设为 None 表示不是起义战争
         new_consul = MagicMock(spec=Figure)
         new_consul.id = 1
         old_commander = MagicMock(spec=Figure)
@@ -36,6 +37,7 @@ class TestAutoWarTakeoverDecider:
     def test_config_key(self):
         state = MagicMock()
         war = MagicMock(spec=War)
+        war.rebellion_province_id = None  # 新增
         new_consul = MagicMock(spec=Figure)
         new_consul.id = 1
         old_commander = MagicMock(spec=Figure)

@@ -192,18 +192,22 @@ class SenateCommand(Command):
 
 
         # ========== 5. 执行通过的提案 ==========
+
         # 5.1 执行宣战
         for war, consul_id, legions in passed_wars:
             self._execute_war_declaration(war, consul_id, legions)
 
-        # 5.2 战争接管处理（与原逻辑一致）
+        # 5.2.1 执行总督任命
+        self._execute_governor_appointments()
+
+        # 5.2.2 镇压起义战争接管
+        self._assign_rebellion_commanders()  # 起义战争指派总督
+
+        # 5.3 战争接管处理（与原逻辑一致）
         self._process_war_takeover()
 
-        # 5.3 执行通过的停战草案
+        # 5.4 执行通过的停战草案
         self._execute_passed_peace_treaties()
-
-        # 5.4 执行总督任命
-        self._execute_governor_appointments()
 
         # 5.5 标记合同为 BUDGETED
         for contract in passed_contracts:
@@ -221,6 +225,65 @@ class SenateCommand(Command):
         return True
 
     # =================================== MVP 0.7 =============================================
+
+    # ==================== 新增：MVP 0.7-4 行省起义镇压 ====================
+    def _assign_rebellion_commanders(self):
+        """为起义战争指派总督作为指挥官并征召军团"""
+        war_system = self.state.get_war_system()
+        if not war_system:
+            return
+
+        ms = self.state.get_military_system()
+        if not ms:
+            return
+
+        rebellion_strength = self.state.config.get("combat_rules.rebellion_strength", 5)
+        # 计算所需军团数量（假设每个军团基础战力2）
+        legion_count = (rebellion_strength + 1) // 2
+        if legion_count < 1:
+            legion_count = 1
+
+        for war in war_system.get_active_wars():
+            if war.rebellion_province_id is None or war.commander_id is not None:
+                continue
+
+            province = self.state.get_province(war.rebellion_province_id)
+            if not province:
+                continue
+
+            # 优先使用候任总督，若无则使用现任总督
+            governor_id = province.governor_designate_id or province.governor_id
+            if governor_id is None:
+                continue
+
+            commander = self.state.get_member(governor_id)
+            if not commander or commander.is_dead:
+                continue
+
+            # 征召军团
+            available = ms.get_available_legions()
+            if not available:
+                print(f"      ⚠️ 无可用军团镇压 {province.name} 起义")
+                continue
+
+            recruit_count = min(legion_count, len(available))
+            results = ms.recruit_multiple(recruit_count)
+            recruited_numbers = [r[0] for r in results if r[1]]
+            if not recruited_numbers:
+                print(f"      ⚠️ 军团征召失败，无法镇压 {province.name} 起义")
+                continue
+
+            # 指派指挥官和军团
+            war_system.assign_commander(war.id, governor_id, len(recruited_numbers))
+            ms.assign_to_war(recruited_numbers, war.id, governor_id)
+            commander.is_absent = True  # 总督出征
+
+            print(f"      ✅ 任命 {commander.name} 为 {war.name} 指挥官，征召 {len(recruited_numbers)} 个军团")
+            self.state.log_event(
+                f"指派总督 {commander.name} 镇压起义",
+                extra={"war_id": war.id, "commander_id": governor_id}
+            )
+
 
     # ==================== 新增：停战草案相关方法 ====================
 
