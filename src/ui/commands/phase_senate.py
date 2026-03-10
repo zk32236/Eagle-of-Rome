@@ -374,16 +374,11 @@ class SenateCommand(Command):
         print("\n\t====================== 行省总督任命 ====================")
 
         # 获取所有已征服的行省
-        all_provinces = [p for p in self.state.get_all_provinces() if p.conquered]
+        all_provinces = [p for p in self.state.get_all_provinces() if p.conquered and p.province_id != 0]
 
         # 行省分类（仅基于已征服行省）
-        proconsul_provinces = []
-        propraetor_provinces = []
-        for p in all_provinces:
-            if p.province_id == 1:
-                proconsul_provinces.append(p)
-            elif p.province_id in (2, 3):
-                propraetor_provinces.append(p)
+        proconsul_provinces = [p for p in all_provinces if p.governor_type == "proconsul"]
+        propraetor_provinces = [p for p in all_provinces if p.governor_type == "propraetor"]
 
         # 候选人获取函数（不变）
         def get_candidates(office_type: str):

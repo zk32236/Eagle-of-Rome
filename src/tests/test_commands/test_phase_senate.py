@@ -140,6 +140,63 @@ class TestSenateCommand(unittest.TestCase):
         self.assertIsNotNone(presiding)
         self.assertIn(presiding.name, output)
 
+    def test_governor_appointment_by_type(self):
+        """验证总督任命时按 governor_type 正确分类行省"""
+        from src.ui.commands.phase_senate import SenateCommand
+        from src.core.entities.province import Province
+        from src.core.entities.figure import Figure
+        from src.core.entities.entities import Faction, GameTurn
+        from src.core.game_state import GameState  # 新增导入
+
+        state = GameState.create_for_testing({})
+        # 添加测试行省
+        province1 = Province(
+            province_id=1,
+            name="西西里",
+            total_land=10000,
+            conquered=True,
+            governor_type="proconsul"
+        )
+        province2 = Province(
+            province_id=2,
+            name="撒丁-科西嘉",
+            total_land=16000,
+            conquered=True,
+            governor_type="propraetor"
+        )
+        state.add_province(province1)
+        state.add_province(province2)
+
+        # 添加候选人（卸任执政官和卸任大法官）
+        consul = Figure(id=101, name="Consul Candidate", faction_id="test")
+        consul.office_history = [type('Term', (), {'office_type': 'consul', 'end_turn': 5})]
+        praetor = Figure(id=102, name="Praetor Candidate", faction_id="test")
+        praetor.office_history = [type('Term', (), {'office_type': 'praetor', 'end_turn': 5})]
+        state.add_member(consul)
+        state.add_member(praetor)
+
+        # 添加派系（不直接设置 leader_id，后续可能需要时再处理）
+        faction = Faction(id="test", name="Test Faction", treasury=0)
+        # 如果需要 leader，可以后续设置（但当前测试可能不依赖）
+        # faction.leader_id = 101  # 假设有可写属性，否则使用 setter
+        state.add_faction(faction)
+
+        # 设置回合信息
+        state.turn = GameTurn(turn_number=10, year=-270)
+        state.turn.leader_ids = [101]
+
+        # 执行总督任命
+        cmd = SenateCommand(state)
+        cmd._process_governor_appointments(None)
+
+        # 验证提案中的行省类型与候选人对应关系
+        self.assertEqual(len(cmd.proposed_governors), 2)
+        for prop in cmd.proposed_governors:
+            if prop['province_id'] == 1:
+                self.assertEqual(prop['new_governor_id'], 101)
+            elif prop['province_id'] == 2:
+                self.assertEqual(prop['new_governor_id'], 102)
+
     def test_contract_processing(self):
         """测试合同处理逻辑"""
         # 创建贵族人物（元老）并赋予影响力，确保投票有效

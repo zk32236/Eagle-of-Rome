@@ -4,6 +4,29 @@ from src.core.entities.entities import Province
 class TestProvince:
     """测试 Province 实体（包括 MVP 0.7-2 新增字段）"""
 
+    def test_province_governor_type_from_json(self):
+        """验证从 JSON 加载的行省包含正确的 governor_type"""
+        # 模拟从 provinces.json 加载的数据
+        data = {
+            "province_id": 1,
+            "name": "西西里",
+            "total_land": 10000,
+            "governor_type": "proconsul",
+            "conquered": True,
+        }
+        province = Province.from_dict(data)
+        assert province.governor_type == "proconsul"
+
+        data2 = {
+            "province_id": 2,
+            "name": "撒丁-科西嘉",
+            "total_land": 16000,
+            "governor_type": "propraetor",
+            "conquered": True,
+        }
+        province2 = Province.from_dict(data2)
+        assert province2.governor_type == "propraetor"
+
     def test_province_creation_with_defaults(self):
         """使用最小参数创建，检查默认值是否正确。"""
         p = Province(province_id=1, name="Test", total_land=1000)

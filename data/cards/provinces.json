@@ -2,6 +2,7 @@
   {
     "province_id": 0,
     "name": "意大利",
+    "governor_type": "proconsul",
     "total_land": 6000,
     "land_public": 6000,
     "land_private": 0,
@@ -27,6 +28,7 @@
   {
     "province_id": 1,
     "name": "西西里",
+    "governor_type": "proconsul",
     "total_land": 10000,
     "land_public": 2000,
     "land_private": 8000,
@@ -52,6 +54,7 @@
   {
     "province_id": 2,
     "name": "撒丁-科西嘉",
+    "governor_type": "propraetor",
     "total_land": 16000,
     "land_public": 3200,
     "land_private": 12800,
@@ -77,6 +80,7 @@
   {
     "province_id": 3,
     "name": "山南高卢",
+    "governor_type": "propraetor",
     "total_land": 150000,
     "land_public": 50000,
     "land_private": 100000,
