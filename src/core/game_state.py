@@ -20,7 +20,7 @@ from src.core.entities.figure import Figure
 from src.core.systems.war_system import WarSystem
 from src.core.systems.military_system import MilitarySystem
 from src.core.systems.naval_system import NavalSystem
-
+from src.core.entities.city import City
 
 
 if TYPE_CHECKING:
@@ -85,6 +85,9 @@ class GameState:
         self._hero_spawned_this_turn: bool = False         # 本回合是否有英雄生成
         self._hero_to_spawn: Optional[Dict] = None         # 待生成英雄的数据
         self._spawned_hero_ids: Set[str] = set()           # 已出现的历史人物卡ID
+        # MVP 0.7 城市系统预留
+        self._cities: Dict[int, City] = {}
+        self._city_id_counter: int = 1
 
         # 初始化时调用 reset，确保状态一致性
         self.reset()
@@ -210,6 +213,10 @@ class GameState:
 
         self._naval_system = NavalSystem(self)
 
+        # MVP 0.7 城市系统重置
+        self._cities.clear()
+        self._city_id_counter = 1
+
 
     # ========== 序列化 ==========
     def to_dict(self) -> Dict[str, Any]:
@@ -237,6 +244,9 @@ class GameState:
             "_hero_spawned_this_turn": self._hero_spawned_this_turn,
             "_hero_to_spawn": self._hero_to_spawn.copy() if self._hero_to_spawn else None,
             "_spawned_hero_ids": list(self._spawned_hero_ids),
+            # 城市系统
+            "_cities": {cid: city.to_dict() for cid, city in self._cities.items()},
+            "_city_id_counter": self._city_id_counter,
 
         }
         return data
@@ -301,6 +311,13 @@ class GameState:
         self._hero_to_spawn = data.get("_hero_to_spawn")
         self._spawned_hero_ids = set(data.get("_spawned_hero_ids", []))
 
+        # 恢复城市
+        self._cities.clear()
+        for cid, city_data in data.get("_cities", {}).items():
+            city = City.from_dict(city_data)
+            self._cities[int(cid)] = city
+        self._city_id_counter = data.get("_city_id_counter", 1)
+
     def _initialize_mortality_pool(self):
         """初始化天命池"""
         self._mortality_pool = list(range(1, self.MAX_MEMBER_ID + 1))
@@ -353,6 +370,10 @@ class GameState:
         instance._pyrrhic_war_won = False
         instance._wartime_tax_collected = 0
         instance._tax_refund_due = 0
+
+        # MVP 0.7 城市系统预留
+        instance._cities = {}
+        instance._city_id_counter = 1
 
         return instance
 
@@ -810,6 +831,30 @@ class GameState:
         私有方法：遍历行省注册表，更新全局公地总数。
         """
         self._public_land_total = sum(p.land_public for p in self._provinces.values())
+
+    # ---------- 城市管理 ----------
+    def add_city(self, city: City) -> None:
+        """添加城市到注册表"""
+        self._cities[city.city_id] = city
+        # 确保城市ID不小于当前计数器
+        if city.city_id >= self._city_id_counter:
+            self._city_id_counter = city.city_id + 1
+
+    def get_city(self, city_id: int) -> Optional[City]:
+        """根据ID获取城市"""
+        return self._cities.get(city_id)
+
+    def get_all_cities(self) -> List[City]:
+        """获取所有城市列表"""
+        return list(self._cities.values())
+
+    def create_city(self, name: str, infrastructure: Optional[Dict[str, int]] = None) -> City:
+        """创建新城市并自动分配ID"""
+        city_id = self._city_id_counter
+        self._city_id_counter += 1
+        city = City(city_id, name, infrastructure)
+        self.add_city(city)
+        return city
 
     # ---------- 合同管理 ----------
     def create_contract(self, contract_type: ContractType, province_id: int,

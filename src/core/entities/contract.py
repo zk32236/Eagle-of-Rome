@@ -37,6 +37,7 @@ class Contract:
     _warranty_remaining: int = 0  # 剩余质保年限
     _annual_cost: int = 0  # 骑士年支出
     _is_extended: bool = False
+    _standard_warranty: int = 0
 
     status: ContractStatus = ContractStatus.PENDING
 
@@ -79,6 +80,7 @@ class Contract:
     _winning_bid: Optional[Dict] = None                   # 中标记录（含 bidder_id, amount, tax_rate）
     _tax_rate: Optional[float] = None                     # 实际税率（中标者承诺的加价比例）
 
+
     def __repr__(self) -> str:
         type_emoji = {
             ContractType.TAX_FARMING: "📊",
@@ -94,6 +96,15 @@ class Contract:
 
         return (f"{type_emoji}{status_icon} {self.name} "
                 f"[成本:{self.base_cost} 收益:{self.expected_profit}]")
+
+
+    @property
+    def standard_warranty(self) -> int:
+        return self._standard_warranty
+
+    @standard_warranty.setter
+    def standard_warranty(self, value: int):
+        self._standard_warranty = value
 
     @property
     def recommended_fleet_composition(self) -> List[Dict[str, Any]]:
@@ -301,3 +312,87 @@ class Contract:
     def terminate(self) -> None:
         self._is_under_execution = False
         self.status = ContractStatus.EXPIRED
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "contract_type": self.contract_type.value,
+            "_province_id": self._province_id,
+            "_create_turn": self._create_turn,
+            "_annual_profit": self._annual_profit,
+            "_original_budget": self._original_budget,
+            "_construction_years": self._construction_years,
+            "_warranty_years": self._warranty_years,
+            "_annual_income": self._annual_income,
+            "_warranty_remaining": self._warranty_remaining,
+            "_annual_cost": self._annual_cost,
+            "_is_extended": self._is_extended,
+            "status": self.status.value,
+            "_is_fleet_construction": self._is_fleet_construction,
+            "_recommended_fleet_composition": self._recommended_fleet_composition,
+            "_enemy_strength": self._enemy_strength,
+            "_total_budget": self._total_budget,
+            "name": self.name,
+            "description": self.description,
+            "base_cost": self.base_cost,
+            "expected_profit": self.expected_profit,
+            "duration_years": self.duration_years,
+            "target_province": self.target_province,
+            "project_type": self.project_type,
+            "awarded_to": self.awarded_to,
+            "awarded_faction": self.awarded_faction,
+            "awarded_turn": self.awarded_turn,
+            "remaining_years": self.remaining_years,
+            "total_collected": self.total_collected,
+            "total_spent": self.total_spent,
+            "_profit_base": self._profit_base,
+            "_is_under_execution": self._is_under_execution,
+            "_complete_turn": self._complete_turn,
+            "_bids": self._bids,
+            "_winning_bid": self._winning_bid,
+            "_tax_rate": self._tax_rate,
+            "_standard_warranty": self._standard_warranty,
+        }
+
+    @staticmethod
+    def from_dict(data: Dict[str, Any]) -> "Contract":
+        contract = Contract(
+            id=data["id"],
+            contract_type=ContractType(data["contract_type"]),
+            _province_id=data.get("_province_id", 0),
+            _create_turn=data.get("_create_turn", 0),
+            _annual_profit=data.get("_annual_profit", 0),
+            _original_budget=data.get("_original_budget", 0),
+            _construction_years=data.get("_construction_years", 0),
+            _warranty_years=data.get("_warranty_years", 0),
+            _annual_income=data.get("_annual_income", 0),
+            _warranty_remaining=data.get("_warranty_remaining", 0),
+            _annual_cost=data.get("_annual_cost", 0),
+            _is_extended=data.get("_is_extended", False),
+            status=ContractStatus(data.get("status", "pending")),
+            _is_fleet_construction=data.get("_is_fleet_construction", False),
+            _recommended_fleet_composition=data.get("_recommended_fleet_composition", []),
+            _enemy_strength=data.get("_enemy_strength", 0),
+            _total_budget=data.get("_total_budget", 0),
+            name=data.get("name", ""),
+            description=data.get("description", ""),
+            base_cost=data.get("base_cost", 0),
+            expected_profit=data.get("expected_profit", 0),
+            duration_years=data.get("duration_years", 1),
+            target_province=data.get("target_province"),
+            project_type=data.get("project_type"),
+            awarded_to=data.get("awarded_to"),
+            awarded_faction=data.get("awarded_faction"),
+            awarded_turn=data.get("awarded_turn"),
+            remaining_years=data.get("remaining_years", 0),
+            total_collected=data.get("total_collected", 0),
+            total_spent=data.get("total_spent", 0),
+            _profit_base=data.get("_profit_base", 0),
+            _is_under_execution=data.get("_is_under_execution", False),
+            _complete_turn=data.get("_complete_turn"),
+            _bids=data.get("_bids", []),
+            _winning_bid=data.get("_winning_bid"),
+            _tax_rate=data.get("_tax_rate"),
+            _standard_warranty=data.get("_standard_warranty", 0),
+        )
+        return contract

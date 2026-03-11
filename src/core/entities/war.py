@@ -53,7 +53,10 @@ class War:
             enemy_maintenance_cost_per_unit: int = 0,
             sea_zone_id: Optional[int] = None,
             mission_type: str = "JOINT_INVASION",
-            rebellion_province_id: Optional[int] = None
+            rebellion_province_id: Optional[int] = None,
+            # ---------- MVP 0.7 战斗统计预留 ----------
+            battles_fought: int = 0,
+            battles_won: int = 0,
     ):
         self._id = id
         self._name = name
@@ -114,8 +117,20 @@ class War:
         self._unanswered_turns: int = 0  # 连续未应战回合数
         self._indemnity_schedule: List[Tuple[int, int]] = []  # 战争赔款分期
         self._sea_control_ratio: float = 1.0  # 当前制海权比例
+        self._battles_fought = battles_fought
+        self._battles_won = battles_won
+
+
 
     # ---------- 属性访问器 ----------
+
+    @property
+    def battles_fought(self) -> int:
+        return self._battles_fought
+
+    @property
+    def battles_won(self) -> int:
+        return self._battles_won
 
     # ---------- MVP 0.7-4 新增字段开始----------
     @property
@@ -480,6 +495,8 @@ class War:
             "_indemnity_schedule": self._indemnity_schedule.copy(),
             "_sea_control_ratio": self._sea_control_ratio,
             "_rebellion_province_id": self._rebellion_province_id,
+            "_battles_fought": self._battles_fought,
+            "_battles_won": self._battles_won,
         }
         return data
 
@@ -547,5 +564,8 @@ class War:
         war._indemnity_schedule = data.get("_indemnity_schedule", [])
         war._sea_control_ratio = data.get("_sea_control_ratio", 1.0)
         war._rebellion_province_id = data.get("_rebellion_province_id")
+
+        war._battles_fought = data.get("_battles_fought", 0)
+        war._battles_won = data.get("_battles_won", 0)
 
         return war

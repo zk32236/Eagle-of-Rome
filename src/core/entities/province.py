@@ -36,6 +36,8 @@ class Province:
         governor_traits_effect: Optional[Dict[str, Any]] = None,
         loyalty: int = 100,
         garrison: Optional[Dict[str, Any]] = None,
+        # MVP 0.7 城市预留
+        city_ids: Optional[List[int]] = None,
     ):
         self._province_id = province_id
         self._name = name
@@ -76,10 +78,24 @@ class Province:
         self._governor_traits_effect = governor_traits_effect or {}
         self._loyalty = loyalty
         self._garrison = garrison or {}
+        self._city_ids = city_ids or []
 
         print(f"[DEBUG] Province {self._name} (ID:{self._province_id}) governor_type = {self._governor_type}")
 
     # ---------- 基础属性 ----------
+
+    @property
+    def city_ids(self) -> List[int]:
+        return self._city_ids.copy()
+
+    def add_city_id(self, city_id: int) -> None:
+        if city_id not in self._city_ids:
+            self._city_ids.append(city_id)
+
+    def remove_city_id(self, city_id: int) -> None:
+        if city_id in self._city_ids:
+            self._city_ids.remove(city_id)
+
     @property
     def province_id(self) -> int:
         return self._province_id
@@ -324,6 +340,7 @@ class Province:
             "governor_traits_effect": self._governor_traits_effect.copy(),
             "loyalty": self._loyalty,
             "garrison": self._garrison.copy(),
+            "city_ids": self._city_ids.copy()
         }
 
     @staticmethod
@@ -355,6 +372,7 @@ class Province:
             governor_traits_effect=data.get("governor_traits_effect", {}),
             loyalty=data.get("loyalty", 100),
             garrison=data.get("garrison", {}),
+            city_ids=data.get("city_ids", [])
         )
         return province
 
