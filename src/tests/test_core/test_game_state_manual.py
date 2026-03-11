@@ -5,7 +5,7 @@ GameState 手动/边界测试（补充）
 
 import pytest
 from src.core.game_state import GameState
-from src.core.entities.entities import Province
+from src.core.entities.province import Province
 from src.core.entities.contract import ContractType
 
 

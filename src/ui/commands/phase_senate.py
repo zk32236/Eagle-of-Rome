@@ -691,6 +691,23 @@ class SenateCommand(Command):
             level=logging.DEBUG,
             extra={"function": "_process_war_takeover", "active_wars": [w.id for w in active_wars], "phase": "enter"}
         )
+
+        # ----- 防御性清理：移除 leader_ids 中已死亡或不存在的人物 -----
+        if self.state.turn and hasattr(self.state.turn, 'leader_ids'):
+            valid_leaders = []
+            for lid in self.state.turn.leader_ids:
+                leader = self.state.get_member(lid)
+                if leader and not leader.is_dead:
+                    valid_leaders.append(lid)
+                else:
+                    self.state.log_event(
+                        f"[DEBUG] 清理 leader_ids 中的死亡/无效人物 {lid}",
+                        level=logging.DEBUG,
+                        extra={"function": "_process_war_takeover", "removed_id": lid}
+                    )
+            self.state.turn.leader_ids = valid_leaders
+        # ------------------------------------------------------------
+
         if not active_wars:
             self.state.log_event(
                 "[DEBUG] _process_war_takeover 结束: 无活跃战争",
@@ -699,25 +716,28 @@ class SenateCommand(Command):
             )
             return
 
-        # 获取执政官
+        # 获取执政官（清理后取第一个）
         if not self.state.turn.leader_ids:
             self.state.log_event(
-                "[DEBUG] _process_war_takeover 结束: 无执政官ID",
+                "[DEBUG] _process_war_takeover 结束: 无存活执政官",
                 level=logging.DEBUG,
-                extra={"function": "_process_war_takeover", "phase": "exit", "reason": "no_consul_id"}
+                extra={"function": "_process_war_takeover", "phase": "exit", "reason": "no_surviving_consul"}
             )
             return
         consul_id = self.state.turn.leader_ids[0]
         consul = self.state.get_member(consul_id)
         if not consul:
+            # 理论上不应发生，但保留防御
             self.state.log_event(
-                f"[DEBUG] _process_war_takeover 结束: 执政官 {consul_id} 不存在或已死亡",
+                f"[DEBUG] _process_war_takeover 结束: 执政官 {consul_id} 无效",
                 level=logging.DEBUG,
-                extra={"function": "_process_war_takeover", "phase": "exit", "reason": "consul_dead_or_missing"}
+                extra={"function": "_process_war_takeover", "phase": "exit", "reason": "consul_invalid"}
             )
+            if consul_id in self.state.turn.leader_ids:
+                self.state.turn.leader_ids.remove(consul_id)
             return
 
-        # 打印每个战争的当前状态（原有打印可保留或替换为日志）
+        # 打印每个战争的当前状态
         for war in active_wars:
             print(f"  - {war.name}, status: {war.status}, commander_id: {war.commander_id}")
             self.state.log_event(

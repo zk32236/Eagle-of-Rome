@@ -18,6 +18,24 @@ class NavalSystem:
         self._construction_contracts: Dict[int, int] = {}  # 合同ID -> 舰队编号（建造中）
 
     # ---------- 舰队管理 ----------
+    def assign_available_fleets_to_war(self, war_id: str) -> int:
+        """
+        将所有 available 状态且目标战争为 war_id 的舰队指派给该战争。
+        返回成功指派的舰队数量。
+        """
+        assigned = 0
+        for fleet in self.get_all_fleets():
+            if fleet.status == FleetStatus.AVAILABLE and fleet._target_war_id == war_id:
+                if self.assign_fleet_to_war(fleet.number, war_id, mission_type="naval"):
+                    assigned += 1
+        if assigned:
+            self.state.log_event(
+                f"[DEBUG] 战争 {war_id} 重新激活，自动指派 {assigned} 艘舰队",
+                level=logging.DEBUG,
+                extra={"war_id": war_id, "assigned_count": assigned}
+            )
+        return assigned
+
     def _can_build_fleet(self) -> bool:
         """检查是否允许建造舰队（皮洛士战争胜利后方可）"""
         return getattr(self.state, "pyrrhic_war_won", False)

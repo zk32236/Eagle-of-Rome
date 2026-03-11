@@ -5,7 +5,8 @@ import pytest
 import io
 from unittest.mock import patch, MagicMock
 from src.core.entities.contract import Contract, ContractType, ContractStatus
-from src.core.entities.entities import Province, GameTurn
+from src.core.entities.entities import GameTurn
+from src.core.entities.province import Province
 from src.core.entities.figure import Figure
 from src.core.game_state import GameState
 from src.ui.commands.phase_revenue import RevenueCommand

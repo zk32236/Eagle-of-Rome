@@ -5,7 +5,7 @@
 import pytest
 from src.core.game_state import GameState
 from src.core.entities.contract import ContractType, ContractStatus
-from src.core.entities.entities import Province
+from src.core.entities.province import Province
 from src.core.entities.figure import Figure
 from src.core.entities.entities import GameTurn
 

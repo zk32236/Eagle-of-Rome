@@ -75,7 +75,7 @@ class TestSenateCommand(unittest.TestCase):
         self.state.mark_phase_executed("population")
 
         # 添加合同测试用的行省
-        from src.core.entities.entities import Province
+        from src.core.entities.province import Province
         province = Province(1, "西西里", 1000)
         self.state.add_province(province)
 

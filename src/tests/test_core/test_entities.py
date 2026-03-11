@@ -1,5 +1,5 @@
 import pytest
-from src.core.entities.entities import Province
+from src.core.entities.province import Province
 from src.core.entities.contract import Contract, ContractType, ContractStatus
 
 class TestProvince:

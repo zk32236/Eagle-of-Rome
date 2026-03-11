@@ -214,39 +214,54 @@ class AssignFleetCommand(Command):
 class ShowFleetsCommand(Command):
     """调试命令：显示所有舰队状态"""
     name = "show_fleets"
-    aliases = ["fl"]  # 从 "sf" 改为 "fl"
+    aliases = ["fl"]
     description = "调试：显示所有舰队状态"
 
     def execute(self, args: List[str]) -> bool:
-        ns = self.state.naval_system
-        if not ns:
-            print("❌ 海军系统未就绪")
-            return False
+        try:
+            ns = self.state.naval_system
+            if not ns:
+                print("❌ 海军系统未就绪")
+                return False
 
-        fleets = ns.get_all_fleets()
-        if not fleets:
-            print("📭 没有舰队")
+            fleets = ns.get_all_fleets()
+            if not fleets:
+                print("📭 没有舰队")
+                return True
+
+            print("\n   ⚓ 舰队状态：")
+            print("   ID  名称               类型      状态        指挥官  战力")
+            print("   " + "-" * 50)
+            for fleet in fleets:
+                status_emoji = {
+                    FleetStatus.BUILDING: "🏗️",
+                    FleetStatus.AVAILABLE: "🟢",
+                    FleetStatus.ON_MISSION: "⚓",
+                    FleetStatus.IN_COMBAT: "⚔️",
+                    FleetStatus.DESTROYED: "💀"
+                }.get(fleet.status, "❓")
+                status_str = fleet.status.value
+
+                # 安全获取指挥官名称
+                commander_name = ""
+                if fleet.commander_id:
+                    fig = self.state.get_member(fleet.commander_id)
+                    commander_name = fig.name if fig else "?"
+
+                # 安全获取战力
+                try:
+                    strength = fleet.get_combat_strength(self.state)
+                except Exception as e:
+                    strength = "?"
+                    self.state.log_exception(e, "计算舰队战力出错")
+
+                print(f"   {fleet.number:<3} {fleet.name:<18} {fleet.fleet_type:<8} {status_emoji}{status_str:<8} {commander_name:<8} {strength}")
+            print()
             return True
-
-        print("\n   ⚓ 舰队状态：")
-        print("   ID  名称               类型      状态        指挥官  战力")
-        print("   " + "-" * 50)
-        for fleet in fleets:
-            status_emoji = {
-                FleetStatus.BUILDING: "🏗️",
-                FleetStatus.AVAILABLE: "🟢",
-                FleetStatus.ON_MISSION: "⚓",
-                FleetStatus.IN_COMBAT: "⚔️",
-                FleetStatus.DESTROYED: "💀"
-            }.get(fleet.status, "❓")
-            status_str = fleet.status.value
-            commander_name = ""
-            if fleet.commander_id:
-                fig = self.state.get_member(fleet.commander_id)
-                commander_name = fig.name if fig else "?"
-            print(f"   {fleet.number:<3} {fleet.name:<18} {fleet.fleet_type:<8} {status_emoji}{status_str:<8} {commander_name:<8} {fleet.get_combat_strength(self.state)}")
-        print()
-        return True
+        except Exception as e:
+            print(f"❌ 显示舰队时发生错误: {e}")
+            self.state.log_exception(e, "ShowFleetsCommand 执行异常")
+            return False
 
 
 class ProcessFleetConstructionCommand(Command):

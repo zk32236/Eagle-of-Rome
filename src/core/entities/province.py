@@ -1,76 +1,80 @@
 # src/core/entities/province.py
 from typing import List, Optional, Dict, Any
 
-
 class Province:
-    """行省实体"""
+    """
+    行省实体 - MVP 0.5 新增，MVP 0.7-2 扩展征服状态及预留字段
+    """
 
     def __init__(
         self,
         province_id: int,
         name: str,
         total_land: int,
+        # ---------- MVP 0.5 原有字段 ----------
         land_public: Optional[int] = None,
         land_private: Optional[int] = None,
         tax_base: int = 0,
         grievance: int = 0,
-        conquered: bool = False,
-        # 总督相关
-        governor_id: Optional[int] = None,
-        governor_type: str = "",  # "proconsul" / "propraetor"
-        old_governor_id: Optional[int] = None,
-        governor_designate_id: Optional[int] = None,
-        # 合同相关
         tax_contract_id: Optional[int] = None,
         project_contract_id: Optional[int] = None,
         has_project: bool = False,
-        # 新增字段（来自 provinces.json）
+        turns_since_last_land_distribution: int = 0,
+        governor_id: Optional[int] = None,
+        old_governor_id: Optional[int] = None,
+        governor_since: int = 0,
+        governor_type: str = "proconsul",
+        governor_designate_id: Optional[int] = None,
+        # ---------- MVP 0.7-2 新增字段 ----------
+        conquered: bool = False,               # 征服状态
+        country_id: int = 0,                    # 归属国家（0=罗马）
+        development_level: int = 0,              # 开发度
+        infrastructure: Optional[Dict[str, int]] = None,  # 基础设施等级
+        resources: Optional[List[str]] = None,               # 资源列表
+        culture: str = "latin",                  # 主流文化
+        religion: str = "roman_polytheism",       # 主流宗教
+        event_flags: Optional[Dict[str, Any]] = None,      # 事件标记
+        governor_traits_effect: Optional[Dict[str, Any]] = None,  # 总督特质影响
+        loyalty: int = 100,                       # 忠诚度
+        garrison: Optional[Dict[str, Any]] = None,            # 驻军信息
+        # ---------- 城市系统扩展（原 province.py 保留）----------
         adjacent_provinces: Optional[List[int]] = None,
-        country_id: int = 0,
-        development_level: int = 0,
-        infrastructure: Optional[Dict[str, int]] = None,
-        resources: Optional[List[str]] = None,
-        culture: str = "",
-        religion: str = "",
-        event_flags: Optional[Dict[str, Any]] = None,
-        governor_traits_effect: Optional[Dict[str, Any]] = None,
-        loyalty: int = 100,
-        garrison: Optional[Dict[str, Any]] = None,
-        # MVP 0.7 城市预留
         city_ids: Optional[List[int]] = None,
     ):
+        # 基础属性
         self._province_id = province_id
         self._name = name
         self._total_land = total_land
 
-        # 土地分配，若未指定则按 6:4 比例分配
-        if land_public is None or land_private is None:
+        # ---------- MVP 0.5 原有字段 ----------
+        # 如果未指定公/私地，按 6:4 比例初始化（仅当 total_land>0）
+        if land_public is None:
             self._land_public = int(total_land * 0.6)
-            self._land_private = int(total_land * 0.4)
         else:
             self._land_public = land_public
+        if land_private is None:
+            self._land_private = int(total_land * 0.4)
+        else:
             self._land_private = land_private
 
         self._tax_base = tax_base
         self._grievance = grievance
-        self._conquered = conquered
-
-        # 总督相关
-        self._governor_id = governor_id
-        self._governor_type = governor_type
-        self._old_governor_id = old_governor_id
-        self._governor_designate_id = governor_designate_id
-
-        # 合同相关
         self._tax_contract_id = tax_contract_id
         self._project_contract_id = project_contract_id
         self._has_project = has_project
+        self._turns_since_last_land_distribution = turns_since_last_land_distribution
 
-        # 新增字段
-        self._adjacent_provinces = adjacent_provinces or []
+        self._governor_id = governor_id
+        self._old_governor_id = old_governor_id
+        self._governor_since = governor_since
+        self._governor_type = governor_type
+        self._governor_designate_id = governor_designate_id
+
+        # ---------- MVP 0.7-2 新增字段 ----------
+        self._conquered = conquered
         self._country_id = country_id
         self._development_level = development_level
-        self._infrastructure = infrastructure or {}
+        self._infrastructure = infrastructure or {"roads": 0, "aqueducts": 0, "ports": 0, "walls": 0}
         self._resources = resources or []
         self._culture = culture
         self._religion = religion
@@ -78,24 +82,12 @@ class Province:
         self._governor_traits_effect = governor_traits_effect or {}
         self._loyalty = loyalty
         self._garrison = garrison or {}
+
+        # ---------- 城市系统扩展 ----------
+        self._adjacent_provinces = adjacent_provinces or []
         self._city_ids = city_ids or []
 
-        print(f"[DEBUG] Province {self._name} (ID:{self._province_id}) governor_type = {self._governor_type}")
-
-    # ---------- 基础属性 ----------
-
-    @property
-    def city_ids(self) -> List[int]:
-        return self._city_ids.copy()
-
-    def add_city_id(self, city_id: int) -> None:
-        if city_id not in self._city_ids:
-            self._city_ids.append(city_id)
-
-    def remove_city_id(self, city_id: int) -> None:
-        if city_id in self._city_ids:
-            self._city_ids.remove(city_id)
-
+    # ---------- 属性访问器（只读）----------
     @property
     def province_id(self) -> int:
         return self._province_id
@@ -120,56 +112,10 @@ class Province:
     def tax_base(self) -> int:
         return self._tax_base
 
-    @tax_base.setter
-    def tax_base(self, value: int):
-        self._tax_base = value
-
     @property
     def grievance(self) -> int:
         return self._grievance
 
-    @property
-    def conquered(self) -> bool:
-        return self._conquered
-
-    @conquered.setter
-    def conquered(self, value: bool):
-        self._conquered = value
-
-    # ---------- 总督相关 ----------
-    @property
-    def governor_id(self) -> Optional[int]:
-        return self._governor_id
-
-    @governor_id.setter
-    def governor_id(self, value: Optional[int]):
-        self._governor_id = value
-
-    @property
-    def governor_type(self) -> str:
-        return self._governor_type
-
-    @governor_type.setter
-    def governor_type(self, value: str):
-        self._governor_type = value
-
-    @property
-    def old_governor_id(self) -> Optional[int]:
-        return self._old_governor_id
-
-    @old_governor_id.setter
-    def old_governor_id(self, value: Optional[int]):
-        self._old_governor_id = value
-
-    @property
-    def governor_designate_id(self) -> Optional[int]:
-        return self._governor_designate_id
-
-    @governor_designate_id.setter
-    def governor_designate_id(self, value: Optional[int]):
-        self._governor_designate_id = value
-
-    # ---------- 合同相关 ----------
     @property
     def tax_contract_id(self) -> Optional[int]:
         return self._tax_contract_id
@@ -182,26 +128,41 @@ class Province:
     def has_project(self) -> bool:
         return self._has_project
 
-    # ---------- 新增字段 ----------
     @property
-    def adjacent_provinces(self) -> List[int]:
-        return self._adjacent_provinces.copy()
+    def turns_since_last_land_distribution(self) -> int:
+        return self._turns_since_last_land_distribution
+
+    @property
+    def governor_id(self) -> Optional[int]:
+        return self._governor_id
+
+    @property
+    def old_governor_id(self) -> Optional[int]:
+        return self._old_governor_id
+
+    @property
+    def governor_since(self) -> int:
+        return self._governor_since
+
+    @property
+    def governor_type(self) -> str:
+        return self._governor_type
+
+    @property
+    def governor_designate_id(self) -> Optional[int]:
+        return self._governor_designate_id
+
+    @property
+    def conquered(self) -> bool:
+        return self._conquered
 
     @property
     def country_id(self) -> int:
         return self._country_id
 
-    @country_id.setter
-    def country_id(self, value: int):
-        self._country_id = value
-
     @property
     def development_level(self) -> int:
         return self._development_level
-
-    @development_level.setter
-    def development_level(self, value: int):
-        self._development_level = value
 
     @property
     def infrastructure(self) -> Dict[str, int]:
@@ -215,17 +176,9 @@ class Province:
     def culture(self) -> str:
         return self._culture
 
-    @culture.setter
-    def culture(self, value: str):
-        self._culture = value
-
     @property
     def religion(self) -> str:
         return self._religion
-
-    @religion.setter
-    def religion(self, value: str):
-        self._religion = value
 
     @property
     def event_flags(self) -> Dict[str, Any]:
@@ -239,47 +192,71 @@ class Province:
     def loyalty(self) -> int:
         return self._loyalty
 
-    @loyalty.setter
-    def loyalty(self, value: int):
-        self._loyalty = max(0, min(100, value))  # 限定 0-100
-
     @property
     def garrison(self) -> Dict[str, Any]:
         return self._garrison.copy()
 
-    # ---------- 修改方法 ----------
+    # ---------- 新增属性：城市系统扩展 ----------
+    @property
+    def adjacent_provinces(self) -> List[int]:
+        return self._adjacent_provinces.copy()
+
+    @property
+    def city_ids(self) -> List[int]:
+        return self._city_ids.copy()
+
+    # ---------- 公共方法 ----------
     def update_land_type(self, public_change: int, private_change: int) -> None:
-        """调整公地/私地数量，保证非负"""
+        """调整公地/私地数量，保证非负。"""
         self._land_public = max(0, self._land_public + public_change)
         self._land_private = max(0, self._land_private + private_change)
 
-    def set_grievance(self, value: int) -> None:
-        """设置民怨值，范围 0-3"""
-        if not (0 <= value <= 3):
-            raise ValueError("Grievance must be between 0 and 3")
-        self._grievance = value
-
     def bind_tax_contract(self, contract_id: int) -> None:
-        """绑定包税权合同"""
         if self._tax_contract_id is not None:
-            raise ValueError("Province already has a tax contract")
+            raise ValueError(f"Province {self._province_id} already has a tax contract (ID: {self._tax_contract_id})")
         self._tax_contract_id = contract_id
 
-    def unbind_tax_contract(self) -> None:
-        """解绑包税权合同"""
-        self._tax_contract_id = None
-
     def bind_project_contract(self, contract_id: int) -> None:
-        """绑定公共工程合同"""
         if self._project_contract_id is not None:
-            raise ValueError("Province already has a project contract")
+            raise ValueError(f"Province {self._province_id} already has a project contract (ID: {self._project_contract_id})")
         self._project_contract_id = contract_id
         self._has_project = True
 
+    def unbind_tax_contract(self) -> None:
+        self._tax_contract_id = None
+
     def unbind_project_contract(self) -> None:
-        """解绑公共工程合同"""
         self._project_contract_id = None
         self._has_project = False
+
+    def set_grievance(self, value: int) -> None:
+        if not (0 <= value <= 3):
+            raise ValueError(f"Grievance must be between 0 and 3, got {value}")
+        self._grievance = value
+
+    def set_governor(self, new_id: Optional[int], turn: int) -> None:
+        self._old_governor_id = self._governor_id
+        self._governor_id = new_id
+        self._governor_since = turn
+
+    def set_event_flag(self, key: str, value: Any) -> None:
+        """设置事件标记"""
+        self._event_flags[key] = value
+
+    def clear_event_flag(self, key: str) -> None:
+        """清除事件标记"""
+        self._event_flags.pop(key, None)
+
+    # ---------- 城市系统扩展方法 ----------
+    def add_city_id(self, city_id: int) -> None:
+        """添加城市ID到行省"""
+        if city_id not in self._city_ids:
+            self._city_ids.append(city_id)
+
+    def remove_city_id(self, city_id: int) -> None:
+        """从行省移除城市ID"""
+        if city_id in self._city_ids:
+            self._city_ids.remove(city_id)
 
     def set_infrastructure(self, key: str, value: int) -> None:
         """设置基础设施等级"""
@@ -295,14 +272,6 @@ class Province:
         if resource in self._resources:
             self._resources.remove(resource)
 
-    def set_event_flag(self, key: str, value: Any) -> None:
-        """设置事件标记"""
-        self._event_flags[key] = value
-
-    def clear_event_flag(self, key: str) -> None:
-        """清除事件标记"""
-        self._event_flags.pop(key, None)
-
     def set_governor_trait_effect(self, key: str, value: Any) -> None:
         """设置总督特质效果"""
         self._governor_traits_effect[key] = value
@@ -313,6 +282,7 @@ class Province:
 
     # ---------- 序列化 ----------
     def to_dict(self) -> Dict[str, Any]:
+        """将行省对象转换为字典，用于存档。"""
         return {
             "province_id": self._province_id,
             "name": self._name,
@@ -321,15 +291,17 @@ class Province:
             "land_private": self._land_private,
             "tax_base": self._tax_base,
             "grievance": self._grievance,
-            "conquered": self._conquered,
-            "governor_id": self._governor_id,
-            "governor_type": self._governor_type,
-            "old_governor_id": self._old_governor_id,
-            "governor_designate_id": self._governor_designate_id,
             "tax_contract_id": self._tax_contract_id,
             "project_contract_id": self._project_contract_id,
             "has_project": self._has_project,
-            "adjacent_provinces": self._adjacent_provinces.copy(),
+            "turns_since_last_land_distribution": self._turns_since_last_land_distribution,
+            "governor_id": self._governor_id,
+            "old_governor_id": self._old_governor_id,
+            "governor_since": self._governor_since,
+            "governor_type": self._governor_type,
+            "governor_designate_id": self._governor_designate_id,
+            # MVP 0.7-2 新增字段
+            "conquered": self._conquered,
             "country_id": self._country_id,
             "development_level": self._development_level,
             "infrastructure": self._infrastructure.copy(),
@@ -340,12 +312,15 @@ class Province:
             "governor_traits_effect": self._governor_traits_effect.copy(),
             "loyalty": self._loyalty,
             "garrison": self._garrison.copy(),
-            "city_ids": self._city_ids.copy()
+            # 城市系统扩展
+            "adjacent_provinces": self._adjacent_provinces.copy(),
+            "city_ids": self._city_ids.copy(),
         }
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "Province":
-        province = Province(
+        """从字典重建行省对象。"""
+        return Province(
             province_id=data["province_id"],
             name=data["name"],
             total_land=data["total_land"],
@@ -353,28 +328,29 @@ class Province:
             land_private=data.get("land_private"),
             tax_base=data.get("tax_base", 0),
             grievance=data.get("grievance", 0),
-            conquered=data.get("conquered", False),
-            governor_id=data.get("governor_id"),
-            governor_type=data.get("governor_type", ""),
-            old_governor_id=data.get("old_governor_id"),
-            governor_designate_id=data.get("governor_designate_id"),
             tax_contract_id=data.get("tax_contract_id"),
             project_contract_id=data.get("project_contract_id"),
             has_project=data.get("has_project", False),
-            adjacent_provinces=data.get("adjacent_provinces", []),
+            turns_since_last_land_distribution=data.get("turns_since_last_land_distribution", 0),
+            governor_id=data.get("governor_id"),
+            old_governor_id=data.get("old_governor_id"),
+            governor_since=data.get("governor_since", 0),
+            governor_type=data.get("governor_type", "proconsul"),
+            governor_designate_id=data.get("governor_designate_id"),
+            conquered=data.get("conquered", False),
             country_id=data.get("country_id", 0),
             development_level=data.get("development_level", 0),
-            infrastructure=data.get("infrastructure", {}),
-            resources=data.get("resources", []),
-            culture=data.get("culture", ""),
-            religion=data.get("religion", ""),
-            event_flags=data.get("event_flags", {}),
-            governor_traits_effect=data.get("governor_traits_effect", {}),
+            infrastructure=data.get("infrastructure"),
+            resources=data.get("resources"),
+            culture=data.get("culture", "latin"),
+            religion=data.get("religion", "roman_polytheism"),
+            event_flags=data.get("event_flags"),
+            governor_traits_effect=data.get("governor_traits_effect"),
             loyalty=data.get("loyalty", 100),
-            garrison=data.get("garrison", {}),
-            city_ids=data.get("city_ids", [])
+            garrison=data.get("garrison"),
+            adjacent_provinces=data.get("adjacent_provinces"),
+            city_ids=data.get("city_ids"),
         )
-        return province
 
     def __repr__(self) -> str:
         status = "🏛️" if self._conquered else "⛔"

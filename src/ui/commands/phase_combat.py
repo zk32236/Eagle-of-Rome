@@ -332,18 +332,16 @@ class CombatCommand(Command):
             war.commander_id = None
             war.duration += 1
 
+
         elif result == "DISASTER":
+
             print(f"\n      {emoji} RESULT: DISASTER, {legion_count} Legion(s) destroyed")
             print(f"      🔥 DISASTER! Catastrophic defeat!")
+
             for legion in legions:
                 legion.mark_destroyed(self.state.turn.turn_number)
-
-            # 将领阵亡
-            commander.is_dead = True
-            commander.is_faction_leader = False
-            if commander.id in self.state.turn.leader_ids:
-                self.state.turn.leader_ids.remove(commander.id)
-
+            # 将领阵亡 - 统一通过 GameState 处理
+            self.state.mark_member_dead(commander.id, transfer_land=True, transfer_wealth=True)
             war.report_commander_casualty("killed", self.state.turn.turn_number)
             war.commander_id = None
             war.legions_assigned = 0

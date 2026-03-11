@@ -10,14 +10,15 @@ print("GameState file:", inspect.getfile(GameState))
 print("log_event signature:", inspect.signature(GameState.log_event))
 from pathlib import Path
 import pytest
-from src.core.entities.entities import Province
+from src.core.entities.province import Province
 
 # 将项目根目录加入 sys.path
 project_root = Path(__file__).parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.core.entities.entities import Province, Faction
+from src.core.entities.entities import Faction
+from src.core.entities.province import Province
 from src.core.entities.contract import Contract, ContractType
 from src.core.entities.figure import Figure
 from src.core.game_state import GameState

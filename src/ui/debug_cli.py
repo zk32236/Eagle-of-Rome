@@ -135,8 +135,12 @@ class DebugCLI:
                         print(f"未知命令: {cmd_name}")
                         print("输入 'help' 查看可用命令")
 
+                except EOFError:
+                    print("\n输入流已关闭，退出。")
+                    break
                 except KeyboardInterrupt:
                     print("\n使用 'exit' 命令退出游戏")
+                    continue
                 except Exception as e:
                     # 获取当前状态信息
                     state_info = ""

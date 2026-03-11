@@ -15,7 +15,8 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.core.game_state import GameState
-from src.core.entities.entities import GameTurn, Province, Faction
+from src.core.entities.entities import GameTurn, Faction
+from src.core.entities.province import Province
 from src.core.entities.figure import Figure, ClassTier
 from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.ui.commands.phase_forum import ForumCommand

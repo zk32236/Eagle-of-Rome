@@ -164,7 +164,7 @@ class TestResolutionCommand(unittest.TestCase):
 
     def test_contract_expiration(self):
         """测试合同过期逻辑（无输出）"""
-        from src.core.entities.entities import Province
+        from src.core.entities.province import Province
 
         province1 = Province(1, "Province1", 1000)
         province2 = Province(2, "Province2", 1000)
@@ -206,7 +206,7 @@ class TestResolutionCommand(unittest.TestCase):
 
     def test_contract_summary(self):
         """测试合同摘要（已移除）"""
-        from src.core.entities.entities import Province
+        from src.core.entities.province import Province
 
         province = Province(1, "Province1", 1000)
         self.state.add_province(province)

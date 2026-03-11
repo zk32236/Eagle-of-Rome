@@ -5,8 +5,8 @@ import random
 from pathlib import Path
 from src.core.game_state import GameState
 from src.core.entities.figure import Figure, ClassTier
-from src.core.entities.entities import Faction, GameTurn, Province
-#from src.core.entities.province import Province
+from src.core.entities.entities import Faction, GameTurn
+from src.core.entities.province import Province
 
 
 class ScenarioLoader:

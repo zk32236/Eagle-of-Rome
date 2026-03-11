@@ -2,7 +2,8 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from src.core.game_state import GameState
-from src.core.entities.entities import Province, Faction, GameTurn
+from src.core.entities.entities import Faction, GameTurn
+from src.core.entities.province import Province
 from src.core.entities.figure import Figure, OfficeTerm
 from src.core.entities.contract import ContractType, ContractStatus
 from src.ui.commands.phase_senate import SenateCommand

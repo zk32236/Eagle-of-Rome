@@ -206,8 +206,11 @@ class MortalityCommand(Command):
 
     def _handle_death_event(self):
         """死神来了：随机抽取死亡人数，财产归公，同时终止死亡人物的合同"""
+
         rules = self.state.config.get("mortality_rules", {})
         death_count = rules.get("death_count", 1)
+
+        self.state.log_event(f"[DEBUG] death_count = {death_count}", level=logging.DEBUG)
 
         living = self.state.get_living_members()
         if not living:

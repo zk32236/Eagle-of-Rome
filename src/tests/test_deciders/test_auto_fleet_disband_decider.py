@@ -7,7 +7,6 @@ from src.core.deciders.impl.auto_fleet_disband_decider import AutoFleetDisbandDe
 from src.core.entities.fleet import Fleet, FleetStatus
 from src.core.game_state import GameState
 from src.core.entities.war import War, WarStatus
-from src.core.systems.war_system import WarSystem   # 新增导入
 
 
 class TestAutoFleetDisbandDecider(unittest.TestCase):
@@ -20,13 +19,13 @@ class TestAutoFleetDisbandDecider(unittest.TestCase):
         # 创建 mock 游戏状态
         self.state = create_autospec(GameState)
 
-        # 创建 mock 战争系统（使用 autospec 确保方法存在）
-        self.war_system = create_autospec(WarSystem)   # 修改点
+        # 创建 mock 战争系统
+        self.war_system = MagicMock()
         self.state.get_war_system.return_value = self.war_system
 
         # 默认返回空战争列表
         self.war_system.get_active_wars.return_value = []
-        self.war_system.get_threat_wars.return_value = []   # 添加
+        self.war_system.get_threat_wars.return_value = []
         self.war_system.get_truce_wars.return_value = []
 
     def create_fleet(self, status=FleetStatus.AVAILABLE, is_building=False):
@@ -90,7 +89,7 @@ class TestAutoFleetDisbandDecider(unittest.TestCase):
         """有威胁战争且需要海战，不应解散"""
         fleet = self.create_fleet()
         war = self.create_war(naval_required=True, status=WarStatus.THREAT)
-        self.war_system.get_threat_wars.return_value = [war]   # 修改点
+        self.war_system.get_threat_wars.return_value = [war]
         result = self.decider.should_disband_fleet(fleet, self.state)
         self.assertFalse(result)
 
@@ -139,7 +138,7 @@ class TestAutoFleetDisbandDecider(unittest.TestCase):
             self.create_war(naval_required=True, status=WarStatus.TRUCE, peace_treaty_status='approved')
         ]
         self.war_system.get_active_wars.return_value = [w for w in wars if w.status == WarStatus.ACTIVE]
-        self.war_system.get_threat_wars.return_value = [w for w in wars if w.status == WarStatus.THREAT]   # 修改点
+        self.war_system.get_threat_wars.return_value = [w for w in wars if w.status == WarStatus.THREAT]
         self.war_system.get_truce_wars.return_value = [w for w in wars if w.status == WarStatus.TRUCE]
         result = self.decider.should_disband_fleet(fleet, self.state)
         self.assertTrue(result)
@@ -153,7 +152,7 @@ class TestAutoFleetDisbandDecider(unittest.TestCase):
             self.create_war(naval_required=True, status=WarStatus.TRUCE, peace_treaty_status='approved')
         ]
         self.war_system.get_active_wars.return_value = [w for w in wars if w.status == WarStatus.ACTIVE]
-        self.war_system.get_threat_wars.return_value = [w for w in wars if w.status == WarStatus.THREAT]   # 修改点
+        self.war_system.get_threat_wars.return_value = [w for w in wars if w.status == WarStatus.THREAT]
         self.war_system.get_truce_wars.return_value = [w for w in wars if w.status == WarStatus.TRUCE]
         result = self.decider.should_disband_fleet(fleet, self.state)
         self.assertFalse(result)

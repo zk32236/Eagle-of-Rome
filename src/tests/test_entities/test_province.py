@@ -1,5 +1,5 @@
 import pytest
-from src.core.entities.entities import Province
+from src.core.entities.province import Province
 
 class TestProvince:
     """测试 Province 实体（包括 MVP 0.7-2 新增字段）"""

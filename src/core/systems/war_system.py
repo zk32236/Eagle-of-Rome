@@ -154,6 +154,8 @@ class WarSystem:
                 "truce_after": [w.id for w in self._truce_wars],
             }
         )
+        if self.state.naval_system:
+            self.state.naval_system.assign_available_fleets_to_war(war.id)
         return True
 
     def _move_to_threat(self, war: War, threat_level: int = 1) -> bool:
@@ -718,9 +720,10 @@ class WarSystem:
         """获取所有活跃战争"""
         return [w for w in self._active_wars if w.status == WarStatus.ACTIVE]
 
+    # 在 WarSystem 类中
     def get_war_by_id(self, war_id: str) -> Optional[War]:
-        """通过ID查找战争（搜索所有战争列表）"""
-        all_wars = self._war_deck + self._war_discard + self._active_wars + self._threats
+        """通过ID查找战争（搜索所有战争列表，包括停战列表）"""
+        all_wars = self._war_deck + self._war_discard + self._active_wars + self._threats + self._truce_wars
         for war in all_wars:
             if war.id == war_id:
                 return war

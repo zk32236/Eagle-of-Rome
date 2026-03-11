@@ -329,7 +329,7 @@ class TestGameStateMVP05(unittest.TestCase):
     # ---------- 行省管理测试 ----------
     def test_add_province_and_get_province(self):
         """测试添加行省和通过ID获取行省"""
-        from src.core.entities.entities import Province
+        from src.core.entities.province import Province
 
         province = Province(1, "西西里", 1000)
         self.state.add_province(province)
@@ -343,7 +343,7 @@ class TestGameStateMVP05(unittest.TestCase):
 
     def test_add_province_updates_public_land(self):
         """测试添加行省后全局公地总数更新正确"""
-        from src.core.entities.entities import Province
+        from src.core.entities.province import Province
 
         # 初始为0
         self.assertEqual(self.state._public_land_total, 0)
@@ -357,7 +357,7 @@ class TestGameStateMVP05(unittest.TestCase):
 
     def test_get_all_provinces_returns_copy(self):
         """测试 get_all_provinces 返回副本，修改副本不影响内部"""
-        from src.core.entities.entities import Province
+        from src.core.entities.province import Province
 
         province1 = Province(1, "西西里", 1000)
         province2 = Province(2, "撒丁尼亚", 500)
@@ -413,7 +413,7 @@ class TestGameStateMVP05(unittest.TestCase):
     # ---------- 获取行省绑定的合同测试 ----------
     def test_get_province_contract(self):
         """测试通过行省和类型获取绑定的合同"""
-        from src.core.entities.entities import Province
+        from src.core.entities.province import Province
         from src.core.entities.contract import ContractType
 
         province = Province(1, "西西里", 1000)
@@ -431,7 +431,7 @@ class TestGameStateMVP05(unittest.TestCase):
     # ---------- reset 测试 ----------
     def test_reset_clears_new_fields(self):
         """测试 reset 方法清空新增字段并重置计数器"""
-        from src.core.entities.entities import Province
+        from src.core.entities.province import Province
         from src.core.entities.contract import ContractType
 
         province = Province(1, "西西里", 1000)

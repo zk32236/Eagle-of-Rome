@@ -177,7 +177,8 @@ class TestMortalityCommand(unittest.TestCase):
 
     def test_death_event_terminates_contract(self):
         """测试死亡事件终止合同"""
-        from src.core.entities.entities import Province, Faction, GameTurn
+        from src.core.entities.entities import Faction, GameTurn
+        from src.core.entities.province import Province
         from src.core.entities.contract import Contract, ContractType, ContractStatus
         from src.core.entities.figure import Figure, ClassTier
         from src.ui.commands.phase_mortality import MortalityCommand

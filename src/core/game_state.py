@@ -676,6 +676,11 @@ class GameState:
         if self._turn and hasattr(self._turn, 'leader_ids'):
             if member_id in self._turn.leader_ids:
                 self._turn.leader_ids.remove(member_id)
+                self.log_event(
+                    f"[DEBUG] 死亡人物 {member_id} 从 leader_ids 移除",
+                    level=logging.DEBUG,
+                    extra={"figure_id": member_id, "leader_ids_after": self._turn.leader_ids.copy()}
+                )
 
         return True
 
