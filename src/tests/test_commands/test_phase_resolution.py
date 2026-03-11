@@ -4,7 +4,7 @@
 import unittest
 import sys
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 import io
 from contextlib import redirect_stdout
 
@@ -14,12 +14,11 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.core.game_state import GameState
 from src.core.entities.entities import GameTurn, Faction
 from src.core.entities.figure import Figure
-from src.core.entities.contract import Contract, ContractType, ContractStatus
+from src.core.entities.contract import ContractType, ContractStatus
+from src.core.game_state import GameState
 from src.ui.commands.phase_resolution import ResolutionCommand
-from src.core.localization import TerminologyService
 
 
 class TestResolutionCommand(unittest.TestCase):
@@ -55,7 +54,18 @@ class TestResolutionCommand(unittest.TestCase):
         self.state.add_member(self.fig2)
         self.faction2.member_ids.append(2)
 
+        self.state._active_events = {"test_event": {"value": 1}}
+
     # ========== 测试用例 ==========
+
+    def test_clear_active_events(self):
+        cmd = ResolutionCommand(self.state)
+        # 模拟已执行前置阶段
+        self.state._executed_phases.add("combat")
+        cmd.execute([])
+        self.assertEqual(self.state._active_events, {})
+
+
     def test_deficit_increment(self):
         """国库为负时赤字计数增加"""
         self.state.treasury = -10

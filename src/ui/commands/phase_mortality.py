@@ -60,6 +60,8 @@ class MortalityCommand(Command):
 
             if effect == "death":
                 self._handle_death_event()
+            elif effect == "bountiful_harvest":
+                self._handle_bountiful_harvest()
             else:
                 # 其他事件暂不实现，仅打印
                 print(f"      (效果暂未实现)")
@@ -108,3 +110,13 @@ class MortalityCommand(Command):
             )
 
         self.state.log_event(f"💀 死神来了：{len(victims)} 人死亡，财产归公")
+
+    def _handle_bountiful_harvest(self):
+        """风调雨顺：本回合全国土地产出 +50%"""
+        multiplier = self.state.config.get("mortality_rules.bumper_harvest_multiplier", 1.5)
+        self.state._active_events["bumper_harvest"] = {"multiplier": multiplier}
+        print(f"      🌾 风调雨顺！本回合全国土地产出 +{int((multiplier-1)*100)}%")
+        self.state.log_event(
+            "风调雨顺触发",
+            extra={"type": "event", "event": "bountiful_harvest", "multiplier": multiplier}
+        )

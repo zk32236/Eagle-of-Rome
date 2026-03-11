@@ -219,6 +219,70 @@ class TestMortalityCommand(unittest.TestCase):
         self.assertEqual(contract.status, ContractStatus.EXPIRED)
         self.assertIsNone(province.tax_contract_id)
 
+    def test_bountiful_harvest_event(self):
+        """测试风调雨顺事件：写入 active_events 并检查税收阶段加成"""
+        # 修改配置确保抽取到风调雨顺
+        test_config = {
+            "mortality_rules": {
+                "event_deck": [{"name": "风调雨顺", "effect": "bountiful_harvest", "weight": 1}],
+                "event_draw_count": 1,
+                "bumper_harvest_multiplier": 1.5
+            },
+            "economic_rules": {
+                "land_price_per_unit": 10,
+                "public_land_income_rate": 0.01,
+                "national_public_land_tax_rate": 0.1,
+                "private_land_income_rate": 0.05,
+                "faction_tax_rate": 0.1
+            }
+        }
+        state = GameState.create_for_testing(test_config)
+        # 设置必要的实体
+        from src.core.entities.entities import GameTurn, Faction
+        from src.core.entities.figure import Figure, ClassTier
+        state.turn = GameTurn(turn_number=1, year=-264)
+        # 添加派系和人物
+        faction = Faction("test", "测试派")
+        state.add_faction(faction)
+        fig = Figure(1, "测试人物", faction_id="test", age=30)
+        # 设置私地数量（通过私有字段，因为 land_private 是只读属性）
+        fig._land_private = 100
+        fig.class_tier = ClassTier.EQUES
+        state.add_member(fig)
+        faction.member_ids = [1]
+        # 设置国家公地
+        state._national_public_land = 1000
+
+        # 执行天命阶段
+        from src.ui.commands.phase_mortality import MortalityCommand
+        cmd_m = MortalityCommand(state)
+        cmd_m.execute([])
+
+        # 验证事件已写入
+        self.assertIn("bumper_harvest", state.active_events)
+        self.assertEqual(state.active_events["bumper_harvest"]["multiplier"], 1.5)
+
+        # 执行税收阶段
+        from src.ui.commands.phase_revenue import RevenueCommand
+        cmd_r = RevenueCommand(state)
+        # 模拟前置阶段已执行
+        state._executed_phases.add("mortality")
+        initial_treasury = state.treasury
+        initial_wealth = fig.wealth
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            cmd_r.execute([])
+        output = f.getvalue()
+
+        # 验证加成效果
+        # 国家公地收益：1000*10*0.01*0.1 = 10，乘1.5得15
+        self.assertEqual(state.treasury - initial_treasury, 15)
+        # 私地收入：100*10*0.05 = 50，乘1.5得75，扣除派系抽成10%得67.5，四舍五入68
+        self.assertEqual(fig.wealth - initial_wealth, 68)
+        # 日志中应有提示
+        self.assertIn("风调雨顺加成", output)
+
 
 if __name__ == "__main__":
     unittest.main()

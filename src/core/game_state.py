@@ -80,10 +80,19 @@ class GameState:
         self._tax_refund_due: int = 0                          # 待返还财产税（预留）
         self._naval_system = NavalSystem(self)
 
+        # ---------- 新增：天命系统 MVP0.7-5~8 ----------
+        self._active_events: Dict[str, Any] = {}           # 本回合生效的事件
+        self._hero_spawned_this_turn: bool = False         # 本回合是否有英雄生成
+        self._hero_to_spawn: Optional[Dict] = None         # 待生成英雄的数据
+        self._spawned_hero_ids: Set[str] = set()           # 已出现的历史人物卡ID
+
         # 初始化时调用 reset，确保状态一致性
         self.reset()
 
     #========================= 功能函数 ===================================
+
+
+
 
     def log_exception(self, e: Exception, context: str = "", extra: dict = None):
         """
@@ -223,7 +232,12 @@ class GameState:
             "_contracts_dict": {cid: contract.to_dict() for cid, contract in self._contracts_dict.items()},
             # 海军系统
             "_naval_system": self._naval_system.to_dict() if self._naval_system else None,
-            # 其他系统（如 war_system, military_system, curia）暂未序列化，若有需要可类似添加
+            # 天命系统
+            "_active_events": self._active_events.copy(),
+            "_hero_spawned_this_turn": self._hero_spawned_this_turn,
+            "_hero_to_spawn": self._hero_to_spawn.copy() if self._hero_to_spawn else None,
+            "_spawned_hero_ids": list(self._spawned_hero_ids),
+
         }
         return data
 
@@ -281,6 +295,12 @@ class GameState:
         # 更新全局公地总数
         self._update_global_public_land()
 
+        # 恢复天命系统
+        self._active_events = data.get("_active_events", {}).copy()
+        self._hero_spawned_this_turn = data.get("_hero_spawned_this_turn", False)
+        self._hero_to_spawn = data.get("_hero_to_spawn")
+        self._spawned_hero_ids = set(data.get("_spawned_hero_ids", []))
+
     def _initialize_mortality_pool(self):
         """初始化天命池"""
         self._mortality_pool = list(range(1, self.MAX_MEMBER_ID + 1))
@@ -316,7 +336,13 @@ class GameState:
         instance._contract_id_counter = 1
         instance._national_public_land = test_config.get("economic_rules", {}).get("initial_national_public_land", 1000)
         instance._pending_land_acts = []
-        instance._treasury_deficit_turns = 0   # 新增：初始化赤字计数
+        instance._treasury_deficit_turns = 0
+
+        # MVP 0.7 新增字段
+        instance._active_events = {}
+        instance._hero_spawned_this_turn = False
+        instance._hero_to_spawn = None
+        instance._spawned_hero_ids = set()
 
         # ---------- 新增：日志记录器 ----------
         instance._logger = None
@@ -634,7 +660,38 @@ class GameState:
 
     # ========== 属性访问 ==========
 
+    @property
+    def active_events(self) -> Dict[str, Any]:
+        """返回当前生效的事件字典副本"""
+        return self._active_events.copy()
 
+    def clear_active_events(self):
+        """清除本回合生效的事件（在决议阶段调用）"""
+        self._active_events.clear()
+
+    @property
+    def hero_spawned_this_turn(self) -> bool:
+        return self._hero_spawned_this_turn
+
+    @hero_spawned_this_turn.setter
+    def hero_spawned_this_turn(self, value: bool):
+        self._hero_spawned_this_turn = value
+
+    @property
+    def hero_to_spawn(self) -> Optional[Dict]:
+        return self._hero_to_spawn
+
+    @hero_to_spawn.setter
+    def hero_to_spawn(self, value: Optional[Dict]):
+        self._hero_to_spawn = value
+
+    @property
+    def spawned_hero_ids(self) -> Set[str]:
+        return self._spawned_hero_ids
+
+    def add_spawned_hero_id(self, hero_id: str):
+        """记录已生成的历史人物ID"""
+        self._spawned_hero_ids.add(hero_id)
 
     @property
     def members(self):

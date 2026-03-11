@@ -59,6 +59,13 @@ class RevenueCommand(Command):
         national_land = self.state.get_national_public_land()
         tax_income = int(round(national_land * land_price* public_income_rate * national_tax_rate))
 
+        # ===== 风调雨顺加成 =====
+        if "bumper_harvest" in self.state.active_events:
+            multiplier = self.state.active_events["bumper_harvest"]["multiplier"]
+            tax_income = int(round(tax_income * multiplier))
+            print(f"      🌾 风调雨顺加成: 国家公地收益 ×{multiplier}")
+        # =========================
+
         self.state.add_treasury(tax_income)
         print(f"💰 国家公地收益: \t+{tax_income} {terms.currency}")
         print(f"📊 国库现有资金: \t{self.state.treasury} {terms.currency}\n")
@@ -226,12 +233,19 @@ class RevenueCommand(Command):
         land_price = self.state.get_economic_rule("land_price_per_unit", 10)
         rate = self.state.get_economic_rule("private_land_income_rate", 0.05)
 
+        # 风调雨顺倍率
+        multiplier = 1.0
+        if "bumper_harvest" in self.state.active_events:
+            multiplier = self.state.active_events["bumper_harvest"]["multiplier"]
+
         data = []
         for fig in self.state.get_living_members():
             try:
                 if fig.land_private <= 0:
                     continue
                 income_float = fig.land_private * land_price * rate
+                # 应用风调雨顺加成
+                income_float *= multiplier
                 if income_float <= 0:
                     continue
 
@@ -274,6 +288,14 @@ class RevenueCommand(Command):
                         continue
 
                     annual_profit = contract.annual_profit
+
+                    # ===== 风调雨顺加成 =====
+                    if "bumper_harvest" in self.state.active_events:
+                        multiplier = self.state.active_events["bumper_harvest"]["multiplier"]
+                        annual_profit = int(round(annual_profit * multiplier))
+                        # 可在此处打印调试信息，但为了简洁，可以省略或只在日志中记录
+                    # =========================
+
                     profit_float = float(annual_profit)
                     tax_float = profit_float * tax_rate
                     net_profit_int = int(round(profit_float - tax_float))

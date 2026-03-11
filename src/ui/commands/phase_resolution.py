@@ -53,6 +53,9 @@ class ResolutionCommand(Command):
         if ms:
             ms.process_legion_recovery(self.state.turn.turn_number)  # 该方法内部已无打印或需修改
 
+        # 清除本回合生效的事件（天命）
+        self.state.clear_active_events()
+
         self.state.mark_phase_executed("resolution")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
