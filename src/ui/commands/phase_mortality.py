@@ -5,6 +5,8 @@
 
 import random
 import logging
+import json
+from pathlib import Path
 from typing import List, TYPE_CHECKING, Dict
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
@@ -66,6 +68,8 @@ class MortalityCommand(Command):
                 self._handle_peace_event()
             elif effect == "mighty_man":
                 self._handle_mighty_man_event()
+            elif effect == "disaster":
+                self._handle_disaster_event()
             else:
                 # 其他事件暂不实现，仅打印
                 print(f"      (效果暂未实现)")
@@ -74,6 +78,77 @@ class MortalityCommand(Command):
         self.state.mark_phase_executed("mortality")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
+
+    def _load_disasters(self) -> List[Dict]:
+        """从 disasters.json 加载灾害数据，如果文件不存在或解析失败则返回空列表"""
+        base_path = Path(__file__).parent.parent.parent.parent
+        file_path = base_path / "data" / "cards" / "disasters.json"
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return data.get("disasters", [])
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            self.state.log_event(f"灾害数据加载失败: {e}", level=logging.WARNING)
+            return []
+
+    def _handle_disaster_event(self):
+        """无妄天灾：随机一个行省受灾，影响该行省所有收入"""
+        print(f"      🌪️ 无妄天灾！一场灾难降临罗马")
+
+        # 获取所有已征服行省（包括意大利）
+        provinces = [p for p in self.state.get_all_provinces() if p.conquered]
+        if not provinces:
+            print(f"         没有已征服行省，天灾无处降临")
+            return
+
+        # 随机选择一个行省
+        province = random.choice(provinces)
+
+        # 加载灾害配置
+        disasters = self._load_disasters()
+        if not disasters:
+            # 如果没有灾害配置，使用默认值
+            base_loss = self.state.config.get("mortality_rules.disaster_base_loss", 0.5)
+            mitigation_factor = self.state.config.get("mortality_rules.disaster_mitigation_factor", 0.1)
+            loss = base_loss
+            # 简化：不使用基建减免
+            print(f"         行省 {province.name} 受灾，损失比例 {loss*100:.0f}%")
+            self.state._active_events["disaster"] = {
+                "province_id": province.province_id,
+                "loss_ratio": loss
+            }
+            self.state.log_event(
+                f"无妄天灾: {province.name} 受灾，损失 {loss*100:.0f}%",
+                extra={"type": "disaster", "province_id": province.province_id, "loss": loss}
+            )
+            return
+
+        # 随机选择一种灾害（P0只有一种）
+        disaster = random.choice(disasters)
+        base_loss = disaster["base_loss"]
+        mitigation_infra = disaster["mitigation_infra"]
+        mitigation_factor = disaster["mitigation_factor"]
+
+        # 获取行省基建等级
+        infra_level = province.infrastructure.get(mitigation_infra, 0)
+        # 计算实际损失比例
+        loss = base_loss * (1 - infra_level * mitigation_factor)
+        loss = max(0.0, min(1.0, loss))  # 限制在0~1之间
+
+        print(f"         行省 {province.name} 遭受 {disaster['name']}，损失比例 {loss*100:.0f}%")
+        if infra_level > 0:
+            print(f"         基建 {mitigation_infra} 等级 {infra_level} 减免 {mitigation_factor*infra_level*100:.0f}%")
+
+        # 存入 active_events
+        self.state._active_events["disaster"] = {
+            "province_id": province.province_id,
+            "loss_ratio": loss
+        }
+
+        self.state.log_event(
+            f"无妄天灾: {province.name} 受灾，损失 {loss*100:.0f}%",
+            extra={"type": "disaster", "province_id": province.province_id, "loss": loss}
+        )
 
     def _handle_mighty_man_event(self):
         """天降猛男：在广场阶段生成一位历史强力人物（或随机猛人）"""

@@ -1,0 +1,11 @@
+{
+  "disasters": [
+    {
+      "id": "general_disaster",
+      "name": "天灾",
+      "base_loss": 0.5,
+      "mitigation_infra": "roads",
+      "mitigation_factor": 0.1
+    }
+  ]
+}

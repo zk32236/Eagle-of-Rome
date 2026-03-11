@@ -60,10 +60,19 @@ class RevenueCommand(Command):
         tax_income = int(round(national_land * land_price* public_income_rate * national_tax_rate))
 
         # ===== 风调雨顺加成 =====
-        if "bumper_harvest" in self.state.active_events:
-            multiplier = self.state.active_events["bumper_harvest"]["multiplier"]
+        if "bumper_harvest" in self.state._active_events:
+            multiplier = self.state._active_events["bumper_harvest"]["multiplier"]
             tax_income = int(round(tax_income * multiplier))
             print(f"      🌾 风调雨顺加成: 国家公地收益 ×{multiplier}")
+        # =========================
+
+        # ===== 天灾影响（如果受灾行省是意大利）=====
+        if "disaster" in self.state._active_events:
+            disaster_info = self.state._active_events["disaster"]
+            if disaster_info["province_id"] == 0:
+                loss_ratio = disaster_info["loss_ratio"]
+                tax_income = int(round(tax_income * (1 - loss_ratio)))
+                print(f"      🌪️ 天灾影响: 国家公地收益减少 {loss_ratio * 100:.0f}%")
         # =========================
 
         self.state.add_treasury(tax_income)
@@ -235,8 +244,15 @@ class RevenueCommand(Command):
 
         # 风调雨顺倍率
         multiplier = 1.0
-        if "bumper_harvest" in self.state.active_events:
-            multiplier = self.state.active_events["bumper_harvest"]["multiplier"]
+        if "bumper_harvest" in self.state._active_events:
+            multiplier = self.state._active_events["bumper_harvest"]["multiplier"]
+
+        # 天灾影响（只影响意大利）
+        disaster_loss = 1.0
+        if "disaster" in self.state._active_events:
+            disaster_info = self.state._active_events["disaster"]
+            if disaster_info["province_id"] == 0:  # 意大利
+                disaster_loss = 1.0 - disaster_info["loss_ratio"]
 
         data = []
         for fig in self.state.get_living_members():
@@ -246,6 +262,9 @@ class RevenueCommand(Command):
                 income_float = fig.land_private * land_price * rate
                 # 应用风调雨顺加成
                 income_float *= multiplier
+                # 应用天灾影响（所有人物私地收入都受影响，因为假设私地主要在意大利）
+                # 如果后续需要更精细的行省关联，可扩展
+                income_float *= disaster_loss
                 if income_float <= 0:
                     continue
 
@@ -290,10 +309,19 @@ class RevenueCommand(Command):
                     annual_profit = contract.annual_profit
 
                     # ===== 风调雨顺加成 =====
-                    if "bumper_harvest" in self.state.active_events:
-                        multiplier = self.state.active_events["bumper_harvest"]["multiplier"]
+                    if "bumper_harvest" in self.state._active_events:
+                        multiplier = self.state._active_events["bumper_harvest"]["multiplier"]
                         annual_profit = int(round(annual_profit * multiplier))
                         # 可在此处打印调试信息，但为了简洁，可以省略或只在日志中记录
+
+                    # ===== 天灾影响（如果合同关联行省受灾）=====
+                    if "disaster" in self.state._active_events:
+                        disaster_info = self.state._active_events["disaster"]
+                        if disaster_info["province_id"] == contract.province_id:
+                            loss_ratio = disaster_info["loss_ratio"]
+                            annual_profit = int(round(annual_profit * (1 - loss_ratio)))
+                            # 可在此打印提示，但为了简洁，只在日志中记录
+
                     # =========================
 
                     profit_float = float(annual_profit)
