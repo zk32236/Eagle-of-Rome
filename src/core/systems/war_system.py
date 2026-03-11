@@ -441,6 +441,8 @@ class WarSystem:
                     war.activation_turn = self.state.turn.turn_number
                     self._active_wars.append(war)
                     self._threats.remove(war)
+                    print(
+                        f"✅ 战争 {war.name} 已激活，状态={war.status}，活跃列表现在包含 {len(self._active_wars)} 个战争")
                     # 清除旧指挥官（新增修复）
                     war.commander_id = None
                     events.append(f"⚔️ 战争爆发：{war.name}！")

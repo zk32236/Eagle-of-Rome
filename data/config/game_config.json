@@ -110,7 +110,7 @@
       {"name": "死神来了", "type": "厄运", "effect": "death", "weight": 1},
       {"name": "丰调雨顺", "type": "好运", "effect": "bountiful_harvest", "weight": 1},
       {"name": "国泰民安", "type": "好运", "effect": "peace", "weight": 1},
-      {"name": "天降猛男", "type": "好运", "effect": "mighty_man", "weight": 1},
+      {"name": "天降猛男", "type": "好运", "effect": "mighty_man", "weight": 10},
       {"name": "无妄天灾", "type": "厄运", "effect": "disaster", "weight": 1}
     ],
     "bumper_harvest_multiplier": 1.5,

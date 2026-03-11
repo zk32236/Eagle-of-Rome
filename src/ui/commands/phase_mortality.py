@@ -5,7 +5,7 @@
 
 import random
 import logging
-from typing import List, TYPE_CHECKING
+from typing import List, TYPE_CHECKING, Dict
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.ui.commands.func_status import get_progress_bar
@@ -64,6 +64,8 @@ class MortalityCommand(Command):
                 self._handle_bountiful_harvest()
             elif effect == "peace":
                 self._handle_peace_event()
+            elif effect == "mighty_man":
+                self._handle_mighty_man_event()
             else:
                 # 其他事件暂不实现，仅打印
                 print(f"      (效果暂未实现)")
@@ -72,6 +74,60 @@ class MortalityCommand(Command):
         self.state.mark_phase_executed("mortality")
         print(f"\n   Progress: {get_progress_bar(self.state)}")
         return True
+
+    def _handle_mighty_man_event(self):
+        """天降猛男：在广场阶段生成一位历史强力人物（或随机猛人）"""
+        print(f"      🌟 天降猛男！一位非凡人物即将降临罗马")
+
+        current_year = self.state.turn.year
+        heroes = self._load_heroes()
+
+        # 筛选符合当前年份且未出现过的历史人物
+        available = []
+        for hero in heroes:
+            birth = hero["birth_year"]
+            death = hero["death_year"]
+            # 公元前年份为负数，例如 -236 表示公元前236年
+            if birth + 16 <= current_year <= death:
+                if hero["id"] not in self.state.spawned_hero_ids:
+                    available.append(hero)
+
+        if available:
+            # 有历史人物可用，随机选择一个
+            chosen = random.choice(available)
+            self.state.hero_to_spawn = {
+                "type": "historical",
+                "data": chosen
+            }
+            print(f"         历史英雄 {chosen['name']} 将在广场阶段登场")
+            self.state.log_event(
+                f"天降猛男: 历史英雄 {chosen['name']} 选中",
+                extra={"type": "mighty_man", "hero_id": chosen["id"], "name": chosen["name"]}
+            )
+        else:
+            # 无历史人物，准备生成随机猛人
+            self.state.hero_to_spawn = {"type": "random"}
+            print(f"         无历史英雄可用，将生成一位随机猛人")
+            self.state.log_event(
+                "天降猛男: 无历史英雄，将生成随机猛人",
+                extra={"type": "mighty_man", "subtype": "random"}
+            )
+
+        self.state.hero_spawned_this_turn = True
+
+    def _load_heroes(self) -> List[Dict]:
+        """从 heroes.json 加载英雄数据，如果文件不存在或解析失败则返回空列表"""
+        import json
+        from pathlib import Path
+        base_path = Path(__file__).parent.parent.parent.parent
+        file_path = base_path / "data" / "cards" / "heroes.json"
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return data.get("heroes", [])
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            self.state.log_event(f"英雄数据加载失败: {e}", level=logging.WARNING)
+            return []
 
     def _handle_death_event(self):
         """死神来了：随机抽取死亡人数，财产归公，同时终止死亡人物的合同"""

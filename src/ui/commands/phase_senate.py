@@ -680,11 +680,14 @@ class SenateCommand(Command):
 
         ws = self.state.get_war_system()
         if not ws:
+            print("DEBUG: no war system")
             return
 
         # 只处理 ACTIVE 战争
         active_wars = ws.get_active_wars()
+        print(f"DEBUG: active_wars = {[w.name for w in active_wars]}")
         if not active_wars:
+            print("DEBUG: no active wars, skip takeover")
             return
 
         # 获取当前执政官（第一位）

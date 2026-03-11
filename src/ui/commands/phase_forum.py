@@ -5,7 +5,7 @@
 
 import random
 import logging
-from typing import List, TYPE_CHECKING, Optional
+from typing import List, TYPE_CHECKING, Optional, Dict
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.figure import Figure, ClassTier
@@ -15,10 +15,10 @@ from src.core.deciders.impl.auto_retirement_decider import AutoRetirementDecider
 from src.core.deciders.impl.auto_recruitment_decider import AutoRecruitmentDecider
 from src.core.entities.war import WarStatus
 from src.core.deciders.impl.auto_triumph_decider import AutoTriumphDecider
-from src.core.deciders.triumph_decider import TriumphDecider
 from src.core.deciders.impl.auto_land_trade_decider import AutoLandTradeDecider
 from src.core.deciders.land_trade_decider import LandTradeDecider
 from src.core.service.land_trading_service import LandTradingService
+
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -447,8 +447,8 @@ class ForumCommand(Command):
         if pleb_prob < 0:
             pleb_prob = 0.65
 
+        # 先按原逻辑生成普通新人
         next_id = max((mid for mid in self.state.members.keys()), default=0) + 1
-
         for i in range(count):
             figure_id = next_id + i
             tier_roll = random.random()
@@ -462,6 +462,79 @@ class ForumCommand(Command):
             self.state.add_member(figure)
             self.state.curia.add_figure(figure)
             new_figures.append(figure)
+
+        # ===== 天降猛男：额外生成一位英雄 =====
+        if self.state.hero_spawned_this_turn and self.state.hero_to_spawn:
+            hero_info = self.state.hero_to_spawn
+            hero_figure = None
+            if hero_info["type"] == "historical":
+                # 历史英雄
+                data = hero_info["data"]
+                age = self.state.turn.year - data["birth_year"]  # 注意公元前年份计算，如 -236 到 -216 得 20
+                figure_id = self.state.allocate_id()  # 分配新 ID
+                hero_figure = Figure(
+                    id=figure_id,
+                    name=data["name"],
+                    age=age,
+                    martial=data["martial"],
+                    intelligence=data["intelligence"],
+                    charisma=data["charisma"],
+                    zeal=data["zeal"],
+                    family_prestige=data.get("family_prestige", 0)
+                )
+                # 根据年龄和属性确定阶级（通常英雄为贵族）
+                hero_figure.class_tier = ClassTier.NOBILE
+                # 记录已出现
+                self.state.add_spawned_hero_id(data["id"])
+            else:
+                # 随机猛人：取当前存活人物各属性最大值
+                living = self.state.get_living_members()
+                if living:
+                    max_martial = max(f.martial for f in living)
+                    max_intel = max(f.intelligence for f in living)
+                    max_charisma = max(f.charisma for f in living)
+                    max_zeal = max(f.zeal for f in living)
+                else:
+                    # 无存活人物时使用默认值（不应发生）
+                    max_martial = max_intel = max_charisma = max_zeal = 5
+
+                # 生成随机名字和家族声望（沿用原有规则）
+                # 简化：随机选取一个贵族家族名
+                nomen_list = ["Cornelius", "Julius", "Claudius", "Fabius", "Aemilius", "Valerius"]
+                cognomen_list = ["Magnus", "Africanus", "Asiaticus", "Macedonicus", "Maximus", "Rufus"]
+                nomen = random.choice(nomen_list)
+                cognomen = random.choice(cognomen_list)
+                full_name = f"{nomen} · {cognomen}"
+
+                figure_id = self.state.allocate_id()
+                hero_figure = Figure(
+                    id=figure_id,
+                    name=full_name,
+                    age=random.randint(30, 45),
+                    martial=max_martial,
+                    intelligence=max_intel,
+                    charisma=max_charisma,
+                    zeal=max_zeal,
+                    family_prestige=random.randint(1, 3)  # 随机家族声望
+                )
+                hero_figure.class_tier = ClassTier.NOBILE  # 猛男通常为贵族
+
+            if hero_figure:
+                self.state.add_member(hero_figure)
+                self.state.curia.add_figure(hero_figure)
+                new_figures.append(hero_figure)
+                # 打印英雄信息（带特殊标记）
+                print(f"      🌟 英雄降临: {hero_figure.get_formal_name()} "
+                      f"(军略 {hero_figure.martial}, 智略 {hero_figure.intelligence}, "
+                      f"魅力 {hero_figure.charisma}, 热诚 {hero_figure.zeal})")
+                self.state.log_event(
+                    f"天降猛男生成: {hero_figure.get_formal_name()}",
+                    extra={"type": "hero_spawn", "figure_id": hero_figure.id}
+                )
+
+            # 清除标记
+            self.state.hero_spawned_this_turn = False
+            self.state.hero_to_spawn = None
 
         return new_figures
 

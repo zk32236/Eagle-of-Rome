@@ -226,7 +226,6 @@ class TestGameStateMultiInstance(unittest.TestCase):
         self.assertTrue(hasattr(state, 'mark_phase_executed'))
         # 战争/军事
         self.assertTrue(hasattr(state, 'get_war_system'))
-        self.assertTrue(hasattr(state, 'get_active_wars'))
         self.assertTrue(hasattr(state, 'get_military_system'))
         self.assertTrue(hasattr(state, 'is_military_prepared'))
         self.assertTrue(hasattr(state, 'get_military_preparation_status'))

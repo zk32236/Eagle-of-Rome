@@ -546,9 +546,9 @@ class GameState:
         """获取战争系统"""
         return self._war_system
 
-    def get_active_wars(self) -> List[Any]:
-        """获取活跃战争列表"""
-        return []
+    #def get_active_wars(self) -> List[Any]:
+    #    """获取活跃战争列表"""
+    #    return []
 
     def get_military_system(self) -> Optional['MilitarySystem']:
         """获取军事系统"""
