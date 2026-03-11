@@ -6,6 +6,82 @@ from src.ui.commands.sys_base import Command
 from src.core.entities.fleet import Fleet, FleetStatus
 from src.core.localization import TerminologyService
 
+class DebugFleetCommand(Command):
+    name = "debug_fleet"
+    aliases = ["df"]
+    description = "显示舰队内部状态: debug_fleet <fleet_id>"
+
+    def execute(self, args: List[str]) -> bool:
+        if not args:
+            print("❌ 请指定舰队编号")
+            return False
+        try:
+            fleet_id = int(args[0])
+        except ValueError:
+            print("❌ 舰队编号必须为整数")
+            return False
+
+        ns = self.state.naval_system
+        if not ns:
+            print("❌ 海军系统未就绪")
+            return False
+        fleet = ns.get_fleet(fleet_id)
+        if not fleet:
+            print(f"❌ 舰队 {fleet_id} 不存在")
+            return False
+
+        print(f"\n🔍 舰队 {fleet.name} (编号:{fleet.number}) 内部状态：")
+        print(f"  类型: {fleet.fleet_type}")
+        print(f"  状态: {fleet.status.value}")
+        print(f"  指挥官ID: {fleet.commander_id}")
+        print(f"  经验: {fleet.experience}")
+        print(f"  基础战力: {fleet._strength_base}")
+        print(f"  是否老兵: {fleet.is_veteran}")
+        print(f"  指派战争ID: {fleet.assigned_war_id}")
+        print(f"  指派任务类型: {fleet._assigned_mission_type}")
+        print(f"  目标战争ID(建造时): {fleet._target_war_id}")
+        print(f"  建造开始回合: {fleet.build_start_turn}")
+        print(f"  建造结束回合: {fleet.build_end_turn}")
+        print(f"  关联合同ID: {fleet.contract_id}")
+        print(f"  被摧毁回合: {fleet.destroyed_turn}")
+        return True
+
+class DebugWarCommand(Command):
+    name = "debug_war"
+    aliases = ["dw"]
+    description = "显示战争内部状态: debug_war <war_id>"
+
+    def execute(self, args: List[str]) -> bool:
+        if not args:
+            print("❌ 请指定战争ID")
+            return False
+        war_id = args[0]
+        ws = self.state.get_war_system()
+        if not ws:
+            print("❌ 战争系统未就绪")
+            return False
+        war = ws.get_war_by_id(war_id)
+        if not war:
+            print(f"❌ 战争 {war_id} 不存在")
+            return False
+
+        print(f"\n🔍 战争 {war.name} (ID:{war.id}) 内部状态：")
+        print(f"  状态: {war.status.value}")
+        print(f"  类型: {war.war_type.value}")
+        print(f"  指挥官ID: {war.commander_id}")
+        print(f"  指派军团数: {war.legions_assigned}")
+        print(f"  指派舰队ID: {war.assigned_fleet_ids}")
+        print(f"  在 active_wars: {war in ws._active_wars}")
+        print(f"  在 truce_wars: {war in ws._truce_wars}")
+        print(f"  在 threats: {war in ws._threats}")
+        print(f"  和约: {war.peace_treaty}")
+        print(f"  停战结束回合: {war.truce_end_turn}")
+        print(f"  威胁等级: {war.threat_level}")
+        print(f"  需要海战: {war.naval_required}")
+        print(f"  敌方海军当前: {war.enemy_naval_current}")
+        print(f"  原指挥官ID: {war.original_commander_id}")
+        print(f"  指挥官指派回合: {war.commander_assigned_turn}")
+        return True
 
 class BuildFleetCommand(Command):
     """调试命令：直接建造舰队"""

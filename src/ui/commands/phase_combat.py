@@ -130,14 +130,39 @@ class CombatCommand(Command):
 
         if war.naval_required and self.state.naval_system:
             print(f"\n      ⚓ 进行海战...")
+            # ----- 海战前日志 -----
+            fleet_ids = war.assigned_fleet_ids
+            fleets = [self.state.naval_system.get_fleet(fid) for fid in fleet_ids]
+            fleet_statuses = [f.status.value if f else "missing" for f in fleets]
+            self.state.log_event(
+                f"[DEBUG] 海战开始: war={war.id}, 指派舰队={fleet_ids}, 舰队状态={fleet_statuses}",
+                level=logging.DEBUG,
+                extra={
+                    "function": "_resolve_battle",
+                    "war_id": war.id,
+                    "phase": "naval_battle_start",
+                    "assigned_fleet_ids": fleet_ids,
+                    "fleet_statuses": fleet_statuses
+                }
+            )
             naval_result, losses = self.state.naval_system.resolve_naval_battle(war)
             print(f"      海战结果: {naval_result}, 罗马损失 {losses.get('roman_losses', 0)} 艘战舰")
+            # ----- 海战后日志 -----
+            self.state.log_event(
+                f"[DEBUG] 海战结束: war={war.id}, 结果={naval_result}, 损失={losses}",
+                level=logging.DEBUG,
+                extra={
+                    "function": "_resolve_battle",
+                    "war_id": war.id,
+                    "phase": "naval_battle_end",
+                    "result": naval_result,
+                    "losses": losses
+                }
+            )
             if naval_result in ("DISASTER", "DEFEAT"):
-                # 海战失败，无法登陆，战争继续但无陆战
                 print(f"      海战失败，无法登陆，战争持续")
                 war.duration += 1
                 return
-            # 海战胜利或僵持，继续陆战（但敌军海军可能削弱，影响陆战？当前简化处理）
 
         legions = ms.get_legions_for_battle(war.id) if ms else []
         legion_count = len(legions)

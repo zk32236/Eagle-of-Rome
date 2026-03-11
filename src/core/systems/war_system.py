@@ -106,28 +106,96 @@ class WarSystem:
         return True
 
     def _move_to_active(self, war: War) -> bool:
-        """将战争从 _truce_wars 移回 _active_wars"""
+        # 入口日志
+        self.state.log_event(
+            f"[DEBUG] _move_to_active 开始: war={war.id}",
+            level=logging.DEBUG,
+            extra={
+                "function": "_move_to_active",
+                "war_id": war.id,
+                "phase": "enter",
+                "active_before": [w.id for w in self._active_wars],
+                "truce_before": [w.id for w in self._truce_wars],
+            }
+        )
         if war not in self._truce_wars:
+            self.state.log_event(
+                f"[DEBUG] _move_to_active 失败: war={war.id} 不在 truce_wars",
+                level=logging.DEBUG,
+                extra={
+                    "function": "_move_to_active",
+                    "war_id": war.id,
+                    "phase": "exit",
+                    "success": False,
+                    "reason": "not_in_truce"
+                }
+            )
             return False
         self._truce_wars.remove(war)
         if war not in self._active_wars:
             self._active_wars.append(war)
         war.status = WarStatus.ACTIVE
-        # 清除旧指挥官（新增修复）
         war.commander_id = None
+        self.state.log_event(
+            f"[DEBUG] _move_to_active 成功: war={war.id}",
+            level=logging.DEBUG,
+            extra={
+                "function": "_move_to_active",
+                "war_id": war.id,
+                "phase": "exit",
+                "success": True,
+                "active_after": [w.id for w in self._active_wars],
+                "truce_after": [w.id for w in self._truce_wars],
+            }
+        )
         return True
 
     def _move_to_threat(self, war: War, threat_level: int = 1) -> bool:
-        """将战争从 _truce_wars 移至 _threats"""
+        # ----- 新增入口日志 -----
+        self.state.log_event(
+            f"[DEBUG] _move_to_threat 开始: war={war.id}, threat_level={threat_level}",
+            level=logging.DEBUG,
+            extra={
+                "function": "_move_to_threat",
+                "war_id": war.id,
+                "threat_level": threat_level,
+                "phase": "enter",
+                "truce_before": [w.id for w in self._truce_wars],
+            }
+        )
         if war not in self._truce_wars:
+            # ----- 新增失败日志 -----
+            self.state.log_event(
+                f"[DEBUG] _move_to_threat 失败: war={war.id} 不在 truce_wars",
+                level=logging.DEBUG,
+                extra={
+                    "function": "_move_to_threat",
+                    "war_id": war.id,
+                    "phase": "exit",
+                    "success": False,
+                    "reason": "not_in_truce"
+                }
+            )
             return False
         self._truce_wars.remove(war)
         if war not in self._threats:
             self._threats.append(war)
         war.status = WarStatus.THREAT
-        war.threat_level = threat_level  # 现在可以通过 setter 赋值
-        # 转为威胁时清除指挥官（确保无残留）
+        war.threat_level = threat_level
         war.commander_id = None
+        # ----- 新增成功日志 -----
+        self.state.log_event(
+            f"[DEBUG] _move_to_threat 成功: war={war.id}, 新威胁等级={threat_level}",
+            level=logging.DEBUG,
+            extra={
+                "function": "_move_to_threat",
+                "war_id": war.id,
+                "phase": "exit",
+                "success": True,
+                "truce_after": [w.id for w in self._truce_wars],
+                "threats_after": [w.id for w in self._threats],
+            }
+        )
         return True
 
     # ===== 新增查询方法 =====
@@ -161,25 +229,55 @@ class WarSystem:
     # ========== 日志操作 ==========
 
     def activate_war(self, war_id: str, consul_id: int, legions: int) -> bool:
+        # 入口日志
+        self.state.log_event(
+            f"[DEBUG] activate_war 开始: war_id={war_id}, consul_id={consul_id}, legions={legions}",
+            level=logging.DEBUG,
+            extra={
+                "function": "activate_war",
+                "war_id": war_id,
+                "consul_id": consul_id,
+                "legions": legions,
+                "phase": "enter"
+            }
+        )
         war = self.get_war_by_id(war_id)
         if not war or war.status != WarStatus.THREAT:
             print(f"      ⚠️ 激活战争失败：战争 {war_id} 不存在或不是威胁状态")
+            self.state.log_event(
+                f"[DEBUG] activate_war 失败: war={war_id} 不存在或状态错误",
+                level=logging.DEBUG,
+                extra={
+                    "function": "activate_war",
+                    "war_id": war_id,
+                    "phase": "exit",
+                    "success": False,
+                    "reason": "invalid_war_or_status"
+                }
+            )
             return False
         war.status = WarStatus.ACTIVE
         war.declared_by = consul_id
         war.proposed_legions = legions
         war.activation_turn = self.state.turn.turn_number
-        # 使用 setter 方法
         war.set_commander_assigned_turn(self.state.turn.turn_number)
-        # 从威胁列表移到活跃列表
         if war in self._threats:
             self._threats.remove(war)
         if war not in self._active_wars:
             self._active_wars.append(war)
         print(f"      ✅ 战争 {war.name} 已激活，批准军团数 {legions}")
         self.state.log_event(
-            f"战争激活：{war.name}，批准军团 {legions}",
-            extra={"war_id": war.id, "consul_id": consul_id, "legions": legions}
+            f"[DEBUG] activate_war 成功: war={war.name}, legions={legions}",
+            level=logging.DEBUG,
+            extra={
+                "function": "activate_war",
+                "war_id": war.id,
+                "phase": "exit",
+                "success": True,
+                "legions": legions,
+                "active_after": [w.id for w in self._active_wars],
+                "threats_after": [w.id for w in self._threats],
+            }
         )
         return True
 
@@ -426,25 +524,43 @@ class WarSystem:
                 print(f"   ⚠️ 外交冲突：{war.name} 开始威胁罗马")
 
     def escalate_threats(self):
-        """处理威胁自动升级，返回升级事件列表"""
-        if not self.state.config.get("enable_threats", True):
-            return []
         events = []
         for war in self._threats[:]:
             if war._triggered_this_turn:
                 war._triggered_this_turn = False
                 continue
             if war.auto_escalate:
+                old_level = war.threat_level
                 war.threat_level += war.escalate_rate
+                # ----- 记录升级 -----
+                self.state.log_event(
+                    f"[DEBUG] escalate_threats: 战争 {war.id} 威胁等级 {old_level} -> {war.threat_level}",
+                    level=logging.DEBUG,
+                    extra={
+                        "function": "escalate_threats",
+                        "war_id": war.id,
+                        "old_level": old_level,
+                        "new_level": war.threat_level,
+                        "action": "escalate"
+                    }
+                )
                 if war.threat_level >= 3:
                     war.status = WarStatus.ACTIVE
                     war.activation_turn = self.state.turn.turn_number
                     self._active_wars.append(war)
                     self._threats.remove(war)
-                    print(
-                        f"✅ 战争 {war.name} 已激活，状态={war.status}，活跃列表现在包含 {len(self._active_wars)} 个战争")
-                    # 清除旧指挥官（新增修复）
                     war.commander_id = None
+                    # ----- 记录激活 -----
+                    self.state.log_event(
+                        f"[DEBUG] escalate_threats: 战争 {war.id} 激活为活跃",
+                        level=logging.DEBUG,
+                        extra={
+                            "function": "escalate_threats",
+                            "war_id": war.id,
+                            "action": "activate",
+                            "active_after": [w.id for w in self._active_wars],
+                        }
+                    )
                     events.append(f"⚔️ 战争爆发：{war.name}！")
                 else:
                     level_names = ["", "外交冲突", "大军压境"]

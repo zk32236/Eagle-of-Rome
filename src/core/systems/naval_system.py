@@ -39,6 +39,11 @@ class NavalSystem:
     # ---------- 建造合同生成 ----------
     def generate_construction_contracts(self, current_turn: int) -> List[Contract]:
         if not self._can_build_fleet():
+            self.state.log_event(
+                "[DEBUG] 舰队建造合同生成跳过：皮洛士战争未胜利（技术未解锁）",
+                level=logging.DEBUG,
+                extra={"function": "generate_construction_contracts", "reason": "tech_locked"}
+            )
             return []   # 未解锁，不生成合同
         war_system = self.state.get_war_system()
         if not war_system:
@@ -193,42 +198,159 @@ class NavalSystem:
         for fleet in self._fleets.values():
             if fleet.is_building and fleet.build_end_turn == current_turn:
                 fleet.complete_building()
+                # 基础完成日志
+                self.state.log_event(
+                    f"[DEBUG] 舰队 {fleet.number} 建造完成",
+                    level=logging.DEBUG,
+                    extra={"fleet": fleet.number, "event": "construction_complete"}
+                )
                 if fleet._target_war_id:
                     war_system = self.state.get_war_system()
                     if war_system:
                         war = war_system.get_war_by_id(fleet._target_war_id)
-                        # 使用字符串比较，避免直接引用 WarStatus 枚举
-                        if war and war.status.value == "active" and war.naval_required:
-                            self.assign_fleet_to_war(
-                                fleet.number,
-                                fleet._target_war_id,
-                                "naval",
-                                commander_id=None
+                        # 记录目标战争信息
+                        self.state.log_event(
+                            f"[DEBUG] 舰队 {fleet.number} 目标战争: {fleet._target_war_id}, 战争存在={war is not None}",
+                            level=logging.DEBUG,
+                            extra={
+                                "fleet": fleet.number,
+                                "target_war_id": fleet._target_war_id,
+                                "war_exists": war is not None
+                            }
+                        )
+                        if war:
+                            # 记录战争状态和 naval_required
+                            self.state.log_event(
+                                f"[DEBUG] 舰队 {fleet.number} 目标战争 {war.id} 状态={war.status.value}, naval_required={war.naval_required}",
+                                level=logging.DEBUG,
+                                extra={
+                                    "fleet": fleet.number,
+                                    "war_id": war.id,
+                                    "war_status": war.status.value,
+                                    "naval_required": war.naval_required
+                                }
+                            )
+                            if war.status.value == "active" and war.naval_required:
+                                success = self.assign_fleet_to_war(
+                                    fleet.number,
+                                    fleet._target_war_id,
+                                    "naval",
+                                    commander_id=None
+                                )
+                                self.state.log_event(
+                                    f"[DEBUG] 舰队 {fleet.number} 自动指派结果: {success}",
+                                    level=logging.DEBUG,
+                                    extra={
+                                        "fleet": fleet.number,
+                                        "war_id": war.id,
+                                        "assign_success": success
+                                    }
+                                )
+                            else:
+                                # 记录不指派的原因
+                                reason = []
+                                if war.status.value != "active":
+                                    reason.append("war_not_active")
+                                if not war.naval_required:
+                                    reason.append("naval_not_required")
+                                self.state.log_event(
+                                    f"[DEBUG] 舰队 {fleet.number} 未指派: 原因 {reason}",
+                                    level=logging.DEBUG,
+                                    extra={
+                                        "fleet": fleet.number,
+                                        "war_id": war.id,
+                                        "assign_skipped_reason": reason
+                                    }
+                                )
+                        else:
+                            self.state.log_event(
+                                f"[DEBUG] 舰队 {fleet.number} 目标战争 {fleet._target_war_id} 不存在，未指派",
+                                level=logging.DEBUG,
+                                extra={
+                                    "fleet": fleet.number,
+                                    "target_war_id": fleet._target_war_id,
+                                    "reason": "war_not_found"
+                                }
                             )
                 completed.append(fleet.number)
-                self.state.log_event(
-                    f"舰队 {fleet.name} 建造完成，现已可用",
-                    extra={"fleet_number": fleet.number}
-                )
         return completed
 
     # ---------- 舰队指派 ----------
     def assign_fleet_to_war(self, fleet_id: int, war_id: str, mission_type: str,
                             commander_id: Optional[int] = None) -> bool:
-        """指派舰队到战争（仅当舰队可用且战争需要海战）"""
+        # 入口日志
+        self.state.log_event(
+            f"[DEBUG] assign_fleet_to_war 开始: fleet_id={fleet_id}, war_id={war_id}, mission_type={mission_type}, commander_id={commander_id}",
+            level=logging.DEBUG,
+            extra={
+                "function": "assign_fleet_to_war",
+                "fleet_id": fleet_id,
+                "war_id": war_id,
+                "mission_type": mission_type,
+                "commander_id": commander_id,
+                "phase": "enter"
+            }
+        )
         fleet = self.get_fleet(fleet_id)
         if not fleet or fleet.status != FleetStatus.AVAILABLE:
+            self.state.log_event(
+                f"[DEBUG] assign_fleet_to_war 失败: 舰队不可用",
+                level=logging.DEBUG,
+                extra={
+                    "function": "assign_fleet_to_war",
+                    "fleet_id": fleet_id,
+                    "phase": "exit",
+                    "success": False,
+                    "reason": "fleet_unavailable"
+                }
+            )
             return False
 
         war_system = self.state.get_war_system()
         war = war_system.get_war_by_id(war_id) if war_system else None
         if not war or not war.naval_required:
+            self.state.log_event(
+                f"[DEBUG] assign_fleet_to_war 失败: 战争不存在或不需要海战",
+                level=logging.DEBUG,
+                extra={
+                    "function": "assign_fleet_to_war",
+                    "fleet_id": fleet_id,
+                    "war_id": war_id,
+                    "phase": "exit",
+                    "success": False,
+                    "reason": "war_invalid_or_no_naval"
+                }
+            )
             return False
 
         if fleet.assign_to_war(war_id, mission_type, commander_id):
             war.assign_fleet(fleet_id)
+            self.state.log_event(
+                f"[DEBUG] assign_fleet_to_war 成功",
+                level=logging.DEBUG,
+                extra={
+                    "function": "assign_fleet_to_war",
+                    "fleet_id": fleet_id,
+                    "war_id": war_id,
+                    "phase": "exit",
+                    "success": True
+                }
+            )
             return True
-        return False
+        else:
+            self.state.log_event(
+                f"[DEBUG] assign_fleet_to_war 失败: fleet.assign_to_war 返回 False",
+                level=logging.DEBUG,
+                extra={
+                    "function": "assign_fleet_to_war",
+                    "fleet_id": fleet_id,
+                    "war_id": war_id,
+                    "phase": "exit",
+                    "success": False,
+                    "reason": "assign_method_failed"
+                }
+            )
+            return False
 
     def recall_fleet_from_war(self, fleet_id: int) -> bool:
         """从战争召回舰队"""

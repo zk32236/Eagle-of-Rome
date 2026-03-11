@@ -57,7 +57,7 @@
       "threat_level": 0,
       "auto_escalate": true,
       "escalate_rate": 1,
-      "strength": 16,
+      "strength": 12,
       "naval_strength": 3,
       "rewards": {
         "treasury": 500,
@@ -70,8 +70,8 @@
         "treasury_cost": 5
       },
       "land_battle": true,
-      "disaster_numbers": [2, 3, 4],
-      "standoff_numbers": [5, 6, 7, 8, 9],
+      "disaster_numbers": [2, 3],
+      "standoff_numbers": [4,5, 6, 7, 8],
       "is_imminent": false,
       "matched_war_id": null,
       "unlocked_provinces": []

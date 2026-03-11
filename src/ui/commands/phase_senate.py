@@ -676,45 +676,60 @@ class SenateCommand(Command):
             print(f"          ❌ 法案否决。")
 
     def _process_war_takeover(self):
-        """处理战争接管：为无指挥官的活跃战争指派指挥官，以及处理 proconsul 机制"""
-
         ws = self.state.get_war_system()
         if not ws:
             print("DEBUG: no war system")
             return
 
-        # 只处理 ACTIVE 战争
         active_wars = ws.get_active_wars()
-        print(f"DEBUG: active_wars = {[w.name for w in active_wars]}")
+        # ----- 函数开头日志 -----
+        self.state.log_event(
+            f"[DEBUG] _process_war_takeover 开始: 活跃战争列表 = {[w.id for w in active_wars]}",
+            level=logging.DEBUG,
+            extra={
+                "function": "_process_war_takeover",
+                "active_wars": [w.id for w in active_wars],
+                "phase": "enter"
+            }
+        )
         if not active_wars:
             print("DEBUG: no active wars, skip takeover")
+            self.state.log_event(
+                "[DEBUG] _process_war_takeover 结束: 无活跃战争",
+                level=logging.DEBUG,
+                extra={"function": "_process_war_takeover", "phase": "exit", "reason": "no_active_wars"}
+            )
             return
 
-        # 获取当前执政官（第一位）
-        if not self.state.turn.leader_ids:
+        consul_id = self.state.turn.leader_ids[0] if self.state.turn.leader_ids else None
+        if not consul_id:
             return
-        consul_id = self.state.turn.leader_ids[0]
         consul = self.state.get_member(consul_id)
         if not consul:
             return
 
-        # ===== 新增调试打印 =====
-
+        # 原有调试打印保留（可选），但已添加结构化日志
         for war in active_wars:
             print(f"  - {war.name}, status: {war.status}, commander_id: {war.commander_id}")
 
-        # ========================
-
         for war in active_wars:
-            # 确保战争是 ACTIVE 状态（二次确认）
             if war.status != WarStatus.ACTIVE:
                 continue
 
             if war.commander_id is None:
-                # 无指挥官，由执政官接管（决策器决定）
-                # ===== 新增调试打印 =====
+                # 无指挥官分支
                 takeover_decision = self.takeover_decider.decide_takeover(war, consul, None, self.state)
-                # ========================
+                # ----- 记录决策结果 -----
+                self.state.log_event(
+                    f"[DEBUG] _process_war_takeover: 无指挥官战争 {war.id}, 接管决策={takeover_decision}",
+                    level=logging.DEBUG,
+                    extra={
+                        "function": "_process_war_takeover",
+                        "war_id": war.id,
+                        "branch": "no_commander",
+                        "takeover_decision": takeover_decision
+                    }
+                )
                 if takeover_decision:
                     war.commander_id = consul.id
                     consul.is_absent = True
@@ -724,14 +739,25 @@ class SenateCommand(Command):
                 else:
                     print(f"      ⏳ 执政官 {consul.name} 决定不接管 {war.name}")
             else:
-                # 已有指挥官，检查是否为前任执政官（proconsul 机制）
-                # ========================
+                # 已有指挥官分支
                 old_cmd = self.state.get_member(war.commander_id)
                 if not old_cmd:
                     continue
-                # 如果指挥官是 proconsul 或 ex-consul 且不在罗马，新执政官可决定是否接管
                 if old_cmd.office in ("proconsul", "ex-consul") and old_cmd.is_absent:
-                    if self.takeover_decider.decide_takeover(war, consul, old_cmd, self.state):
+                    takeover_decision = self.takeover_decider.decide_takeover(war, consul, old_cmd, self.state)
+                    # ----- 记录决策结果 -----
+                    self.state.log_event(
+                        f"[DEBUG] _process_war_takeover: 已有指挥官战争 {war.id}, 旧指挥官={old_cmd.id}, 接管决策={takeover_decision}",
+                        level=logging.DEBUG,
+                        extra={
+                            "function": "_process_war_takeover",
+                            "war_id": war.id,
+                            "branch": "has_commander",
+                            "old_commander_id": old_cmd.id,
+                            "takeover_decision": takeover_decision
+                        }
+                    )
+                    if takeover_decision:
                         old_cmd.is_absent = False
                         old_cmd.office = "ex-proconsul"
                         war.commander_id = consul.id
@@ -741,6 +767,12 @@ class SenateCommand(Command):
                         self.state.log_event(f"执政官 {consul.name} 接管战争 {war.name}，原指挥官 {old_cmd.name} 返回")
                     else:
                         print(f"      ⏳ 执政官 {consul.name} 决定不接管 {war.name}，由 {old_cmd.name} 继续指挥")
+        # 函数结束日志（可选）
+        self.state.log_event(
+            "[DEBUG] _process_war_takeover 结束",
+            level=logging.DEBUG,
+            extra={"function": "_process_war_takeover", "phase": "exit"}
+        )
 
     def _auto_recruit_and_assign_legions_for_war(self, war, consul_id):
         """自动征召军团并指派给战争（用于宣战和接管）"""
