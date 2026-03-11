@@ -6,6 +6,7 @@ from pathlib import Path
 from src.core.game_state import GameState
 from src.core.entities.figure import Figure, ClassTier
 from src.core.entities.entities import Faction, GameTurn, Province
+#from src.core.entities.province import Province
 
 
 class ScenarioLoader:
@@ -61,15 +62,9 @@ class ScenarioLoader:
                 event_flags=p.get("event_flags"),
                 governor_traits_effect=p.get("governor_traits_effect"),
                 loyalty=p.get("loyalty", 100),
-                garrison=p.get("garrison")
+                garrison=p.get("garrison"),
+                governor_type = p.get("governor_type", "")
             )
-            # 如果 JSON 中未指定 governor_type，可以在这里设置默认值
-            if not hasattr(province, '_governor_type') or province._governor_type is None:
-                # 根据行省 ID 分配类型（示例：1=proconsul, 2/3=propraetor）
-                if p["province_id"] == 1:
-                    province._governor_type = "proconsul"
-                else:
-                    province._governor_type = "propraetor"
             state.add_province(province)
 
         # 确保意大利行省（ID 0）征服状态为 True（即使文件中为 False）

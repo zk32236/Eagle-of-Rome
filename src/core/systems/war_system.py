@@ -84,6 +84,12 @@ class WarSystem:
             # 记录原指挥官及上任回合，用于人口阶段转换
             if war.commander_id:
                 war.set_original_commander(war.commander_id, war.commander_assigned_turn)
+            # 召回军团和舰队
+            ms = self.state.get_military_system()
+            if ms:
+                ms.recall_from_war(war.id)
+            if self.state.naval_system:
+                self.state.naval_system.recall_fleets_from_war(war.id)
             return True
         return False
 
@@ -152,6 +158,7 @@ class WarSystem:
 
     def _move_to_threat(self, war: War, threat_level: int = 1) -> bool:
         # ----- 新增入口日志 -----
+
         self.state.log_event(
             f"[DEBUG] _move_to_threat 开始: war={war.id}, threat_level={threat_level}",
             level=logging.DEBUG,
@@ -181,6 +188,7 @@ class WarSystem:
         if war not in self._threats:
             self._threats.append(war)
         war.status = WarStatus.THREAT
+        war._triggered_this_turn = True
         war.threat_level = threat_level
         war.commander_id = None
         # ----- 新增成功日志 -----
@@ -304,6 +312,9 @@ class WarSystem:
             if war.legion_numbers:
                 self._legions_to_disband.extend(war.legion_numbers)
             war.clear_legion_numbers()
+
+        if self.state.naval_system:
+            self.state.naval_system.recall_fleets_from_war(war.id)
 
         self.state.log_event(
             f"战争降级为威胁：{war.name}，威胁等级 {threat_level}",
@@ -480,6 +491,10 @@ class WarSystem:
         ms = self.state.get_military_system()
         if ms:
             ms.recall_from_war(war.id)
+
+        # ===== 新增：召回指派给该战争的所有舰队 =====
+        if self.state.naval_system:
+            self.state.naval_system.recall_fleets_from_war(war.id)
 
         if war in self._active_wars:
             self._active_wars.remove(war)

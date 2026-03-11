@@ -678,22 +678,20 @@ class SenateCommand(Command):
     def _process_war_takeover(self):
         ws = self.state.get_war_system()
         if not ws:
-            print("DEBUG: no war system")
+            self.state.log_event(
+                "[DEBUG] _process_war_takeover: 无战争系统",
+                level=logging.DEBUG,
+                extra={"function": "_process_war_takeover", "reason": "no_war_system"}
+            )
             return
 
         active_wars = ws.get_active_wars()
-        # ----- 函数开头日志 -----
         self.state.log_event(
             f"[DEBUG] _process_war_takeover 开始: 活跃战争列表 = {[w.id for w in active_wars]}",
             level=logging.DEBUG,
-            extra={
-                "function": "_process_war_takeover",
-                "active_wars": [w.id for w in active_wars],
-                "phase": "enter"
-            }
+            extra={"function": "_process_war_takeover", "active_wars": [w.id for w in active_wars], "phase": "enter"}
         )
         if not active_wars:
-            print("DEBUG: no active wars, skip takeover")
             self.state.log_event(
                 "[DEBUG] _process_war_takeover 结束: 无活跃战争",
                 level=logging.DEBUG,
@@ -701,34 +699,45 @@ class SenateCommand(Command):
             )
             return
 
-        consul_id = self.state.turn.leader_ids[0] if self.state.turn.leader_ids else None
-        if not consul_id:
+        # 获取执政官
+        if not self.state.turn.leader_ids:
+            self.state.log_event(
+                "[DEBUG] _process_war_takeover 结束: 无执政官ID",
+                level=logging.DEBUG,
+                extra={"function": "_process_war_takeover", "phase": "exit", "reason": "no_consul_id"}
+            )
             return
+        consul_id = self.state.turn.leader_ids[0]
         consul = self.state.get_member(consul_id)
         if not consul:
+            self.state.log_event(
+                f"[DEBUG] _process_war_takeover 结束: 执政官 {consul_id} 不存在或已死亡",
+                level=logging.DEBUG,
+                extra={"function": "_process_war_takeover", "phase": "exit", "reason": "consul_dead_or_missing"}
+            )
             return
 
-        # 原有调试打印保留（可选），但已添加结构化日志
+        # 打印每个战争的当前状态（原有打印可保留或替换为日志）
         for war in active_wars:
             print(f"  - {war.name}, status: {war.status}, commander_id: {war.commander_id}")
+            self.state.log_event(
+                f"[DEBUG] _process_war_takeover 检查战争: {war.id}, 状态={war.status.value}, 指挥官ID={war.commander_id}",
+                level=logging.DEBUG,
+                extra={"function": "_process_war_takeover", "war_id": war.id, "status": war.status.value,
+                       "commander_id": war.commander_id}
+            )
 
         for war in active_wars:
             if war.status != WarStatus.ACTIVE:
                 continue
 
             if war.commander_id is None:
-                # 无指挥官分支
                 takeover_decision = self.takeover_decider.decide_takeover(war, consul, None, self.state)
-                # ----- 记录决策结果 -----
                 self.state.log_event(
                     f"[DEBUG] _process_war_takeover: 无指挥官战争 {war.id}, 接管决策={takeover_decision}",
                     level=logging.DEBUG,
-                    extra={
-                        "function": "_process_war_takeover",
-                        "war_id": war.id,
-                        "branch": "no_commander",
-                        "takeover_decision": takeover_decision
-                    }
+                    extra={"function": "_process_war_takeover", "war_id": war.id, "branch": "no_commander",
+                           "takeover_decision": takeover_decision}
                 )
                 if takeover_decision:
                     war.commander_id = consul.id
@@ -739,23 +748,21 @@ class SenateCommand(Command):
                 else:
                     print(f"      ⏳ 执政官 {consul.name} 决定不接管 {war.name}")
             else:
-                # 已有指挥官分支
                 old_cmd = self.state.get_member(war.commander_id)
                 if not old_cmd:
+                    self.state.log_event(
+                        f"[DEBUG] _process_war_takeover: 战争 {war.id} 的指挥官 {war.commander_id} 不存在，跳过",
+                        level=logging.DEBUG,
+                        extra={"function": "_process_war_takeover", "war_id": war.id, "reason": "old_commander_missing"}
+                    )
                     continue
                 if old_cmd.office in ("proconsul", "ex-consul") and old_cmd.is_absent:
                     takeover_decision = self.takeover_decider.decide_takeover(war, consul, old_cmd, self.state)
-                    # ----- 记录决策结果 -----
                     self.state.log_event(
                         f"[DEBUG] _process_war_takeover: 已有指挥官战争 {war.id}, 旧指挥官={old_cmd.id}, 接管决策={takeover_decision}",
                         level=logging.DEBUG,
-                        extra={
-                            "function": "_process_war_takeover",
-                            "war_id": war.id,
-                            "branch": "has_commander",
-                            "old_commander_id": old_cmd.id,
-                            "takeover_decision": takeover_decision
-                        }
+                        extra={"function": "_process_war_takeover", "war_id": war.id, "branch": "has_commander",
+                               "old_commander_id": old_cmd.id, "takeover_decision": takeover_decision}
                     )
                     if takeover_decision:
                         old_cmd.is_absent = False
@@ -767,7 +774,13 @@ class SenateCommand(Command):
                         self.state.log_event(f"执政官 {consul.name} 接管战争 {war.name}，原指挥官 {old_cmd.name} 返回")
                     else:
                         print(f"      ⏳ 执政官 {consul.name} 决定不接管 {war.name}，由 {old_cmd.name} 继续指挥")
-        # 函数结束日志（可选）
+                else:
+                    self.state.log_event(
+                        f"[DEBUG] _process_war_takeover: 战争 {war.id} 已有指挥官 {old_cmd.id}，且不符合接管条件",
+                        level=logging.DEBUG,
+                        extra={"function": "_process_war_takeover", "war_id": war.id,
+                               "branch": "has_commander_no_action"}
+                    )
         self.state.log_event(
             "[DEBUG] _process_war_takeover 结束",
             level=logging.DEBUG,

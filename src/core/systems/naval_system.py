@@ -366,6 +366,15 @@ class NavalSystem:
                 war.remove_fleet(fleet_id)
         return True
 
+    def recall_fleets_from_war(self, war_id: str) -> None:
+        """
+        召回指定战争的所有指派舰队。
+        遍历所有舰队，将 assigned_war_id 匹配且状态为 ON_MISSION 的舰队召回。
+        """
+        for fleet in list(self._fleets.values()):
+            if fleet.assigned_war_id == war_id and fleet.status == FleetStatus.ON_MISSION:
+                self.recall_fleet_from_war(fleet.number)
+
     # ---------- 海战判定 ----------
     def resolve_naval_battle(self, war) -> Tuple[str, Dict]:
         """
@@ -431,7 +440,7 @@ class NavalSystem:
         # VICTORY 和 TRIUMPH 无损
         return losses
 
-    # ---------- 维护费 ----------
+    # ---------- 维护与解散 ----------
     def calculate_maintenance(self) -> int:
         """计算所有活跃舰队的维护费总和"""
         total = 0
@@ -439,6 +448,23 @@ class NavalSystem:
             if fleet.status not in (FleetStatus.DESTROYED, FleetStatus.BUILDING):
                 total += fleet.get_maintenance_cost(self.state)
         return total
+
+    def disband_unused_fleets(self, current_turn: int, decider: 'FleetDisbandDecider') -> List[int]:
+        """
+        根据决策器解散舰队。
+        返回被解散的舰队编号列表。
+        """
+        disbanded = []
+        for fleet in list(self._fleets.values()):
+            if decider.should_disband_fleet(fleet, self.state):
+                fleet.mark_destroyed(current_turn)
+                disbanded.append(fleet.number)
+                self.state.log_event(
+                    f"[DEBUG] 舰队 {fleet.number} 已解散（根据决策器）",
+                    level=logging.DEBUG,
+                    extra={"fleet": fleet.number, "reason": "decider"}
+                )
+        return disbanded
 
     # ---------- 舰队恢复 ----------
 
@@ -511,8 +537,6 @@ class NavalSystem:
                 extra={"contract_id": contract.id, "war_id": war.id}
             )
         return contracts
-
-
 
 
     def apply_maintenance(self) -> Tuple[bool, str]:

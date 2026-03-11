@@ -119,6 +119,7 @@ class War:
         self._sea_control_ratio: float = 1.0  # 当前制海权比例
         self._battles_fought = battles_fought
         self._battles_won = battles_won
+        self._triggered_this_turn = False  # 标记本回合是否刚被激活为威胁
 
 
 
@@ -497,6 +498,7 @@ class War:
             "_rebellion_province_id": self._rebellion_province_id,
             "_battles_fought": self._battles_fought,
             "_battles_won": self._battles_won,
+            "_triggered_this_turn":self._triggered_this_turn,
         }
         return data
 
@@ -567,5 +569,6 @@ class War:
 
         war._battles_fought = data.get("_battles_fought", 0)
         war._battles_won = data.get("_battles_won", 0)
+        war._triggered_this_turn = data.get("_triggered_this_turn", False)
 
         return war

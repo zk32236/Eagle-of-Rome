@@ -790,10 +790,30 @@ class GameState:
             province = self.get_province(province_id)
             if not province or province.conquered:
                 continue
+
+            # ----- 新增调试打印 -----
+            # 如果需要记录到日志（DEBUG级别）：
+            self.log_event(
+                f"[DEBUG] 征服前行省 {province.name} (ID:{province_id}) governor_type = {province.governor_type}",
+                level=logging.DEBUG,
+                extra={"province_id": province_id, "governor_type": province.governor_type, "phase": "pre_conquest"}
+            )
+            # ------------------------
+
             province._conquered = True
             province.set_grievance(3)
-            # 注意：不要修改 province.governor_type，它已从 JSON 中正确加载
-            self.log_event(f"行省扩张：通过 {war.name} 的胜利，罗马征服了 {province.name}！当地民怨高涨（等级3）。")
+
+            # ----- 新增调试打印 -----
+            self.log_event(
+                f"[DEBUG] 征服后行省 {province.name} (ID:{province_id}) governor_type = {province.governor_type}",
+                level=logging.DEBUG,
+                extra={"province_id": province_id, "governor_type": province.governor_type, "phase": "post_conquest"}
+            )
+            # ------------------------
+
+            self.log_event(
+                f"行省扩张：通过 {war.name} 的胜利，罗马征服了 {province.name}！当地民怨高涨（等级3）。"
+            )
 
     def add_province(self, province: Province) -> None:
         """

@@ -14,6 +14,8 @@ from src.core.deciders.festival_decider import FestivalDecider
 from typing import List, Optional, Dict, TYPE_CHECKING
 from collections import defaultdict
 from src.core.entities.war import WarStatus
+from src.core.deciders.fleet_disband_decider import FleetDisbandDecider
+from src.core.deciders.impl.auto_fleet_disband_decider import AutoFleetDisbandDecider
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -26,9 +28,11 @@ class PopulationCommand(Command):
     aliases = ["p"]
     description = "执行人口阶段 (Population Phase) - 举行公职选举、评估共和国状态、处理军团"
 
-    def __init__(self, state: "GameState", festival_decider: Optional[FestivalDecider] = None):
+    def __init__(self, state: "GameState", festival_decider: Optional[FestivalDecider] = None,
+                 fleet_disband_decider: Optional[FleetDisbandDecider] = None):
         super().__init__(state)
         self.festival_decider = festival_decider or AutoFestivalDecider()
+        self.fleet_disband_decider = fleet_disband_decider or AutoFleetDisbandDecider()
 
     def execute(self, args: List[str]) -> bool:
 
@@ -59,6 +63,14 @@ class PopulationCommand(Command):
         print("=" * 58)
         self._process_legion_disbandment_and_triumphs()
         print()
+
+        if self.state.naval_system:
+            disbanded = self.state.naval_system.disband_unused_fleets(
+                self.state.turn.turn_number,
+                self.fleet_disband_decider
+            )
+            if disbanded:
+                print(f"      ⚓ 舰队 {disbanded} 已解散（无需要海战的战争）")
 
         # ========== 2. 卸任所有现任官员（普通卸任） ==========
         election_order = ["consul", "censor", "praetor", "quaestor", "tribune"]
