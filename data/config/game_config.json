@@ -192,6 +192,6 @@
     "legion_maintenance_polybian": 2,
     "legion_strength_marian": 4,
     "legion_maintenance_marian": 5,
-    "italy_unrest_trigger_turns": 99
+    "italy_unrest_trigger_turns": 10
   }
 }

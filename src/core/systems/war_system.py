@@ -36,6 +36,11 @@ class WarSystem:
 
     # ========== 以下函数为 MVP 0.7 的内容 ==========
 
+    # -------------- MVP 0.7-6 国泰民安 -----------
+    def get_threat_wars(self) -> List[War]:
+        """返回所有威胁状态的战争列表（只读副本）"""
+        return [war for war in self._threats if war.status == WarStatus.THREAT]
+
     # -------------- MVP 0.7-4 战争系统 -----------
 
     def create_rebellion_war(self, province) -> War:
@@ -59,7 +64,6 @@ class WarSystem:
     def process_enemy_reinforcements(self) -> None:
         """处理敌军增援（预留）"""
         pass
-
 
     # -------------- MVP 0.7-1 停战议和 -----------
 

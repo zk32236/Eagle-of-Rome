@@ -17,8 +17,8 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.core.game_state import GameState
-from src.core.entities.contract import ContractStatus
 from src.ui.commands.phase_mortality import MortalityCommand
+from src.core.entities.war import War, WarStatus
 
 
 class TestMortalityCommand(unittest.TestCase):
@@ -282,6 +282,64 @@ class TestMortalityCommand(unittest.TestCase):
         self.assertEqual(fig.wealth - initial_wealth, 68)
         # 日志中应有提示
         self.assertIn("风调雨顺加成", output)
+
+    def test_peace_event(self):
+        """测试国泰民安事件：民怨和战争威胁等级置零"""
+        # 修改配置确保抽取到国泰民安
+        test_config = {
+            "mortality_rules": {
+                "event_deck": [{"name": "国泰民安", "effect": "peace", "weight": 1}],
+                "event_draw_count": 1
+            }
+        }
+        state = GameState.create_for_testing(test_config)
+        from src.core.entities.entities import GameTurn, Faction
+        from src.core.entities.figure import Figure
+        from src.core.entities.province import Province
+        from src.core.systems.war_system import WarSystem
+        from src.core.entities.war import War, WarStatus  # 确保导入
+
+        state.turn = GameTurn(turn_number=1, year=-264)
+
+        # 添加一个已征服行省，民怨设为2
+        province = Province(1, "Test Province", 1000, conquered=True)
+        province.set_grievance(2)
+        state.add_province(province)
+
+        # 添加一个未征服行省，民怨设为3（不应受影响）
+        province2 = Province(2, "Unconquered", 1000, conquered=False)
+        province2.set_grievance(3)
+        state.add_province(province2)
+
+        # 初始化战争系统（真实对象）
+        war_system = WarSystem(state)
+        # 创建一个威胁战争
+        war = War(id="test_war", name="Test War")
+        war.threat_level = 3
+        war.status = WarStatus.THREAT
+        war_system._threats.append(war)
+        state._war_system = war_system
+
+        # 执行天命阶段
+        from src.ui.commands.phase_mortality import MortalityCommand
+        cmd = MortalityCommand(state)
+        f = io.StringIO()
+        with redirect_stdout(f):
+            cmd.execute([])
+        output = f.getvalue()
+
+        # 验证行省民怨
+        self.assertEqual(province.grievance, 0)
+        self.assertEqual(province2.grievance, 3)  # 未征服的不变
+        # 验证战争威胁
+        self.assertEqual(war.threat_level, 0)
+        # 检查输出
+        self.assertIn("国泰民安", output)
+        self.assertIn("Test Province 民怨从 2 降至 0", output)
+        self.assertIn("Test War 威胁等级从 3 降至 0", output)
+
+        # 验证日志
+        self.assertTrue(any("国泰民安触发" in msg for msg in state.event_log))
 
 
 if __name__ == "__main__":

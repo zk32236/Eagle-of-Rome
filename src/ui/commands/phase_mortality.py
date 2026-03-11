@@ -62,6 +62,8 @@ class MortalityCommand(Command):
                 self._handle_death_event()
             elif effect == "bountiful_harvest":
                 self._handle_bountiful_harvest()
+            elif effect == "peace":
+                self._handle_peace_event()
             else:
                 # 其他事件暂不实现，仅打印
                 print(f"      (效果暂未实现)")
@@ -119,4 +121,40 @@ class MortalityCommand(Command):
         self.state.log_event(
             "风调雨顺触发",
             extra={"type": "event", "event": "bountiful_harvest", "multiplier": multiplier}
+        )
+
+    def _handle_peace_event(self):
+        """国泰民安：全国民变和战争威胁等级降为1（通过先置0，再经后续升级变为1）"""
+        print(f"      🕊️ 国泰民安！全国民怨和战争威胁得到平息")
+
+        # 1. 处理行省民怨：所有已征服行省 >0 的降为 0
+        provinces = self.state.get_all_provinces()
+        for province in provinces:
+            if province.conquered and province.grievance > 0:
+                old = province.grievance
+                province.set_grievance(0)
+                print(f"         行省 {province.name} 民怨从 {old} 降至 0")
+                self.state.log_event(
+                    f"国泰民安: {province.name} 民怨 {old}→0",
+                    extra={"type": "peace_event", "province_id": province.province_id, "old": old, "new": 0}
+                )
+
+        # 2. 处理战争威胁：所有威胁战争等级 >0 的降为 0
+        war_system = self.state.get_war_system()
+        if war_system:
+            # 通过公共方法获取威胁列表（需确保 WarSystem 有 get_threat_wars 方法）
+            threat_wars = war_system.get_threat_wars() if hasattr(war_system, 'get_threat_wars') else []
+            for war in threat_wars:
+                if war.threat_level > 0:
+                    old = war.threat_level
+                    war.threat_level = 0
+                    print(f"         战争 {war.name} 威胁等级从 {old} 降至 0")
+                    self.state.log_event(
+                        f"国泰民安: {war.name} 威胁等级 {old}→0",
+                        extra={"type": "peace_event", "war_id": war.id, "old": old, "new": 0}
+                    )
+
+        self.state.log_event(
+            "国泰民安触发",
+            extra={"type": "event", "event": "peace"}
         )
