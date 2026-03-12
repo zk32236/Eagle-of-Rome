@@ -84,12 +84,6 @@ class WarSystem:
             # 记录原指挥官及上任回合，用于人口阶段转换
             if war.commander_id:
                 war.set_original_commander(war.commander_id, war.commander_assigned_turn)
-            # 召回军团和舰队
-            ms = self.state.get_military_system()
-            if ms:
-                ms.recall_from_war(war.id)
-            if self.state.naval_system:
-                self.state.naval_system.recall_fleets_from_war(war.id)
             return True
         return False
 

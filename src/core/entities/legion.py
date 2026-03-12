@@ -167,7 +167,7 @@ class Legion:
             "available": "🟢",
             "active": "⚔️",
             "recalling": "🔙",
-            "disbanded": "💀",
+            "disbanded": "⚪",
             "destroyed": "💀",
         }.get(self.status.value, "❓")
 
