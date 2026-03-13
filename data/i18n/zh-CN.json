@@ -38,7 +38,9 @@
     "faction_warning_empty": "   ⚠️  派系无人！",
     "factions_no_factions": "   无派系",
     "province_summary_header": "\n================================================================================\n   🏛️ 已征服行省状态一览\n================================================================================\n{header_line}\n{separator}\n{rows}\n================================================================================\n",
-    "province_summary_header_line": "{'ID':<4} {'名称':<12} {'类型':<10} {'总督':<16} {'民怨':<4} {'包税合同':<16} {'工程合同':<16} {'控制派系':<12}",
+    "province_summary_header_line": "ID    名称         类型       总督               民怨   包税合同           工程合同           控制派系",
+    "province_tax_contract_summary": "包税(税率 {rate:.0f}%)",
+    "province_works_contract_summary": "工程(预算 {budget})",
     "province_summary_separator": "------------------------------------------------------------------------------------------------------------------------------------------------",
     "province_summary_row": "{id:<4} {name:<12} {gov_type:<10} {governor:<16} {grievance:<4} {tax_contract:<16} {project_contract:<16} {controller:<12}",
     "province_summary_no_provinces": "   📭 没有已征服的行省数据",
@@ -102,5 +104,10 @@
     "help_prompt": "输入 'help' 查看可用命令，'exit' 退出游戏",
     "unknown_command": "未知命令: {cmd}",
     "cli_shutdown": "CLI已关闭",
-    "auto_load_scenario": "🔄 自动加载默认场景..."
+    "auto_load_scenario": "🔄 自动加载默认场景...",
+    "error_not_your_turn": "❌ 当前不是您的回合，请等待其他玩家。",
+    "error_no_current_player": "❌ 当前没有玩家。",
+    "error_no_next_player": "❌ 没有下一个玩家。",
+    "info_current_player": "当前玩家: {player_id} (派系 {faction})",
+    "info_player_switched": "已切换到玩家 {player_id} (派系 {faction})"
 }

@@ -84,6 +84,15 @@ class DebugCLI:
         # 为特殊命令设置回调
         self._setup_special_commands()
 
+    def _get_prompt_prefix(self) -> str:
+        """返回提示符前缀，如 [Player1] """
+        player = self.state.get_current_player()
+        if player:
+            faction = self.state.get_faction(player.faction_id)
+            faction_name = faction.name if faction else "无派系"
+            return f"[{player.player_id} {faction_name}] "
+        return "> "
+
     def _get_next_phase(self) -> Optional[str]:
         """返回下一个未执行的阶段名，若全部执行则返回None"""
         for phase in PHASE_SEQUENCE:
@@ -92,10 +101,10 @@ class DebugCLI:
         return None
 
     def _execute_phase_with_ui(self, phase_name: str) -> bool:
-        """
-        执行单个阶段，包含头部、预览、执行、进度条输出。
-        返回阶段执行是否成功。
-        """
+        player = self.state.get_current_player()
+        if not player:
+            print("当前没有玩家")
+            return False
         year_display = self.state.turn.get_year_display() if self.state.turn else "未知"
         phase_display = PHASE_DISPLAY_NAMES.get(phase_name, phase_name)
         executed_before = len(self.state.executed_phases)
@@ -108,9 +117,9 @@ class DebugCLI:
         preview = i18n.get(preview_key, default="")
         if preview and preview != preview_key:
             print(preview)
-            print()  # 添加空行分隔预览和阶段输出
+            print()  # 空行分隔预览和阶段输出
 
-        result = game_api.execute_phase(self.state, phase_name)
+        result = game_api.execute_phase(self.state, phase_name, player.player_id)
         if result["success"] and result["message"]:
             print(result["message"])
         elif not result["success"]:
@@ -125,22 +134,19 @@ class DebugCLI:
         return True
 
     def _do_turn(self):
-        """处理 turn 命令：逐阶段执行并显示UI"""
         if not self.state:
             print(i18n.get("error_no_state"))
             return
-        # 循环执行所有未执行阶段
+        # 循环执行所有未执行阶段（不使用 game_api.execute_turn，因为我们需要每个阶段的 UI）
         while True:
             next_phase = self._get_next_phase()
             if not next_phase:
                 break
             success = self._execute_phase_with_ui(next_phase)
             if not success:
-                break  # 阶段执行失败时停止
-        # 不再打印额外进度条（每个阶段已打印）
+                break
 
     def _do_step(self):
-        """处理 step 命令：执行下一个阶段"""
         if not self.state:
             print(i18n.get("error_no_state"))
             return
@@ -151,19 +157,21 @@ class DebugCLI:
         self._execute_phase_with_ui(next_phase)
 
     def _do_next(self):
-        """处理 next 命令：推进到下一回合"""
         if not self.state:
             print(i18n.get("error_no_state"))
             return
         if len(self.state.executed_phases) < len(PHASE_SEQUENCE):
             print(i18n.get("error_phase_not_complete"))
             return
-        result = game_api.advance_year(self.state)
+        player = self.state.get_current_player()
+        if not player:
+            print("当前没有玩家")
+            return
+        result = game_api.advance_year(self.state, player.player_id)
         if result["success"]:
-            print(result["message"])  # 已包含 i18n 格式化
+            print(result["message"])
         else:
             print(result["message"])
-        # 打印新回合信息
         year_display = self.state.turn.get_year_display() if self.state.turn else "未知"
         print(f"\n📅 Year {year_display}:")
         print(f"   Completed: 0/{len(PHASE_SEQUENCE)} phases")
@@ -215,7 +223,7 @@ class DebugCLI:
 
             while self.running:
                 try:
-                    cmd_input = input("> ").strip()
+                    cmd_input = input(self._get_prompt_prefix()).strip()
                     if not cmd_input:
                         continue
 

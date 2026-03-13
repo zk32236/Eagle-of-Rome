@@ -89,12 +89,95 @@ class GameState:
         self._cities: Dict[int, City] = {}
         self._city_id_counter: int = 1
 
+        # ---------- 新增：玩家系统 MVP0.7.11-12 ----------
+        self._players: Dict[str, 'Player'] = {}  # 玩家ID -> Player对象
+        self._current_player_id: Optional[str] = None  # 当前操作玩家ID
+        self._turn_order: List[str] = []  # 回合顺序（玩家ID列表）
+
         # 初始化时调用 reset，确保状态一致性
         self.reset()
 
     #========================= 功能函数 ===================================
 
+    # ========== 玩家管理 ==========
 
+    def add_player(self, player: 'Player') -> None:
+        """添加玩家"""
+        self._players[player.player_id] = player
+        self.log_event(f"添加玩家: {player.player_id}", level=logging.DEBUG,
+                       extra={"player_id": player.player_id, "faction": player.faction_id})
+
+    def get_player(self, player_id: str) -> Optional['Player']:
+        """根据ID获取玩家"""
+        return self._players.get(player_id)
+
+    def get_all_players(self) -> List['Player']:
+        """获取所有玩家列表"""
+        return list(self._players.values())
+
+    def get_player_by_faction(self, faction_id: str) -> Optional['Player']:
+        """根据派系ID获取玩家（假设一个派系最多一个玩家）"""
+        for player in self._players.values():
+            if player.faction_id == faction_id:
+                return player
+        return None
+
+    def remove_player(self, player_id: str) -> bool:
+        """移除玩家"""
+        if player_id in self._players:
+            del self._players[player_id]
+            if self._current_player_id == player_id:
+                self._current_player_id = None
+            if player_id in self._turn_order:
+                self._turn_order.remove(player_id)
+            self.log_event(f"移除玩家: {player_id}", level=logging.DEBUG,
+                           extra={"player_id": player_id})
+            return True
+        return False
+
+    def set_turn_order(self, order: List[str]) -> None:
+        """设置回合顺序（玩家ID列表）"""
+        self._turn_order = order
+        self.log_event(f"设置回合顺序: {order}", level=logging.DEBUG,
+                       extra={"turn_order": order})
+
+    def get_current_player(self) -> Optional['Player']:
+        """获取当前玩家"""
+        if self._current_player_id:
+            return self._players.get(self._current_player_id)
+        return None
+
+    def set_current_player(self, player_id: str) -> bool:
+        """设置当前玩家"""
+        if player_id in self._players:
+            self._current_player_id = player_id
+            self.log_event(f"设置当前玩家: {player_id}", level=logging.DEBUG,
+                           extra={"player_id": player_id})
+            return True
+        return False
+
+    def next_player(self) -> Optional[str]:
+        """
+        切换到下一个玩家，返回新玩家ID。
+        如果轮完一圈则返回第一个玩家（循环）。
+        如果没有玩家则返回 None。
+        """
+        if not self._turn_order:
+            return None
+        if self._current_player_id not in self._turn_order:
+            # 当前玩家不在顺序中，默认从第一个开始
+            self._current_player_id = self._turn_order[0]
+            return self._current_player_id
+        idx = self._turn_order.index(self._current_player_id)
+        next_idx = (idx + 1) % len(self._turn_order)
+        self._current_player_id = self._turn_order[next_idx]
+        self.log_event(f"切换到下一个玩家: {self._current_player_id}", level=logging.DEBUG,
+                       extra={"new_player": self._current_player_id})
+        return self._current_player_id
+
+    def is_current_player(self, player_id: str) -> bool:
+        """检查指定ID是否为当前玩家"""
+        return self._current_player_id == player_id
 
 
     def log_exception(self, e: Exception, context: str = "", extra: dict = None):
@@ -217,6 +300,10 @@ class GameState:
         self._cities.clear()
         self._city_id_counter = 1
 
+        #新增：玩家系统 MVP0.7.11-12
+        self._players.clear()
+        self._current_player_id = None
+        self._turn_order.clear()
 
     # ========== 序列化 ==========
     def to_dict(self) -> Dict[str, Any]:
@@ -247,7 +334,10 @@ class GameState:
             # 城市系统
             "_cities": {cid: city.to_dict() for cid, city in self._cities.items()},
             "_city_id_counter": self._city_id_counter,
-
+            # 玩家系统
+            "_players": {pid: player.to_dict() for pid, player in self._players.items()},
+            "_current_player_id": self._current_player_id,
+            "_turn_order": self._turn_order.copy(),
         }
         return data
 
@@ -318,6 +408,14 @@ class GameState:
             self._cities[int(cid)] = city
         self._city_id_counter = data.get("_city_id_counter", 1)
 
+        # 恢复玩家
+        self._players.clear()
+        from src.core.entities.player import Player
+        for pid, player_data in data.get("_players", {}).items():
+            self._players[pid] = Player.from_dict(player_data)
+        self._current_player_id = data.get("_current_player_id")
+        self._turn_order = data.get("_turn_order", []).copy()
+
     def _initialize_mortality_pool(self):
         """初始化天命池"""
         self._mortality_pool = list(range(1, self.MAX_MEMBER_ID + 1))
@@ -374,6 +472,11 @@ class GameState:
         # MVP 0.7 城市系统预留
         instance._cities = {}
         instance._city_id_counter = 1
+
+        # MVP 0.7.11-12 玩家系统
+        instance._players = {}
+        instance._current_player_id = None
+        instance._turn_order = []
 
         return instance
 

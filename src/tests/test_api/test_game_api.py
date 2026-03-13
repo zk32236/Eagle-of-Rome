@@ -23,6 +23,8 @@ def mock_state():
         "national_public_land_tax_rate": 0.02
     }.get(key, default)
     state.get_national_public_land.return_value = 1000
+    # 默认是当前玩家（测试权限时覆盖）
+    state.is_current_player.return_value = True
     return state
 
 def test_get_status_summary(mock_state):
@@ -56,60 +58,82 @@ def mock_phase_commands(monkeypatch):
 
     yield mock_mortality, mock_instance
 
-def test_execute_phase_success(mock_phase_commands):
+def test_execute_phase_success(mock_state, mock_phase_commands):
     """测试 execute_phase 成功执行阶段"""
-    state = MagicMock(spec=GameState)
+    mock_state.is_current_player.return_value = True
     mock_mortality, mock_instance = mock_phase_commands
-    result = game_api.execute_phase(state, "mortality")
+    result = game_api.execute_phase(mock_state, "mortality", "player1")
     assert result["success"] is True
     assert "message" in result
-    mock_mortality.assert_called_once_with(state)
+    mock_mortality.assert_called_once_with(mock_state)
     mock_instance.execute.assert_called_once_with([])
 
-def test_execute_phase_invalid():
-    """测试 execute_phase 传入无效阶段名"""
-    state = MagicMock()
-    result = game_api.execute_phase(state, "invalid")
+def test_execute_phase_not_current_player(mock_state):
+    """测试 execute_phase 权限失败"""
+    mock_state.is_current_player.return_value = False
+    result = game_api.execute_phase(mock_state, "mortality", "player1")
     assert result["success"] is False
-    assert "未知阶段" in result["message"]  # i18n 已加载，应为中文
+    assert "当前不是您的回合" in result["message"]
 
-def test_execute_phase_exception(mock_phase_commands):
+def test_execute_phase_invalid(mock_state):
+    """测试 execute_phase 传入无效阶段名"""
+    mock_state.is_current_player.return_value = True
+    result = game_api.execute_phase(mock_state, "invalid", "player1")
+    assert result["success"] is False
+    assert "未知阶段" in result["message"]
+
+def test_execute_phase_exception(mock_state, mock_phase_commands):
     """测试阶段执行抛出异常"""
-    state = MagicMock()
+    mock_state.is_current_player.return_value = True
     mock_mortality, mock_instance = mock_phase_commands
     mock_instance.execute.side_effect = ValueError("模拟错误")
-    result = game_api.execute_phase(state, "mortality")
+    result = game_api.execute_phase(mock_state, "mortality", "player1")
     assert result["success"] is False
     assert "阶段执行异常" in result["message"]
 
-def test_execute_turn_all_phases():
+def test_execute_turn_all_phases(mock_state):
     """测试 execute_turn 执行所有阶段"""
-    state = MagicMock()
-    state.is_phase_executed.return_value = False  # 所有阶段未执行
+    mock_state.is_current_player.return_value = True
+    mock_state.is_phase_executed.return_value = False  # 所有阶段未执行
     with patch('src.api.game_api.execute_phase') as mock_exec:
         mock_exec.return_value = {"success": True, "message": "ok"}
-        result = game_api.execute_turn(state)
+        result = game_api.execute_turn(mock_state, "player1")
         assert result["success"] is True
         assert mock_exec.call_count == 7
 
-def test_execute_turn_partial():
+def test_execute_turn_partial(mock_state):
     """测试 execute_turn 跳过已执行阶段"""
-    state = MagicMock()
+    mock_state.is_current_player.return_value = True
     def is_executed_side_effect(phase):
         return phase in ["mortality", "revenue"]
-    state.is_phase_executed.side_effect = is_executed_side_effect
+    mock_state.is_phase_executed.side_effect = is_executed_side_effect
     with patch('src.api.game_api.execute_phase') as mock_exec:
         mock_exec.return_value = {"success": True, "message": "ok"}
-        result = game_api.execute_turn(state)
+        result = game_api.execute_turn(mock_state, "player1")
         assert result["success"] is True
+        # 应执行剩余5个阶段
         assert mock_exec.call_count == 5
 
-def test_advance_year():
+def test_execute_turn_not_current_player(mock_state):
+    """测试 execute_turn 权限失败"""
+    mock_state.is_current_player.return_value = False
+    result = game_api.execute_turn(mock_state, "player1")
+    assert result["success"] is False
+    assert "当前不是您的回合" in result["message"]
+
+def test_advance_year(mock_state):
     """测试 advance_year 推进回合"""
-    state = MagicMock()
-    state.turn = MagicMock()
-    state.turn.get_year_display.return_value = "281 BC"
-    result = game_api.advance_year(state)
+    mock_state.is_current_player.return_value = True
+    mock_state.turn = MagicMock()
+    mock_state.turn.get_year_display.return_value = "281 BC"
+    result = game_api.advance_year(mock_state, "player1")
     assert result["success"] is True
     assert result["message"] == "已推进至 281 BC"
-    state.advance_year.assert_called_once()
+    mock_state.advance_year.assert_called_once()
+
+def test_advance_year_not_current_player(mock_state):
+    """测试 advance_year 权限失败"""
+    mock_state.is_current_player.return_value = False
+    result = game_api.advance_year(mock_state, "player1")
+    assert result["success"] is False
+    assert "当前不是您的回合" in result["message"]

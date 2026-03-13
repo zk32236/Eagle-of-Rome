@@ -71,8 +71,38 @@ class ScenarioLoader:
         italy = state.get_province(0)
         if italy:
             italy._conquered = True  # 直接设置私有字段，或通过 setter（如果有）
-
         ScenarioLoader._assign_initial_governors(state)
+        ScenarioLoader._create_players_from_factions(state)
+
+    @staticmethod
+    def _create_players_from_factions(state: GameState):
+        """根据派系列表创建玩家（每个派系一个人类玩家）"""
+        from src.core.entities.player import Player, PlayerType
+
+        factions = list(state.factions.values())
+        if not factions:
+            return
+
+        # 为每个派系创建一个玩家，玩家ID使用 "player_<派系ID>" 或 "player_序号"
+        for idx, faction in enumerate(factions):
+            player_id = f"player_{faction.id}"  # 或 f"player_{idx+1}"
+            player = Player(
+                player_id=player_id,
+                faction_id=faction.id,
+                player_type=PlayerType.HUMAN,
+                is_online=False
+            )
+            state.add_player(player)
+
+        # 设置回合顺序（按派系列表顺序）
+        turn_order = [f"player_{f.id}" for f in factions]
+        state.set_turn_order(turn_order)
+
+        # 设置第一个玩家为当前玩家
+        if turn_order:
+            state.set_current_player(turn_order[0])
+            print(f"🎮 当前玩家: {turn_order[0]} (派系 {factions[0].name})")
+
 
     @staticmethod
     def _assign_initial_governors(state: GameState):

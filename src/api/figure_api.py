@@ -139,7 +139,8 @@ def get_private_land_info(state: GameState) -> dict:
     living = state.get_living_members()
     landowners = [fig for fig in living if fig.land_private > 0]
     if not landowners:
-        return api_response(True, i18n.get("no_landowners", default="   无拥有土地的人物"), data=[])
+        return api_response(True, i18n.get("no_landowners", default="   无拥有土地的人物"),
+                            data={"landowners": [], "totals": {"land": 0, "value": 0, "income": 0, "wealth": 0}})
 
     header_line = f"{'ID':<5} {'姓名':<20} {'私地(C)':<8} {'价值(T)':<10} {'年收益(T)':<12} {'私库(T)'}"
     separator = "-" * 80

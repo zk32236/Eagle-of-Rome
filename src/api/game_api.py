@@ -25,10 +25,15 @@ PHASE_COMMAND_MAP = {
     "resolution": ResolutionCommand,
 }
 
-def execute_phase(state, phase_name: str, args: list = None) -> dict:
+
+def execute_phase(state: GameState, phase_name: str, player_id: str, args: list = None) -> dict:
     """
-    执行单个游戏阶段，返回捕获的输出和状态。
+    执行单个游戏阶段，需要玩家ID进行权限检查。
     """
+    # 权限检查
+    if not state.is_current_player(player_id):
+        return api_response(False, i18n.get("error_not_your_turn"))
+
     cmd_class = PHASE_COMMAND_MAP.get(phase_name)
     if not cmd_class:
         return api_response(False, i18n.get("error_phase_invalid", phase=phase_name))
@@ -43,10 +48,14 @@ def execute_phase(state, phase_name: str, args: list = None) -> dict:
     output = f.getvalue().strip()
     return api_response(success, output, data={"phase": phase_name})
 
-def execute_turn(state) -> dict:
+
+def execute_turn(state: GameState, player_id: str) -> dict:
     """
-    按顺序执行所有未执行阶段，返回汇总输出和结果。
+    按顺序执行所有未执行阶段，需要玩家权限。
     """
+    if not state.is_current_player(player_id):
+        return api_response(False, i18n.get("error_not_your_turn"))
+
     phase_order = ["mortality", "revenue", "forum", "population", "senate", "combat", "resolution"]
     results = []
     all_success = True
@@ -54,7 +63,7 @@ def execute_turn(state) -> dict:
     for phase in phase_order:
         if state.is_phase_executed(phase):
             continue
-        result = execute_phase(state, phase)
+        result = execute_phase(state, phase, player_id)
         results.append(result)
         outputs.append(result["message"])
         if not result["success"]:
@@ -63,17 +72,22 @@ def execute_turn(state) -> dict:
     message = "\n\n".join(outputs) if outputs else i18n.get("info_turn_complete")
     return api_response(all_success, message, data={"phases": results})
 
-def advance_year(state) -> dict:
+
+def advance_year(state: GameState, player_id: str) -> dict:
     """
-    推进到下一年（不检查阶段完成情况，调用前需由上层确保）。
+    推进到下一年，需要玩家权限。
     """
+    if not state.is_current_player(player_id):
+        return api_response(False, i18n.get("error_not_your_turn"))
+
     if state.turn:
         state.advance_year()
         year_display = state.turn.get_year_display() if hasattr(state.turn, 'get_year_display') else str(state.turn.year)
         return api_response(True, i18n.get("info_advance_year", year=year_display), data={"year_display": year_display})
     return api_response(False, "游戏回合未初始化")
 
-# ---------- 以下为阶段0已有的查询函数，改造为使用 i18n ----------
+
+# ---------- 以下为阶段0已有的查询函数，无需权限检查，保持原样 ----------
 
 def get_status_summary(state: GameState) -> dict:
     try:
@@ -102,6 +116,7 @@ def get_status_summary(state: GameState) -> dict:
         return api_response(True, message, data)
     except Exception as e:
         return api_response(False, f"生成状态摘要时出错: {e}", errors=[str(e)])
+
 
 def get_public_land_info(state: GameState) -> dict:
     land_price = state.get_economic_rule("land_price_per_unit", 10)

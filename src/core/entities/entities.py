@@ -81,6 +81,33 @@ class Faction:
     _province_owned: List[int] = field(default_factory=list)  # 控制的行省ID列表
     _knight_contract_count: int = 0          # 派系内骑士持有的合同总数
 
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "treasury": self.treasury,
+            "is_player": self.is_player,
+            "member_ids": self.member_ids.copy(),
+            "_total_land": self._total_land,
+            "_province_owned": self._province_owned.copy(),
+            "_knight_contract_count": self._knight_contract_count,
+        }
+
+    @staticmethod
+    def from_dict(data: dict) -> "Faction":
+        faction = Faction(
+            id=data["id"],
+            name=data["name"],
+            treasury=data.get("treasury", 0),
+            is_player=data.get("is_player", False)
+        )
+        faction.member_ids = data.get("member_ids", []).copy()
+        faction._total_land = data.get("_total_land", 0)
+        faction._province_owned = data.get("_province_owned", []).copy()
+        faction._knight_contract_count = data.get("_knight_contract_count", 0)
+        return faction
+
     def get_senate_influence(self, state: 'GameState') -> int:
         total = 0
         for mid in self.member_ids:
