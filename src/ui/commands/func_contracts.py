@@ -3,105 +3,29 @@
 合同功能命令：显示合同状态、投票授予包税合同
 """
 
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, TYPE_CHECKING, Optional
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.contract import ContractType, ContractStatus
-from src.core.entities.figure import ClassTier
+import src.api.contract_api as contract_api
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
-    from src.core.entities.figure import Figure
-    from src.core.entities.contract import Contract
 
 
 class ContractsCommand(Command):
-    """显示所有合同状态"""
-
     name = "contracts"
     aliases = []
     description = "显示所有合同状态（待决、执行中、已完成）"
 
-    def __init__(self, state: "GameState"):
-        super().__init__(state)
-
     def execute(self, args: List[str]) -> bool:
-        terms = TerminologyService.get()
-
-        print(f"\n{'=' * 60}")
-        print(f"   📜 {terms.assembly} Contracts")
-        print(f"{'=' * 60}")
-
-        if not self.state.contracts:
-            print(f"\n   📭 No contracts")
-            return True
-
-        # 按状态分组
-        pending = [c for c in self.state.contracts if c.status == ContractStatus.PENDING]
-        budgeted = [c for c in self.state.contracts if c.status == ContractStatus.BUDGETED]
-        active = [c for c in self.state.contracts if c.status == ContractStatus.ACTIVE]
-        completed = [c for c in self.state.contracts if c.status == ContractStatus.COMPLETED]
-        expired = [c for c in self.state.contracts if c.status == ContractStatus.EXPIRED]
-
-        if pending:
-            print(f"\n   ⏳ PENDING (Awaiting Senate Budget Vote):")
-            for c in pending:
-                type_name = "📊 Tax" if c.contract_type == ContractType.TAX_FARMING else "🏗️ Works"
-                print(f"      ID:{c.id} {type_name}: {c.name}")
-                print(f"         Cost: {c.base_cost} | Profit: {c.expected_profit}")
-
-        if budgeted:
-            print(f"\n   💰 BUDGETED (Awaiting Forum Auction):")
-            for c in budgeted:
-                type_name = "📊 Tax" if c.contract_type == ContractType.TAX_FARMING else "🏗️ Works"
-                print(f"      ID:{c.id} {type_name}: {c.name}")
-                print(f"         Cost: {c.base_cost} | Profit: {c.expected_profit}")
-
-        if active:
-            print(f"\n   ▶️  ACTIVE:")
-            for c in active:
-                type_name = "📊 Tax" if c.contract_type == ContractType.TAX_FARMING else "🏗️ Works"
-                figure = self.state.get_member(c.awarded_to)
-                fname = figure.name if figure else "Unknown"
-                faction = self.state.get_faction(c.awarded_faction)
-                fact_name = faction.name if faction else "Unknown"
-                extended = " (已延期)" if getattr(c, 'is_extended', False) else ""
-                print(f"      ID:{c.id} {type_name}: {c.name}{extended}")
-                print(f"         Contractor: {fname} ({fact_name})")
-                print(f"         Remaining: {c.remaining_years} years")
-                if c.contract_type == ContractType.TAX_FARMING:
-                    print(f"         Progress: {c.total_collected}/{c.expected_profit}")
-                else:
-                    print(f"         Progress: {c.total_spent}/{c.base_cost}")
-
-        if completed:
-            print(f"\n   ✅ COMPLETED:")
-            for c in completed:
-                type_name = "📊" if c.contract_type == ContractType.TAX_FARMING else "🏗️"
-                total = c.total_collected + c.total_spent
-                warranty_info = ""
-                if c.contract_type == ContractType.PUBLIC_WORKS and hasattr(c, 'warranty_remaining'):
-                    if getattr(c, '_is_fleet_construction', False):
-                        # 舰队建造合同，不显示额外信息
-                        pass
-                    elif c.warranty_remaining > 0:
-                        warranty_info = f" (质保剩余 {c.warranty_remaining} 年)"
-                    else:
-                        warranty_info = f" (已失修)"
-                print(f"      {type_name} {c.name} - Total: {total}{warranty_info}")
-
-        if expired:
-            print(f"\n   ❌ EXPIRED:")
-            for c in expired:
-                print(f"      {c.name}")
-
-        print(f"{'=' * 60}")
-        return True
+        result = contract_api.get_contracts_status(self.state)
+        print(result["message"])
+        return result["success"]
 
 
 class VoteCommand(Command):
     """投票授予包税合同"""
-
     name = "vote"
     aliases = []
     description = "投票授予包税合同，用法: vote contract <合同ID>"
