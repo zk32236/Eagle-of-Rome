@@ -2,6 +2,7 @@
 from src.core.game_state import GameState
 from src.core.entities.contract import ContractType
 from src.api import api_response
+from src.core.i18n import i18n
 from typing import Optional, List, Dict, Any
 
 def _get_display_governor_type(province) -> str:
@@ -24,45 +25,49 @@ def _get_controlling_faction(state: GameState, province_id: int) -> Optional[str
 def _format_contract_info(state: GameState, contract_id: Optional[int]) -> str:
     """返回合同简要信息"""
     if contract_id is None:
-        return "无"
+        return i18n.get("province_no_contract", default="无")
     contract = state.get_contract(contract_id)
     if not contract:
-        return "无效"
+        return i18n.get("province_invalid_contract", default="无效")
     if contract.contract_type == ContractType.TAX_FARMING:
         tax_rate = getattr(contract, 'tax_rate', 0.0)
-        return f"包税(税率 {tax_rate*100:.0f}%)"
+        return i18n.get("province_tax_contract_summary", rate=tax_rate*100)
     else:
-        return f"工程(预算 {contract.base_cost})"
+        return i18n.get("province_works_contract_summary", budget=contract.base_cost)
 
 def _get_governor_name(state: GameState, governor_id: Optional[int]) -> str:
     if governor_id is None:
-        return "无"
+        return i18n.get("province_no_governor", default="无")
     fig = state.get_member(governor_id)
-    return fig.get_formal_name() if fig else "缺失(数据异常)"
+    return fig.get_formal_name() if fig else i18n.get("province_governor_missing", default="缺失(数据异常)")
 
 def get_province_info(state: GameState, province_id: Optional[int] = None) -> dict:
     """获取行省信息，无参数时返回所有已征服行省概要"""
     if province_id is None:
         provinces = [p for p in state.get_all_provinces() if p.conquered]
         if not provinces:
-            return api_response(True, "   📭 没有已征服的行省数据", data=[])
+            return api_response(True, i18n.get("province_summary_no_provinces"), data=[])
 
-        lines = [
-            "\n" + "=" * 80,
-            "   🏛️ 已征服行省状态一览",
-            "=" * 80,
-            f"{'ID':<4} {'名称':<12} {'类型':<10} {'总督':<16} {'民怨':<4} {'包税合同':<16} {'工程合同':<16} {'控制派系':<12}",
-            "-" * 80
-        ]
+        header_line = i18n.get("province_summary_header_line")
+        separator = i18n.get("province_summary_separator")
+        rows = []
         data_list = []
         for p in provinces:
-            name = "意大利(本土)" if p.province_id == 0 else p.name
+            name = i18n.get("province_italy_name", default="意大利(本土)") if p.province_id == 0 else p.name
             gov_name = _get_governor_name(state, p.governor_id)
             gov_type = _get_display_governor_type(p)
             tax_info = _format_contract_info(state, p.tax_contract_id)
             proj_info = _format_contract_info(state, p.project_contract_id)
-            controller = _get_controlling_faction(state, p.province_id) or "无"
-            lines.append(f"{p.province_id:<4} {name:<12} {gov_type:<10} {gov_name:<16} {p.grievance:<4} {tax_info:<16} {proj_info:<16} {controller:<12}")
+            controller = _get_controlling_faction(state, p.province_id) or i18n.get("province_no_controller", default="无")
+            rows.append(i18n.get("province_summary_row",
+                                 id=p.province_id,
+                                 name=name,
+                                 gov_type=gov_type,
+                                 governor=gov_name,
+                                 grievance=p.grievance,
+                                 tax_contract=tax_info,
+                                 project_contract=proj_info,
+                                 controller=controller))
             data_list.append({
                 "province_id": p.province_id,
                 "name": name,
@@ -73,33 +78,32 @@ def get_province_info(state: GameState, province_id: Optional[int] = None) -> di
                 "project_contract": proj_info,
                 "controller": controller
             })
-        lines.append("=" * 80)
-        message = "\n".join(lines)
+        message = i18n.get("province_summary_header",
+                           header_line=header_line,
+                           separator=separator,
+                           rows="\n".join(rows))
         return api_response(True, message, data_list)
 
     # 单个行省详情
     province = state.get_province(province_id)
     if not province:
-        return api_response(False, f"❌ 行省ID {province_id} 不存在")
+        return api_response(False, i18n.get("province_not_found", id=province_id))
     if not province.conquered:
-        return api_response(False, f"❌ 行省ID {province_id} 尚未征服")
+        return api_response(False, i18n.get("province_not_conquered", id=province_id))
 
-    lines = ["\n" + "=" * 60]
-    if province_id == 0:
-        lines.append(f"   🏛️ 行省详情：意大利 (本土)")
-    else:
-        lines.append(f"   🏛️ 行省详情：{province.name} (ID:{province_id})")
-    lines.append("=" * 60)
-    lines.extend([
-        f"   总土地: {province.total_land} C",
-        f"   公地: {province.land_public} C",
-        f"   私地: {province.land_private} C",
-        f"   行省类型: {_get_display_governor_type(province)}",
-    ])
+    lines = []
+    name = i18n.get("province_italy_name", default="意大利(本土)") if province_id == 0 else province.name
+    lines.append(i18n.get("province_detail_header", name=name, id=province_id))
+    lines.append(i18n.get("province_detail_total_land", total_land=province.total_land))
+    lines.append(i18n.get("province_detail_public_land", public_land=province.land_public))
+    lines.append(i18n.get("province_detail_private_land", private_land=province.land_private))
+    lines.append(i18n.get("province_detail_governor_type", gov_type=_get_display_governor_type(province)))
+
     if province.governor_designate_id:
         designate = state.get_member(province.governor_designate_id)
         designate_name = designate.get_formal_name() if designate else "?"
-        lines.append(f"   候任总督: {designate_name} (将在决算阶段上任)")
+        lines.append(i18n.get("province_detail_designate", name=designate_name))
+
     if province.governor_id:
         gov = state.get_member(province.governor_id)
         gov_name = gov.get_formal_name() if gov else "?"
@@ -107,11 +111,12 @@ def get_province_info(state: GameState, province_id: Optional[int] = None) -> di
             since_year = state.turn.year + (province.governor_since - state.turn.turn_number)
             since_display = f"{abs(since_year)} BC" if since_year < 0 else f"{since_year} AD"
         else:
-            since_display = "未知"
-        lines.append(f"   现任总督: {gov_name} (上任于 {since_display})")
+            since_display = i18n.get("figure_unknown", default="未知")
+        lines.append(i18n.get("province_detail_governor", name=gov_name, since=since_display))
     else:
-        lines.append(f"   现任总督: 无")
-    lines.append(f"   民怨等级: {province.grievance} (0=安居乐业,1=怨声载道,2=民不聊生,3=平民起义)")
+        lines.append(i18n.get("province_detail_no_governor"))
+
+    lines.append(i18n.get("province_detail_grievance", grievance=province.grievance))
 
     # 包税合同
     if province.tax_contract_id:
@@ -119,48 +124,51 @@ def get_province_info(state: GameState, province_id: Optional[int] = None) -> di
         if contract:
             tax_rate = getattr(contract, 'tax_rate', 0.0)
             winner = state.get_member(contract.awarded_to)
-            winner_name = winner.get_formal_name() if winner else "未知"
+            winner_name = winner.get_formal_name() if winner else i18n.get("contract_unknown")
             faction = state.get_faction(contract.awarded_faction)
-            faction_name = faction.name if faction else "无"
-            lines.append(f"\n   📊 包税合同:")
-            lines.append(f"      ID: {contract.id}")
-            lines.append(f"      中标者: {winner_name} ({faction_name})")
-            lines.append(f"      实际税率: {tax_rate*100:.1f}%")
-            lines.append(f"      剩余年限: {contract.remaining_years} 年")
-            lines.append(f"      年净收入: {getattr(contract, '_annual_profit', 0)}")
+            faction_name = faction.name if faction else i18n.get("contract_unknown")
+            lines.append(i18n.get("province_detail_tax_contract_header"))
+            lines.append(i18n.get("province_detail_tax_contract_line",
+                                  id=contract.id,
+                                  winner=winner_name,
+                                  faction=faction_name,
+                                  rate=tax_rate*100,
+                                  remaining=contract.remaining_years,
+                                  profit=getattr(contract, '_annual_profit', 0)))
         else:
-            lines.append(f"\n   ⚠️ 包税合同数据异常")
+            lines.append(i18n.get("province_detail_tax_contract_none"))
     else:
-        lines.append(f"\n   📭 无包税合同")
+        lines.append(i18n.get("province_detail_tax_contract_none"))
 
     # 工程合同
     if province.project_contract_id:
         contract = state.get_contract(province.project_contract_id)
         if contract:
             contractor = state.get_member(contract.awarded_to)
-            contractor_name = contractor.get_formal_name() if contractor else "未知"
+            contractor_name = contractor.get_formal_name() if contractor else i18n.get("contract_unknown")
             faction = state.get_faction(contract.awarded_faction)
-            faction_name = faction.name if faction else "无"
-            lines.append(f"\n   🏗️ 公共工程合同:")
-            lines.append(f"      ID: {contract.id}")
-            lines.append(f"      承建者: {contractor_name} ({faction_name})")
-            lines.append(f"      预算: {contract.base_cost}")
-            lines.append(f"      剩余年限: {contract.remaining_years} 年")
-            lines.append(f"      质保剩余: {getattr(contract, 'warranty_remaining', 0)} 年")
+            faction_name = faction.name if faction else i18n.get("contract_unknown")
+            lines.append(i18n.get("province_detail_project_contract_header"))
+            lines.append(i18n.get("province_detail_project_contract_line",
+                                  id=contract.id,
+                                  contractor=contractor_name,
+                                  faction=faction_name,
+                                  budget=contract.base_cost,
+                                  remaining=contract.remaining_years,
+                                  warranty=getattr(contract, 'warranty_remaining', 0)))
         else:
-            lines.append(f"\n   ⚠️ 工程合同数据异常")
+            lines.append(i18n.get("province_detail_project_contract_none"))
     else:
-        lines.append(f"\n   🏗️ 无公共工程合同")
+        lines.append(i18n.get("province_detail_project_contract_none"))
 
     controller = _get_controlling_faction(state, province_id)
     if controller:
-        lines.append(f"\n   🏛️ 控制派系: {controller}")
+        lines.append(i18n.get("province_detail_controller", controller=controller))
     else:
-        lines.append(f"\n   🏛️ 无派系控制")
+        lines.append(i18n.get("province_detail_no_controller"))
 
     lines.append("=" * 60)
     message = "\n".join(lines)
-    # 结构化数据
     data = {
         "province_id": province.province_id,
         "name": province.name,

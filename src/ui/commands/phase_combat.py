@@ -12,7 +12,7 @@ from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.war import WarStatus
 from src.core.entities.legion import LegionStatus
-from src.ui.commands.func_status import get_progress_bar
+from src.ui.utils import get_progress_bar
 from src.core.deciders.peace_treaty_decider import PeaceTreatyDecider
 from src.core.deciders.impl.auto_peace_treaty_decider import AutoPeaceTreatyDecider
 
@@ -79,7 +79,7 @@ class CombatCommand(Command):
             self.state.turn.current_phase = "combat"
 
         self.state.mark_phase_executed("combat")
-        print(f"\n   Progress: {get_progress_bar(self.state)}")
+
         return True
 
     # ================================= MVP 0.7 ===========================================

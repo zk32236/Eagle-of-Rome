@@ -9,7 +9,7 @@ from typing import List, Dict, Tuple, Optional, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.contract import ContractStatus, ContractType
-from src.ui.commands.func_status import get_progress_bar
+from src.ui.utils import get_progress_bar
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -143,7 +143,7 @@ class RevenueCommand(Command):
         self.state.log_event(...)
 
         self.state.mark_phase_executed("revenue")
-        print(f"\n   Progress: {get_progress_bar(self.state)}")
+
         return True
 
     # ================================= MVP 0.7 ===========================================

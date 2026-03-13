@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import List, TYPE_CHECKING, Dict
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
-from src.ui.commands.func_status import get_progress_bar
 from src.core.entities.contract import ContractStatus, ContractType
+from src.ui.utils import get_progress_bar
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -43,7 +43,7 @@ class MortalityCommand(Command):
         if not deck:
             print("   ⚠️ 未配置事件卡")
             self.state.mark_phase_executed("mortality")
-            print(f"\n   Progress: {get_progress_bar(self.state)}")
+
             return True
 
         # 按权重抽取事件卡
@@ -76,7 +76,7 @@ class MortalityCommand(Command):
                 self.state.log_event(f"{event_name}")
 
         self.state.mark_phase_executed("mortality")
-        print(f"\n   Progress: {get_progress_bar(self.state)}")
+
         return True
 
     def _load_disasters(self) -> List[Dict]:

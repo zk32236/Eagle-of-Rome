@@ -8,6 +8,7 @@ import src.api.game_api as game_api
 import src.api.figure_api as figure_api
 import src.api.faction_api as faction_api
 import src.api.province_api as province_api
+from src.ui.utils import get_progress_bar
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -100,10 +101,3 @@ class ProvinceCommand(Command):
         print(result["message"])
         return result["success"]
 
-# 进度条函数保留（如果有其他地方用到）
-def get_progress_bar(state, width=7):
-    executed = len(state.executed_phases)
-    total = 7
-    filled = "▓" * executed
-    empty = "░" * (total - executed)
-    return f"[{filled}{empty}] {executed}/{total}"

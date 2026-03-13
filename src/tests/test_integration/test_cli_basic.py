@@ -11,6 +11,10 @@ import os
 import io
 from contextlib import redirect_stdout
 import importlib.util
+from src.core.i18n import i18n
+
+# 在测试执行前加载 i18n 中文文本
+i18n.load("zh-CN")
 
 # 获取项目根目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -47,6 +51,9 @@ class TestCLIIntegration(unittest.TestCase):
 
     def test_load_and_status(self):
         """测试 load 后 status 能正确显示加载的数据"""
+        from src.core.i18n import i18n
+        i18n.load("zh-CN", force=True)  # 强制重新加载
+        print(f"[DEBUG] i18n keys: {list(i18n._strings.keys())}")
         # 执行 load 命令（使用默认场景名）
         load_cmd = LoadCommand(self.state)
         result = load_cmd.execute([])

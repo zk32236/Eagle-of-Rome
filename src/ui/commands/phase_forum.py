@@ -10,7 +10,7 @@ from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.figure import Figure, ClassTier
 from src.core.entities.contract import Contract, ContractType, ContractStatus
-from src.ui.commands.func_status import get_progress_bar
+from src.ui.utils import get_progress_bar
 from src.core.deciders.impl.auto_retirement_decider import AutoRetirementDecider
 from src.core.deciders.impl.auto_recruitment_decider import AutoRecruitmentDecider
 from src.core.entities.war import WarStatus
@@ -80,7 +80,7 @@ class ForumCommand(Command):
 
 
         self.state.mark_phase_executed("forum")
-        print(f"\n   Progress: {get_progress_bar(self.state)}")
+
         return True
 
     # ----------------------------------------------------------------------

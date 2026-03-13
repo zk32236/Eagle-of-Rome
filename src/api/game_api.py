@@ -2,68 +2,121 @@
 from src.core.game_state import GameState
 from src.core.localization import TerminologyService
 from src.api import api_response
+from src.core.i18n import i18n
+import io
+from contextlib import redirect_stdout
 
+# 导入所有阶段命令类
+from src.ui.commands.phase_mortality import MortalityCommand
+from src.ui.commands.phase_revenue import RevenueCommand
+from src.ui.commands.phase_forum import ForumCommand
+from src.ui.commands.phase_population import PopulationCommand
+from src.ui.commands.phase_senate import SenateCommand
+from src.ui.commands.phase_combat import CombatCommand
+from src.ui.commands.phase_resolution import ResolutionCommand
+
+PHASE_COMMAND_MAP = {
+    "mortality": MortalityCommand,
+    "revenue": RevenueCommand,
+    "forum": ForumCommand,
+    "population": PopulationCommand,
+    "senate": SenateCommand,
+    "combat": CombatCommand,
+    "resolution": ResolutionCommand,
+}
+
+def execute_phase(state, phase_name: str, args: list = None) -> dict:
+    """
+    执行单个游戏阶段，返回捕获的输出和状态。
+    """
+    cmd_class = PHASE_COMMAND_MAP.get(phase_name)
+    if not cmd_class:
+        return api_response(False, i18n.get("error_phase_invalid", phase=phase_name))
+
+    cmd = cmd_class(state)
+    f = io.StringIO()
+    with redirect_stdout(f):
+        try:
+            success = cmd.execute(args or [])
+        except Exception as e:
+            return api_response(False, f"阶段执行异常: {e}", errors=[str(e)])
+    output = f.getvalue().strip()
+    return api_response(success, output, data={"phase": phase_name})
+
+def execute_turn(state) -> dict:
+    """
+    按顺序执行所有未执行阶段，返回汇总输出和结果。
+    """
+    phase_order = ["mortality", "revenue", "forum", "population", "senate", "combat", "resolution"]
+    results = []
+    all_success = True
+    outputs = []
+    for phase in phase_order:
+        if state.is_phase_executed(phase):
+            continue
+        result = execute_phase(state, phase)
+        results.append(result)
+        outputs.append(result["message"])
+        if not result["success"]:
+            all_success = False
+            break
+    message = "\n\n".join(outputs) if outputs else i18n.get("info_turn_complete")
+    return api_response(all_success, message, data={"phases": results})
+
+def advance_year(state) -> dict:
+    """
+    推进到下一年（不检查阶段完成情况，调用前需由上层确保）。
+    """
+    if state.turn:
+        state.advance_year()
+        year_display = state.turn.get_year_display() if hasattr(state.turn, 'get_year_display') else str(state.turn.year)
+        return api_response(True, i18n.get("info_advance_year", year=year_display), data={"year_display": year_display})
+    return api_response(False, "游戏回合未初始化")
+
+# ---------- 以下为阶段0已有的查询函数，改造为使用 i18n ----------
 
 def get_status_summary(state: GameState) -> dict:
     try:
         treasury = state.treasury
         living_count = len(state.get_living_members())
         faction_count = len(state.factions)
-
-        # 安全处理 turn 对象
         if state.turn:
-            turn_year = state.turn.year
             turn_num = state.turn.turn_number
-            year_display = f"{abs(turn_year)} BC" if turn_year < 0 else f"{turn_year} AD"
+            year_display = f"{abs(state.turn.year)} BC" if state.turn.year < 0 else f"{state.turn.year} AD"
         else:
             turn_num = "未知"
             year_display = "未知"
-
-        lines = [
-            "",
-            "=" * 50,
-            "   📊 游戏状态摘要",
-            "=" * 50,
-            f"   回合: 第 {turn_num} 年 ({year_display})",
-            f"   国库: {treasury} 塔兰特",
-            f"   存活人物: {living_count} 人",
-            f"   派系数: {faction_count} 个",
-            "=" * 50
-        ]
-        message = "\n".join(lines)
+        message = i18n.get("status_summary",
+                           turn_num=turn_num,
+                           year_display=year_display,
+                           treasury=treasury,
+                           living_count=living_count,
+                           faction_count=faction_count)
         data = {
             "treasury": treasury,
             "living_count": living_count,
             "faction_count": faction_count,
             "turn": turn_num,
-            "year": turn_year if state.turn else None
+            "year": state.turn.year if state.turn else None
         }
         return api_response(True, message, data)
     except Exception as e:
         return api_response(False, f"生成状态摘要时出错: {e}", errors=[str(e)])
 
 def get_public_land_info(state: GameState) -> dict:
-    """返回国家公地信息"""
-    terms = TerminologyService.get()
     land_price = state.get_economic_rule("land_price_per_unit", 10)
     tax_rate = state.get_economic_rule("national_public_land_tax_rate", 0.02)
     national_land = state.get_national_public_land()
     value = national_land * land_price
     annual_income = int(value * tax_rate)
     treasury = state.treasury
-
-    message = (
-        "\n" + "=" * 50 + "\n"
-        "   🏞️ 国家公地信息\n"
-        "=" * 50 + "\n"
-        f"   公地数量: {national_land} C\n"
-        f"   土地单价: {land_price} Talents/C\n"
-        f"   公地价值: {value} Talents\n"
-        f"   年收益率: {tax_rate * 100:.1f}%\n"
-        f"   年收益: {annual_income} Talents\n"
-        f"   国库余额: {treasury} Talents\n"
-        "=" * 50
-    )
+    message = i18n.get("public_land_info",
+                       national_land=national_land,
+                       land_price=land_price,
+                       value=value,
+                       tax_rate=tax_rate * 100,
+                       annual_income=annual_income,
+                       treasury=treasury)
     data = {
         "national_land": national_land,
         "land_price": land_price,

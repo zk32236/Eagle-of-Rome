@@ -10,6 +10,7 @@ print("GameState file:", inspect.getfile(GameState))
 print("log_event signature:", inspect.signature(GameState.log_event))
 from pathlib import Path
 import pytest
+from src.core.i18n import i18n
 from src.core.entities.province import Province
 
 # 将项目根目录加入 sys.path
@@ -24,6 +25,17 @@ from src.core.entities.figure import Figure
 from src.core.game_state import GameState
 
 # ==================== 原有夹具 ====================
+@pytest.fixture(scope="session", autouse=True)
+def load_i18n():
+    """自动加载 i18n 中文文本，所有测试共享"""
+    i18n.load("zh-CN")
+
+@pytest.fixture(autouse=True)
+def reset_i18n():
+    from src.core.i18n import i18n
+    i18n._strings = {}
+    i18n.load("zh-CN")
+    yield
 
 @pytest.fixture
 def sample_province():

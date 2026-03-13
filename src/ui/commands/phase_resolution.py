@@ -6,7 +6,7 @@ import logging
 from typing import List, Dict, Optional, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
-from src.ui.commands.func_status import get_progress_bar
+from src.ui.utils import get_progress_bar
 from src.core.entities.contract import Contract, ContractType, ContractStatus
 
 if TYPE_CHECKING:
@@ -57,7 +57,7 @@ class ResolutionCommand(Command):
         self.state.clear_active_events()
 
         self.state.mark_phase_executed("resolution")
-        print(f"\n   Progress: {get_progress_bar(self.state)}")
+
         return True
 
     # ================================= MVP 0.7 ===========================================

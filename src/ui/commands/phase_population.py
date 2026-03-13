@@ -8,7 +8,7 @@ import logging
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.figure import OfficeTerm, Figure
-from src.ui.commands.func_status import get_progress_bar
+from src.ui.utils import get_progress_bar
 from src.core.deciders.impl.auto_festival_decider import AutoFestivalDecider
 from src.core.deciders.festival_decider import FestivalDecider
 from typing import List, Optional, Dict, TYPE_CHECKING
@@ -123,7 +123,7 @@ class PopulationCommand(Command):
         self._print_faction_summary("选举后", post_election_influences)
 
         self.state.mark_phase_executed("population")
-        print(f"\n   Progress: {get_progress_bar(self.state)}")
+
         return True
 
     # ================================= MVP 0.7 ===========================================

@@ -1,5 +1,6 @@
 {
   "terminology_preset": "original",
+  "language": "zh-CN",
   "enable_threats": true,
   "testing": {
     "always_declare": false,

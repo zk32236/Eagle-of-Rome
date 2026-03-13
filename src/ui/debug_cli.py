@@ -1,6 +1,6 @@
 # src/ui/debug_cli.py
 """
-调试命令行界面 - 整改后版本（整合 GameState）
+调试命令行界面 - 阶段1重构版（支持强制阶段顺序、进度条、i18n）
 """
 
 import sys
@@ -8,7 +8,12 @@ import os
 import traceback
 import logging
 import datetime
+from typing import Optional
 
+from src.core.i18n import i18n
+from src.ui.commands.sys_registry import CommandRegistry
+from src.core.game_state import GameState
+from src.api import game_api
 
 # 添加项目根目录到Python路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -16,8 +21,28 @@ project_root = os.path.dirname(os.path.dirname(current_dir))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.ui.commands.sys_registry import CommandRegistry
-from src.core.game_state import GameState
+# 阶段顺序和显示名称
+PHASE_SEQUENCE = ["mortality", "revenue", "forum", "population", "senate", "combat", "resolution"]
+PHASE_DISPLAY_NAMES = {
+    "mortality": "天命阶段",
+    "revenue": "收入阶段",
+    "forum": "广场阶段",
+    "population": "人口阶段",
+    "senate": "元老院阶段",
+    "combat": "战斗阶段",
+    "resolution": "决算阶段",
+}
+
+# 单字母别名映射
+PHASE_ALIASES = {
+    "m": "mortality",
+    "r": "revenue",
+    "f": "forum",
+    "p": "population",
+    "s": "senate",
+    "c": "combat",
+    "x": "resolution",
+}
 
 
 class Tee:
@@ -45,8 +70,12 @@ class DebugCLI:
 
     def __init__(self):
         """初始化CLI"""
-        self.running = True
         self.state = GameState("data/config/game_config.json")
+        # 从配置读取语言
+        lang = self.state.config.get("language", "zh-CN")
+        i18n.load(lang)
+
+        self.running = True
 
         # 初始化命令注册器
         commands_dir = os.path.join(os.path.dirname(__file__), "commands")
@@ -55,15 +84,95 @@ class DebugCLI:
         # 为特殊命令设置回调
         self._setup_special_commands()
 
+    def _get_next_phase(self) -> Optional[str]:
+        """返回下一个未执行的阶段名，若全部执行则返回None"""
+        for phase in PHASE_SEQUENCE:
+            if not self.state.is_phase_executed(phase):
+                return phase
+        return None
+
+    def _execute_phase_with_ui(self, phase_name: str) -> bool:
+        """
+        执行单个阶段，包含头部、预览、执行、进度条输出。
+        返回阶段执行是否成功。
+        """
+        year_display = self.state.turn.get_year_display() if self.state.turn else "未知"
+        phase_display = PHASE_DISPLAY_NAMES.get(phase_name, phase_name)
+        executed_before = len(self.state.executed_phases)
+        total = len(PHASE_SEQUENCE)
+        print("\n" + "#" * 60)
+        print(f" 回合 {self.state.turn.turn_number} ({year_display}) - {phase_display} [{executed_before + 1}/{total}]")
+        print("#" * 60 + "\n")
+
+        preview_key = f"phase_{phase_name}_preview"
+        preview = i18n.get(preview_key, default="")
+        if preview and preview != preview_key:
+            print(preview)
+            print()  # 添加空行分隔预览和阶段输出
+
+        result = game_api.execute_phase(self.state, phase_name)
+        if result["success"] and result["message"]:
+            print(result["message"])
+        elif not result["success"]:
+            print(i18n.get("error_phase_exec_failed", msg=result["message"]))
+            return False
+
+        executed_after = len(self.state.executed_phases)
+        filled = "▓" * executed_after
+        empty = "░" * (total - executed_after)
+        progress = i18n.get("progress_bar", filled=filled, empty=empty, executed=executed_after, total=total)
+        print(f"\nProgress: {progress}")
+        return True
+
+    def _do_turn(self):
+        """处理 turn 命令：逐阶段执行并显示UI"""
+        if not self.state:
+            print(i18n.get("error_no_state"))
+            return
+        # 循环执行所有未执行阶段
+        while True:
+            next_phase = self._get_next_phase()
+            if not next_phase:
+                break
+            success = self._execute_phase_with_ui(next_phase)
+            if not success:
+                break  # 阶段执行失败时停止
+        # 不再打印额外进度条（每个阶段已打印）
+
+    def _do_step(self):
+        """处理 step 命令：执行下一个阶段"""
+        if not self.state:
+            print(i18n.get("error_no_state"))
+            return
+        next_phase = self._get_next_phase()
+        if not next_phase:
+            print(i18n.get("error_phase_already_done"))
+            return
+        self._execute_phase_with_ui(next_phase)
+
+    def _do_next(self):
+        """处理 next 命令：推进到下一回合"""
+        if not self.state:
+            print(i18n.get("error_no_state"))
+            return
+        if len(self.state.executed_phases) < len(PHASE_SEQUENCE):
+            print(i18n.get("error_phase_not_complete"))
+            return
+        result = game_api.advance_year(self.state)
+        if result["success"]:
+            print(result["message"])  # 已包含 i18n 格式化
+        else:
+            print(result["message"])
+        # 打印新回合信息
+        year_display = self.state.turn.get_year_display() if self.state.turn else "未知"
+        print(f"\n📅 Year {year_display}:")
+        print(f"   Completed: 0/{len(PHASE_SEQUENCE)} phases")
+
     def _setup_special_commands(self):
-        """
-        设置特殊命令的回调
-        帮助命令需要注册器引用，退出命令需要退出回调
-        """
+        """设置特殊命令的回调"""
         help_info = self.registry.get_command_info("help")
         if help_info:
             self._help_class = help_info['class']
-
         exit_info = self.registry.get_command_info("exit")
         if exit_info:
             self._exit_class = exit_info['class']
@@ -71,49 +180,37 @@ class DebugCLI:
     def _create_command_instance(self, cmd_name: str):
         """
         创建命令实例并设置必要的回调
-
-        Args:
-            cmd_name: 命令名
-
-        Returns:
-            命令实例，如果命令不存在返回None
         """
         cmd_info = self.registry.get_command_info(cmd_name)
         if not cmd_info:
             return None
-
         cmd_class = cmd_info['class']
         instance = cmd_class(self.state)
-
-        # 为特定命令设置回调
         if cmd_class.name == "help":
             instance.set_registry(self.registry)
         elif cmd_class.name == "exit":
             instance.set_exit_callback(self._stop)
-
         return instance
 
     def _stop(self):
-        """设置退出标志"""
         self.running = False
 
     def run(self):
         """运行CLI主循环，同时将输出保存到日志文件"""
-        # ---------- 设置 CLI 输出日志 ----------
+        # 设置 CLI 输出日志
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         log_dir = os.path.join(project_root, "logs")
         os.makedirs(log_dir, exist_ok=True)
         cli_log_path = os.path.join(log_dir, f"cli_{timestamp}.log")
         tee = Tee(cli_log_path)
         sys.stdout = tee
-        # ---------------------------------------
 
         try:
             # 自动加载默认场景
-            print("\n🔄 自动加载默认场景...")
+            print(i18n.get("auto_load_scenario", default="🔄 自动加载默认场景..."))
             self.registry.execute("load", self.state, [])
 
-            print("输入 'help' 查看可用命令，'exit' 退出游戏")
+            print(i18n.get("help_prompt"))
             print()
 
             while self.running:
@@ -123,17 +220,31 @@ class DebugCLI:
                         continue
 
                     parts = cmd_input.split()
-                    cmd_name = parts[0].lower()
+                    raw_cmd = parts[0].lower()
                     args = parts[1:] if len(parts) > 1 else []
 
-                    cmd_instance = self._create_command_instance(cmd_name)
-                    if cmd_instance:
-                        result = cmd_instance.execute(args)
-                        if cmd_name in ["exit", "quit"] and not result:
-                            self._stop()
+                    # 将别名转换为阶段名
+                    cmd_name = PHASE_ALIASES.get(raw_cmd, raw_cmd)
+
+                    # 处理内置命令
+                    if cmd_name == "turn":
+                        self._do_turn()
+                    elif cmd_name == "step":
+                        self._do_step()
+                    elif cmd_name == "next":
+                        self._do_next()
+                    elif cmd_name in PHASE_SEQUENCE:
+                        # 直接执行阶段，使用 UI 包装
+                        self._execute_phase_with_ui(cmd_name)
                     else:
-                        print(f"未知命令: {cmd_name}")
-                        print("输入 'help' 查看可用命令")
+                        cmd_instance = self._create_command_instance(cmd_name)
+                        if cmd_instance:
+                            result = cmd_instance.execute(args)
+                            if cmd_name in ["exit", "quit"] and not result:
+                                self._stop()
+                        else:
+                            print(i18n.get("unknown_command", cmd=raw_cmd))
+                            print(i18n.get("help_prompt"))
 
                 except EOFError:
                     print("\n输入流已关闭，退出。")
@@ -142,13 +253,11 @@ class DebugCLI:
                     print("\n使用 'exit' 命令退出游戏")
                     continue
                 except Exception as e:
-                    # 获取当前状态信息
                     state_info = ""
                     if self.state and hasattr(self.state, 'turn') and self.state.turn:
                         turn_info = f"回合 {self.state.turn.turn_number}"
                         year_info = f"年份 {abs(self.state.turn.year)} BC"
                         state_info = f"{turn_info} {year_info}"
-                    # 记录错误日志
                     if self.state and hasattr(self.state, 'log_event'):
                         tb_str = traceback.format_exc()
                         self.state.log_event(
@@ -164,15 +273,14 @@ class DebugCLI:
                     print(f"发生未预期错误: {e}")
                     traceback.print_exc()
         finally:
-            # 恢复原始 stdout 并关闭文件
             sys.stdout = tee.stdout
             tee.close()
+            print(i18n.get("cli_shutdown", default="CLI已关闭"))
             print("CLI 输出日志已保存至:", cli_log_path)
 
     def shutdown(self):
-        """关闭CLI"""
         self.running = False
-        print("CLI已关闭")
+        print(i18n.get("cli_shutdown", default="CLI已关闭"))
 
 
 def main():

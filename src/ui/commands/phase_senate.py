@@ -9,7 +9,7 @@ from typing import List, TYPE_CHECKING, Optional, Tuple, Any
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.contract import ContractType, ContractStatus
-from src.ui.commands.func_status import get_progress_bar
+from src.ui.utils import get_progress_bar
 from src.core.deciders.impl.auto_budget_decider import AutoBudgetDecider
 from src.core.deciders.senate_vote_decider import SenateVoteDecider
 from src.core.deciders.impl.auto_senate_vote_decider import AutoSenateVoteDecider
@@ -221,7 +221,7 @@ class SenateCommand(Command):
             print(f"      ✅ {act['description']} 通过，等待下回合执行")
 
         self.state.mark_phase_executed("senate")
-        print(f"\n   Progress: {get_progress_bar(self.state)}")
+
         return True
 
     # =================================== MVP 0.7 =============================================
