@@ -1,636 +1,137 @@
 # src/ui/commands/phase_forum.py
 """
-广场阶段命令 - 优化打印布局，分区块显示信息
+广场阶段命令 - 完整功能版，严格遵循 UI 设计师流程
 """
-
+import sys
+import traceback
 import random
 import logging
-from typing import List, TYPE_CHECKING, Optional, Dict
+from typing import List, Optional, Dict, Any, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
-from src.core.localization import TerminologyService
+from src.api import forum_api, figure_api, player_api, game_api
+from src.core.i18n import i18n
 from src.core.entities.figure import Figure, ClassTier
 from src.core.entities.contract import Contract, ContractType, ContractStatus
-from src.ui.utils import get_progress_bar
-from src.core.deciders.impl.auto_retirement_decider import AutoRetirementDecider
-from src.core.deciders.impl.auto_recruitment_decider import AutoRecruitmentDecider
-from src.core.entities.war import WarStatus
-from src.core.deciders.impl.auto_triumph_decider import AutoTriumphDecider
-from src.core.deciders.impl.auto_land_trade_decider import AutoLandTradeDecider
-from src.core.deciders.land_trade_decider import LandTradeDecider
-from src.core.service.land_trading_service import LandTradingService
-
+from src.core.localization import TerminologyService
+from src.core.systems.war_system import War, WarStatus
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
 
 
 class ForumCommand(Command):
-    """广场阶段命令"""
+    """广场阶段命令 - 支持多步骤玩家交互，包含完整功能"""
 
     name = "forum"
     aliases = ["f"]
-    description = "执行广场阶段 (Forum Phase)"
+    description = "执行广场阶段 (Forum Phase) - 包含裁员、招募、竞标、土地交易"
 
-    def __init__(self, state: "GameState",
-                 retirement_decider=None,
-                 recruitment_decider=None,
-                 triumph_decider=None,
-                 land_trade_decider: Optional[LandTradeDecider] = None):
+    def __init__(self, state: "GameState"):
         super().__init__(state)
-        self.retirement_decider = retirement_decider or AutoRetirementDecider(state)
-        self.recruitment_decider = recruitment_decider or AutoRecruitmentDecider()
-        self.triumph_decider = triumph_decider or AutoTriumphDecider()
-        self.land_trade_decider = land_trade_decider or AutoLandTradeDecider()
+        self._step = 0  # 0: 公告, 1: 裁员, 2: 市场, 3: 公示, 4: 交易市场, 5: 完成
+        self._current_player_index = 0
+        self._players = []
+        self.terms = TerminologyService.get()
+        self._resolution_done = False  # 控制公示只执行一次
 
-    def execute(self, args: List[str]) -> bool:
-        if not self.state.is_phase_executed("revenue"):
-            print("⚠️ 必须先执行税收阶段 (revenue)")
-            return False
+    # ==================== 辅助函数 ====================
 
-        if self.state.is_phase_executed("forum"):
-            print("⚠️ 广场阶段在本回合已执行过")
-            return False
+    def _get_quaestor_players(self) -> List[str]:
+        """返回所有担任财务官的人物所属的玩家ID列表（去重）"""
+        players = set()
+        for member in self.state.get_living_members():
+            if member.office == "quaestor" and member.faction_id:
+                player = self.state.get_player_by_faction(member.faction_id)
+                if player:
+                    players.add(player.player_id)
+        return list(players)
 
-        terms = TerminologyService.get()
-        print(f"\n--- {terms.phase_forum} Phase (Year {abs(self.state.turn.year)} BC) ---")
+    def _has_quaestor(self) -> bool:
+        """检查是否有存活人物担任财务官 (quaestor)"""
+        for member in self.state.get_living_members():
+            if member.office == "quaestor":
+                return True
+        return False
 
-        # ========== 1. 安民告示 ==========
-        self._print_notice_board()
-
-        if self.state.naval_system:
-            construction_contracts = self.state.naval_system.generate_construction_contracts(
-                self.state.turn.turn_number)
-            if construction_contracts:
-                print(f"\n   ⚓ 检测到海战威胁，生成 {len(construction_contracts)} 个舰队建造合同")
-
-        # ========== 2. 人才市场 ==========
-        self._print_labor_market()
-
-        # ========== 3. 合同拍卖 ==========
-        self._print_contract_auction()
-
-        # ========== 4. 土地交易 ==========
-        self._print_land_deals()
-
-        # 新增：检查舰队建造完成
-        if self.state.naval_system:
-            completed_fleets = self.state.naval_system.process_fleet_construction(self.state.turn.turn_number)
-            if completed_fleets:
-                print(f"   ⚓ 舰队 {completed_fleets} 建造完成！")
-
-
-        self.state.mark_phase_executed("forum")
-
-        return True
-
-    # ----------------------------------------------------------------------
-    # 区块打印方法
-    # ----------------------------------------------------------------------
-
-    def _print_notice_board(self):
-        """安民告示：战争威胁、活跃战争、民变、凯旋、停战草案"""
-        print("\n\t====================== 安民告示 ====================")
-
-        # 战争威胁
-        ws = self.state.get_war_system()
-        if ws:
-            ws.check_triggers(self.state.turn.year)
-            events = ws.escalate_threats()
-            for event in events:
-                print(f"   {event}")
-
-        # 活跃战争
-        active_wars = ws.get_active_wars() if ws else []
-        if active_wars:
-            print(f"   ⚔️ 活跃战争：{len(active_wars)}场")
-            for war in active_wars:
-                print(f"\t\t{war.name}")
-        else:
-            print("   ⚔️ 当前无活跃战争")
-
-        # ===== 新增：显示待评议的停战草案 =====
-        if ws:
-            pending_treaties = ws.get_truce_wars_with_pending_treaty()
-            if pending_treaties:
-                print(f"   📜 停战草案待评议：")
-                for war in pending_treaties:
-                    treaty = war.peace_treaty
-                    indemnity = treaty['indemnity'] if treaty else 0
-                    print(f"\t\t{war.name} 赔款 {indemnity} 塔兰特")
-
-        # 行省民变状态
-        self._print_civil_unrest()
-
-        # 凯旋审批
-        self._print_triumphs()
-
-    def _print_labor_market(self):
-        """人才市场：抛弃人物、新人物、招募"""
-        print("\n\t====================== 人才市场 ====================")
-
-        # 抛弃人物
-        retired_count = self._process_retirements()
-        if retired_count > 0:
-            print(f"   📢 {retired_count} figure(s) left their factions in Rome:")
-            # 具体打印已在 _process_retirements 中完成，此处无需重复
-        else:
-            print("   📢 无人物被抛弃")
-
-        # 新人物
-        new_figures = self._generate_new_figures()
-        if new_figures:
-            print(f"\n   📢 {len(new_figures)} new figure(s) arrive in the Senate:")
-            for fig in new_figures:
-                tier_emoji = {
-                    ClassTier.NOBILE: "🏛️",
-                    ClassTier.EQUES: "💰",
-                    ClassTier.PLEBEIAN: "👤"
-                }.get(fig.class_tier, "❓")
-                tier_name = fig.class_tier.value
-                print(f"      {tier_emoji} {fig.get_formal_name()} ({tier_name})"
-                      f"(军略 {fig.martial}, 智略 {fig.intelligence}, 魅力 {fig.charisma}, 热诚 {fig.zeal})")
-        else:
-            print("   📭 无新人物出现")
-
-        # 广场现有总人数
-        total_in_curia = len(self.state.curia.get_all_available())
-        print(f"\n   📢 共 {total_in_curia} 名人物在罗马广场可供招募！")
-
-        # 招募过程
-        self._process_recruitment()
-
-    def _print_contract_auction(self):
-        """合同拍卖：待决合同、预算合同竞标"""
-        print("\n\t====================== 合同拍卖 ====================")
-
-        # 生成新合同（但不竞标）
-        new_contracts = self._generate_contracts()
-        if new_contracts:
-            for contract in new_contracts:
-                type_emoji = "📊" if contract.contract_type == ContractType.TAX_FARMING else "🏗️"
-                print(f"      {type_emoji} 新{contract.name} 生成")
-
-        # 待决合同
-        pending = [c for c in self.state.contracts if c.status == ContractStatus.PENDING]
-        if pending:
-            print("\n   📋 Pending Contracts (等待元老院预算表决):")
-            tax_contracts = [c for c in pending if c.contract_type == ContractType.TAX_FARMING]
-            works_contracts = [c for c in pending if c.contract_type == ContractType.PUBLIC_WORKS]
-            if tax_contracts:
-                print("\n      📊 Tax Farming:")
-                for c in tax_contracts:
-                    print(
-                        f"         ID:{c.id} {c.name}\t预付:{c.base_cost} 年收益:{c.expected_profit} 期限:{c.duration_years}年")
-            if works_contracts:
-                print("\n      🏗️ Public Works:")
-                for c in works_contracts:
-                    print(f"         ID:{c.id} {c.name}\t预算:{c.base_cost} 预期利润:{c.expected_profit}")
-        else:
-            print("\n   📭 无待决合同")
-
-        # 已预算合同竞标
-        budgeted = [c for c in self.state.contracts if c.status == ContractStatus.BUDGETED]
-        if budgeted:
-            print("\n   📜 对已预算合同进行竞标：")
-            for contract in budgeted:
-                if contract.contract_type == ContractType.TAX_FARMING:
-                    self._auto_bid_for_contract(contract)
-                elif contract.contract_type == ContractType.PUBLIC_WORKS:
-                    # 判断是否为舰队建造合同
-                    if getattr(contract, '_is_fleet_construction', False):
-                        self._auto_bid_for_fleet_construction(contract)
-                    else:
-                        self._auto_bid_for_works(contract)
-        else:
-            print("\n   📭 没有待竞标的预算合同。")
-
-    def _auto_bid_for_fleet_construction(self, contract):
-        if contract.contract_type != ContractType.PUBLIC_WORKS:
-            return
-
-        try:
-            # 使用合同存储的总预算
-            total_budget = contract.total_budget
-            if total_budget <= 0:
-                total_budget = getattr(contract, "base_cost", 20)  # 兼容旧数据
-
-            min_discount = self.state.config.get("economic_rules.project_bid_discount_min", 0.05)
-            max_discount = self.state.config.get("economic_rules.project_bid_discount_max", 0.20)
-
-            factions = list(self.state.factions.values())
-            if not factions:
-                return
-
-            print(f"\n      🔔 开始竞标 {contract.name} 预算 {total_budget}")
-
-            for faction in factions:
-                knights = [m for m in faction.get_members(self.state)
-                           if m.class_tier == ClassTier.EQUES and not m.is_dead]
-                if not knights:
-                    continue
-                knight = max(knights, key=lambda k: k.wealth)
-
-                r = random.uniform(min_discount, max_discount)
-                bid_amount = int(total_budget * (1 - r))
-                if bid_amount < 0:
-                    bid_amount = 0
-
-                # 舰队建造合同工期固定为配置中的 build_time，无质保期
-                build_time = getattr(contract, "_build_time", 1)
-                construction = build_time
-                warranty = 0
-                annual_income = 0
-                annual_cost = 0
-
-                self.state.place_bid(
-                    contract.id,
-                    knight.id,
-                    bid_amount,
-                    r=r,
-                    original_budget=total_budget,
-                    construction=construction,
-                    warranty=warranty,
-                    annual_income=annual_income,
-                    annual_cost=annual_cost
-                )
-                print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {bid_amount} (降价 {r * 100:.0f}%)")
-
-            self.state.resolve_auction(contract.id)
-
-            if contract.status == ContractStatus.ACTIVE and contract.winning_bid:
-                winner = self.state.get_member(contract.winning_bid["bidder_id"])
-                winner_name = winner.get_formal_name() if winner else "未知"
-                r = contract.winning_bid.get("r", 0)
-                discount_pct = r * 100
-                print(f"      ✅ 中标者: {winner_name}，中标价 {contract.winning_bid['amount']}，降价 {discount_pct:.0f}%")
-                self.state.log_event(
-                    f"舰队建造合同中标: {contract.name} 中标者 {winner_name} 价格 {contract.winning_bid['amount']}",
-                    extra={
-                        "type": "fleet_contract_award",
-                        "contract_id": contract.id,
-                        "winner_id": contract.winning_bid["bidder_id"],
-                        "amount": contract.winning_bid['amount']
+    def _get_war_triumph(self) -> Optional[Dict]:
+        """获取待凯旋的战争信息（用于投票）"""
+        war_system = self.state.get_war_system()
+        if not war_system:
+            return None
+        for war in war_system._war_discard:
+            if war.status == WarStatus.RESOLVED and war.soldier_share > 0 and war.triumph_commander_id is None:
+                commander = self.state.get_member(war.commander_id)
+                if commander and not commander.is_dead:
+                    return {
+                        "war": war,
+                        "commander": commander
                     }
-                )
-            else:
-                print(f"      ❌ 流拍")
-        except Exception as e:
-            self.state.log_exception(
-                e,
-                context=f"舰队建造合同自动竞标失败: 合同 {contract.id}",
-                extra={"contract_id": contract.id, "contract_name": contract.name}
-            )
+        return None
 
-    def _print_land_deals(self):
-        """土地交易：土地法案执行、自动土地交易"""
-        print("\n\t====================== 土地交易 ====================")
+    def _get_available_contracts(self) -> List[Contract]:
+        """获取可竞标的合同（BUDGETED 状态）"""
+        return [c for c in self.state.contracts if c.status == ContractStatus.BUDGETED]
 
-        # 执行待决的土地法案
-        self._execute_pending_land_acts()
+    def _get_available_land_for_sale(self) -> int:
+        """获取可用于出售的国家公地数量（根据待执行的土地法案）"""
+        acts = self.state.get_pending_land_acts()
+        total = 0
+        for act in acts:
+            if act['type'] == 'sale':
+                total += act['amount']
+        return total
 
-        # 自动土地交易
-        self._process_land_trades()
+    # ==================== 原有功能函数移植 ====================
 
-    # ----------------------------------------------------------------------
-    # 原有功能方法（修改打印部分以适配新布局）
-    # ----------------------------------------------------------------------
+    def _generate_new_figures(self):
+        """生成新人物并加入 curia"""
+        rules = self.state.config.get("forum_rules", {})
+        count = rules.get("new_figures_count", 3)
+        class_probs = rules.get("class_probabilities", {
+            "nobile": 0.5,
+            "eques": 0.3,
+            "plebeian": 0.2
+        })
 
-    def _print_civil_unrest(self):
-        """处理民变触发与自动升级，并打印详细信息（不带DEBUG）"""
-        if not self.state.config.get("enable_threats", True):
-            return
-        base_tax_rate = self.state.get_economic_rule("province_tax_rate", 0.1)
-        italy_unrest_trigger = self.state.config.get("economic_rules.italy_unrest_trigger_turns", 3)
-        provinces = self.state.get_all_provinces()
-        if not provinces:
-            return
-
-        active_contracts = [c for c in self.state.contracts
-                            if c.status == ContractStatus.ACTIVE and c.contract_type == ContractType.TAX_FARMING]
-        province_contracts = {}
-        for contract in active_contracts:
-            pid = contract.province_id
-            if pid == 0:
-                continue
-            province_contracts.setdefault(pid, []).append(contract)
-
-        any_change = False
-        print("\n   📊 行省民变状态：")
-
-        # 意大利本土
-        italy = self.state.get_province(0)
-        if italy:
-            old_grievance = italy.grievance
-            if old_grievance == 0:
-                italy._turns_since_last_land_distribution += 1
-                if italy._turns_since_last_land_distribution >= italy_unrest_trigger:
-                    italy.set_grievance(1)
-                    print(f"      ⚠️ 意大利本土因长期未分地，民怨升至 1 级")
-                    any_change = True
-            elif 0 < old_grievance < 3:
-                italy.set_grievance(old_grievance + 1)
-                print(f"      ⚠️ 意大利本土 民怨升级至 {italy.grievance} 级")
-                if italy.grievance == 3:
-                    print(f"         意大利本土爆发平民起义！政府面临倒台，马上行动！")
-                any_change = True
-
-        # 行省
-        for province in provinces:
-            if province.province_id == 0:
-                continue
-
-            # ===== 新增：检查是否达到起义条件 =====
-            if province.grievance >= 3 and not province.event_flags.get("rebellion_active"):
-                war_system = self.state.get_war_system()
-                if war_system:
-                    rebellion_war = war_system.create_rebellion_war(province)
-                    # 将战争加入活跃列表（立即爆发）
-                    war_system._active_wars.append(rebellion_war)
-                    print(f"DEBUG: province type = {type(province)}")
-                    print(f"DEBUG: province dir (first 20) = {dir(province)[:20]}")
-                    print(f"DEBUG: has set_event_flag? {'set_event_flag' in dir(province)}")
-                    province.set_event_flag("rebellion_active", True)
-                    print(f"      ⚔️ 行省 {province.name} 爆发起义！战争 {rebellion_war.name} 已激活。")
-                    self.state.log_event(
-                        f"行省起义：{province.name}",
-                        extra={"type": "rebellion", "province_id": province.province_id}
-                    )
-                    any_change = True
-            # ======================================
-
-            if 0 < province.grievance < 3:
-                old = province.grievance
-                province.set_grievance(old + 1)
-                print(f"      ⚠️ 行省 {province.name} 民怨升级至 {province.grievance} 级")
-                if province.grievance == 3:
-                    print(f"         行省 {province.name} 爆发平民起义！")
-                any_change = True
-
-            contracts = province_contracts.get(province.province_id, [])
-            if contracts:
-                for contract in contracts:
-                    tax_rate = getattr(contract, 'tax_rate', 0.0)
-                    if tax_rate > base_tax_rate:
-                        if province.grievance < 1:
-                            province.set_grievance(1)
-                            print(f"      🔔 行省 {province.name} 因包税合同税率 {tax_rate * 100:.0f}% > {base_tax_rate * 100:.0f}%，民怨升至 1 级")
-                            any_change = True
-                        else:
-                            print(f"      📌 行省 {province.name} 包税合同税率 {tax_rate * 100:.0f}%，当前民怨 {province.grievance} 级")
-                    else:
-                        print(f"      ✅ 行省 {province.name} 包税合同税率 {tax_rate * 100:.0f}% 在允许范围内，民怨 {province.grievance} 级")
-            else:
-                if province.grievance > 0:
-                    print(f"      ℹ️ 行省 {province.name} 当前民怨 {province.grievance} 级")
-                    any_change = True
-
-        if not any_change:
-            print(f"      所有行省安居乐业，无民变威胁。")
-
-    def _print_triumphs(self):
-        """处理所有待凯旋的战争（无调试输出）"""
-        ws = self.state.get_war_system()
-        if not ws:
-            return
-
-        for war in ws._war_discard:
-            if war.soldier_share > 0 and war.status == WarStatus.RESOLVED:
-                commander_id = war.triumph_commander_id or war.commander_id
-                commander = self.state.get_member(commander_id) if commander_id else None
-                if not commander or commander.is_dead:
-                    war.set_soldier_share(0)
-                    continue
-
-                if self.triumph_decider.decide_triumph(war, commander, self.state):
-                    duration = self.state.config.get("combat_rules.triumph_veteran_duration", 5)
-                    per_turn = war.soldier_share // duration
-                    if per_turn > 0:
-                        commander.add_temp_influence_task(per_turn, duration)
-                        war.set_triumph_approved(True)
-                        print(f"   🏆 元老院决定授予 {commander.name} 凯旋！未来几年他将获得士兵的拥戴！")
-                        self.state.log_event(f"凯旋批准：{commander.name} 获得 {war.soldier_share} 士兵份额，分 {duration} 回合")
-                else:
-                    print(f"   ⏳ {commander.name} 的凯旋被元老院否决")
-                war.set_soldier_share(0)
-
-    def _process_retirements(self) -> int:
-        """处理各派系抛弃人物，打印抛弃信息（带能力值），返回抛弃人数"""
-        count = 0
-        for faction in self.state.factions.values():
-            member_id = self.retirement_decider.decide_whom_to_retire(faction)
-            if member_id is None:
-                continue
-            figure = self.state.get_member(member_id)
-            if not figure:
-                continue
-            faction.remove_member(member_id)
-            figure.abandoned_by = faction.id
-            figure.faction_id = None
-            figure.is_available = True
-            self.state.curia.add_figure(figure)
-            count += 1
-            print(f"      {faction.name} 抛弃了 {figure.get_formal_name()} "
-                  f"(军略 {figure.martial}, 智略 {figure.intelligence}, 魅力 {figure.charisma}, 热诚 {figure.zeal})")
-        if count > 0:
-            print(f"      🗑️ 共 {count} 名人物被抛弃，现已加入广场")
-        return count
-
-    def _generate_new_figures(self) -> List[Figure]:
-        """生成新人物，返回新人物列表（打印带能力值）"""
         new_figures = []
-        forum_rules = self.state.config.get("forum_rules", {})
-        count = forum_rules.get("new_figures_count", 3)
-        probs = forum_rules.get("class_probabilities", {})
-        nobile_prob = probs.get("nobile", 0.1)
-        eques_prob = probs.get("eques", 0.25)
-        pleb_prob = 1 - nobile_prob - eques_prob
-        if pleb_prob < 0:
-            pleb_prob = 0.65
-
-        # 先按原逻辑生成普通新人
-        next_id = max((mid for mid in self.state.members.keys()), default=0) + 1
-        for i in range(count):
-            figure_id = next_id + i
-            tier_roll = random.random()
-            if tier_roll < nobile_prob:
-                figure = Figure.create_nobile(figure_id, None, age=random.randint(30, 50))
-            elif tier_roll < nobile_prob + eques_prob:
-                figure = Figure.create_eques(figure_id, None, age=random.randint(25, 40))
+        for _ in range(count):
+            tier = random.choices(
+                list(class_probs.keys()),
+                weights=list(class_probs.values())
+            )[0]
+            figure_id = self.state.allocate_id()
+            if tier == "nobile":
+                fig = Figure.create_nobile(figure_id, None, age=random.randint(30, 50))
+            elif tier == "eques":
+                fig = Figure.create_eques(figure_id, None, age=random.randint(25, 45))
             else:
-                figure = Figure.create_plebeian(figure_id, None, age=random.randint(20, 35))
+                fig = Figure.create_plebeian(figure_id, None, age=random.randint(20, 40))
+            self.state.add_member(fig)
+            self.state.curia.add_figure(fig)
+            new_figures.append(fig)
+        if new_figures:
+            print(f"\n   📢 {len(new_figures)} new figure(s) arrive in the Rome:", file=sys.stderr)
 
-            self.state.add_member(figure)
-            self.state.curia.add_figure(figure)
-            new_figures.append(figure)
-
-        # ===== 天降猛男：额外生成一位英雄 =====
-        if self.state.hero_spawned_this_turn and self.state.hero_to_spawn:
-            hero_info = self.state.hero_to_spawn
-            hero_figure = None
-            if hero_info["type"] == "historical":
-                # 历史英雄
-                data = hero_info["data"]
-                age = self.state.turn.year - data["birth_year"]  # 注意公元前年份计算，如 -236 到 -216 得 20
-                figure_id = self.state.allocate_id()  # 分配新 ID
-                hero_figure = Figure(
-                    id=figure_id,
-                    name=data["name"],
-                    age=age,
-                    martial=data["martial"],
-                    intelligence=data["intelligence"],
-                    charisma=data["charisma"],
-                    zeal=data["zeal"],
-                    family_prestige=data.get("family_prestige", 0)
-                )
-                # 根据年龄和属性确定阶级（通常英雄为贵族）
-                hero_figure.class_tier = ClassTier.NOBILE
-                # 记录已出现
-                self.state.add_spawned_hero_id(data["id"])
-            else:
-                # 随机猛人：取当前存活人物各属性最大值
-                living = self.state.get_living_members()
-                if living:
-                    max_martial = max(f.martial for f in living)
-                    max_intel = max(f.intelligence for f in living)
-                    max_charisma = max(f.charisma for f in living)
-                    max_zeal = max(f.zeal for f in living)
-                else:
-                    # 无存活人物时使用默认值（不应发生）
-                    max_martial = max_intel = max_charisma = max_zeal = 5
-
-                # 生成随机名字和家族声望（沿用原有规则）
-                # 简化：随机选取一个贵族家族名
-                nomen_list = ["Cornelius", "Julius", "Claudius", "Fabius", "Aemilius", "Valerius"]
-                cognomen_list = ["Magnus", "Africanus", "Asiaticus", "Macedonicus", "Maximus", "Rufus"]
-                nomen = random.choice(nomen_list)
-                cognomen = random.choice(cognomen_list)
-                full_name = f"{nomen} · {cognomen}"
-
-                figure_id = self.state.allocate_id()
-                hero_figure = Figure(
-                    id=figure_id,
-                    name=full_name,
-                    age=random.randint(30, 45),
-                    martial=max_martial,
-                    intelligence=max_intel,
-                    charisma=max_charisma,
-                    zeal=max_zeal,
-                    family_prestige=random.randint(1, 3)  # 随机家族声望
-                )
-                hero_figure.class_tier = ClassTier.NOBILE  # 猛男通常为贵族
-
-            if hero_figure:
-                self.state.add_member(hero_figure)
-                self.state.curia.add_figure(hero_figure)
-                new_figures.append(hero_figure)
-                # 打印英雄信息（带特殊标记）
-                print(f"      🌟 英雄降临: {hero_figure.get_formal_name()} "
-                      f"(军略 {hero_figure.martial}, 智略 {hero_figure.intelligence}, "
-                      f"魅力 {hero_figure.charisma}, 热诚 {hero_figure.zeal})")
-                self.state.log_event(
-                    f"天降猛男生成: {hero_figure.get_formal_name()}",
-                    extra={"type": "hero_spawn", "figure_id": hero_figure.id}
-                )
-
-            # 清除标记
-            self.state.hero_spawned_this_turn = False
-            self.state.hero_to_spawn = None
-
-        return new_figures
-
-    def _process_recruitment(self):
-        """招募处理（打印出价和结果）"""
-        member_limit = self.state.config.get("economic_rules.faction_member_limit", 6)
-        factions = list(self.state.factions.values())
-        if not factions:
-            return
-        available_figures = self.state.curia.get_all_available()
-        if not available_figures:
-            return
-
-        committed = {faction.id: 0 for faction in factions}
-        all_bids = {}
-        for faction in factions:
-            vacancies = faction.get_vacancies(self.state, member_limit)
-            if vacancies <= 0:
-                continue
-            bids = self.recruitment_decider.decide_bids(faction, available_figures, vacancies, self.state)
-            if not bids:
-                continue
-            for fig_id, amount in bids.items():
-                if committed[faction.id] + amount > faction.treasury:
-                    continue
-                if fig_id not in all_bids:
-                    all_bids[fig_id] = {}
-                all_bids[fig_id][faction.id] = amount
-                committed[faction.id] += amount
-
-        if not all_bids:
-            print(f"\n   📭 No recruitment bids this year.")
-            return
-
-        print(f"\n   📢 招募出价情况：")
-        for fig_id, faction_bids in all_bids.items():
-            figure = self.state.get_member(fig_id)
-            if not figure:
-                continue
-            bid_str = ", ".join([f"{self.state.get_faction(fid).name}:{amt}" for fid, amt in faction_bids.items()])
-            print(f"      {figure.get_formal_name()} 收到出价：{bid_str}")
-
-        recruited_count = 0
-        for fig_id, faction_bids in all_bids.items():
-            figure = self.state.get_member(fig_id)
-            if not figure or figure not in self.state.curia.get_all_available():
-                continue
-
-            max_amount = max(faction_bids.values())
-            top_factions = [fid for fid, amt in faction_bids.items() if amt == max_amount]
-
-            if len(top_factions) > 1:
-                winner_fid = random.choice(top_factions)
-            else:
-                winner_fid = top_factions[0]
-
-            winner_faction = self.state.get_faction(winner_fid)
-
-            if winner_faction.treasury < max_amount:
-                print(f"      ⚠️ {winner_faction.name} 金库不足 {max_amount}，无法招募 {figure.get_formal_name()}")
-                continue
-
-            winner_faction.treasury -= max_amount
-            figure.wealth += max_amount
-
-            self.state.curia.remove_figure(fig_id)
-            figure.faction_id = winner_fid
-            winner_faction.member_ids.append(fig_id)
-            figure.abandoned_by = None
-
-            recruited_count += 1
-            print(f"      ✅ {figure.get_formal_name()} 加入 {winner_faction.name}，成交价 {max_amount}")
-
-        if recruited_count > 0:
-            print(f"   🎉 {recruited_count} 名人物被招募")
-        else:
-            print(f"   📭 No successful recruitments.")
-
-    def _process_war_threats(self):
-        """处理战争威胁触发和自动升级（已在安民告示中调用，此处保留空方法避免错误）"""
-        pass
-
-    def _generate_contracts(self) -> List[Contract]:
-        """生成包税权合同和公共工程合同，返回合同列表（仅针对已征服行省）"""
-        contracts = []
+    def _generate_contracts(self):
+        """生成新合同（包税、工程、舰队建造），仅对已征服行省生效，意大利本土只生成工程合同"""
+        contracts = []  # 用于记录新生成的合同（可选）
         config = self.state.config
         land_price = config.get("economic_rules.land_price_per_unit", 10)
         private_income_rate = config.get("economic_rules.private_land_income_rate", 0.05)
         province_tax_rate = config.get("economic_rules.province_tax_rate", 0.1)
         auction_ratio = config.get("economic_rules.tax_auction_ratio", 0.8)
+        infra_rate = config.get("economic_rules.infrastructure_cost_rate", 0.001)
+        budget_margin = config.get("economic_rules.project_budget_margin", 0.2)
+        tax_duration = config.get("economic_rules.tax_contract_duration", 5)
+        works_duration = config.get("economic_rules.works_contract_duration", 3)
 
-        # 续约合同（仅针对已征服行省）
+        # ---------- 1. 续约合同（仅针对已征服行省）----------
         for contract in self.state.contracts:
+            # 包税合同续约（剩余1年时生成新合同）
             if contract.contract_type == ContractType.TAX_FARMING and contract.status == ContractStatus.ACTIVE:
                 if contract.remaining_years == 1:
                     province = self.state.get_province(contract.province_id)
+                    # 仅当行省已征服时才续约（未征服的行省不应有活跃合同，但以防万一）
                     if not province or not province.conquered:
                         continue
                     existing = any(c for c in self.state.contracts
@@ -652,11 +153,11 @@ class ForumCommand(Command):
                         year = self.state.turn.year
                         year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
                         new_contract.name = f"{province.name}包税权 ({year_display})"
-                        new_contract.description = f"{province.name}行省税收承包权（续约）"
                         new_contract.expected_profit = base_tax - base_cost
-                        new_contract.duration_years = config.get("economic_rules.tax_contract_duration", 5)
+                        new_contract.duration_years = tax_duration
                         contracts.append(new_contract)
 
+            # 工程合同续约（质保期剩余1年时生成新合同）
             elif contract.contract_type == ContractType.PUBLIC_WORKS and contract.status == ContractStatus.COMPLETED:
                 if contract.warranty_remaining == 1:
                     province = self.state.get_province(contract.province_id)
@@ -668,8 +169,6 @@ class ForumCommand(Command):
                                    and c.status == ContractStatus.PENDING)
                     if not existing and province.land_public > 0:
                         land_value = province.land_public * land_price
-                        infra_rate = config.get("economic_rules.infrastructure_cost_rate", 0.001)
-                        budget_margin = config.get("economic_rules.project_budget_margin", 0.2)
                         infra_cost = int(land_value * infra_rate)
                         budget = int(infra_cost * (1 + budget_margin))
 
@@ -682,21 +181,20 @@ class ForumCommand(Command):
                             self.state.turn.turn_number
                         )
                         new_contract.name = f"{province.name}工程 ({year_display})"
-                        new_contract.description = f"{province.name}公共建设项目（续约）"
                         new_contract._original_budget = budget
+                        new_contract.duration_years = works_duration
                         contracts.append(new_contract)
 
-        # 全新合同（仅针对已征服行省）
+        # ---------- 2. 全新合同 ----------
         for province in self.state.get_all_provinces():
-            if not province.conquered:
-                continue
-            if province.province_id != 0:
+            # 包税合同：仅已征服的非意大利行省
+            if province.province_id != 0 and province.conquered and province.land_public > 0:
                 has_tax_active = any(c for c in self.state.contracts
                                      if c.province_id == province.province_id
                                      and c.contract_type == ContractType.TAX_FARMING
                                      and c.status in (
                                      ContractStatus.ACTIVE, ContractStatus.PENDING, ContractStatus.BUDGETED))
-                if not has_tax_active and province.land_public > 0:
+                if not has_tax_active:
                     land_value = province.land_public * land_price
                     base_income = int(land_value * private_income_rate)
                     base_tax = int(base_income * province_tax_rate)
@@ -711,280 +209,830 @@ class ForumCommand(Command):
                     year = self.state.turn.year
                     year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
                     contract.name = f"{province.name}包税权 ({year_display})"
-                    contract.description = f"{province.name}行省税收承包权"
                     contract.expected_profit = base_tax - base_cost
-                    contract.duration_years = config.get("economic_rules.tax_contract_duration", 5)
+                    contract.duration_years = tax_duration
                     contracts.append(contract)
 
-            has_works = any(c for c in self.state.contracts
-                            if c.province_id == province.province_id
-                            and c.contract_type == ContractType.PUBLIC_WORKS
-                            and c.status not in (ContractStatus.EXPIRED, ContractStatus.COMPLETED))
-            if not has_works and province.land_public > 0:
-                land_value = province.land_public * land_price
-                infra_rate = config.get("economic_rules.infrastructure_cost_rate", 0.001)
-                budget_margin = config.get("economic_rules.project_budget_margin", 0.2)
-                infra_cost = int(land_value * infra_rate)
-                budget = int(infra_cost * (1 + budget_margin))
+            # 工程合同：已征服的行省 或 意大利本土
+            if (province.conquered or province.province_id == 0) and province.land_public > 0:
+                has_works = any(c for c in self.state.contracts
+                                if c.province_id == province.province_id
+                                and c.contract_type == ContractType.PUBLIC_WORKS
+                                and c.status not in (ContractStatus.EXPIRED, ContractStatus.COMPLETED))
+                if not has_works:
+                    land_value = province.land_public * land_price
+                    infra_cost = int(land_value * infra_rate)
+                    budget = int(infra_cost * (1 + budget_margin))
 
-                year = self.state.turn.year
-                year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
-                contract = self.state.create_contract(
-                    ContractType.PUBLIC_WORKS,
-                    province.province_id,
-                    budget,
-                    self.state.turn.turn_number
-                )
-                contract.name = f"{province.name}工程 ({year_display})"
-                contract.description = f"{province.name}公共建设项目"
-                contract._original_budget = budget
-                contracts.append(contract)
+                    year = self.state.turn.year
+                    year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
+                    contract = self.state.create_contract(
+                        ContractType.PUBLIC_WORKS,
+                        province.province_id,
+                        budget,
+                        self.state.turn.turn_number
+                    )
+                    contract.name = f"{province.name}工程 ({year_display})"
+                    contract._original_budget = budget
+                    contract.duration_years = works_duration
+                    contracts.append(contract)
 
+        # ---------- 3. 舰队建造合同（通过 naval_system）----------
         if self.state.naval_system:
             construction_contracts = self.state.naval_system.generate_construction_contracts(
                 self.state.turn.turn_number)
             if construction_contracts:
-                print(f"\n   ⚓ 检测到海战威胁，生成 {len(construction_contracts)} 个舰队建造合同")
-
-            # 新增：为激活战争生成补充合同
+                print(f"\n   ⚓ 检测到海战威胁，生成 {len(construction_contracts)} 个舰队建造合同", file=sys.stderr)
             replacement_contracts = self.state.naval_system.generate_replacement_contracts(
                 self.state.turn.turn_number)
             if replacement_contracts:
-                print(f"\n   ⚓ 罗马舰队不足，为激活战争生成 {len(replacement_contracts)} 个补充舰队建造合同")
+                print(f"\n   ⚓ 罗马舰队不足，生成 {len(replacement_contracts)} 个补充舰队建造合同", file=sys.stderr)
 
-        return contracts
+        return contracts  # 返回生成的合同列表（可选）
 
-    def _auto_bid_for_contract(self, contract):
-        if contract.contract_type != ContractType.TAX_FARMING:
-            return
+    def _generate_fleet_construction_contract(self, war: War):
+        """为指定战争生成舰队建造合同"""
+        contract = self.state.create_contract(
+            ContractType.PUBLIC_WORKS,
+            0,  # 意大利
+            80,  # 预算，实际应从配置读取
+            self.state.turn.turn_number
+        )
+        contract._is_fleet_construction = True
+        contract.name = f"舰队建造（{war.name}）"
+        contract._target_war_id = war.id
+        composition = [{"type": "trireme", "count": 2}]
+        contract.set_fleet_composition(composition, war.enemy_naval_current, 80)
 
-        try:
-            config = self.state.config
-            min_inc = config.get("economic_rules.tax_bid_increment_min", 0.05)
-            max_inc = config.get("economic_rules.tax_bid_increment_max", 0.20)
+    # ==================== 步骤展示函数 ====================
 
-            factions = list(self.state.factions.values())
-            if not factions:
-                return
+    def _print_ui_03_0(self):
+        """打印 UI_03-0 公告环节"""
+        print("\n############################################################", file=sys.stderr)
+        print(f" UI_03-0 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 广场阶段 [3/7]", file=sys.stderr)
+        print("############################################################", file=sys.stderr)
+        print("--- 阶段预览---", file=sys.stderr)
+        print("广场阶段为玩家交互核心环节，包含人才招募、合同拍卖、土地交易三大核心玩法。", file=sys.stderr)
+        print("你可出价招募人物、竞标工程/舰队合同、手动促成土地交易，结果直接影响派系", file=sys.stderr)
+        print("实力、个人财富及后续元老院的议程和利益分配，请务必谨慎使用你的资源争取最", file=sys.stderr)
+        print("大的利益！", file=sys.stderr)
+        # 安民告示
+        print("\n	====================== 安民告示 ====================", file=sys.stderr)
 
-            print(f"\n      🔔 开始竞标 {contract.name} 底价 {contract.base_cost}")
-            for faction in factions:
-                equites = [m for m in faction.get_members(self.state)
-                           if m.class_tier == ClassTier.EQUES and not m.is_dead]
-                if not equites:
-                    continue
-                knight = max(equites, key=lambda k: k.wealth)
-
-                r = random.uniform(min_inc, max_inc)
-                amount = int(contract.base_cost * (1 + r))
-
-                if knight.wealth < amount:
-                    print(
-                        f"         {faction.name} 的 {knight.get_formal_name()} 财富不足 {knight.wealth} < {amount}，无法出价")
-                    continue
-                self.state.place_bid(contract.id, knight.id, amount, tax_rate=r)
-                print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {amount} (加价 {r * 100:.0f}%)")
-
-            self.state.resolve_auction(contract.id)
-
-            if contract.status == ContractStatus.ACTIVE and contract.winning_bid:
-                winner = self.state.get_member(contract.winning_bid["bidder_id"])
-                winner_name = winner.get_formal_name() if winner else "未知"
-                actual_inc = (contract.winning_bid['amount'] - contract.base_cost) / contract.base_cost * 100
-                print(f"      ✅ 中标者: {winner_name}，中标价 {contract.winning_bid['amount']}，加价 {actual_inc:.0f}%")
-                self.state.log_event(
-                    f"包税合同中标: {contract.name} 中标者 {winner_name} 价格 {contract.winning_bid['amount']}",
-                    extra={
-                        "type": "tax_contract_award",
-                        "contract_id": contract.id,
-                        "winner_id": contract.winning_bid["bidder_id"],
-                        "amount": contract.winning_bid['amount']
-                    }
-                )
+        # 战争威胁
+        war_system = self.state.get_war_system()
+        if war_system:
+            threats = war_system.get_threat_wars()
+            if threats:
+                print("   ⚔️ 战争威胁：", file=sys.stderr)
+                for war in threats:
+                    threat_emoji = "⚠️" if war.threat_level <= 2 else "⚡"
+                    print(f"   {threat_emoji} {war.name} 开始威胁罗马", file=sys.stderr)
+                    if war.naval_required:
+                        print(f"      ⚓ 检测到海战威胁，生成 1 个舰队建造合同", file=sys.stderr)
             else:
-                print(f"      ❌ 流拍")
-        except Exception as e:
-            self.state.log_exception(
-                e,
-                context=f"包税合同自动竞标失败: 合同 {contract.id}",
-                extra={"contract_id": contract.id, "contract_name": contract.name}
-            )
+                print("   ⚔️ 当前无战争威胁", file=sys.stderr)
 
-    def _auto_bid_for_works(self, contract):
-        if contract.contract_type != ContractType.PUBLIC_WORKS:
-            return
+        # 行省民变
+        provinces = self.state.get_all_provinces()
+        revolting = [p for p in provinces if p.grievance == 3]
+        if revolting:
+            print("   📊 民变威胁：", file=sys.stderr)
+            for p in revolting:
+                print(f"      ⚠️ {p.name} 爆发起义！", file=sys.stderr)
+        else:
+            print("   📊 行省民变状态：", file=sys.stderr)
+            print("      所有行省安居乐业，无民变威胁。", file=sys.stderr)
 
-        try:
-            config = self.state.config
-            X = config.get("economic_rules.project_theoretical_construction", 5)
-            N = config.get("economic_rules.project_theoretical_warranty", 10)
-            min_discount = config.get("economic_rules.project_bid_discount_min", 0.05)
-            max_discount = config.get("economic_rules.project_bid_discount_max", 0.20)
-            land_price = config.get("economic_rules.land_price_per_unit", 10)
-            infra_rate = config.get("economic_rules.infrastructure_cost_rate", 0.001)
+        # 凯旋信息
+        triumph = self._get_war_triumph()
+        if triumph:
+            commander = triumph["commander"]
+            print(f"\n   🏆 {commander.get_formal_name()} 取得了 {triumph['war'].name} 的胜利正返回罗马。", file=sys.stderr)
+            print(f"      元老院正在讨论是否要授予他凯旋仪式。", file=sys.stderr)
 
-            province = self.state.get_province(contract.province_id)
-            if not province:
-                return
-            land_value = province.land_public * land_price
-            infra_cost = int(land_value * infra_rate)
+        print("\n🔧 本阶段可操作(ANY)：", file=sys.stderr)
+        print("   1. next/n → 进入裁员环节", file=sys.stderr)
+        sys.stderr.flush()
 
-            factions = list(self.state.factions.values())
-            if not factions:
-                return
+    def _print_ui_03_1(self, player_id: str, faction_id: str):
+        """打印 UI_03-1 裁员环节"""
+        player = self.state.get_player(player_id)
+        faction = self.state.get_faction(faction_id)
+        faction_name = faction.name if faction else "未知"
+        print("\n############################################################", file=sys.stderr)
+        print(f" UI_03-1 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 广场阶段 [3/7]", file=sys.stderr)
+        print("############################################################", file=sys.stderr)
+        print("\n--- 步骤说明 ---", file=sys.stderr)
+        print("新鲜血液是保持组织活力的重要源泉，裁汰掉对组织没有贡献的成员，才能腾出空", file=sys.stderr)
+        print("间招募更优秀的人才。请从你的成员列表中挑选需要淘汰的成员，让他们去广场上", file=sys.stderr)
+        print("自谋生路吧。", file=sys.stderr)
 
-            print(f"\n      🔔 开始竞标 {contract.name} 预算 {contract._original_budget}")
-            original_budget = contract._original_budget
+        # 显示派系成员列表
+        result = figure_api.get_figure_info(self.state)
+        if result["success"]:
+            members = [f for f in result["data"] if f["faction_id"] == faction_id]
+            if members:
+                print("\n================================================================================", file=sys.stderr)
+                print(f"   👥 {faction_name} 存活派系人物列表", file=sys.stderr)
+                print("================================================================================", file=sys.stderr)
+                for m in members:
+                    status = "👑" if m["is_faction_leader"] else "🟢"
+                    tier_emoji = {"nobile": "🏛️", "eques": "💰", "plebeian": "👤"}.get(m["class_tier"], "❓")
+                    print(f"{status}{tier_emoji} ID:{m['id']:<3} {m['name']:<25} 派系:{m['faction_id']:<12} 影响力:{m['influence']} 财富:{m['wealth']} 人气:{m['popularity']} 私地:{m['land_private']} 老兵:{m['veterans']} 官职:{m['office']}", file=sys.stderr)
 
-            for faction in factions:
-                knights = [m for m in faction.get_members(self.state)
-                           if m.class_tier == ClassTier.EQUES and not m.is_dead]
-                if not knights:
-                    continue
-                knight = max(knights, key=lambda k: k.wealth)
+        print(f"\n🔧 本阶段可操作 (PLAYER {player_id} {faction_name})：", file=sys.stderr)
+        print("   1. investigate → 查询人物详情；", file=sys.stderr)
+        print("   2. retire → 驱逐不需要的派系成员；", file=sys.stderr)
+        print("   3. next/n → 下一个玩家；", file=sys.stderr)
+        sys.stderr.flush()
 
-                r = random.uniform(min_discount, max_discount)
-                bid_amount = int(original_budget * (1 - r))
-                construction = int(X * (1 + r) + 0.5)
-                if construction < 1:
-                    construction = 1
-                warranty = int(N * (1 - r) + 0.5)
-                if warranty < 0:
-                    warranty = 0
-                annual_income = bid_amount // construction
-                actual_cost = int(infra_cost * (1 - r))
-                annual_cost = actual_cost // construction
+    def _print_ui_03_2(self, player_id: str, faction_id: str):
+        """打印 UI_03-2 市场环节"""
+        player = self.state.get_player(player_id)
+        faction = self.state.get_faction(faction_id)
+        faction_name = faction.name if faction else "未知"
+        print("\n############################################################", file=sys.stderr)
+        print(f" UI_03-2 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 广场阶段 [3/7]", file=sys.stderr)
+        print("############################################################", file=sys.stderr)
+        print("\n--- 步骤说明 ---", file=sys.stderr)
+        print("罗马广场藏龙卧虎，物欲横流。是你利用金钱的力量扩张你的实力，招揽人才，竞标", file=sys.stderr)
+        print("合同，兼并土地，结交权贵的最佳场所。当然，这一切都是在罗马法律的统治下公平", file=sys.stderr)
+        print("竞争的结果。现在请你下注吧！", file=sys.stderr)
 
-                self.state.place_bid(
-                    contract.id,
-                    knight.id,
-                    bid_amount,
-                    r=r,
-                    original_budget=original_budget,
-                    construction=construction,
-                    warranty=warranty,
-                    annual_income=annual_income,
-                    annual_cost=annual_cost
-                )
-                print(f"         {faction.name} 的 {knight.get_formal_name()} 出价 {bid_amount} (降价 {r * 100:.0f}%)")
+        # 人才市场
 
-            self.state.resolve_auction(contract.id)
+        print("\n====================== 人才市场 ====================", file=sys.stderr)
+        # 生成新人物、新合同
+        curia = self.state.curia.get_all_available()
+        if curia:
+            for fig in curia:
+                tier_emoji = {"nobile": "🏛️", "eques": "💰", "plebeian": "👤"}.get(fig.class_tier.value, "❓")
+                print(f"      {tier_emoji} ID:{fig.id} {fig.get_formal_name()} ({fig.class_tier.value})(军略 {fig.martial}, 智略 {fig.intelligence}, 魅力 {fig.charisma}, 热诚 {fig.zeal})", file=sys.stderr)
+        else:
+            print("   📭 广场无人物", file=sys.stderr)
 
-            if contract.status == ContractStatus.ACTIVE and contract.winning_bid:
-                winner = self.state.get_member(contract.winning_bid["bidder_id"])
-                winner_name = winner.get_formal_name() if winner else "未知"
-                r = contract.winning_bid.get("r", 0)
-                discount_pct = r * 100
-                print(f"      ✅ 中标者: {winner_name}，中标价 {contract.winning_bid['amount']}，降价 {discount_pct:.0f}%")
-                self.state.log_event(
-                    f"工程合同中标: {contract.name} 中标者 {winner_name} 价格 {contract.winning_bid['amount']}",
-                    extra={
-                        "type": "works_contract_award",
-                        "contract_id": contract.id,
-                        "winner_id": contract.winning_bid["bidder_id"],
-                        "amount": contract.winning_bid['amount']
-                    }
-                )
-            else:
-                print(f"      ❌ 流拍")
-        except Exception as e:
-            self.state.log_exception(
-                e,
-                context=f"工程合同自动竞标失败: 合同 {contract.id}",
-                extra={"contract_id": contract.id, "contract_name": contract.name}
-            )
+        # 可竞标合同
+        print("\n====================== 交易市场 ====================", file=sys.stderr)
+        contracts = self._get_available_contracts()
+        if contracts:
+            for c in contracts:
+                type_emoji = "📊" if c.contract_type == ContractType.TAX_FARMING else "🏗️"
+                print(f"      🔔 标的 {c.id} {type_emoji} {c.name} 预算 {c.base_cost}", file=sys.stderr)
+        else:
+            print("   📭 没有待竞标的预算合同", file=sys.stderr)
 
-    def _execute_pending_land_acts(self):
-        """执行已通过的平民分地和贵族买地法案"""
+        # 待决合同（仅显示）
+        pending = [c for c in self.state.contracts if c.status == ContractStatus.PENDING]
+        if pending:
+            print("\n   📋 Pending Contracts (等待元老院预算表决):", file=sys.stderr)
+            for c in pending:
+                type_emoji = "📊" if c.contract_type == ContractType.TAX_FARMING else "🏗️"
+                if c.contract_type == ContractType.TAX_FARMING:
+                    print(f"      {type_emoji} ID:{c.id} {c.name}	预付:{c.base_cost} 预期利润:{c.expected_profit}", file=sys.stderr)
+                else:
+                    print(f"      {type_emoji} ID:{c.id} {c.name}	预算:{c.base_cost}", file=sys.stderr)
+
+        # 土地法案
         acts = self.state.get_pending_land_acts()
-        if not acts:
-            return
-        print(f"\n   🏞️ 执行土地法案：")
-        land_price = self.state.get_economic_rule("land_price_per_unit", 10)
-        for act in acts:
-            if act['type'] == 'distribution':
-                self._execute_land_distribution(act, land_price)
-            elif act['type'] == 'sale':
-                self._execute_land_sale(act, land_price)
-        self.state.clear_pending_land_acts()
+        if acts:
+            print("\n   🏞️ 执行土地法案：", file=sys.stderr)
+            for act in acts:
+                if act['type'] == 'distribution':
+                    print(f"      ✅ 平民分地 {act['amount']} C 土地（占国家公地 {act['percent']*100:.1f}%），转入意大利私地，民怨重置。", file=sys.stderr)
+                elif act['type'] == 'sale':
+                    print(f"      🏛️ 贵族买地：出售 {act['amount']} C 国家公地。", file=sys.stderr)
 
-    def _execute_land_distribution(self, act, land_price):
-        national_land = self.state.get_national_public_land()
-        amount = int(national_land * act['percent'])
-        if amount <= 0:
-            print(f"      ⚠️ 国家公地不足，无法分配。")
-            return
-        self.state.add_national_public_land(-amount)
-        italy = self.state.get_province(0)
-        if italy:
-            italy._land_private += amount
-            italy._turns_since_last_land_distribution = 0
-            italy.set_grievance(0)
-        print(f"      ✅ 平民分地 {amount} C 土地（占国家公地 {act['percent'] * 100:.1f}%），转入意大利私地，民怨重置。")
+        # 凯旋信息
+        triumph = self._get_war_triumph()
+        if triumph:
+            commander = triumph["commander"]
+            print(f"\n   🏆 {commander.get_formal_name()} 的凯旋等待投票", file=sys.stderr)
 
-    def _execute_land_sale(self, act, land_price):
-        national_land = self.state.get_national_public_land()
-        amount = int(national_land * act['percent'])
-        if amount <= 0:
-            print(f"      ⚠️ 国家公地不足，无法出售。")
-            return
-        print(f"      🏛️ 贵族买地：出售 {amount} C 国家公地。")
-        nobles = [fig for fig in self.state.get_living_members() if fig.class_tier.value == "nobile"]
-        nobles.sort(key=lambda f: f.influence, reverse=True)
-        remaining = amount
-        sold_count = 0
-        for fig in nobles:
-            if remaining <= 0:
-                break
-            max_buy = fig.wealth // land_price
-            if max_buy <= 0:
+        print(f"\n🔧 本阶段可操作(PLAYER {player_id} {faction_name})：", file=sys.stderr)
+        print("   1. investigate → 查看人才详情", file=sys.stderr)
+        print("   2. recruit <人物ID> <金额> → 招募新人", file=sys.stderr)
+        print("   3. bid <合同ID> <金额> → 竞标合同", file=sys.stderr)
+        print("   4. buy <数量> → 认购公地", file=sys.stderr)
+        print("   5. vote yes/no → 投票授予凯旋", file=sys.stderr)
+        print("   6. balance → 查询派系金库；", file=sys.stderr)
+        print("   7. next → 下一个玩家；", file=sys.stderr)
+        sys.stderr.flush()
+
+    def _print_ui_03_4(self, player_id: Optional[str], faction_id: Optional[str]):
+        """打印 UI_03-4 交易市场环节（财务官）"""
+        # 获取派系名称（用于显示）
+        faction_name = "未知"
+        if player_id and faction_id:
+            faction = self.state.get_faction(faction_id)
+            faction_name = faction.name if faction else "未知"
+
+        print("\n############################################################", file=sys.stderr)
+        print(f" UI_03-4 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 广场阶段 [3/7]",
+              file=sys.stderr)
+        print("############################################################", file=sys.stderr)
+        print("\n--- 步骤说明 ---", file=sys.stderr)
+        print("贵族有土地，骑士有金钱，土地是地位的象征，而金钱是权力的保证，没有比土地", file=sys.stderr)
+        print("交易更适合罗马城里权钱交易的游戏了。所有的土地交易都必须通过政府注册，因此", file=sys.stderr)
+        print("这将成为有据可查的反腐利器！", file=sys.stderr)
+
+        if not self._has_quaestor():
+            print("\n⚠️ 罗马城里没有财务官，无法进行土地交易。", file=sys.stderr)
+            print("\n🔧 本阶段可操作(ANY)：", file=sys.stderr)
+            print("   1. next/n → 下一阶段；", file=sys.stderr)
+        else:
+            print(f"\n🔧 本阶段可操作(QUAESTOR {player_id} {faction_name})：", file=sys.stderr)
+            print("   1. transact <卖家ID> <买家ID> <土地数量> <价格> → 交易土地", file=sys.stderr)
+            print("   2. next → 下一阶段；", file=sys.stderr)
+        sys.stderr.flush()
+
+    def _print_ui_03_3(self):
+        """打印 UI_03-3 公示环节"""
+        print("\n############################################################", file=sys.stderr)
+        print(f" UI_03-3 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 广场阶段 [3/7]", file=sys.stderr)
+        print("############################################################", file=sys.stderr)
+        print("\n喧嚣散去，尘埃落下。", file=sys.stderr)
+
+    # ==================== 命令处理函数 ====================
+
+    def _handle_retire(self, args: List[str]) -> bool:
+        if len(args) != 1:
+            print(i18n.get("error_usage_retire"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        try:
+            fig_id = int(args[0])
+        except ValueError:
+            print(i18n.get("error_invalid_id"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        player_id = self._get_current_player_id()
+        if not player_id:
+            print(i18n.get("error_no_current_player"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        result = forum_api.retire_figure(self.state, player_id, fig_id)
+        print(result["message"], file=sys.stderr)
+        sys.stderr.flush()
+        return result["success"]
+
+    def _handle_recruit(self, args: List[str]) -> bool:
+        if len(args) != 2:
+            print(i18n.get("error_usage_recruit"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        try:
+            fig_id = int(args[0])
+            amount = int(args[1])
+        except ValueError:
+            print(i18n.get("error_invalid_id"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+
+        # 检查人物是否在 Curia 中
+        fig = next((f for f in self.state.curia.get_all_available() if f.id == fig_id), None)
+        if not fig:
+            print(i18n.get("error_figure_not_in_curia"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+
+        player_id = self._get_current_player_id()
+        if not player_id:
+            print(i18n.get("error_no_current_player"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+
+        player = self.state.get_player(player_id)
+        if not player:
+            return False
+
+        faction = self.state.get_faction(player.faction_id)  # <--- 必须在此处定义 faction
+        if not faction:
+            return False
+
+        # ===== 新增：派系成员上限检查 =====
+        num_factions = len(self.state.factions)
+        if num_factions == 3:
+            max_members = 6
+        elif num_factions == 4:
+            max_members = 5
+        elif num_factions == 6:
+            max_members = 4
+        else:
+            max_members = 5  # 默认值
+
+        current_members = len(faction.get_members(self.state))
+        vacancies = max_members - current_members
+        if vacancies <= 0:
+            print(i18n.get("error_no_vacancies", faction=faction.name), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        # =================================
+
+        result = forum_api.recruit_figure(self.state, player_id, fig_id, amount)
+        print(result["message"], file=sys.stderr)
+        sys.stderr.flush()
+        return result["success"]
+
+    def _handle_bid(self, args: List[str]) -> bool:
+        if len(args) != 2:
+            print(i18n.get("error_usage_bid"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        try:
+            contract_id = int(args[0])
+            amount = int(args[1])
+        except ValueError:
+            print(i18n.get("error_invalid_id"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        # 检查合同是否存在且可竞标
+        contract = self.state.get_contract(contract_id)
+        if not contract:
+            print(i18n.get("contract_not_found", id=contract_id), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        if contract.status != ContractStatus.BUDGETED:
+            print(i18n.get("error_contract_not_auctionable"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        player_id = self._get_current_player_id()
+        if not player_id:
+            print(i18n.get("error_no_current_player"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        result = forum_api.place_bid(self.state, player_id, contract_id, amount)
+        print(result["message"], file=sys.stderr)
+        sys.stderr.flush()
+        return result["success"]
+
+    def _handle_buy(self, args: List[str]) -> bool:
+        if len(args) != 1:
+            print(i18n.get("error_usage_buy"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        try:
+            amount = int(args[0])
+        except ValueError:
+            print(i18n.get("error_invalid_amount"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        # 检查是否有公地可出售
+        if self._get_available_land_for_sale() == 0:
+            print("   📭 没有公地可购买", file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        player_id = self._get_current_player_id()
+        if not player_id:
+            print(i18n.get("error_no_current_player"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        result = forum_api.buy_land(self.state, player_id, amount)
+        print(result["message"], file=sys.stderr)
+        sys.stderr.flush()
+        return result["success"]
+
+    def _handle_vote(self, args: List[str]) -> bool:
+        if len(args) != 1:
+            print(i18n.get("error_usage_vote"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        vote_str = args[0].lower()
+        if vote_str not in ("yes", "no"):
+            print(i18n.get("error_invalid_vote"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        # 检查是否有凯旋需要投票
+        if not self._get_war_triumph():
+            print("   📭 没有凯旋仪式需要授予", file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        vote = (vote_str == "yes")
+        player_id = self._get_current_player_id()
+        if not player_id:
+            print(i18n.get("error_no_current_player"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        result = forum_api.vote_triumph(self.state, player_id, vote)
+        print(result["message"], file=sys.stderr)
+        sys.stderr.flush()
+        return result["success"]
+
+    def _handle_transact(self, args: List[str]) -> bool:
+        if len(args) != 4:
+            print(i18n.get("error_usage_transact"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        try:
+            seller = int(args[0])
+            buyer = int(args[1])
+            land = int(args[2])
+            price = int(args[3])
+        except ValueError:
+            print(i18n.get("error_invalid_number"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        player_id = self._get_current_player_id()
+        if not player_id:
+            print(i18n.get("error_no_current_player"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        result = forum_api.transact_land(self.state, player_id, seller, buyer, land, price)
+        print(result["message"], file=sys.stderr)
+        sys.stderr.flush()
+        return result["success"]
+
+    def _handle_investigate(self, args: List[str]) -> bool:
+        """处理 investigate 命令：
+           无参：
+             步骤1（裁员）：显示本派系所有存活人物
+             步骤2（市场）：显示本派系所有存活人物 + 广场所有可招募人物
+           有参：显示指定人物的详细信息
+        """
+        if len(args) == 0:
+            player_id = self._get_current_player_id()
+            if not player_id:
+                print(i18n.get("error_no_current_player"), file=sys.stderr)
+                sys.stderr.flush()
+                return False
+            player = self.state.get_player(player_id)
+            if not player:
+                return False
+            faction = self.state.get_faction(player.faction_id)
+            if not faction:
+                return False
+
+            # 获取所有存活人物数据（用于派系成员）
+            result = figure_api.get_figure_info(self.state)
+            if not result["success"]:
+                print(result["message"], file=sys.stderr)
+                sys.stderr.flush()
+                return False
+            all_figures = result["data"]
+
+            # 筛选本派系存活人物
+            faction_members = [fig for fig in all_figures if
+                               fig["faction_id"] == faction.id and not fig.get("is_dead", False)]
+
+            # 打印派系成员列表
+            if faction_members:
+                print("\n================================================================================",
+                      file=sys.stderr)
+                print(f"   👥 {faction.name} 存活派系人物列表", file=sys.stderr)
+                print("================================================================================",
+                      file=sys.stderr)
+                for m in faction_members:
+                    status = "👑" if m.get("is_faction_leader", False) else "🟢"
+                    tier_emoji = {"nobile": "🏛️", "eques": "💰", "plebeian": "👤"}.get(m["class_tier"], "❓")
+                    office_display = m["office"] if m.get("office") and not m["office"].startswith("ex-") else "无"
+                    print(
+                        f"{status}{tier_emoji} ID:{m['id']:<3} {m['name']:<25} 派系:{m['faction_id']:<12} 影响力:{m['influence']} 财富:{m['wealth']} 人气:{m['popularity']} 私地:{m['land_private']} 老兵:{m['veterans']} 官职:{office_display}",
+                        file=sys.stderr)
+            else:
+                print(i18n.get("no_members_in_faction", faction=faction.name), file=sys.stderr)
+
+            # 如果是市场环节，显示广场人物
+            if self._step == 2:
+                curia_figures = self.state.curia.get_all_available()
+                if curia_figures:
+                    print("\n================================================================================",
+                          file=sys.stderr)
+                    print("   📢 广场可招募人物列表", file=sys.stderr)
+                    print("================================================================================",
+                          file=sys.stderr)
+                    for fig in curia_figures:
+                        tier_emoji = {"nobile": "🏛️", "eques": "💰", "plebeian": "👤"}.get(fig.class_tier.value, "❓")
+                        print(
+                            f"   {tier_emoji} ID:{fig.id} {fig.get_formal_name()} ({fig.class_tier.value})(军略 {fig.martial}, 智略 {fig.intelligence}, 魅力 {fig.charisma}, 热诚 {fig.zeal})",
+                            file=sys.stderr)
+                else:
+                    print("\n   📭 广场无人物", file=sys.stderr)
+
+            sys.stderr.flush()
+            return True
+
+        elif len(args) == 1:
+            try:
+                fig_id = int(args[0])
+            except ValueError:
+                print(i18n.get("error_invalid_id"), file=sys.stderr)
+                sys.stderr.flush()
+                return False
+            result = figure_api.get_figure_info(self.state, fig_id)
+            print(result["message"], file=sys.stderr)
+            sys.stderr.flush()
+            return result["success"]
+
+        else:
+            print(i18n.get("error_usage_investigate"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+
+    def _handle_balance(self, args: List[str]) -> bool:
+        player_id = self._get_current_player_id()
+        if not player_id:
+            print(i18n.get("error_no_current_player"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+        player = self.state.get_player(player_id)
+        if not player:
+            return False
+        faction = self.state.get_faction(player.faction_id)
+        if not faction:
+            return False
+        print(i18n.get("info_balance", faction=faction.name, treasury=faction.treasury), file=sys.stderr)
+        sys.stderr.flush()
+        return True
+
+    def _handle_next(self, args: List[str]) -> bool:
+        if self._step == 0:
+            self._step = 1
+            self._players = self._get_step_players()
+            self._current_player_index = 0
+            print("\n--- 进入裁员环节 ---", file=sys.stderr)
+            sys.stderr.flush()
+        elif self._step == 3:
+            # 公示环节结束，进入交易市场
+            self._step = 4
+            self._players = self._get_step_players()
+            self._current_player_index = 0
+            print("\n--- 进入私地交易环节 ---", file=sys.stderr)
+            sys.stderr.flush()
+        elif self._step in (1, 2, 4):
+            next_player_id = self._next_player()
+            if next_player_id:
+                player = self.state.get_player(next_player_id)
+                faction = self.state.get_faction(player.faction_id) if player else None
+                print(i18n.get("info_next_player", player=next_player_id, faction=faction.name if faction else "无"),
+                      file=sys.stderr)
+                sys.stderr.flush()
+            else:
+                self._step += 1
+                self._players = self._get_step_players()
+                self._current_player_index = 0
+                if self._step == 2:
+                    print("\n--- 进入市场环节 ---", file=sys.stderr)
+                elif self._step == 3:
+                    print("\n--- 进入公示环节 ---", file=sys.stderr)
+                elif self._step == 5:
+                    print("\n--- 广场阶段完成 ---", file=sys.stderr)
+                sys.stderr.flush()
+        sys.stderr.flush()
+        return True
+
+    def _do_resolution(self):
+        """执行公示结算（只打印结果，不改变步骤）"""
+        result = forum_api.resolve_forum(self.state)
+        self._print_ui_03_3()
+        print(result["message"], file=sys.stderr)
+        sys.stderr.flush()
+
+    # ==================== 步骤处理函数 ====================
+
+    def _handle_step_0(self):
+        """处理公告环节"""
+        self._print_ui_03_0()
+        while True:
+            print("\n> 请输入操作(ANY): ", file=sys.stderr, end="")
+            sys.stderr.flush()
+            cmd_input = input("").strip()
+            if not cmd_input:
                 continue
-            buy = random.randint(1, min(remaining, max_buy))
-            cost = buy * land_price
-            fig.wealth -= cost
-            fig._land_private += buy
-            fig.update_influence()
-            remaining -= buy
-            sold_count += 1
-            print(f"         {fig.name} 购买 {buy} C，花费 {cost}，剩余土地 {remaining} C")
-        sold = amount - remaining
-        if sold > 0:
-            self.state.add_national_public_land(-sold)
-            # === 新增调试输出 ===
-            # print(f"      [DEBUG] 即将增加国库：{sold * land_price} Talents")
-            self.state.add_treasury(sold * land_price)
-            # print(f"      [DEBUG] 增加后国库：{self.state.treasury} Talents")
-            print(
-                f"      共售出 {sold} C，国库 +{sold * land_price} Talents，国家公地剩余 {self.state.get_national_public_land()} C")
-        else:
-            print(f"      无土地售出。")
+            parts = cmd_input.split()
+            cmd = parts[0].lower()
+            if cmd in ("next", "n"):
+                self._handle_next([])
+                break
+            else:
+                print(i18n.get("error_unknown_command"), file=sys.stderr)
+                sys.stderr.flush()
 
-    def _process_land_trades(self):
-        """处理自动土地交易"""
-        trade_info = self.land_trade_decider.decide_trade(self.state)
-        if not trade_info:
+    def _handle_step_1(self):
+        """处理裁员环节"""
+        player_id = self._get_current_player_id()
+        if not player_id:
+            self._step += 1
+            return
+        player = self.state.get_player(player_id)
+        if not player:
+            self._step += 1
+            return
+        self._print_ui_03_1(player_id, player.faction_id)
+
+        while True:
+            print(f"\n> 请输入操作(PLAYER {player_id}): ", file=sys.stderr, end="")
+            sys.stderr.flush()
+            cmd_input = input("").strip()
+            if not cmd_input:
+                continue
+            parts = cmd_input.split()
+            cmd = parts[0].lower()
+            args = parts[1:]
+
+            if cmd in ("next", "n"):
+                self._handle_next([])
+                break
+            elif cmd == "investigate":
+                self._handle_investigate(args)
+            elif cmd == "retire":
+                self._handle_retire(args)
+            else:
+                print(i18n.get("error_unknown_command"), file=sys.stderr)
+                sys.stderr.flush()
+
+    def _handle_step_2(self):
+        """处理市场环节"""
+        player_id = self._get_current_player_id()
+        if not player_id:
+            self._step += 1
+            return
+        player = self.state.get_player(player_id)
+        if not player:
+            self._step += 1
+            return
+        self._print_ui_03_2(player_id, player.faction_id)
+
+        while True:
+            print(f"\n> 请输入操作(PLAYER {player_id}): ", file=sys.stderr, end="")
+            sys.stderr.flush()
+            cmd_input = input("").strip()
+            if not cmd_input:
+                continue
+            parts = cmd_input.split()
+            cmd = parts[0].lower()
+            args = parts[1:]
+
+            if cmd in ("next", "n"):
+                self._handle_next([])
+                break
+            elif cmd == "investigate":
+                self._handle_investigate(args)
+            elif cmd == "recruit":
+                self._handle_recruit(args)
+            elif cmd == "bid":
+                self._handle_bid(args)
+            elif cmd == "buy":
+                self._handle_buy(args)
+            elif cmd == "vote":
+                self._handle_vote(args)
+            elif cmd == "balance":
+                self._handle_balance(args)
+            else:
+                print(i18n.get("error_unknown_command"), file=sys.stderr)
+                sys.stderr.flush()
+
+    def _handle_step_3(self):
+        """公示环节：显示结果后等待玩家输入next"""
+        if not self._resolution_done:
+            self._do_resolution()
+            self._resolution_done = True
+
+        while True:
+            print("\n🔧 本阶段可操作(ANY):", file=sys.stderr)
+            print("   1. next/n → 进入私地交易环节", file=sys.stderr)
+            print("\n> 请输入操作(ANY): ", file=sys.stderr, end="")
+            sys.stderr.flush()
+            cmd_input = input("").strip()
+            if not cmd_input:
+                continue
+            parts = cmd_input.split()
+            cmd = parts[0].lower()
+            if cmd in ("next", "n"):
+                self._handle_next([])
+                break
+            else:
+                print(i18n.get("error_unknown_command"), file=sys.stderr)
+                sys.stderr.flush()
+
+    def _handle_step_4(self):
+        """处理交易市场环节"""
+        has_quaestor = self._has_quaestor()
+
+        if not has_quaestor:
+            # 无财务官：打印界面，然后等待玩家输入next
+            self._print_ui_03_4(None, None)
+            while True:
+                print("\n> 请输入操作(ANY): ", file=sys.stderr, end="")
+                sys.stderr.flush()
+                cmd_input = input("").strip()
+                if not cmd_input:
+                    continue
+                parts = cmd_input.split()
+                cmd = parts[0].lower()
+                if cmd in ("next", "n"):
+                    self._handle_next([])
+                    break
+                else:
+                    print(i18n.get("error_unknown_command"), file=sys.stderr)
+                    sys.stderr.flush()
             return
 
-        seller_id, buyer_id, amount = trade_info
-        service = LandTradingService(self.state)
-        success, msg = service.execute_trade(seller_id, buyer_id, amount)
+        # 有财务官：正常流程
+        player_id = self._get_current_player_id()
+        if not player_id:
+            self._step = 5
+            return
+        player = self.state.get_player(player_id)
+        if not player:
+            self._step = 5
+            return
 
-        if success:
-            print(f"\n   💱 自动土地交易执行成功：")
-            for line in msg.split('\n'):
-                print(f"      {line}")
-            # ===== 新增日志 =====
-            self.state.log_event(
-                f"土地交易成功: 卖家 {seller_id} 买家 {buyer_id} 数量 {amount}",
-                extra={"type": "land_trade", "seller_id": seller_id, "buyer_id": buyer_id, "amount": amount}
-            )
-        else:
-            seller = self.state.get_member(seller_id)
-            buyer = self.state.get_member(buyer_id)
-            seller_name = seller.get_formal_name() if seller else "Unknown"
-            buyer_name = buyer.get_formal_name() if buyer else "Unknown"
-            print(f"\n   ⚠️ 自动土地交易失败：{seller_name} → {buyer_name} {msg}")
-            self.state.log_event(
-                f"土地交易失败: 卖家 {seller_id} 买家 {buyer_id} 数量 {amount} - {msg}",
-                extra={"type": "land_trade_failure", "seller_id": seller_id, "buyer_id": buyer_id, "amount": amount}
-            )
+        self._print_ui_03_4(player_id, player.faction_id)
+
+        while True:
+            print(f"\n> 请输入操作(QUAESTOR {player_id}): ", file=sys.stderr, end="")
+            sys.stderr.flush()
+            cmd_input = input("").strip()
+            if not cmd_input:
+                continue
+            parts = cmd_input.split()
+            cmd = parts[0].lower()
+            args = parts[1:]
+
+            if cmd in ("next", "n"):
+                self._handle_next([])
+                break
+            elif cmd == "transact":
+                self._handle_transact(args)
+            else:
+                print(i18n.get("error_unknown_command"), file=sys.stderr)
+                sys.stderr.flush()
+
+
+    # ==================== 核心执行函数 ====================
+
+    def execute(self, args: List[str]) -> bool:
+        sys.stderr.flush()
+        try:
+            if self.state.is_phase_executed("forum"):
+                print(i18n.get("error_phase_already_executed", phase="forum"), file=sys.stderr)
+                sys.stderr.flush()
+                return False
+
+            # 初始化状态机
+            self._step = 0
+            self._players = self._get_step_players()
+            self._current_player_index = 0
+
+            # 新人加入，合同生成
+            self._generate_new_figures()
+            self._generate_contracts()
+
+            while self._step < 5:
+                sys.stderr.flush()
+                if self._step == 0:
+                    self._handle_step_0()
+                elif self._step == 1:
+                    self._handle_step_1()
+                elif self._step == 2:
+                    self._handle_step_2()
+                elif self._step == 3:
+                    self._handle_step_3()
+                elif self._step == 4:
+                    self._handle_step_4()
+                    # 交易市场环节可能直接设置 _step = 5，循环自然结束
+
+            # 所有环节完成，标记阶段
+            self.state.mark_phase_executed("forum")
+            return True
+
+        except Exception as e:
+            print(f"!!! UNCAUGHT EXCEPTION in ForumCommand: {e}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            sys.stderr.flush()
+            return False
+
+    # ==================== 辅助方法 ====================
+
+    def _get_step_players(self) -> List[str]:
+        if self._step == 1 or self._step == 2:
+            # 裁员、市场环节：所有人类玩家
+            return [p.player_id for p in self.state.get_all_players() if p.player_type.value == "human"]
+        elif self._step == 4:
+            # 交易市场环节：财务官所属玩家
+            return self._get_quaestor_players()
+        return []  # 公告(0)、公示(3) 无玩家操作
+
+    def _next_player(self) -> Optional[str]:
+        if not self._players:
+            sys.stderr.flush()
+            return None
+        self._current_player_index += 1
+        if self._current_player_index >= len(self._players):
+
+            sys.stderr.flush()
+            return None
+        next_id = self._players[self._current_player_index]
+
+        sys.stderr.flush()
+        return next_id
+
+    def _get_current_player_id(self) -> Optional[str]:
+        if 0 <= self._current_player_index < len(self._players):
+            pid = self._players[self._current_player_index]
+
+            sys.stderr.flush()
+            return pid
+
+        sys.stderr.flush()
+        return None

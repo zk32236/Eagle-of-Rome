@@ -119,7 +119,13 @@ class DebugCLI:
             print(preview)
             print()  # 空行分隔预览和阶段输出
 
+
+        sys.stdout.flush()
         result = game_api.execute_phase(self.state, phase_name, player.player_id)
+
+        sys.stdout.flush()
+
+
         if result["success"] and result["message"]:
             print(result["message"])
         elif not result["success"]:
@@ -234,6 +240,8 @@ class DebugCLI:
                     # 将别名转换为阶段名
                     cmd_name = PHASE_ALIASES.get(raw_cmd, raw_cmd)
 
+                    sys.stdout.flush()
+
                     # 处理内置命令
                     if cmd_name == "turn":
                         self._do_turn()
@@ -243,7 +251,11 @@ class DebugCLI:
                         self._do_next()
                     elif cmd_name in PHASE_SEQUENCE:
                         # 直接执行阶段，使用 UI 包装
+
+                        sys.stdout.flush()
                         self._execute_phase_with_ui(cmd_name)
+
+                        sys.stdout.flush()
                     else:
                         cmd_instance = self._create_command_instance(cmd_name)
                         if cmd_instance:

@@ -93,11 +93,82 @@ class GameState:
         self._players: Dict[str, 'Player'] = {}  # 玩家ID -> Player对象
         self._current_player_id: Optional[str] = None  # 当前操作玩家ID
         self._turn_order: List[str] = []  # 回合顺序（玩家ID列表）
+        # 广场阶段
+        self._forum_pending = {
+            "retirements": [],  # 被淘汰的人物ID列表
+            "recruitment_bids": [],  # 招募出价记录，每个元素为 (faction_id, figure_id, amount)
+            "contract_bids": [],  # 合同竞标记录，每个元素为 (contract_id, faction_id, amount)
+            "land_purchases": [],  # 公地认购记录，每个元素为 (faction_id, amount)
+            "triumph_votes": [],  # 凯旋投票记录，每个元素为 (faction_id, vote)  # vote为True/False
+            "land_trades": [],  # 土地交易记录，每个元素为 (seller_id, buyer_id, land, price)
+        }
 
         # 初始化时调用 reset，确保状态一致性
         self.reset()
 
+    def reset(self):
+        """重置状态 - 实例方法，仅影响当前实例"""
+        self._members.clear()
+        self._factions.clear()
+        self._treasury = 0
+        self._national_public_land = 0
+        self._turn = None
+        self._event_log.clear()
+        self._used_ids.clear()
+        self._initialize_mortality_pool()
+
+        # 重置系统（重新创建）
+        self._war_system = WarSystem(self)
+        self._war_system.load_wars_from_json("wars.json")
+        self._military_system = MilitarySystem(self)  # <-- 创建军事系统实例
+        self._curia = Curia()
+        self._contracts.clear()
+        self._executed_phases.clear()
+
+        # MVP 0.5 重置新增字段
+        self._provinces.clear()
+        self._contracts_dict.clear()
+        self._public_land_total = 0
+        self._contract_id_counter = 1
+
+        self._pending_land_acts.clear()  # 新增
+        self._naval_system = None
+        self._pyrrhic_war_won = False
+        self._wartime_tax_collected = 0
+        self._tax_refund_due = 0
+
+        self._naval_system = NavalSystem(self)
+
+        # MVP 0.7 城市系统重置
+        self._cities.clear()
+        self._city_id_counter = 1
+
+        #新增：玩家系统 MVP0.7.11-12
+        self._players.clear()
+        self._current_player_id = None
+        self._turn_order.clear()
+        self._forum_pending = {k: [] for k in self._forum_pending}
+
     #========================= 功能函数 ===================================
+
+
+    # 广场阶段玩家操作
+    def add_forum_action(self, category: str, data) -> None:
+        """添加广场阶段操作记录"""
+        if category in self._forum_pending:
+            self._forum_pending[category].append(data)
+            self.log_event(f"添加广场操作: {category} - {data}", level=logging.DEBUG,
+                           extra={"category": category, "data": data})
+
+    def clear_forum_pending(self) -> None:
+        """清除所有广场阶段临时数据"""
+        for key in self._forum_pending:
+            self._forum_pending[key] = []
+
+    def get_forum_pending(self) -> dict:
+        """获取当前所有广场阶段临时数据副本"""
+        return {k: v.copy() for k, v in self._forum_pending.items()}
+
 
     # ========== 玩家管理 ==========
 
@@ -263,47 +334,7 @@ class GameState:
                 handler.close()
                 self._logger.removeHandler(handler)
 
-    def reset(self):
-        """重置状态 - 实例方法，仅影响当前实例"""
-        self._members.clear()
-        self._factions.clear()
-        self._treasury = 0
-        self._national_public_land = 0
-        self._turn = None
-        self._event_log.clear()
-        self._used_ids.clear()
-        self._initialize_mortality_pool()
 
-        # 重置系统（重新创建）
-        self._war_system = WarSystem(self)
-        self._war_system.load_wars_from_json("wars.json")
-        self._military_system = MilitarySystem(self)  # <-- 创建军事系统实例
-        self._curia = Curia()
-        self._contracts.clear()
-        self._executed_phases.clear()
-
-        # MVP 0.5 重置新增字段
-        self._provinces.clear()
-        self._contracts_dict.clear()
-        self._public_land_total = 0
-        self._contract_id_counter = 1
-
-        self._pending_land_acts.clear()  # 新增
-        self._naval_system = None
-        self._pyrrhic_war_won = False
-        self._wartime_tax_collected = 0
-        self._tax_refund_due = 0
-
-        self._naval_system = NavalSystem(self)
-
-        # MVP 0.7 城市系统重置
-        self._cities.clear()
-        self._city_id_counter = 1
-
-        #新增：玩家系统 MVP0.7.11-12
-        self._players.clear()
-        self._current_player_id = None
-        self._turn_order.clear()
 
     # ========== 序列化 ==========
     def to_dict(self) -> Dict[str, Any]:
@@ -477,6 +508,14 @@ class GameState:
         instance._players = {}
         instance._current_player_id = None
         instance._turn_order = []
+        instance._forum_pending = {
+            "retirements": [],
+            "recruitment_bids": [],
+            "contract_bids": [],
+            "land_purchases": [],
+            "triumph_votes": [],
+            "land_trades": [],
+        }
 
         return instance
 

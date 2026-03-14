@@ -1,4 +1,6 @@
 # src/api/game_api.py
+import sys
+import traceback
 from src.core.game_state import GameState
 from src.core.localization import TerminologyService
 from src.api import api_response
@@ -27,16 +29,20 @@ PHASE_COMMAND_MAP = {
 
 
 def execute_phase(state: GameState, phase_name: str, player_id: str, args: list = None) -> dict:
-    """
-    执行单个游戏阶段，需要玩家ID进行权限检查。
-    """
-    # 权限检查
+
+    sys.stdout.flush()
+
     if not state.is_current_player(player_id):
         return api_response(False, i18n.get("error_not_your_turn"))
 
     cmd_class = PHASE_COMMAND_MAP.get(phase_name)
     if not cmd_class:
+
+        sys.stdout.flush()
         return api_response(False, i18n.get("error_phase_invalid", phase=phase_name))
+
+
+    sys.stdout.flush()
 
     cmd = cmd_class(state)
     f = io.StringIO()
@@ -44,8 +50,13 @@ def execute_phase(state: GameState, phase_name: str, player_id: str, args: list 
         try:
             success = cmd.execute(args or [])
         except Exception as e:
+
+            traceback.print_exc(file=sys.stdout)
+            sys.stdout.flush()
             return api_response(False, f"阶段执行异常: {e}", errors=[str(e)])
     output = f.getvalue().strip()
+
+    sys.stdout.flush()
     return api_response(success, output, data={"phase": phase_name})
 
 

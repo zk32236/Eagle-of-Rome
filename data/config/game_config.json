@@ -42,7 +42,7 @@
       "consul": 1,
       "censor": 1,
       "praetor": 1,
-      "quaestor": 2,
+      "quaestor": 1,
       "tribune": 1
     },
     "candidates_per_election": {

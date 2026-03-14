@@ -53,7 +53,7 @@ class TestCLIIntegration(unittest.TestCase):
         """测试 load 后 status 能正确显示加载的数据"""
         from src.core.i18n import i18n
         i18n.load("zh-CN", force=True)  # 强制重新加载
-        print(f"[DEBUG] i18n keys: {list(i18n._strings.keys())}")
+
         # 执行 load 命令（使用默认场景名）
         load_cmd = LoadCommand(self.state)
         result = load_cmd.execute([])

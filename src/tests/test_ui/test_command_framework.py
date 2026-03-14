@@ -52,7 +52,7 @@ class TestCommandFramework(unittest.TestCase):
         # 获取所有注册的命令名
         cmd_names = self.registry.get_command_names()
 
-        print(f"[DEBUG] 发现的命令: {cmd_names}")  # 调试输出
+
 
         # 验证基础命令存在
         self.assertIn("help", cmd_names, "help命令未注册")

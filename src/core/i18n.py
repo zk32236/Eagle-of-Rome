@@ -18,12 +18,12 @@ class I18n:
             return
         base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         file_path = os.path.join(base_path, "data", "i18n", f"{language}.json")
-        print(f"[DEBUG] Loading i18n from: {file_path}")
+
         try:
             with open(file_path, 'r', encoding='utf-8-sig') as f:
                 self._strings = json.load(f)
                 self._current_language = language
-                print(f"[DEBUG] Loaded {len(self._strings)} keys")
+
         except FileNotFoundError:
             if language != "zh-CN":
                 self.load("zh-CN")
