@@ -757,35 +757,30 @@ class ForumCommand(Command):
             self._step = 1
             self._players = self._get_step_players()
             self._current_player_index = 0
-            print("\n--- 进入裁员环节 ---", file=sys.stderr)
-            sys.stderr.flush()
+            print("\n--- 进入裁员环节 ---", flush=True)
         elif self._step == 3:
             # 公示环节结束，进入交易市场
             self._step = 4
             self._players = self._get_step_players()
             self._current_player_index = 0
-            print("\n--- 进入私地交易环节 ---", file=sys.stderr)
-            sys.stderr.flush()
+            print("\n--- 进入私地交易环节 ---", flush=True)
         elif self._step in (1, 2, 4):
             next_player_id = self._next_player()
             if next_player_id:
                 player = self.state.get_player(next_player_id)
                 faction = self.state.get_faction(player.faction_id) if player else None
                 print(i18n.get("info_next_player", player=next_player_id, faction=faction.name if faction else "无"),
-                      file=sys.stderr)
-                sys.stderr.flush()
+                      flush=True)
             else:
                 self._step += 1
                 self._players = self._get_step_players()
                 self._current_player_index = 0
                 if self._step == 2:
-                    print("\n--- 进入市场环节 ---", file=sys.stderr)
+                    print("\n--- 进入市场环节 ---", flush=True)
                 elif self._step == 3:
-                    print("\n--- 进入公示环节 ---", file=sys.stderr)
+                    print("\n--- 进入公示环节 ---", flush=True)
                 elif self._step == 5:
-                    print("\n--- 广场阶段完成 ---", file=sys.stderr)
-                sys.stderr.flush()
-        sys.stderr.flush()
+                    print("\n--- 广场阶段完成 ---", flush=True)
         return True
 
     def _do_resolution(self):
@@ -799,11 +794,9 @@ class ForumCommand(Command):
     # ==================== 步骤处理函数 ====================
 
     def _handle_step_0(self):
-        """处理公告环节"""
         self._print_ui_03_0()
         while True:
-            print("\n> 请输入操作(ANY): ", file=sys.stderr, end="")
-            sys.stderr.flush()
+            print("\n> 请输入操作(ANY): ", end="", flush=True)  # 使用 stdout 并立即刷新
             cmd_input = input("").strip()
             if not cmd_input:
                 continue
@@ -829,8 +822,7 @@ class ForumCommand(Command):
         self._print_ui_03_1(player_id, player.faction_id)
 
         while True:
-            print(f"\n> 请输入操作(PLAYER {player_id}): ", file=sys.stderr, end="")
-            sys.stderr.flush()
+            print(f"\n> 请输入操作(PLAYER {player_id}): ", end="", flush=True)
             cmd_input = input("").strip()
             if not cmd_input:
                 continue
@@ -862,8 +854,7 @@ class ForumCommand(Command):
         self._print_ui_03_2(player_id, player.faction_id)
 
         while True:
-            print(f"\n> 请输入操作(PLAYER {player_id}): ", file=sys.stderr, end="")
-            sys.stderr.flush()
+            print("\n> 请输入操作(ANY): ", end="", flush=True)  # 使用 stdout 并立即刷新
             cmd_input = input("").strip()
             if not cmd_input:
                 continue
@@ -913,6 +904,27 @@ class ForumCommand(Command):
                 print(i18n.get("error_unknown_command"), file=sys.stderr)
                 sys.stderr.flush()
 
+    def _handle_step_3(self):
+        """公示环节：显示结果后等待玩家输入next"""
+        if not self._resolution_done:
+            self._do_resolution()
+            self._resolution_done = True
+
+        while True:
+            print("\n🔧 本阶段可操作(ANY):", flush=True)
+            print("   1. next/n → 进入私地交易环节", flush=True)
+            print("\n> 请输入操作(ANY): ", end="", flush=True)
+            cmd_input = input("").strip()
+            if not cmd_input:
+                continue
+            parts = cmd_input.split()
+            cmd = parts[0].lower()
+            if cmd in ("next", "n"):
+                self._handle_next([])
+                break
+            else:
+                print(i18n.get("error_unknown_command"), flush=True)
+
     def _handle_step_4(self):
         """处理交易市场环节"""
         has_quaestor = self._has_quaestor()
@@ -921,8 +933,7 @@ class ForumCommand(Command):
             # 无财务官：打印界面，然后等待玩家输入next
             self._print_ui_03_4(None, None)
             while True:
-                print("\n> 请输入操作(ANY): ", file=sys.stderr, end="")
-                sys.stderr.flush()
+                print("\n> 请输入操作(ANY): ", end="", flush=True)
                 cmd_input = input("").strip()
                 if not cmd_input:
                     continue
@@ -932,8 +943,7 @@ class ForumCommand(Command):
                     self._handle_next([])
                     break
                 else:
-                    print(i18n.get("error_unknown_command"), file=sys.stderr)
-                    sys.stderr.flush()
+                    print(i18n.get("error_unknown_command"), flush=True)
             return
 
         # 有财务官：正常流程
@@ -949,8 +959,7 @@ class ForumCommand(Command):
         self._print_ui_03_4(player_id, player.faction_id)
 
         while True:
-            print(f"\n> 请输入操作(QUAESTOR {player_id}): ", file=sys.stderr, end="")
-            sys.stderr.flush()
+            print(f"\n> 请输入操作(QUAESTOR {player_id}): ", end="", flush=True)
             cmd_input = input("").strip()
             if not cmd_input:
                 continue
@@ -964,8 +973,7 @@ class ForumCommand(Command):
             elif cmd == "transact":
                 self._handle_transact(args)
             else:
-                print(i18n.get("error_unknown_command"), file=sys.stderr)
-                sys.stderr.flush()
+                print(i18n.get("error_unknown_command"), flush=True)
 
     # ==================== 核心执行函数 ====================
 

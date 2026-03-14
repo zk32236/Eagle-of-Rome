@@ -11,8 +11,9 @@ def retire_figure(state: GameState, player_id: str, figure_id: int) -> dict:
     淘汰人物：从派系中移除，加入广场。
     权限：当前玩家，且人物属于该玩家派系。
     """
-    if not state.is_current_player(player_id):
-        return api_response(False, i18n.get("error_not_your_turn"))
+    if not state.config.get("testing.bypass_player_check", False):
+        if not state.is_current_player(player_id):
+            return api_response(False, i18n.get("error_not_your_turn"))
 
     player = state.get_player(player_id)
     if not player:
@@ -56,8 +57,9 @@ def recruit_figure(state: GameState, player_id: str, figure_id: int, amount: int
     """
     招募出价：记录出价，等待公示结算。
     """
-    if not state.is_current_player(player_id):
-        return api_response(False, i18n.get("error_not_your_turn"))
+    if not state.config.get("testing.bypass_player_check", False):
+        if not state.is_current_player(player_id):
+            return api_response(False, i18n.get("error_not_your_turn"))
 
     player = state.get_player(player_id)
     if not player:
@@ -82,8 +84,9 @@ def place_bid(state: GameState, player_id: str, contract_id: int, amount: int) -
     """
     合同竞标：记录出价。
     """
-    if not state.is_current_player(player_id):
-        return api_response(False, i18n.get("error_not_your_turn"))
+    if not state.config.get("testing.bypass_player_check", False):
+        if not state.is_current_player(player_id):
+            return api_response(False, i18n.get("error_not_your_turn"))
 
     player = state.get_player(player_id)
     if not player:
@@ -109,8 +112,9 @@ def buy_land(state: GameState, player_id: str, amount: int) -> dict:
     """
     认购公地：记录认购。
     """
-    if not state.is_current_player(player_id):
-        return api_response(False, i18n.get("error_not_your_turn"))
+    if not state.config.get("testing.bypass_player_check", False):
+        if not state.is_current_player(player_id):
+            return api_response(False, i18n.get("error_not_your_turn"))
 
     player = state.get_player(player_id)
     if not player:
@@ -130,8 +134,9 @@ def vote_triumph(state: GameState, player_id: str, vote: bool) -> dict:
     """
     凯旋投票：记录投票（True=支持，False=反对）。
     """
-    if not state.is_current_player(player_id):
-        return api_response(False, i18n.get("error_not_your_turn"))
+    if not state.config.get("testing.bypass_player_check", False):
+        if not state.is_current_player(player_id):
+            return api_response(False, i18n.get("error_not_your_turn"))
 
     player = state.get_player(player_id)
     if not player:
@@ -147,8 +152,9 @@ def transact_land(state: GameState, player_id: str, seller_id: int, buyer_id: in
     """
     土地交易：记录交易。
     """
-    if not state.is_current_player(player_id):
-        return api_response(False, i18n.get("error_not_your_turn"))
+    if not state.config.get("testing.bypass_player_check", False):
+        if not state.is_current_player(player_id):
+            return api_response(False, i18n.get("error_not_your_turn"))
 
     # 检查买卖双方人物是否存在
     seller = state.get_member(seller_id)

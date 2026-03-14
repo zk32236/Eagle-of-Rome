@@ -120,19 +120,15 @@ class DebugCLI:
             print(preview)
             print()  # 空行分隔预览和阶段输出
 
-
         sys.stdout.flush()
         result = game_api.execute_phase(self.state, phase_name, player.player_id)
 
-        sys.stdout.flush()
-
-
-        if result["success"] and result["message"]:
-            print(result["message"])
-        elif not result["success"]:
+        # 阶段执行失败时打印错误信息（可能已实时输出，但保留作为兜底）
+        if not result["success"]:
             print(i18n.get("error_phase_exec_failed", msg=result["message"]))
             return False
 
+        # 进度条仍由 CLI 负责
         executed_after = len(self.state.executed_phases)
         filled = "▓" * executed_after
         empty = "░" * (total - executed_after)
