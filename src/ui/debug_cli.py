@@ -53,6 +53,7 @@ class Tee:
 
     def write(self, message):
         self.stdout.write(message)
+        self.stdout.flush()   # 立即刷新终端
         self.file.write(message)
         self.file.flush()
 

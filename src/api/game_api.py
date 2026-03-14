@@ -1,12 +1,11 @@
 # src/api/game_api.py
 import sys
 import traceback
-from src.core.game_state import GameState
-from src.core.localization import TerminologyService
-from src.api import api_response
-from src.core.i18n import i18n
 import io
 from contextlib import redirect_stdout
+from src.core.game_state import GameState
+from src.api import api_response
+from src.core.i18n import i18n
 
 # 导入所有阶段命令类
 from src.ui.commands.phase_mortality import MortalityCommand
@@ -29,7 +28,7 @@ PHASE_COMMAND_MAP = {
 
 
 def execute_phase(state: GameState, phase_name: str, player_id: str, args: list = None) -> dict:
-
+    print(f"[DEBUG game_api] execute_phase called with phase={phase_name}, player={player_id}")
     sys.stdout.flush()
 
     if not state.is_current_player(player_id):
@@ -37,25 +36,43 @@ def execute_phase(state: GameState, phase_name: str, player_id: str, args: list 
 
     cmd_class = PHASE_COMMAND_MAP.get(phase_name)
     if not cmd_class:
-
+        print(f"[DEBUG game_api] ERROR: No command class for phase {phase_name}")
         sys.stdout.flush()
         return api_response(False, i18n.get("error_phase_invalid", phase=phase_name))
 
-
+    print(f"[DEBUG game_api] Found command class: {cmd_class.__name__}")
     sys.stdout.flush()
 
     cmd = cmd_class(state)
+
+    # 创建同时写入终端和 StringIO 的流
     f = io.StringIO()
-    with redirect_stdout(f):
-        try:
-            success = cmd.execute(args or [])
-        except Exception as e:
+    original_stdout = sys.stdout
 
-            traceback.print_exc(file=sys.stdout)
-            sys.stdout.flush()
-            return api_response(False, f"阶段执行异常: {e}", errors=[str(e)])
+    class TeeStdout:
+        def write(self, s):
+            original_stdout.write(s)
+            original_stdout.flush()   # 立即刷新终端
+            f.write(s)
+        def flush(self):
+            original_stdout.flush()
+            f.flush()
+
+    tee = TeeStdout()
+    sys.stdout = tee
+
+    try:
+        success = cmd.execute(args or [])
+    except Exception as e:
+        sys.stdout = original_stdout
+        print(f"[DEBUG game_api] Exception during execute: {e}")
+        traceback.print_exc(file=sys.stdout)
+        sys.stdout.flush()
+        return api_response(False, f"阶段执行异常: {e}", errors=[str(e)])
+
+    sys.stdout = original_stdout
     output = f.getvalue().strip()
-
+    print(f"[DEBUG game_api] Command output: {output[:100]}...")
     sys.stdout.flush()
     return api_response(success, output, data={"phase": phase_name})
 

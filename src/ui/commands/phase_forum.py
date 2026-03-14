@@ -110,7 +110,8 @@ class ForumCommand(Command):
             self.state.curia.add_figure(fig)
             new_figures.append(fig)
         if new_figures:
-            print(f"\n   📢 {len(new_figures)} new figure(s) arrive in the Rome:", file=sys.stderr)
+            print(f"\n   📢 {len(new_figures)} new figure(s) arrive in the Rome:")
+            sys.stdout.flush()
 
     def _generate_contracts(self):
         """生成新合同（包税、工程、舰队建造），仅对已征服行省生效，意大利本土只生成工程合同"""
@@ -242,11 +243,13 @@ class ForumCommand(Command):
             construction_contracts = self.state.naval_system.generate_construction_contracts(
                 self.state.turn.turn_number)
             if construction_contracts:
-                print(f"\n   ⚓ 检测到海战威胁，生成 {len(construction_contracts)} 个舰队建造合同", file=sys.stderr)
+                print(f"\n   ⚓ 检测到海战威胁，生成 {len(construction_contracts)} 个舰队建造合同")
+                sys.stdout.flush()
             replacement_contracts = self.state.naval_system.generate_replacement_contracts(
                 self.state.turn.turn_number)
             if replacement_contracts:
-                print(f"\n   ⚓ 罗马舰队不足，生成 {len(replacement_contracts)} 个补充舰队建造合同", file=sys.stderr)
+                print(f"\n   ⚓ 罗马舰队不足，生成 {len(replacement_contracts)} 个补充舰队建造合同")
+                sys.stdout.flush()
 
         return contracts  # 返回生成的合同列表（可选）
 
@@ -268,156 +271,154 @@ class ForumCommand(Command):
 
     def _print_ui_03_0(self):
         """打印 UI_03-0 公告环节"""
-        print("\n############################################################", file=sys.stderr)
-        print(f" UI_03-0 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 广场阶段 [3/7]", file=sys.stderr)
-        print("############################################################", file=sys.stderr)
-        print("--- 阶段预览---", file=sys.stderr)
-        print("广场阶段为玩家交互核心环节，包含人才招募、合同拍卖、土地交易三大核心玩法。", file=sys.stderr)
-        print("你可出价招募人物、竞标工程/舰队合同、手动促成土地交易，结果直接影响派系", file=sys.stderr)
-        print("实力、个人财富及后续元老院的议程和利益分配，请务必谨慎使用你的资源争取最", file=sys.stderr)
-        print("大的利益！", file=sys.stderr)
+        print("\n############################################################")
+        print(f" UI_03-0 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 广场阶段 [3/7]")
+        print("\n############################################################")
+        print("--- 阶段预览---")
+        print("广场阶段为玩家交互核心环节，包含人才招募、合同拍卖、土地交易三大核心玩法。")
+        print("你可出价招募人物、竞标工程/舰队合同、手动促成土地交易，结果直接影响派系")
+        print("实力、个人财富及后续元老院的议程和利益分配，请务必谨慎使用你的资源争取最")
+        print("大的利益！")
         # 安民告示
-        print("\n	====================== 安民告示 ====================", file=sys.stderr)
+        print("\n	====================== 安民告示 ====================")
 
         # 战争威胁
         war_system = self.state.get_war_system()
         if war_system:
             threats = war_system.get_threat_wars()
             if threats:
-                print("   ⚔️ 战争威胁：", file=sys.stderr)
+                print("   ⚔️ 战争威胁：")
                 for war in threats:
                     threat_emoji = "⚠️" if war.threat_level <= 2 else "⚡"
-                    print(f"   {threat_emoji} {war.name} 开始威胁罗马", file=sys.stderr)
+                    print(f"   {threat_emoji} {war.name} 开始威胁罗马")
                     if war.naval_required:
-                        print(f"      ⚓ 检测到海战威胁，生成 1 个舰队建造合同", file=sys.stderr)
+                        print(f"      ⚓ 检测到海战威胁，生成 1 个舰队建造合同")
             else:
-                print("   ⚔️ 当前无战争威胁", file=sys.stderr)
+                print("   ⚔️ 当前无战争威胁")
 
         # 行省民变
         provinces = self.state.get_all_provinces()
         revolting = [p for p in provinces if p.grievance == 3]
         if revolting:
-            print("   📊 民变威胁：", file=sys.stderr)
+            print("   📊 民变威胁：")
             for p in revolting:
-                print(f"      ⚠️ {p.name} 爆发起义！", file=sys.stderr)
+                print(f"      ⚠️ {p.name} 爆发起义！")
         else:
-            print("   📊 行省民变状态：", file=sys.stderr)
-            print("      所有行省安居乐业，无民变威胁。", file=sys.stderr)
+            print("   📊 行省民变状态：")
+            print("      所有行省安居乐业，无民变威胁。")
 
         # 凯旋信息
         triumph = self._get_war_triumph()
         if triumph:
             commander = triumph["commander"]
-            print(f"\n   🏆 {commander.get_formal_name()} 取得了 {triumph['war'].name} 的胜利正返回罗马。", file=sys.stderr)
-            print(f"      元老院正在讨论是否要授予他凯旋仪式。", file=sys.stderr)
+            print(f"\n   🏆 {commander.get_formal_name()} 取得了 {triumph['war'].name} 的胜利正返回罗马。")
+            print(f"      元老院正在讨论是否要授予他凯旋仪式。")
 
-        print("\n🔧 本阶段可操作(ANY)：", file=sys.stderr)
-        print("   1. next/n → 进入裁员环节", file=sys.stderr)
-        sys.stderr.flush()
+        print("\n🔧 本阶段可操作(ANY)：")
+        print("   1. next/n → 进入裁员环节")
+        sys.stdout.flush()
 
     def _print_ui_03_1(self, player_id: str, faction_id: str):
         """打印 UI_03-1 裁员环节"""
         player = self.state.get_player(player_id)
         faction = self.state.get_faction(faction_id)
         faction_name = faction.name if faction else "未知"
-        print("\n############################################################", file=sys.stderr)
-        print(f" UI_03-1 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 广场阶段 [3/7]", file=sys.stderr)
-        print("############################################################", file=sys.stderr)
-        print("\n--- 步骤说明 ---", file=sys.stderr)
-        print("新鲜血液是保持组织活力的重要源泉，裁汰掉对组织没有贡献的成员，才能腾出空", file=sys.stderr)
-        print("间招募更优秀的人才。请从你的成员列表中挑选需要淘汰的成员，让他们去广场上", file=sys.stderr)
-        print("自谋生路吧。", file=sys.stderr)
+        print("\n############################################################")
+        print(f" UI_03-1 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 广场阶段 [3/7]")
+        print("\n############################################################")
+        print("\n--- 步骤说明 ---")
+        print("新鲜血液是保持组织活力的重要源泉，裁汰掉对组织没有贡献的成员，才能腾出空")
+        print("间招募更优秀的人才。请从你的成员列表中挑选需要淘汰的成员，让他们去广场上")
+        print("自谋生路吧。")
 
         # 显示派系成员列表
         result = figure_api.get_figure_info(self.state)
         if result["success"]:
             members = [f for f in result["data"] if f["faction_id"] == faction_id]
             if members:
-                print("\n================================================================================", file=sys.stderr)
-                print(f"   👥 {faction_name} 存活派系人物列表", file=sys.stderr)
-                print("================================================================================", file=sys.stderr)
+                print("\n================================================================================")
+                print(f"   👥 {faction_name} 存活派系人物列表")
+                print("================================================================================")
                 for m in members:
                     status = "👑" if m["is_faction_leader"] else "🟢"
                     tier_emoji = {"nobile": "🏛️", "eques": "💰", "plebeian": "👤"}.get(m["class_tier"], "❓")
-                    print(f"{status}{tier_emoji} ID:{m['id']:<3} {m['name']:<25} 派系:{m['faction_id']:<12} 影响力:{m['influence']} 财富:{m['wealth']} 人气:{m['popularity']} 私地:{m['land_private']} 老兵:{m['veterans']} 官职:{m['office']}", file=sys.stderr)
+                    print(f"{status}{tier_emoji} ID:{m['id']:<3} {m['name']:<25} 派系:{m['faction_id']:<12} 影响力:{m['influence']} 财富:{m['wealth']} 人气:{m['popularity']} 私地:{m['land_private']} 老兵:{m['veterans']} 官职:{m['office']}")
 
-        print(f"\n🔧 本阶段可操作 (PLAYER {player_id} {faction_name})：", file=sys.stderr)
-        print("   1. investigate → 查询人物详情；", file=sys.stderr)
-        print("   2. retire → 驱逐不需要的派系成员；", file=sys.stderr)
-        print("   3. next/n → 下一个玩家；", file=sys.stderr)
-        sys.stderr.flush()
+        print(f"\n🔧 本阶段可操作 (PLAYER {player_id} {faction_name})：")
+        print("   1. investigate → 查询人物详情；")
+        print("   2. retire → 驱逐不需要的派系成员；")
+        print("   3. next/n → 下一个玩家；")
+        sys.stdout.flush()
 
     def _print_ui_03_2(self, player_id: str, faction_id: str):
         """打印 UI_03-2 市场环节"""
         player = self.state.get_player(player_id)
         faction = self.state.get_faction(faction_id)
         faction_name = faction.name if faction else "未知"
-        print("\n############################################################", file=sys.stderr)
-        print(f" UI_03-2 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 广场阶段 [3/7]", file=sys.stderr)
-        print("############################################################", file=sys.stderr)
-        print("\n--- 步骤说明 ---", file=sys.stderr)
-        print("罗马广场藏龙卧虎，物欲横流。是你利用金钱的力量扩张你的实力，招揽人才，竞标", file=sys.stderr)
-        print("合同，兼并土地，结交权贵的最佳场所。当然，这一切都是在罗马法律的统治下公平", file=sys.stderr)
-        print("竞争的结果。现在请你下注吧！", file=sys.stderr)
+        print("\n############################################################")
+        print(f" UI_03-2 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 广场阶段 [3/7]")
+        print("\n############################################################")
+        print("\n--- 步骤说明 ---")
+        print("罗马广场藏龙卧虎，物欲横流。是你利用金钱的力量扩张你的实力，招揽人才，竞标")
+        print("合同，兼并土地，结交权贵的最佳场所。当然，这一切都是在罗马法律的统治下公平")
+        print("竞争的结果。现在请你下注吧！")
 
         # 人才市场
-
-        print("\n====================== 人才市场 ====================", file=sys.stderr)
-        # 生成新人物、新合同
+        print("\n====================== 人才市场 ====================")
         curia = self.state.curia.get_all_available()
         if curia:
             for fig in curia:
                 tier_emoji = {"nobile": "🏛️", "eques": "💰", "plebeian": "👤"}.get(fig.class_tier.value, "❓")
-                print(f"      {tier_emoji} ID:{fig.id} {fig.get_formal_name()} ({fig.class_tier.value})(军略 {fig.martial}, 智略 {fig.intelligence}, 魅力 {fig.charisma}, 热诚 {fig.zeal})", file=sys.stderr)
+                print(f"      {tier_emoji} ID:{fig.id} {fig.get_formal_name()} ({fig.class_tier.value})(军略 {fig.martial}, 智略 {fig.intelligence}, 魅力 {fig.charisma}, 热诚 {fig.zeal})")
         else:
-            print("   📭 广场无人物", file=sys.stderr)
+            print("   📭 广场无人物")
 
         # 可竞标合同
-        print("\n====================== 交易市场 ====================", file=sys.stderr)
+        print("\n====================== 交易市场 ====================")
         contracts = self._get_available_contracts()
         if contracts:
             for c in contracts:
                 type_emoji = "📊" if c.contract_type == ContractType.TAX_FARMING else "🏗️"
-                print(f"      🔔 标的 {c.id} {type_emoji} {c.name} 预算 {c.base_cost}", file=sys.stderr)
+                print(f"      🔔 标的 {c.id} {type_emoji} {c.name} 预算 {c.base_cost}")
         else:
-            print("   📭 没有待竞标的预算合同", file=sys.stderr)
+            print("   📭 没有待竞标的预算合同")
 
         # 待决合同（仅显示）
         pending = [c for c in self.state.contracts if c.status == ContractStatus.PENDING]
         if pending:
-            print("\n   📋 Pending Contracts (等待元老院预算表决):", file=sys.stderr)
+            print("\n   📋 Pending Contracts (等待元老院预算表决):")
             for c in pending:
                 type_emoji = "📊" if c.contract_type == ContractType.TAX_FARMING else "🏗️"
                 if c.contract_type == ContractType.TAX_FARMING:
-                    print(f"      {type_emoji} ID:{c.id} {c.name}	预付:{c.base_cost} 预期利润:{c.expected_profit}", file=sys.stderr)
+                    print(f"      {type_emoji} ID:{c.id} {c.name}	预付:{c.base_cost} 预期利润:{c.expected_profit}")
                 else:
-                    print(f"      {type_emoji} ID:{c.id} {c.name}	预算:{c.base_cost}", file=sys.stderr)
+                    print(f"      {type_emoji} ID:{c.id} {c.name}	预算:{c.base_cost}")
 
         # 土地法案
         acts = self.state.get_pending_land_acts()
         if acts:
-            print("\n   🏞️ 执行土地法案：", file=sys.stderr)
+            print("\n   🏞️ 执行土地法案：")
             for act in acts:
                 if act['type'] == 'distribution':
-                    print(f"      ✅ 平民分地 {act['amount']} C 土地（占国家公地 {act['percent']*100:.1f}%），转入意大利私地，民怨重置。", file=sys.stderr)
+                    print(f"      ✅ 平民分地 {act['amount']} C 土地（占国家公地 {act['percent']*100:.1f}%），转入意大利私地，民怨重置。")
                 elif act['type'] == 'sale':
-                    print(f"      🏛️ 贵族买地：出售 {act['amount']} C 国家公地。", file=sys.stderr)
+                    print(f"      🏛️ 贵族买地：出售 {act['amount']} C 国家公地。")
 
         # 凯旋信息
         triumph = self._get_war_triumph()
         if triumph:
             commander = triumph["commander"]
-            print(f"\n   🏆 {commander.get_formal_name()} 的凯旋等待投票", file=sys.stderr)
+            print(f"\n   🏆 {commander.get_formal_name()} 的凯旋等待投票")
 
-        print(f"\n🔧 本阶段可操作(PLAYER {player_id} {faction_name})：", file=sys.stderr)
-        print("   1. investigate → 查看人才详情", file=sys.stderr)
-        print("   2. recruit <人物ID> <金额> → 招募新人", file=sys.stderr)
-        print("   3. bid <合同ID> <金额> → 竞标合同", file=sys.stderr)
-        print("   4. buy <数量> → 认购公地", file=sys.stderr)
-        print("   5. vote yes/no → 投票授予凯旋", file=sys.stderr)
-        print("   6. balance → 查询派系金库；", file=sys.stderr)
-        print("   7. next → 下一个玩家；", file=sys.stderr)
-        sys.stderr.flush()
+        print(f"\n🔧 本阶段可操作(PLAYER {player_id} {faction_name})：")
+        print("   1. investigate → 查看人才详情")
+        print("   2. recruit <人物ID> <金额> → 招募新人")
+        print("   3. bid <合同ID> <金额> → 竞标合同")
+        print("   4. buy <数量> → 认购公地")
+        print("   5. vote yes/no → 投票授予凯旋")
+        print("   6. balance → 查询派系金库；")
+        print("   7. next → 下一个玩家；")
+        sys.stdout.flush()
 
     def _print_ui_03_4(self, player_id: Optional[str], faction_id: Optional[str]):
         """打印 UI_03-4 交易市场环节（财务官）"""
@@ -427,31 +428,32 @@ class ForumCommand(Command):
             faction = self.state.get_faction(faction_id)
             faction_name = faction.name if faction else "未知"
 
-        print("\n############################################################", file=sys.stderr)
+        print("\n############################################################")
         print(f" UI_03-4 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 广场阶段 [3/7]",
-              file=sys.stderr)
-        print("############################################################", file=sys.stderr)
-        print("\n--- 步骤说明 ---", file=sys.stderr)
-        print("贵族有土地，骑士有金钱，土地是地位的象征，而金钱是权力的保证，没有比土地", file=sys.stderr)
-        print("交易更适合罗马城里权钱交易的游戏了。所有的土地交易都必须通过政府注册，因此", file=sys.stderr)
-        print("这将成为有据可查的反腐利器！", file=sys.stderr)
+              )
+        print("\n############################################################")
+        print("\n--- 步骤说明 ---")
+        print("贵族有土地，骑士有金钱，土地是地位的象征，而金钱是权力的保证，没有比土地")
+        print("交易更适合罗马城里权钱交易的游戏了。所有的土地交易都必须通过政府注册，因此")
+        print("这将成为有据可查的反腐利器！")
 
         if not self._has_quaestor():
-            print("\n⚠️ 罗马城里没有财务官，无法进行土地交易。", file=sys.stderr)
-            print("\n🔧 本阶段可操作(ANY)：", file=sys.stderr)
-            print("   1. next/n → 下一阶段；", file=sys.stderr)
+            print("\n⚠️ 罗马城里没有财务官，无法进行土地交易。")
+            print("\n🔧 本阶段可操作(ANY)：")
+            print("   1. next/n → 下一阶段；")
         else:
-            print(f"\n🔧 本阶段可操作(QUAESTOR {player_id} {faction_name})：", file=sys.stderr)
-            print("   1. transact <卖家ID> <买家ID> <土地数量> <价格> → 交易土地", file=sys.stderr)
-            print("   2. next → 下一阶段；", file=sys.stderr)
-        sys.stderr.flush()
+            print(f"\n🔧 本阶段可操作(QUAESTOR {player_id} {faction_name})：")
+            print("   1. transact <卖家ID> <买家ID> <土地数量> <价格> → 交易土地")
+            print("   2. next → 下一阶段；")
+        sys.stdout.flush()
 
     def _print_ui_03_3(self):
         """打印 UI_03-3 公示环节"""
-        print("\n############################################################", file=sys.stderr)
-        print(f" UI_03-3 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 广场阶段 [3/7]", file=sys.stderr)
-        print("############################################################", file=sys.stderr)
-        print("\n喧嚣散去，尘埃落下。", file=sys.stderr)
+        print("\n############################################################")
+        print(f" UI_03-3 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 广场阶段 [3/7]")
+        print("\n############################################################")
+        print("\n喧嚣散去，尘埃落下。")
+        sys.stdout.flush()
 
     # ==================== 命令处理函数 ====================
 
@@ -472,7 +474,8 @@ class ForumCommand(Command):
             sys.stderr.flush()
             return False
         result = forum_api.retire_figure(self.state, player_id, fig_id)
-        print(result["message"], file=sys.stderr)
+        print(result["message"])
+        sys.stdout.flush()
         sys.stderr.flush()
         return result["success"]
 
@@ -506,7 +509,7 @@ class ForumCommand(Command):
         if not player:
             return False
 
-        faction = self.state.get_faction(player.faction_id)  # <--- 必须在此处定义 faction
+        faction = self.state.get_faction(player.faction_id)
         if not faction:
             return False
 
@@ -530,7 +533,8 @@ class ForumCommand(Command):
         # =================================
 
         result = forum_api.recruit_figure(self.state, player_id, fig_id, amount)
-        print(result["message"], file=sys.stderr)
+        print(result["message"])
+        sys.stdout.flush()
         sys.stderr.flush()
         return result["success"]
 
@@ -562,7 +566,8 @@ class ForumCommand(Command):
             sys.stderr.flush()
             return False
         result = forum_api.place_bid(self.state, player_id, contract_id, amount)
-        print(result["message"], file=sys.stderr)
+        print(result["message"])
+        sys.stdout.flush()
         sys.stderr.flush()
         return result["success"]
 
@@ -588,7 +593,8 @@ class ForumCommand(Command):
             sys.stderr.flush()
             return False
         result = forum_api.buy_land(self.state, player_id, amount)
-        print(result["message"], file=sys.stderr)
+        print(result["message"])
+        sys.stdout.flush()
         sys.stderr.flush()
         return result["success"]
 
@@ -614,7 +620,8 @@ class ForumCommand(Command):
             sys.stderr.flush()
             return False
         result = forum_api.vote_triumph(self.state, player_id, vote)
-        print(result["message"], file=sys.stderr)
+        print(result["message"])
+        sys.stdout.flush()
         sys.stderr.flush()
         return result["success"]
 
@@ -638,7 +645,8 @@ class ForumCommand(Command):
             sys.stderr.flush()
             return False
         result = forum_api.transact_land(self.state, player_id, seller, buyer, land, price)
-        print(result["message"], file=sys.stderr)
+        print(result["message"])
+        sys.stdout.flush()
         sys.stderr.flush()
         return result["success"]
 
@@ -676,18 +684,17 @@ class ForumCommand(Command):
 
             # 打印派系成员列表
             if faction_members:
-                print("\n================================================================================",
-                      file=sys.stderr)
-                print(f"   👥 {faction.name} 存活派系人物列表", file=sys.stderr)
-                print("================================================================================",
-                      file=sys.stderr)
+                print("\n================================================================================")
+                print(f"   👥 {faction.name} 存活派系人物列表")
+                print("================================================================================")
                 for m in faction_members:
                     status = "👑" if m.get("is_faction_leader", False) else "🟢"
                     tier_emoji = {"nobile": "🏛️", "eques": "💰", "plebeian": "👤"}.get(m["class_tier"], "❓")
                     office_display = m["office"] if m.get("office") and not m["office"].startswith("ex-") else "无"
                     print(
                         f"{status}{tier_emoji} ID:{m['id']:<3} {m['name']:<25} 派系:{m['faction_id']:<12} 影响力:{m['influence']} 财富:{m['wealth']} 人气:{m['popularity']} 私地:{m['land_private']} 老兵:{m['veterans']} 官职:{office_display}",
-                        file=sys.stderr)
+                        )
+                sys.stdout.flush()
             else:
                 print(i18n.get("no_members_in_faction", faction=faction.name), file=sys.stderr)
 
@@ -695,18 +702,17 @@ class ForumCommand(Command):
             if self._step == 2:
                 curia_figures = self.state.curia.get_all_available()
                 if curia_figures:
-                    print("\n================================================================================",
-                          file=sys.stderr)
-                    print("   📢 广场可招募人物列表", file=sys.stderr)
-                    print("================================================================================",
-                          file=sys.stderr)
+                    print("\n================================================================================")
+                    print("   📢 广场可招募人物列表")
+                    print("================================================================================")
                     for fig in curia_figures:
                         tier_emoji = {"nobile": "🏛️", "eques": "💰", "plebeian": "👤"}.get(fig.class_tier.value, "❓")
                         print(
                             f"   {tier_emoji} ID:{fig.id} {fig.get_formal_name()} ({fig.class_tier.value})(军略 {fig.martial}, 智略 {fig.intelligence}, 魅力 {fig.charisma}, 热诚 {fig.zeal})",
-                            file=sys.stderr)
+                            )
+                    sys.stdout.flush()
                 else:
-                    print("\n   📭 广场无人物", file=sys.stderr)
+                    print("\n   📭 广场无人物")
 
             sys.stderr.flush()
             return True
@@ -719,7 +725,8 @@ class ForumCommand(Command):
                 sys.stderr.flush()
                 return False
             result = figure_api.get_figure_info(self.state, fig_id)
-            print(result["message"], file=sys.stderr)
+            print(result["message"])
+            sys.stdout.flush()
             sys.stderr.flush()
             return result["success"]
 
@@ -740,7 +747,8 @@ class ForumCommand(Command):
         faction = self.state.get_faction(player.faction_id)
         if not faction:
             return False
-        print(i18n.get("info_balance", faction=faction.name, treasury=faction.treasury), file=sys.stderr)
+        print(i18n.get("info_balance", faction=faction.name, treasury=faction.treasury))
+        sys.stdout.flush()
         sys.stderr.flush()
         return True
 
@@ -784,7 +792,8 @@ class ForumCommand(Command):
         """执行公示结算（只打印结果，不改变步骤）"""
         result = forum_api.resolve_forum(self.state)
         self._print_ui_03_3()
-        print(result["message"], file=sys.stderr)
+        print(result["message"])
+        sys.stdout.flush()
         sys.stderr.flush()
 
     # ==================== 步骤处理函数 ====================
@@ -958,7 +967,6 @@ class ForumCommand(Command):
                 print(i18n.get("error_unknown_command"), file=sys.stderr)
                 sys.stderr.flush()
 
-
     # ==================== 核心执行函数 ====================
 
     def execute(self, args: List[str]) -> bool:
@@ -1019,20 +1027,16 @@ class ForumCommand(Command):
             return None
         self._current_player_index += 1
         if self._current_player_index >= len(self._players):
-
             sys.stderr.flush()
             return None
         next_id = self._players[self._current_player_index]
-
         sys.stderr.flush()
         return next_id
 
     def _get_current_player_id(self) -> Optional[str]:
         if 0 <= self._current_player_index < len(self._players):
             pid = self._players[self._current_player_index]
-
             sys.stderr.flush()
             return pid
-
         sys.stderr.flush()
         return None
