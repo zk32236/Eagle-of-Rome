@@ -298,30 +298,35 @@ def resolve_forum(state: GameState) -> dict:
         else:
             results.append("⚠️ 无有效投票")
 
-    # 5. 土地交易结算
-    if pending["land_trades"]:
-        land_price = state.get_economic_rule("land_price_per_unit", 10)
-        for seller_id, buyer_id, land, price in pending["land_trades"]:
-            seller = state.get_member(seller_id)
-            buyer = state.get_member(buyer_id)
-            if not seller or not buyer:
-                results.append(f"⚠️ 交易双方不存在")
-                continue
-            if seller.land_private < land:
-                results.append(f"⚠️ {seller.get_formal_name()} 土地不足")
-                continue
-            if buyer.wealth < price:
-                results.append(f"⚠️ {buyer.get_formal_name()} 财富不足")
-                continue
-            # 执行交易
-            seller._land_private -= land
-            buyer._land_private += land
-            seller.wealth += price
-            buyer.wealth -= price
-            results.append(f"💱 {seller.get_formal_name()} 出售 {land} C 土地给 {buyer.get_formal_name()}，价格 {price}")
-
     # 清除临时数据
     state.clear_forum_pending()
 
     message = "\n".join(results) if results else i18n.get("info_no_forum_actions")
+    return api_response(True, message, data={"results": results})
+
+def resolve_land_trades(state: GameState) -> dict:
+    """
+    结算土地交易（仅在交易市场环节调用），返回交易结果。
+    """
+    pending = state.get_forum_pending()
+    results = []
+
+    if pending["land_trades"]:
+        from src.core.service.land_trading_service import LandTradingService
+        service = LandTradingService(state)
+        for seller_id, buyer_id, land, price in pending["land_trades"]:
+            if land > 0:
+                price_per_unit = price // land
+                success, msg = service.execute_trade(seller_id, buyer_id, land, price_per_unit)
+                if success:
+                    results.append(f"💱 {msg}")
+                else:
+                    results.append(f"⚠️ 土地交易失败：{msg}")
+            else:
+                results.append(f"⚠️ 土地数量无效")
+
+    # 清除已处理的土地交易记录
+    state._forum_pending["land_trades"] = []
+
+    message = "\n".join(results) if results else ""
     return api_response(True, message, data={"results": results})

@@ -29,6 +29,30 @@ def state_with_players():
     state.turn.turn_number = 1
     state.turn.year = -282
 
+    # 添加 _forum_pending 属性
+    state._forum_pending = {
+        "retirements": [],
+        "recruitment_bids": [],
+        "contract_bids": [],
+        "land_purchases": [],
+        "triumph_votes": [],
+        "land_trades": []
+    }
+
+    # 模拟 add_forum_action 方法，使其修改 _forum_pending
+    def add_forum_action(category, data):
+        state._forum_pending[category].append(data)
+    state.add_forum_action.side_effect = add_forum_action
+
+    # 模拟 get_forum_pending 返回副本
+    state.get_forum_pending.side_effect = lambda: state._forum_pending.copy()
+
+    # 模拟 clear_forum_pending
+    def clear_forum_pending():
+        for key in state._forum_pending:
+            state._forum_pending[key] = []
+    state.clear_forum_pending.side_effect = clear_forum_pending
+
     # 创建玩家对象
     player1 = MagicMock()
     player1.player_id = "p1"
@@ -52,13 +76,19 @@ def state_with_players():
     faction1 = Faction(id="faction1", name="Faction1", treasury=100)
     faction2 = Faction(id="faction2", name="Faction2", treasury=100)
     faction3 = Faction(id="faction3", name="Faction3", treasury=100)
-    state.get_faction.side_effect = lambda fid: {"faction1": faction1, "faction2": faction2, "faction3": faction3}.get(fid)
+    state.get_faction.side_effect = lambda fid: {"faction1": faction1, "faction2": faction2, "faction3": faction3}.get(
+        fid)
     state.factions = {"faction1": faction1, "faction2": faction2, "faction3": faction3}
 
-    # 派系成员
-    faction1.get_members = MagicMock(return_value=[])
-    faction2.get_members = MagicMock(return_value=[])
-    faction3.get_members = MagicMock(return_value=[])
+    # 新增：为每个派系设置成员并指定影响力
+    def create_member(influence):
+        member = MagicMock(spec=Figure)
+        member.influence = influence
+        return member
+
+    faction1.get_members = MagicMock(return_value=[create_member(50)])
+    faction2.get_members = MagicMock(return_value=[create_member(30)])
+    faction3.get_members = MagicMock(return_value=[create_member(20)])
 
     # 模拟意大利行省
     italy = MagicMock()
@@ -80,10 +110,6 @@ def state_with_players():
     state._turn_order = ["p1", "p2", "p3"]  # 回合顺序
     state.get_current_player.return_value = player1
     state.mark_phase_executed = MagicMock()
-    state.add_forum_action = MagicMock()
-    state.get_forum_pending.return_value = {"recruitment_bids": [], "contract_bids": [], "land_purchases": [],
-                                             "triumph_votes": [], "land_trades": []}
-    state.clear_forum_pending = MagicMock()
 
     # 添加战争系统模拟
     war_system = MagicMock(spec=WarSystem)
@@ -149,7 +175,7 @@ def test_auto_mode_full_auto(state_with_players, mock_deciders):
     assert retirement.decide_whom_to_retire.call_count == 3
     assert recruitment.decide_bids.call_count == 3
     assert bid.decide_tax_bid.call_count == 0
-    assert land_trade.decide_trade.call_count == 3
+    assert land_trade.decide_trade.call_count == 0   # 改为0，因为无财务官
     assert triumph.decide_triumph.call_count == 0
     state.mark_phase_executed.assert_called_once_with("forum")
 
@@ -176,6 +202,7 @@ def test_auto_mode_with_actions(state_with_players, mock_deciders):
     knight.id = 201
     knight.class_tier = ClassTier.EQUES
     knight.is_dead = False
+    knight.influence = 0  # 添加此行，确保影响力为整数
     faction = state.get_faction("faction1")
     faction.get_members.return_value = [knight]
 
@@ -218,6 +245,10 @@ def test_auto_mode_with_actions(state_with_players, mock_deciders):
                        land_trade_decider=land_trade,
                        triumph_decider=triumph)
     cmd._get_war_triumph = MagicMock(return_value={"war": war, "commander": commander})
+
+    # 新增：模拟财务官
+    cmd._has_quaestor = MagicMock(return_value=True)
+    cmd._get_quaestor_players = MagicMock(return_value=["p1"])
 
     with patch('src.api.forum_api.retire_figure') as mock_retire:
         result = cmd.execute([])

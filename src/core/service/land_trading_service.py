@@ -57,7 +57,7 @@ class LandTradingService:
         """获取派系关系（预留接口，MVP简化）"""
         return "neutral"
 
-    def execute_trade(self, seller_id: int, buyer_id: int, amount: int) -> Tuple[bool, str]:
+    def execute_trade(self, seller_id: int, buyer_id: int, amount: int, price_per_unit: Optional[int] = None) -> Tuple[bool, str]:
         terms = TerminologyService.get()
 
         try:
@@ -82,7 +82,8 @@ class LandTradingService:
                 return False, f"{seller.name} has insufficient land ({seller.land_private} < {amount})"
 
             # 计算价格
-            price_per_unit = self.calculate_land_price(seller, buyer)
+            if price_per_unit is None:
+                price_per_unit = self.calculate_land_price(seller, buyer)
             total_cost = amount * price_per_unit
 
             if buyer.wealth < total_cost:

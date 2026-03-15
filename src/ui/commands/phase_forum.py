@@ -38,7 +38,8 @@ class ForumCommand(Command):
                  land_trade_decider=None,
                  triumph_decider=None):
         super().__init__(state)
-        self._step = 0  # 0: 公告, 1: 裁员, 2: 市场, 3: 公示, 4: 交易市场, 5: 完成
+        # 步骤顺序：0: 公告, 1: 裁员, 2: 市场, 3: 交易市场, 4: 公示, 5: 完成
+        self._step = 0
         self._current_player_index = 0
         self._players = []
         self.terms = TerminologyService.get()
@@ -79,6 +80,54 @@ class ForumCommand(Command):
             self.triumph_decider = AutoTriumphDecider()
 
     # ==================== 辅助函数 ====================
+
+    def _apply_market_decisions(self, player_id: str, faction):
+        """为指定派系应用市场环节的 AI 决策（招募、竞标、凯旋投票）"""
+        # 1. 招募
+        try:
+            available_figures = self.state.curia.get_all_available()
+            vacancies = faction.get_vacancies(self.state, self.state.get_economic_rule("faction_member_limit", 6))
+            bids = self.recruitment_decider.decide_bids(faction, available_figures, vacancies, self.state)
+            for fig_id, amount in bids.items():
+                self.state.add_forum_action("recruitment_bids", (faction.id, fig_id, amount))
+        except Exception as e:
+            print(f"!!! 招募决策异常: {e}", file=sys.stderr)
+
+        # 2. 合同竞标
+        try:
+            budgeted_contracts = self._get_available_contracts()
+            for contract in budgeted_contracts:
+                knights = [m for m in faction.get_members(self.state)
+                           if m.class_tier == ClassTier.EQUES and not m.is_dead]
+                if not knights:
+                    continue
+                if contract.contract_type == ContractType.TAX_FARMING:
+                    result = self.bid_decider.decide_tax_bid(contract, knights, self.state)
+                    if result:
+                        knight, amount, tax_rate = result
+                        self.state.add_forum_action("contract_bids", (contract.id, faction.id, amount))
+                elif contract.contract_type == ContractType.PUBLIC_WORKS:
+                    if getattr(contract, '_is_fleet_construction', False):
+                        result = self.bid_decider.decide_fleet_bid(contract, knights, self.state)
+                        if result:
+                            knight, amount, r = result
+                            self.state.add_forum_action("contract_bids", (contract.id, faction.id, amount))
+                    else:
+                        result = self.bid_decider.decide_works_bid(contract, knights, self.state)
+                        if result:
+                            knight, amount, r, construction, warranty = result
+                            self.state.add_forum_action("contract_bids", (contract.id, faction.id, amount))
+        except Exception as e:
+            print(f"!!! 竞标决策异常: {e}", file=sys.stderr)
+
+        # 3. 凯旋投票
+        try:
+            triumph = self._get_war_triumph()
+            if triumph:
+                vote = self.triumph_decider.decide_triumph(triumph["war"], triumph["commander"], self.state)
+                self.state.add_forum_action("triumph_votes", (faction.id, vote))
+        except Exception as e:
+            print(f"!!! 凯旋投票异常: {e}", file=sys.stderr)
 
     def _get_quaestor_players(self) -> List[str]:
         """返回所有担任财务官的人物所属的玩家ID列表（去重）"""
@@ -491,8 +540,6 @@ class ForumCommand(Command):
 
         # 凯旋审批
         self._process_triumphs()
-
-        # 注意：舰队建造合同已在 _generate_contracts 中生成并打印提示，此处不再重复调用
 
         print("\n🔧 本阶段可操作(ANY)：")
         print("   1. next/n → 进入裁员环节")
@@ -918,12 +965,7 @@ class ForumCommand(Command):
             self._players = self._get_step_players()
             self._current_player_index = 0
             print("\n--- 进入裁员环节 ---", flush=True)
-        elif self._step == 3:
-            self._step = 4
-            self._players = self._get_step_players()
-            self._current_player_index = 0
-            print("\n--- 进入私地交易环节 ---", flush=True)
-        elif self._step in (1, 2, 4):
+        elif self._step in (1, 2, 3):
             next_player_id = self._next_player()
             if next_player_id:
                 player = self.state.get_player(next_player_id)
@@ -938,8 +980,15 @@ class ForumCommand(Command):
                     print("\n--- 进入市场环节 ---", flush=True)
                 elif self._step == 3:
                     print("\n--- 进入公示环节 ---", flush=True)
+                elif self._step == 4:
+                    print("\n--- 进入私地交易环节 ---", flush=True)
                 elif self._step == 5:
                     print("\n--- 广场阶段完成 ---", flush=True)
+        elif self._step == 4:
+            self._step = 5
+            self._players = []
+            self._current_player_index = 0
+            print("\n--- 广场阶段完成 ---", flush=True)
         return True
 
     def _do_resolution(self):
@@ -976,7 +1025,7 @@ class ForumCommand(Command):
         self.state.add_national_public_land(-amount)
         italy = self.state.get_province(0)
         if italy:
-            italy._land_private += amount
+            italy.update_land_type(0, amount)  # 修改为调用 update_land_type
             italy._turns_since_last_land_distribution = 0
             italy.set_grievance(0)
         print(f"      ✅ 平民分地 {amount} C 土地（占国家公地 {act['percent'] * 100:.1f}%），转入意大利私地，民怨重置。")
@@ -999,16 +1048,18 @@ class ForumCommand(Command):
                 continue
             buy = random.randint(1, min(remaining, max_buy))
             cost = buy * land_price
-            fig.wealth -= cost
-            fig._land_private += buy
-            fig.update_influence()
-            remaining -= buy
-            print(f"         {fig.name} 购买 {buy} C，花费 {cost}，剩余土地 {remaining} C")
+            # 修改为调用 buy_land 方法
+            if fig.buy_land(buy, land_price):
+                remaining -= buy
+                print(f"         {fig.name} 购买 {buy} C，花费 {cost}，剩余土地 {remaining} C")
+            else:
+                print(f"         {fig.name} 购买失败（财富不足？）")
         sold = amount - remaining
         if sold > 0:
             self.state.add_national_public_land(-sold)
             self.state.add_treasury(sold * land_price)
-            print(f"      共售出 {sold} C，国库 +{sold * land_price} Talents，国家公地剩余 {self.state.get_national_public_land()} C")
+            print(
+                f"      共售出 {sold} C，国库 +{sold * land_price} Talents，国家公地剩余 {self.state.get_national_public_land()} C")
         else:
             print(f"      无土地售出。")
 
@@ -1046,12 +1097,15 @@ class ForumCommand(Command):
             return
 
         if self._auto_mode:
-            # 自动模式：走 AI 分支，但先打印界面
             self._print_ui_03_1(player_id, player.faction_id)
             faction = self.state.get_faction(player.faction_id)
-            fig_id = self.retirement_decider.decide_whom_to_retire(faction)
-            if fig_id is not None:
-                forum_api.retire_figure(self.state, player_id, fig_id)
+            try:
+                fig_id = self.retirement_decider.decide_whom_to_retire(faction)
+                if fig_id is not None:
+                    forum_api.retire_figure(self.state, player_id, fig_id)
+            except Exception as e:
+                print(f"!!! 裁员环节自动决策异常: {e}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
             self._handle_next([])
             return
 
@@ -1080,15 +1134,19 @@ class ForumCommand(Command):
                     sys.stderr.flush()
         else:
             # AI 分支（正常模式下的AI玩家）
-            self._print_ui_03_1(player_id, player.faction_id)  # AI 也打印界面
+            self._print_ui_03_1(player_id, player.faction_id)
             faction = self.state.get_faction(player.faction_id)
-            fig_id = self.retirement_decider.decide_whom_to_retire(faction)
-            if fig_id is not None:
-                forum_api.retire_figure(self.state, player_id, fig_id)
+            try:
+                fig_id = self.retirement_decider.decide_whom_to_retire(faction)
+                if fig_id is not None:
+                    forum_api.retire_figure(self.state, player_id, fig_id)
+            except Exception as e:
+                print(f"!!! 裁员环节 AI 决策异常: {e}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
             self._handle_next([])
 
     def _handle_step_2(self):
-        """处理市场环节"""
+        """处理市场环节（招募、竞标、凯旋投票）"""
         player_id = self._get_current_player_id()
         if not player_id:
             self._step += 1
@@ -1099,55 +1157,14 @@ class ForumCommand(Command):
             return
 
         if self._auto_mode:
-            # 自动模式：走 AI 分支，但先打印界面
             self._print_ui_03_2(player_id, player.faction_id)
             faction = self.state.get_faction(player.faction_id)
-            available_figures = self.state.curia.get_all_available()
-            vacancies = faction.get_vacancies(self.state, self.state.get_economic_rule("faction_member_limit", 6))
-            bids = self.recruitment_decider.decide_bids(faction, available_figures, vacancies, self.state)
-            for fig_id, amount in bids.items():
-                self.state.add_forum_action("recruitment_bids", (faction.id, fig_id, amount))
-
-            budgeted_contracts = self._get_available_contracts()
-            for contract in budgeted_contracts:
-                knights = [m for m in faction.get_members(self.state)
-                           if m.class_tier == ClassTier.EQUES and not m.is_dead]
-                if not knights:
-                    continue
-                if contract.contract_type == ContractType.TAX_FARMING:
-                    result = self.bid_decider.decide_tax_bid(contract, knights, self.state)
-                    if result:
-                        knight, amount, tax_rate = result
-                        self.state.add_forum_action("contract_bids", (contract.id, faction.id, amount))
-                elif contract.contract_type == ContractType.PUBLIC_WORKS:
-                    if getattr(contract, '_is_fleet_construction', False):
-                        result = self.bid_decider.decide_fleet_bid(contract, knights, self.state)
-                        if result:
-                            knight, amount, r = result
-                            self.state.add_forum_action("contract_bids", (contract.id, faction.id, amount))
-                    else:
-                        result = self.bid_decider.decide_works_bid(contract, knights, self.state)
-                        if result:
-                            knight, amount, r, construction, warranty = result
-                            self.state.add_forum_action("contract_bids", (contract.id, faction.id, amount))
-
-            trade_info = self.land_trade_decider.decide_trade(self.state)
-            if trade_info:
-                seller_id, buyer_id, amount = trade_info
-                seller = self.state.get_member(seller_id)
-                buyer = self.state.get_member(buyer_id)
-                if seller and buyer:
-                    from src.core.service.land_trading_service import LandTradingService
-                    service = LandTradingService(self.state)
-                    unit_price = service.calculate_land_price(seller, buyer)
-                    total_price = amount * unit_price
-                    self.state.add_forum_action("land_trades", (seller_id, buyer_id, amount, total_price))
-
-            triumph = self._get_war_triumph()
-            if triumph:
-                vote = self.triumph_decider.decide_triumph(triumph["war"], triumph["commander"], self.state)
-                self.state.add_forum_action("triumph_votes", (faction.id, vote))
-
+            if faction:
+                try:
+                    self._apply_market_decisions(player_id, faction)
+                except Exception as e:
+                    print(f"!!! 市场环节自动决策异常: {e}", file=sys.stderr)
+                    traceback.print_exc(file=sys.stderr)
             self._handle_next([])
             return
 
@@ -1186,52 +1203,13 @@ class ForumCommand(Command):
             # AI 分支
             self._print_ui_03_2(player_id, player.faction_id)
             faction = self.state.get_faction(player.faction_id)
-            available_figures = self.state.curia.get_all_available()
-            vacancies = faction.get_vacancies(self.state, self.state.get_economic_rule("faction_member_limit", 6))
-            bids = self.recruitment_decider.decide_bids(faction, available_figures, vacancies, self.state)
-            for fig_id, amount in bids.items():
-                self.state.add_forum_action("recruitment_bids", (faction.id, fig_id, amount))
-
-            budgeted_contracts = self._get_available_contracts()
-            for contract in budgeted_contracts:
-                knights = [m for m in faction.get_members(self.state)
-                           if m.class_tier == ClassTier.EQUES and not m.is_dead]
-                if not knights:
-                    continue
-                if contract.contract_type == ContractType.TAX_FARMING:
-                    result = self.bid_decider.decide_tax_bid(contract, knights, self.state)
-                    if result:
-                        knight, amount, tax_rate = result
-                        self.state.add_forum_action("contract_bids", (contract.id, faction.id, amount))
-                elif contract.contract_type == ContractType.PUBLIC_WORKS:
-                    if getattr(contract, '_is_fleet_construction', False):
-                        result = self.bid_decider.decide_fleet_bid(contract, knights, self.state)
-                        if result:
-                            knight, amount, r = result
-                            self.state.add_forum_action("contract_bids", (contract.id, faction.id, amount))
-                    else:
-                        result = self.bid_decider.decide_works_bid(contract, knights, self.state)
-                        if result:
-                            knight, amount, r, construction, warranty = result
-                            self.state.add_forum_action("contract_bids", (contract.id, faction.id, amount))
-
-            trade_info = self.land_trade_decider.decide_trade(self.state)
-            if trade_info:
-                seller_id, buyer_id, amount = trade_info
-                seller = self.state.get_member(seller_id)
-                buyer = self.state.get_member(buyer_id)
-                if seller and buyer:
-                    from src.core.service.land_trading_service import LandTradingService
-                    service = LandTradingService(self.state)
-                    unit_price = service.calculate_land_price(seller, buyer)
-                    total_price = amount * unit_price
-                    self.state.add_forum_action("land_trades", (seller_id, buyer_id, amount, total_price))
-
-            triumph = self._get_war_triumph()
-            if triumph:
-                vote = self.triumph_decider.decide_triumph(triumph["war"], triumph["commander"], self.state)
-                self.state.add_forum_action("triumph_votes", (faction.id, vote))
-
+            if faction:
+                try:
+                    self._apply_market_decisions(player_id, faction)
+                except Exception as e:
+                    print(f"!!! 市场环节自动决策异常: {e}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+                # 即使发生异常，也尝试继续推进，避免阶段卡死
             self._handle_next([])
 
     def _handle_step_3(self):
@@ -1241,7 +1219,6 @@ class ForumCommand(Command):
             self._resolution_done = True
 
         if self._auto_mode:
-            # 自动模式：直接进入下一环节
             self._handle_next([])
             return
 
@@ -1263,13 +1240,43 @@ class ForumCommand(Command):
     def _handle_step_4(self):
         """处理交易市场环节"""
         has_quaestor = self._has_quaestor()
+        player_id = self._get_current_player_id() if has_quaestor else None
+        faction_id = None
+        if player_id:
+            player = self.state.get_player(player_id)
+            faction_id = player.faction_id if player else None
+        self._print_ui_03_4(player_id, faction_id)
 
+        if self._auto_mode:
+            # 自动模式：生成土地交易并立即执行
+            if has_quaestor:
+                try:
+                    trade_info = self.land_trade_decider.decide_trade(self.state)
+                    if trade_info:
+                        seller_id, buyer_id, amount = trade_info
+                        seller = self.state.get_member(seller_id)
+                        buyer = self.state.get_member(buyer_id)
+                        if seller and buyer:
+                            from src.core.service.land_trading_service import LandTradingService
+                            service = LandTradingService(self.state)
+                            unit_price = service.calculate_land_price(seller, buyer)
+                            total_price = amount * unit_price
+                            self.state.add_forum_action("land_trades", (seller_id, buyer_id, amount, total_price))
+                except Exception as e:
+                    print(f"!!! 交易市场环节自动决策异常: {e}", file=sys.stderr)
+                    traceback.print_exc(file=sys.stderr)
+            try:
+                land_result = forum_api.resolve_land_trades(self.state)
+                if land_result["message"]:
+                    print(land_result["message"])
+            except Exception as e:
+                print(f"!!! 交易市场结算异常: {e}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+            self._handle_next([])
+            return
+
+        # 手动模式
         if not has_quaestor:
-            self._print_ui_03_4(None, None)
-            if self._auto_mode:
-                # 自动模式：直接跳过
-                self._step = 5
-                return
             while True:
                 print("\n> 请输入操作(ANY): ", end="", flush=True)
                 cmd_input = input("").strip()
@@ -1278,41 +1285,32 @@ class ForumCommand(Command):
                 parts = cmd_input.split()
                 cmd = parts[0].lower()
                 if cmd in ("next", "n"):
-                    self._handle_next([])
-                    break
+                    # 检查是否还有下一个玩家
+                    next_player_id = self._next_player()
+                    if next_player_id:
+                        # 有下一个玩家，切换
+                        player = self.state.get_player(next_player_id)
+                        faction = self.state.get_faction(player.faction_id) if player else None
+                        print(i18n.get("info_next_player", player=next_player_id,
+                                       faction=faction.name if faction else "无"),
+                              flush=True)
+                        # 继续循环处理新玩家
+                        continue
+                    else:
+                        # 无下一个玩家，环节结束，执行土地交易并退出
+                        try:
+                            land_result = forum_api.resolve_land_trades(self.state)
+                            if land_result["message"]:
+                                print(land_result["message"])
+                        except Exception as e:
+                            print(f"!!! 交易市场结算异常: {e}", file=sys.stderr)
+                            traceback.print_exc(file=sys.stderr)
+                        self._handle_next([])
+                        return
                 else:
                     print(i18n.get("error_unknown_command"), flush=True)
-            return
-
-        player_id = self._get_current_player_id()
-        if not player_id:
-            self._step = 5
-            return
-        player = self.state.get_player(player_id)
-        if not player:
-            self._step = 5
-            return
-
-        if self._auto_mode:
-            # 自动模式：有财务官，走 AI 分支，但先打印界面
-            self._print_ui_03_4(player_id, player.faction_id)
-            trade_info = self.land_trade_decider.decide_trade(self.state)
-            if trade_info:
-                seller_id, buyer_id, amount = trade_info
-                seller = self.state.get_member(seller_id)
-                buyer = self.state.get_member(buyer_id)
-                if seller and buyer:
-                    from src.core.service.land_trading_service import LandTradingService
-                    service = LandTradingService(self.state)
-                    unit_price = service.calculate_land_price(seller, buyer)
-                    total_price = amount * unit_price
-                    self.state.add_forum_action("land_trades", (seller_id, buyer_id, amount, total_price))
-            self._handle_next([])
-            return
-
-        bypass = self.state.config.get("testing.bypass_player_check", False)
-        if bypass or player.player_type == PlayerType.HUMAN:
-            self._print_ui_03_4(player_id, player.faction_id)
+        else:
+            # 有财务官
             while True:
                 print(f"\n> 请输入操作(QUAESTOR {player_id}): ", end="", flush=True)
                 cmd_input = input("").strip()
@@ -1322,27 +1320,29 @@ class ForumCommand(Command):
                 cmd = parts[0].lower()
                 args = parts[1:]
                 if cmd in ("next", "n"):
-                    self._handle_next([])
-                    break
+                    next_player_id = self._next_player()
+                    if next_player_id:
+                        player = self.state.get_player(next_player_id)
+                        faction = self.state.get_faction(player.faction_id) if player else None
+                        print(i18n.get("info_next_player", player=next_player_id,
+                                       faction=faction.name if faction else "无"),
+                              flush=True)
+                        # 继续循环处理新玩家
+                        continue
+                    else:
+                        try:
+                            land_result = forum_api.resolve_land_trades(self.state)
+                            if land_result["message"]:
+                                print(land_result["message"])
+                        except Exception as e:
+                            print(f"!!! 交易市场结算异常: {e}", file=sys.stderr)
+                            traceback.print_exc(file=sys.stderr)
+                        self._handle_next([])
+                        return
                 elif cmd == "transact":
                     self._handle_transact(args)
                 else:
                     print(i18n.get("error_unknown_command"), flush=True)
-        else:
-            # AI 分支
-            self._print_ui_03_4(player_id, player.faction_id)
-            trade_info = self.land_trade_decider.decide_trade(self.state)
-            if trade_info:
-                seller_id, buyer_id, amount = trade_info
-                seller = self.state.get_member(seller_id)
-                buyer = self.state.get_member(buyer_id)
-                if seller and buyer:
-                    from src.core.service.land_trading_service import LandTradingService
-                    service = LandTradingService(self.state)
-                    unit_price = service.calculate_land_price(seller, buyer)
-                    total_price = amount * unit_price
-                    self.state.add_forum_action("land_trades", (seller_id, buyer_id, amount, total_price))
-            self._handle_next([])
 
     # ==================== 核心执行函数 ====================
 
