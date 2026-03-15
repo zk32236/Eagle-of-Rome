@@ -119,6 +119,14 @@ def state_with_players():
     war_system.get_truce_wars_with_pending_treaty = MagicMock(return_value=[])
     war_system._war_discard = []  # 待凯旋战争列表
     war_system.create_rebellion_war = MagicMock()
+    # 新增：模拟 get_war_by_id
+    def get_war_by_id(war_id):
+        for war in war_system._war_discard:
+            if war.id == war_id:
+                return war
+        return None
+
+    war_system.get_war_by_id = MagicMock(side_effect=get_war_by_id)
     state.get_war_system.return_value = war_system
 
     # 添加海军系统模拟
@@ -202,7 +210,7 @@ def test_auto_mode_with_actions(state_with_players, mock_deciders):
     knight.id = 201
     knight.class_tier = ClassTier.EQUES
     knight.is_dead = False
-    knight.influence = 0  # 添加此行，确保影响力为整数
+    knight.influence = 0
     faction = state.get_faction("faction1")
     faction.get_members.return_value = [knight]
 
@@ -236,8 +244,38 @@ def test_auto_mode_with_actions(state_with_players, mock_deciders):
 
     state.get_member.side_effect = get_member_side_effect
 
-    war = MagicMock()
-    commander = MagicMock()
+    # 创建待凯旋战争
+    # 创建待凯旋战争
+    war = MagicMock(spec=War)
+    war.id = "war1"
+    war.soldier_share = 50
+    war.status = WarStatus.RESOLVED
+    war.triumph_commander_id = None
+    war.commander_id = 101
+    commander = MagicMock()  # 确保已定义
+    commander.is_dead = False
+    ws = state.get_war_system()
+    ws._war_discard = [war]
+
+    def get_member_side_effect(fid):
+        if fid == 1:
+            return seller_mock
+        elif fid == 2:
+            return buyer_mock
+        elif fid == 101:
+            return commander
+        return None
+
+    state.get_member.side_effect = get_member_side_effect
+
+    def get_war_by_id(war_id):
+        for w in ws._war_discard:
+            if w.id == war_id:
+                return w
+        return None
+
+    ws.get_war_by_id = MagicMock(side_effect=get_war_by_id)
+
     cmd = ForumCommand(state,
                        retirement_decider=retirement,
                        recruitment_decider=recruitment,
@@ -246,7 +284,7 @@ def test_auto_mode_with_actions(state_with_players, mock_deciders):
                        triumph_decider=triumph)
     cmd._get_war_triumph = MagicMock(return_value={"war": war, "commander": commander})
 
-    # 新增：模拟财务官
+    # 模拟财务官
     cmd._has_quaestor = MagicMock(return_value=True)
     cmd._get_quaestor_players = MagicMock(return_value=["p1"])
 
@@ -260,7 +298,7 @@ def test_auto_mode_with_actions(state_with_players, mock_deciders):
     # 根据 land_trading_service 逻辑计算预期价格
     # BASE_LAND_PRICE = 10, modifier = 1 + 0.10 (influence) = 1.10, unit_price = 11, total = 33
     state.add_forum_action.assert_any_call("land_trades", (1, 2, 3, 33))
-    state.add_forum_action.assert_any_call("triumph_votes", ("faction1", True))
+    state.add_forum_action.assert_any_call("triumph_votes", ("war1", "faction1", True))
     state.mark_phase_executed.assert_called_once_with("forum")
 
 
@@ -404,6 +442,14 @@ def test_triumph_approved_in_auto_mode(state_with_players, mock_deciders):
     # 将战争添加到 war_discard
     ws = state.get_war_system()
     ws._war_discard = [war]
+
+    def get_war_by_id(war_id):
+        for w in ws._war_discard:
+            if w.id == war_id:
+                return w
+        return None
+
+    ws.get_war_by_id = MagicMock(side_effect=get_war_by_id)
     state.get_member.side_effect = lambda fid: commander if fid == 101 else None
 
     # 设置凯旋决策器返回 True（批准）
@@ -465,6 +511,14 @@ def test_triumph_rejected_in_auto_mode(state_with_players, mock_deciders):
 
     ws = state.get_war_system()
     ws._war_discard = [war]
+
+    def get_war_by_id(war_id):
+        for w in ws._war_discard:
+            if w.id == war_id:
+                return w
+        return None
+
+    ws.get_war_by_id = MagicMock(side_effect=get_war_by_id)
     state.get_member.side_effect = lambda fid: commander if fid == 101 else None
 
     retirement, recruitment, bid, land_trade, triumph = mock_deciders
@@ -515,6 +569,14 @@ def test_triumph_commander_dead_in_auto_mode(state_with_players, mock_deciders):
 
     ws = state.get_war_system()
     ws._war_discard = [war]
+
+    def get_war_by_id(war_id):
+        for w in ws._war_discard:
+            if w.id == war_id:
+                return w
+        return None
+
+    ws.get_war_by_id = MagicMock(side_effect=get_war_by_id)
     state.get_member.side_effect = lambda fid: commander if fid == 101 else None
 
     retirement, recruitment, bid, land_trade, triumph = mock_deciders
@@ -601,8 +663,17 @@ def test_multiple_triumph_wars_in_auto_mode(state_with_players, mock_deciders):
         return None
     state.get_member.side_effect = get_member_side_effect
 
+    # 为战争系统添加 get_war_by_id
+    def get_war_by_id(war_id):
+        for w in ws._war_discard:
+            if w.id == war_id:
+                return w
+        return None
+    ws.get_war_by_id = MagicMock(side_effect=get_war_by_id)
+
     retirement, recruitment, bid, land_trade, triumph = mock_deciders
-    triumph.decide_triumph.side_effect = [True, False]  # 第一个批准，第二个否决
+    # 设置决策器返回值：对每个战争，每个玩家都会调用一次决策器，共6次
+    triumph.decide_triumph.side_effect = [True, False, True, False, True, False]  # 6个值
     land_trade.decide_trade.return_value = None
     retirement.decide_whom_to_retire.return_value = None
     recruitment.decide_bids.return_value = {}
@@ -621,8 +692,9 @@ def test_multiple_triumph_wars_in_auto_mode(state_with_players, mock_deciders):
         result = cmd.execute([])
 
     assert result is True
-    # 验证两个战争都被处理
-    assert triumph.decide_triumph.call_count == 2
+    # 验证决策器被调用了6次（3个玩家 * 2个战争）
+    assert triumph.decide_triumph.call_count == 6
+    # 验证指挥官影响力添加（第一个战争批准，第二个否决）
     commander1.add_temp_influence_task.assert_called_once_with(10, 5)  # 50//5=10
     commander2.add_temp_influence_task.assert_not_called()
     war1.set_triumph_approved.assert_called_once_with(True)

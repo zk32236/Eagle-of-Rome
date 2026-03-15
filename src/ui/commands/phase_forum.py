@@ -122,10 +122,16 @@ class ForumCommand(Command):
 
         # 3. 凯旋投票
         try:
-            triumph = self._get_war_triumph()
-            if triumph:
-                vote = self.triumph_decider.decide_triumph(triumph["war"], triumph["commander"], self.state)
-                self.state.add_forum_action("triumph_votes", (faction.id, vote))
+            war_system = self.state.get_war_system()
+            if war_system:
+                for war in war_system._war_discard:
+                    if war.soldier_share > 0 and war.status == WarStatus.RESOLVED and war.triumph_commander_id is None:
+                        commander = self.state.get_member(war.commander_id)
+                        if not commander or commander.is_dead:
+                            # 跳过死亡指挥官，不记录投票，由公示环节统一清理
+                            continue
+                        vote = self.triumph_decider.decide_triumph(war, commander, self.state)
+                        self.state.add_forum_action("triumph_votes", (war.id, faction.id, vote))
         except Exception as e:
             print(f"!!! 凯旋投票异常: {e}", file=sys.stderr)
 
@@ -458,35 +464,6 @@ class ForumCommand(Command):
         if not any_change:
             print(f"      所有行省安居乐业，无民变威胁。")
 
-    def _process_triumphs(self):
-        """处理待凯旋战争，根据决策器批准凯旋并添加临时影响力"""
-        ws = self.state.get_war_system()
-        if not ws:
-            return
-
-        for war in ws._war_discard:
-            if war.soldier_share > 0 and war.status == WarStatus.RESOLVED:
-                commander_id = war.triumph_commander_id or war.commander_id
-                commander = self.state.get_member(commander_id) if commander_id else None
-                if not commander or commander.is_dead:
-                    war.set_soldier_share(0)
-                    continue
-
-                if self.triumph_decider.decide_triumph(war, commander, self.state):
-                    duration = self.state.config.get("combat_rules.triumph_veteran_duration", 5)
-                    per_turn = war.soldier_share // duration
-                    if per_turn > 0:
-                        commander.add_temp_influence_task(per_turn, duration)
-                        war.set_triumph_approved(True)
-                        print(f"   🏆 元老院决定授予 {commander.get_formal_name()} 凯旋！未来几年他将获得士兵的拥戴！")
-                        self.state.log_event(
-                            f"凯旋批准：{commander.name} 获得 {war.soldier_share} 士兵份额，分 {duration} 回合",
-                            extra={"commander_id": commander.id, "amount": war.soldier_share, "duration": duration}
-                        )
-                else:
-                    print(f"   ⏳ {commander.get_formal_name()} 的凯旋被元老院否决")
-                war.set_soldier_share(0)
-
     def _display_truce_treaties(self):
         """显示待评议的停战草案"""
         ws = self.state.get_war_system()
@@ -538,8 +515,11 @@ class ForumCommand(Command):
         # 行省民变更新
         self._update_civil_unrest()
 
-        # 凯旋审批
-        self._process_triumphs()
+        # 凯旋信息（仅显示待投票的凯旋，不在此处审批）
+        triumph = self._get_war_triumph()
+        if triumph:
+            commander = triumph["commander"]
+            print(f"\n   🏆 {commander.get_formal_name()} 的凯旋等待投票")
 
         print("\n🔧 本阶段可操作(ANY)：")
         print("   1. next/n → 进入裁员环节")
@@ -838,7 +818,12 @@ class ForumCommand(Command):
             print(i18n.get("error_no_current_player"), file=sys.stderr)
             sys.stderr.flush()
             return False
-        result = forum_api.vote_triumph(self.state, player_id, vote)
+
+        triumph = self._get_war_triumph()
+        if triumph:
+            war_id = triumph["war"].id
+            result = forum_api.vote_triumph(self.state, player_id, war_id, vote)
+
         print(result["message"])
         sys.stdout.flush()
         sys.stderr.flush()
@@ -1010,10 +995,13 @@ class ForumCommand(Command):
         print(f"\n   🏞️ 执行土地法案：")
         land_price = self.state.get_economic_rule("land_price_per_unit", 10)
         for act in acts:
-            if act['type'] == 'distribution':
-                self._execute_land_distribution(act, land_price)
-            elif act['type'] == 'sale':
-                self._execute_land_sale(act, land_price)
+            try:
+                if act['type'] == 'distribution':
+                    self._execute_land_distribution(act, land_price)
+                elif act['type'] == 'sale':
+                    self._execute_land_sale(act, land_price)
+            except Exception as e:
+                print(f"      ⚠️ 执行土地法案异常: {e}", file=sys.stderr)
         self.state.clear_pending_land_acts()
 
     def _execute_land_distribution(self, act, land_price):
