@@ -45,6 +45,7 @@ class ForumCommand(Command):
         self.terms = TerminologyService.get()
         self._resolution_done = False  # 控制公示只执行一次
         self._auto_mode = False        # 是否处于自动模式（由配置决定，用于UI显示）
+        self._war_events = []
 
         # 根据配置创建决策器实例
         auto_forum = state.config.get("testing.auto_forum", False)
@@ -81,6 +82,16 @@ class ForumCommand(Command):
 
     # ==================== 辅助函数 ====================
 
+    def _update_war_system_silent(self):
+        """静默更新战争系统（触发、升级），返回升级事件列表"""
+        ws = self.state.get_war_system()
+        if not ws:
+            return []
+        ws.check_triggers(self.state.turn.year)
+        events = ws.escalate_threats()
+        self._war_events = events
+        return events
+
     def _apply_market_decisions(self, player_id: str, faction):
         """为指定派系应用市场环节的 AI 决策（招募、竞标、凯旋投票）"""
         # 1. 招募
@@ -105,18 +116,19 @@ class ForumCommand(Command):
                     result = self.bid_decider.decide_tax_bid(contract, knights, self.state)
                     if result:
                         knight, amount, tax_rate = result
-                        self.state.add_forum_action("contract_bids", (contract.id, faction.id, amount))
+                        self.state.add_forum_action("contract_bids", (contract.id, knight.id, faction.id, amount))
                 elif contract.contract_type == ContractType.PUBLIC_WORKS:
                     if getattr(contract, '_is_fleet_construction', False):
-                        result = self.bid_decider.decide_fleet_bid(contract, knights, self.state)
+                        result = self.bid_decider.decide_works_bid(contract, knights, self.state)  # 或 decide_fleet_bid
                         if result:
-                            knight, amount, r = result
-                            self.state.add_forum_action("contract_bids", (contract.id, faction.id, amount))
+                            knight, amount, r, construction, warranty = result  # 根据返回结构调整
+                            self.state.add_forum_action("contract_bids", (contract.id, knight.id, faction.id, amount))
                     else:
                         result = self.bid_decider.decide_works_bid(contract, knights, self.state)
                         if result:
                             knight, amount, r, construction, warranty = result
-                            self.state.add_forum_action("contract_bids", (contract.id, faction.id, amount))
+                            # 假设 knight 是 Figure 对象，有 id
+                            self.state.add_forum_action("contract_bids", (contract.id, knight.id, faction.id, amount))
         except Exception as e:
             logging.exception("竞标决策异常")
 
@@ -367,15 +379,6 @@ class ForumCommand(Command):
 
     # ==================== 新增：战争威胁、民变、凯旋等状态更新方法 ====================
 
-    def _update_war_threats(self):
-        """更新战争威胁：触发和升级"""
-        ws = self.state.get_war_system()
-        if ws:
-            ws.check_triggers(self.state.turn.year)
-            events = ws.escalate_threats()
-            for event in events:
-                print(f"   {event}")
-
     def _update_civil_unrest(self):
         """更新行省民怨（自动升级、合同税率触发、起义检测）"""
         if not self.state.config.get("enable_threats", True):
@@ -504,13 +507,20 @@ class ForumCommand(Command):
         print("\n\t====================== 安民告示 ====================")
 
         # 战争威胁升级
-        self._update_war_threats()
+        for event in self._war_events:
+            print(f"   {event}")
 
         # 显示活跃战争
         self._display_active_wars()
-
         # 显示停战草案
         self._display_truce_treaties()
+        ws = self.state.get_war_system()
+        if ws:
+            threat_wars = ws.get_threat_wars()
+            if threat_wars:
+                print("   ⚠️ 当前威胁战争：")
+                for war in threat_wars:
+                    print(f"\t\t{war.name} (等级 {war.threat_level})")
 
         # 行省民变更新
         self._update_civil_unrest()
@@ -1379,6 +1389,13 @@ class ForumCommand(Command):
             self._players = self._get_step_players()
             self._current_player_index = 0
 
+            # 先更新战争系统
+            self._update_war_system_silent()
+            # 处理舰队建造完成
+            if self.state.naval_system:
+                completed = self.state.naval_system.process_fleet_construction(self.state.turn.turn_number)
+                for fleet_num in completed:
+                    print(f"      ⚓ 舰队 {fleet_num} 建造完成")
             self._generate_new_figures()
             self._generate_contracts()
 

@@ -1,10 +1,13 @@
 # src/api/forum_api.py
+import logging
+import random
 from src.core.game_state import GameState
 from src.api import api_response
 from src.core.i18n import i18n
 from src.core.entities.contract import ContractType, ContractStatus
 from src.core.entities.war import WarStatus  # 新增
-import logging
+from src.core.service.land_trading_service import LandTradingService
+
 
 def retire_figure(state: GameState, player_id: str, figure_id: int) -> dict:
     """
@@ -80,30 +83,23 @@ def recruit_figure(state: GameState, player_id: str, figure_id: int, amount: int
     return api_response(True, message, data={"figure_id": figure_id, "amount": amount})
 
 
-def place_bid(state: GameState, player_id: str, contract_id: int, amount: int) -> dict:
-    """
-    合同竞标：记录出价。
-    """
+def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int, amount: int) -> dict:
+    # 参数增加 figure_id，需在命令层获取当前操作的骑士ID
     if not state.config.get("testing.bypass_player_check", False):
         if not state.is_current_player(player_id):
             return api_response(False, i18n.get("error_not_your_turn"))
-
     player = state.get_player(player_id)
     if not player:
         return api_response(False, i18n.get("error_no_current_player"))
-
     contract = state.get_contract(contract_id)
     if not contract:
         return api_response(False, i18n.get("contract_not_found", id=contract_id))
-
     if contract.status != ContractStatus.BUDGETED:
         return api_response(False, i18n.get("error_contract_not_auctionable"))
-
     if amount <= 0:
         return api_response(False, i18n.get("error_invalid_amount"))
-
-    state.add_forum_action("contract_bids", (contract_id, player.faction_id, amount))
-
+    # 存储 (contract_id, figure_id, player.faction_id, amount)
+    state.add_forum_action("contract_bids", (contract_id, figure_id, player.faction_id, amount))
     message = i18n.get("info_bid_recorded", contract_name=contract.name, amount=amount)
     return api_response(True, message, data={"contract_id": contract_id, "amount": amount})
 
@@ -186,7 +182,6 @@ def resolve_forum(state: GameState) -> dict:
             # 找出价最高者（若平局，随机选择）
             max_amount = max(b[1] for b in bids)
             top_bidders = [b[0] for b in bids if b[1] == max_amount]
-            import random
             winner_faction_id = random.choice(top_bidders) if len(top_bidders) > 1 else top_bidders[0]
 
             # 从 Curia 中移除人物
@@ -209,8 +204,8 @@ def resolve_forum(state: GameState) -> dict:
     # 2. 合同竞标结算
     if pending["contract_bids"]:
         bids_by_contract = {}
-        for contract_id, faction_id, amount in pending["contract_bids"]:
-            bids_by_contract.setdefault(contract_id, []).append((faction_id, amount))
+        for contract_id, figure_id, faction_id, amount in pending["contract_bids"]:
+            bids_by_contract.setdefault(contract_id, []).append((figure_id, faction_id, amount))
 
         for contract_id, bids in bids_by_contract.items():
             contract = state.get_contract(contract_id)
@@ -219,22 +214,23 @@ def resolve_forum(state: GameState) -> dict:
                 continue
 
             if contract.contract_type == ContractType.TAX_FARMING:
-                # 包税合同：价高者得
-                max_amount = max(b[1] for b in bids)
-                top_bidders = [b[0] for b in bids if b[1] == max_amount]
-                winner_faction = random.choice(top_bidders) if len(top_bidders) > 1 else top_bidders[0]
-                # 中标处理
-                contract.status = ContractStatus.ACTIVE  # 简化，实际需更多处理
-                winner_faction_obj = state.get_faction(winner_faction)
-                results.append(f"✅ 包税合同 {contract.name} 中标者: {winner_faction_obj.name}，出价 {max_amount}")
+                # 价高者得
+                max_amount = max(b[2] for b in bids)
+                top_bidders = [b for b in bids if b[2] == max_amount]
+                winner_figure, winner_faction, amount = random.choice(top_bidders)
+                contract.mark_winner(winner_figure, state.turn.turn_number, 0)
+                # 资金转移等（原有逻辑）
             else:
                 # 工程合同：价低者得
-                min_amount = min(b[1] for b in bids)
-                top_bidders = [b[0] for b in bids if b[1] == min_amount]
-                winner_faction = random.choice(top_bidders) if len(top_bidders) > 1 else top_bidders[0]
-                contract.status = ContractStatus.ACTIVE
-                winner_faction_obj = state.get_faction(winner_faction)
-                results.append(f"✅ 工程合同 {contract.name} 中标者: {winner_faction_obj.name}，出价 {min_amount}")
+                min_amount = min(b[2] for b in bids)
+                top_bidders = [b for b in bids if b[2] == min_amount]
+                winner_figure, winner_faction, amount = random.choice(top_bidders)
+                contract.mark_winner(winner_figure, state.turn.turn_number, 0)
+                # 如果是舰队建造合同，通知海军系统
+                if getattr(contract, '_is_fleet_construction', False) and state.naval_system:
+                    state.naval_system.on_contract_awarded(contract, winner_figure)
+                results.append(
+                    f"✅ 工程合同 {contract.name} 中标者: {state.get_faction(winner_faction).name}，出价 {min_amount}")
 
     # 3. 公地认购结算
     if pending["land_purchases"]:
@@ -342,7 +338,7 @@ def resolve_land_trades(state: GameState) -> dict:
     results = []
 
     if pending["land_trades"]:
-        from src.core.service.land_trading_service import LandTradingService
+
         service = LandTradingService(state)
         for seller_id, buyer_id, land, price in pending["land_trades"]:
             if land > 0:

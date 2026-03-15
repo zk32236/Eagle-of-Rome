@@ -293,7 +293,7 @@ def test_auto_mode_with_actions(state_with_players, mock_deciders):
     assert result is True
     mock_retire.assert_called_once_with(state, "p1", 101)
     state.add_forum_action.assert_any_call("recruitment_bids", ("faction1", 101, 10))
-    state.add_forum_action.assert_any_call("contract_bids", (1, "faction1", 50))
+    state.add_forum_action.assert_any_call("contract_bids", (1, 201, "faction1", 50))
     # 根据 land_trading_service 逻辑计算预期价格
     # BASE_LAND_PRICE = 10, modifier = 1 + 0.10 (influence) = 1.10, unit_price = 11, total = 33
     state.add_forum_action.assert_any_call("land_trades", (1, 2, 3, 33))
@@ -389,6 +389,60 @@ def test_manual_bypass_mode(state_with_players):
 
 
 # ========== 新增测试：舰队合同生成 ==========
+
+def test_fleet_construction_contract_awarded_in_auto_mode(state_with_players, mock_deciders):
+    """测试自动模式下，舰队建造合同中标后调用海军系统的 on_contract_awarded"""
+    state = state_with_players
+    state.config.get.side_effect = lambda key, default=None: {
+        "testing.auto_forum": True,
+        "testing.bypass_player_check": False
+    }.get(key, default)
+
+    # 模拟一个舰队建造合同
+    contract = Contract(id=7, contract_type=ContractType.PUBLIC_WORKS, name="舰队建造（第一次布匿战争）")
+    contract.status = ContractStatus.BUDGETED
+    contract._is_fleet_construction = True  # 标记为舰队建造合同
+    contract._target_war_id = "first_punic_war"
+    state.contracts = [contract]
+
+    # 模拟骑士
+    knight = MagicMock(spec=Figure)
+    knight.id = 201
+    knight.class_tier = ClassTier.EQUES
+    knight.is_dead = False
+    faction = state.get_faction("faction1")
+    faction.get_members.return_value = [knight]
+
+    # 模拟决策器返回值
+    retirement, recruitment, bid, land_trade, triumph = mock_deciders
+    retirement.decide_whom_to_retire.return_value = None
+    recruitment.decide_bids.return_value = {}
+    bid.decide_works_bid.return_value = (knight, 70, 0.1, 5, 10)  # 工程合同出价
+    land_trade.decide_trade.return_value = None
+    triumph.decide_triumph.return_value = False
+
+    # 模拟海军系统
+    naval_system = MagicMock()
+    state.naval_system = naval_system
+
+    cmd = ForumCommand(state,
+                       retirement_decider=retirement,
+                       recruitment_decider=recruitment,
+                       bid_decider=bid,
+                       land_trade_decider=land_trade,
+                       triumph_decider=triumph)
+
+    # 模拟财务官
+    cmd._has_quaestor = MagicMock(return_value=True)
+    cmd._get_quaestor_players = MagicMock(return_value=["p1"])
+
+    with patch('sys.stdout', new_callable=StringIO):
+        result = cmd.execute([])
+
+    assert result is True
+    # 验证出价记录包含 figure_id
+    state.add_forum_action.assert_any_call("contract_bids", (7, 201, "faction1", 70))
+
 
 def test_fleet_contracts_generated_in_auto_mode(state_with_players):
     """测试自动模式下，海军系统生成舰队建造合同"""

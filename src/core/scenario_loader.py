@@ -76,20 +76,17 @@ class ScenarioLoader:
 
     @staticmethod
     def _create_players_from_factions(state: GameState):
-        """根据派系列表创建玩家（每个派系一个人类玩家）"""
         from src.core.entities.player import Player, PlayerType
-
         factions = list(state.factions.values())
         if not factions:
             return
-
-        # 为每个派系创建一个玩家，玩家ID使用 "player_<派系ID>" 或 "player_序号"
-        for idx, faction in enumerate(factions):
-            player_id = f"player_{faction.id}"  # 或 f"player_{idx+1}"
+        for faction in factions:
+            player_id = f"player_{faction.id}"
+            player_type = PlayerType.HUMAN if faction.is_player else PlayerType.AI
             player = Player(
                 player_id=player_id,
                 faction_id=faction.id,
-                player_type=PlayerType.HUMAN,
+                player_type=player_type,
                 is_online=False
             )
             state.add_player(player)

@@ -55,6 +55,19 @@ class NavalSystem:
         return [f for f in self._fleets.values() if f.assigned_war_id == war_id]
 
     # ---------- 建造合同生成 ----------
+    def _has_existing_fleet_or_contract_for_war(self, war_id: str) -> bool:
+        """检查是否已有针对该战争的活动合同或存在非摧毁状态的舰队"""
+        # 检查合同
+        for contract in self.state.get_all_contracts():
+            if getattr(contract, "_target_war_id", None) == war_id:
+                if contract.status in (ContractStatus.PENDING, ContractStatus.BUDGETED, ContractStatus.ACTIVE):
+                    return True
+        # 检查舰队
+        for fleet in self._fleets.values():
+            if fleet._target_war_id == war_id and fleet.status != FleetStatus.DESTROYED:
+                return True
+        return False
+
     def generate_construction_contracts(self, current_turn: int) -> List[Contract]:
         if not self._can_build_fleet():
             self.state.log_event(
@@ -73,7 +86,7 @@ class NavalSystem:
 
         contracts = []
         for war in threatening_wars:
-            if self._has_active_contract_for_war(war.id):
+            if self._has_existing_fleet_or_contract_for_war(war.id):
                 continue
 
             # 获取敌方海军强度
@@ -123,14 +136,6 @@ class NavalSystem:
             )
 
         return contracts
-
-    def _has_active_contract_for_war(self, war_id: str) -> bool:
-        """检查是否已有针对该战争的活动合同（PENDING 或 ACTIVE）"""
-        for contract in self.state.get_all_contracts():
-            if getattr(contract, "_target_war_id", None) == war_id:
-                if contract.status in (ContractStatus.PENDING, ContractStatus.BUDGETED, ContractStatus.ACTIVE):
-                    return True
-        return False
 
     # ---------- 建造过程管理 ----------
     def on_contract_awarded(self, contract: Contract, winner_id: int):
@@ -505,7 +510,7 @@ class NavalSystem:
             if not war.naval_required:
                 continue
             # 检查是否有针对该战争的活跃合同（PENDING/BUDGETED/ACTIVE）
-            if self._has_active_contract_for_war(war.id):
+            if self._has_existing_fleet_or_contract_for_war(war.id):
                 continue
             # 检查是否有针对该战争的舰队正在建造
             building_fleets = [f for f in self._fleets.values()
