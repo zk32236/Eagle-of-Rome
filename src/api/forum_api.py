@@ -277,7 +277,6 @@ def resolve_forum(state: GameState) -> dict:
 
     # 4. 凯旋投票结算
     war_system = state.get_war_system()
-    # 收集所有投票按战争分组
     votes_by_war = {}
     if pending["triumph_votes"]:
         for war_id, faction_id, vote in pending["triumph_votes"]:
@@ -285,11 +284,11 @@ def resolve_forum(state: GameState) -> dict:
 
     # 遍历所有待凯旋战争
     for war in war_system._war_discard:
-        # 如果战争没有士兵份额或状态不对，跳过
-        if war.soldier_share <= 0 or war.status != WarStatus.RESOLVED or war.triumph_commander_id is not None:
+        # 修正：使用 triumph_commander_id，且必须不为 None
+        if war.soldier_share <= 0 or war.status != WarStatus.RESOLVED or war.triumph_commander_id is None:
             continue
 
-        commander = state.get_member(war.commander_id)
+        commander = state.get_member(war.triumph_commander_id)  # 使用 triumph_commander_id
         if not commander or commander.is_dead:
             war.set_soldier_share(0)
             results.append(f"⚠️ 战争 {war.name} 指挥官已死，凯旋失效")

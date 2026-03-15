@@ -91,7 +91,7 @@ class ForumCommand(Command):
             for fig_id, amount in bids.items():
                 self.state.add_forum_action("recruitment_bids", (faction.id, fig_id, amount))
         except Exception as e:
-            print(f"!!! 招募决策异常: {e}", file=sys.stderr)
+            logging.exception("招募决策异常")
 
         # 2. 合同竞标
         try:
@@ -118,22 +118,22 @@ class ForumCommand(Command):
                             knight, amount, r, construction, warranty = result
                             self.state.add_forum_action("contract_bids", (contract.id, faction.id, amount))
         except Exception as e:
-            print(f"!!! 竞标决策异常: {e}", file=sys.stderr)
+            logging.exception("竞标决策异常")
 
         # 3. 凯旋投票
         try:
             war_system = self.state.get_war_system()
             if war_system:
                 for war in war_system._war_discard:
-                    if war.soldier_share > 0 and war.status == WarStatus.RESOLVED and war.triumph_commander_id is None:
-                        commander = self.state.get_member(war.commander_id)
+                    # 修正：使用 triumph_commander_id 且不为 None
+                    if war.soldier_share > 0 and war.status == WarStatus.RESOLVED and war.triumph_commander_id is not None:
+                        commander = self.state.get_member(war.triumph_commander_id)
                         if not commander or commander.is_dead:
-                            # 跳过死亡指挥官，不记录投票，由公示环节统一清理
                             continue
                         vote = self.triumph_decider.decide_triumph(war, commander, self.state)
                         self.state.add_forum_action("triumph_votes", (war.id, faction.id, vote))
         except Exception as e:
-            print(f"!!! 凯旋投票异常: {e}", file=sys.stderr)
+            logging.exception("凯旋投票异常")
 
     def _get_quaestor_players(self) -> List[str]:
         """返回所有担任财务官的人物所属的玩家ID列表（去重）"""
@@ -153,13 +153,13 @@ class ForumCommand(Command):
         return False
 
     def _get_war_triumph(self) -> Optional[Dict]:
-        """获取待凯旋的战争信息（用于投票）"""
         war_system = self.state.get_war_system()
         if not war_system:
             return None
         for war in war_system._war_discard:
-            if war.status == WarStatus.RESOLVED and war.soldier_share > 0 and war.triumph_commander_id is None:
-                commander = self.state.get_member(war.commander_id)
+            # 使用 triumph_commander_id，且必须不为 None
+            if war.status == WarStatus.RESOLVED and war.soldier_share > 0 and war.triumph_commander_id is not None:
+                commander = self.state.get_member(war.triumph_commander_id)
                 if commander and not commander.is_dead:
                     return {
                         "war": war,
@@ -988,7 +988,6 @@ class ForumCommand(Command):
         sys.stderr.flush()
 
     def _execute_pending_land_acts(self):
-        """执行已通过的平民分地和贵族买地法案"""
         acts = self.state.get_pending_land_acts()
         if not acts:
             return
@@ -1001,55 +1000,78 @@ class ForumCommand(Command):
                 elif act['type'] == 'sale':
                     self._execute_land_sale(act, land_price)
             except Exception as e:
-                print(f"      ⚠️ 执行土地法案异常: {e}", file=sys.stderr)
+                print(f"      ⚠️ 执行土地法案异常（已跳过）: {e}", file=sys.stderr)
+                logging.exception(f"执行土地法案异常: act={act}")
+                # 继续处理下一个法案
+                continue
         self.state.clear_pending_land_acts()
 
     def _execute_land_distribution(self, act, land_price):
-        national_land = self.state.get_national_public_land()
-        amount = int(national_land * act['percent'])
-        if amount <= 0:
-            print(f"      ⚠️ 国家公地不足，无法分配。")
-            return
-        self.state.add_national_public_land(-amount)
-        italy = self.state.get_province(0)
-        if italy:
-            italy.update_land_type(0, amount)  # 修改为调用 update_land_type
-            italy._turns_since_last_land_distribution = 0
-            italy.set_grievance(0)
-        print(f"      ✅ 平民分地 {amount} C 土地（占国家公地 {act['percent'] * 100:.1f}%），转入意大利私地，民怨重置。")
+        try:
+            national_land = self.state.get_national_public_land()
+            # 调试日志：打印法案数据和 national_land
+
+            if 'percent' not in act:
+                raise ValueError("法案缺少 'percent' 字段")
+            percent = act['percent']
+            if not isinstance(percent, (int, float)):
+                raise TypeError(f"percent 类型错误: {type(percent)}")
+            amount = int(national_land * percent)
+            if amount <= 0:
+                print(f"      ⚠️ 国家公地不足，无法分配。")
+                return
+            self.state.add_national_public_land(-amount)
+            italy = self.state.get_province(0)
+            if italy:
+                italy.update_land_type(0, amount)  # 公地不变，私地增加
+                italy._turns_since_last_land_distribution = 0
+                italy.set_grievance(0)
+            print(f"      ✅ 平民分地 {amount} C 土地（占国家公地 {percent * 100:.1f}%），转入意大利私地，民怨重置。")
+        except Exception as e:
+            logging.exception(f"执行分地法案异常: act={act}")
+            raise
 
     def _execute_land_sale(self, act, land_price):
-        national_land = self.state.get_national_public_land()
-        amount = int(national_land * act['percent'])
-        if amount <= 0:
-            print(f"      ⚠️ 国家公地不足，无法出售。")
-            return
-        print(f"      🏛️ 贵族买地：出售 {amount} C 国家公地。")
-        nobles = [fig for fig in self.state.get_living_members() if fig.class_tier.value == "nobile"]
-        nobles.sort(key=lambda f: f.influence, reverse=True)
-        remaining = amount
-        for fig in nobles:
-            if remaining <= 0:
-                break
-            max_buy = fig.wealth // land_price
-            if max_buy <= 0:
-                continue
-            buy = random.randint(1, min(remaining, max_buy))
-            cost = buy * land_price
-            # 修改为调用 buy_land 方法
-            if fig.buy_land(buy, land_price):
-                remaining -= buy
-                print(f"         {fig.name} 购买 {buy} C，花费 {cost}，剩余土地 {remaining} C")
+        try:
+            national_land = self.state.get_national_public_land()
+            if 'percent' not in act:
+                raise ValueError("法案缺少 'percent' 字段")
+            percent = act['percent']
+            if not isinstance(percent, (int, float)):
+                raise TypeError(f"percent 类型错误: {type(percent)}")
+            amount = int(national_land * percent)
+            if amount <= 0:
+                print(f"      ⚠️ 国家公地不足，无法出售。")
+                return
+            print(f"      🏛️ 贵族买地：出售 {amount} C 国家公地。")
+            nobles = [fig for fig in self.state.get_living_members() if fig.class_tier.value == "nobile"]
+            nobles.sort(key=lambda f: f.influence, reverse=True)
+            remaining = amount
+            for fig in nobles:
+                if remaining <= 0:
+                    break
+                max_buy = fig.wealth // land_price
+                if max_buy <= 0:
+                    continue
+                buy = random.randint(1, min(remaining, max_buy))
+                cost = buy * land_price
+                # 使用 Figure 的公共方法 buy_land（需确保其存在且正确）
+                if fig.buy_land(buy, land_price):
+                    remaining -= buy
+                    print(f"         {fig.name} 购买 {buy} C，花费 {cost}，剩余土地 {remaining} C")
+                else:
+                    print(f"         {fig.name} 购买失败（财富不足？）")
+            sold = amount - remaining
+            if sold > 0:
+                self.state.add_national_public_land(-sold)
+                self.state.add_treasury(sold * land_price)
+                print(
+                    f"      共售出 {sold} C，国库 +{sold * land_price} Talents，国家公地剩余 {self.state.get_national_public_land()} C")
             else:
-                print(f"         {fig.name} 购买失败（财富不足？）")
-        sold = amount - remaining
-        if sold > 0:
-            self.state.add_national_public_land(-sold)
-            self.state.add_treasury(sold * land_price)
-            print(
-                f"      共售出 {sold} C，国库 +{sold * land_price} Talents，国家公地剩余 {self.state.get_national_public_land()} C")
-        else:
-            print(f"      无土地售出。")
+                print(f"      无土地售出。")
+        except Exception as e:
+            logging.exception(f"执行卖地法案异常: act={act}")
+            raise  # 重新抛出以便上层捕获
 
     # ==================== 步骤处理函数 ====================
 
@@ -1092,8 +1114,7 @@ class ForumCommand(Command):
                 if fig_id is not None:
                     forum_api.retire_figure(self.state, player_id, fig_id)
             except Exception as e:
-                print(f"!!! 裁员环节自动决策异常: {e}", file=sys.stderr)
-                traceback.print_exc(file=sys.stderr)
+                logging.exception("裁员环节自动决策异常")
             self._handle_next([])
             return
 
@@ -1151,8 +1172,7 @@ class ForumCommand(Command):
                 try:
                     self._apply_market_decisions(player_id, faction)
                 except Exception as e:
-                    print(f"!!! 市场环节自动决策异常: {e}", file=sys.stderr)
-                    traceback.print_exc(file=sys.stderr)
+                    logging.exception("市场环节自动决策异常")
             self._handle_next([])
             return
 
@@ -1195,9 +1215,7 @@ class ForumCommand(Command):
                 try:
                     self._apply_market_decisions(player_id, faction)
                 except Exception as e:
-                    print(f"!!! 市场环节自动决策异常: {e}", file=sys.stderr)
-                traceback.print_exc(file=sys.stderr)
-                # 即使发生异常，也尝试继续推进，避免阶段卡死
+                    logging.exception("市场环节自动决策异常") # 即使发生异常，也尝试继续推进，避免阶段卡死
             self._handle_next([])
 
     def _handle_step_3(self):
@@ -1251,15 +1269,13 @@ class ForumCommand(Command):
                             total_price = amount * unit_price
                             self.state.add_forum_action("land_trades", (seller_id, buyer_id, amount, total_price))
                 except Exception as e:
-                    print(f"!!! 交易市场环节自动决策异常: {e}", file=sys.stderr)
-                    traceback.print_exc(file=sys.stderr)
+                    logging.exception("交易市场环节自动决策异常")
             try:
                 land_result = forum_api.resolve_land_trades(self.state)
                 if land_result["message"]:
                     print(land_result["message"])
             except Exception as e:
-                print(f"!!! 交易市场结算异常: {e}", file=sys.stderr)
-                traceback.print_exc(file=sys.stderr)
+                logging.exception("交易市场结算异常")
             self._handle_next([])
             return
 
@@ -1373,9 +1389,7 @@ class ForumCommand(Command):
             return True
 
         except Exception as e:
-            print(f"!!! UNCAUGHT EXCEPTION in ForumCommand: {e}", file=sys.stderr)
-            traceback.print_exc(file=sys.stderr)
-            sys.stderr.flush()
+            logging.exception("UNCAUGHT EXCEPTION in ForumCommand")
             return False
 
     # ==================== 辅助方法 ====================

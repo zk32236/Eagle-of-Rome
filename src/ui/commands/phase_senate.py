@@ -625,6 +625,9 @@ class SenateCommand(Command):
                 support_ratio = votes_for / total_influence
                 print(f"          总影响力：{total_influence}，支持 {votes_for}，反对 {votes_against}，支持率 {support_ratio:.1%}")
                 if support_ratio > 0.5:
+                    national_land = self.state.get_national_public_land()
+                    amount = int(national_land * prop['percent'])
+                    prop['amount'] = amount
                     passed_land_acts.append(prop)
                     print(f"          ✅ 法案通过，等待保民官否决")
                 else:

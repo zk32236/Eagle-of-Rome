@@ -245,13 +245,13 @@ def test_auto_mode_with_actions(state_with_players, mock_deciders):
     state.get_member.side_effect = get_member_side_effect
 
     # 创建待凯旋战争
-    # 创建待凯旋战争
+
     war = MagicMock(spec=War)
     war.id = "war1"
     war.soldier_share = 50
     war.status = WarStatus.RESOLVED
-    war.triumph_commander_id = None
-    war.commander_id = 101
+    war.triumph_commander_id = 101  # 设置 triumph_commander_id
+    war.commander_id = None  # 原指挥官字段设为 None
     commander = MagicMock()  # 确保已定义
     commander.is_dead = False
     ws = state.get_war_system()
@@ -282,7 +282,6 @@ def test_auto_mode_with_actions(state_with_players, mock_deciders):
                        bid_decider=bid,
                        land_trade_decider=land_trade,
                        triumph_decider=triumph)
-    cmd._get_war_triumph = MagicMock(return_value={"war": war, "commander": commander})
 
     # 模拟财务官
     cmd._has_quaestor = MagicMock(return_value=True)
@@ -427,8 +426,8 @@ def test_triumph_approved_in_auto_mode(state_with_players, mock_deciders):
     war.name = "Test War"
     war.status = WarStatus.RESOLVED
     war.soldier_share = 50
-    war.commander_id = 101
-    war.triumph_commander_id = None
+    war.commander_id = None  # 原指挥官字段置 None
+    war.triumph_commander_id = 101  # 设置 triumph_commander_id
     war.set_triumph_approved = MagicMock()
     war.set_soldier_share = MagicMock()
 
@@ -499,13 +498,12 @@ def test_triumph_rejected_in_auto_mode(state_with_players, mock_deciders):
     war.id = "war1"
     war.status = WarStatus.RESOLVED
     war.soldier_share = 50
-    war.commander_id = 101
-    war.triumph_commander_id = None
+    war.commander_id = None
+    war.triumph_commander_id = 101  # 设置 triumph_commander_id
     war.set_triumph_approved = MagicMock()
     war.set_soldier_share = MagicMock()
 
     commander = MagicMock(spec=Figure)
-    commander.id = 101
     commander.is_dead = False
     commander.add_temp_influence_task = MagicMock()
 
@@ -558,12 +556,11 @@ def test_triumph_commander_dead_in_auto_mode(state_with_players, mock_deciders):
     war.id = "war1"
     war.status = WarStatus.RESOLVED
     war.soldier_share = 50
-    war.commander_id = 101
-    war.triumph_commander_id = None
+    war.commander_id = None
+    war.triumph_commander_id = 101  # 设置 triumph_commander_id
     war.set_soldier_share = MagicMock()
 
     commander = MagicMock(spec=Figure)
-    commander.id = 101
     commander.is_dead = True  # 已死亡
     commander.add_temp_influence_task = MagicMock()
 
@@ -617,8 +614,8 @@ def test_multiple_triumph_wars_in_auto_mode(state_with_players, mock_deciders):
     war1.id = "war1"
     war1.status = WarStatus.RESOLVED
     war1.soldier_share = 50
-    war1.commander_id = 101
-    war1.triumph_commander_id = None
+    war1.commander_id = None
+    war1.triumph_commander_id = 101  # 设置 triumph_commander_id
     war1.set_triumph_approved = MagicMock()
     war1.set_soldier_share = MagicMock()
     def set_soldier_share1(value):
@@ -630,8 +627,8 @@ def test_multiple_triumph_wars_in_auto_mode(state_with_players, mock_deciders):
     war2.id = "war2"
     war2.status = WarStatus.RESOLVED
     war2.soldier_share = 30
-    war2.commander_id = 102
-    war2.triumph_commander_id = None
+    war2.commander_id = None
+    war2.triumph_commander_id = 102  # 设置 triumph_commander_id
     war2.set_triumph_approved = MagicMock()
     war2.set_soldier_share = MagicMock()
     def set_soldier_share2(value):
