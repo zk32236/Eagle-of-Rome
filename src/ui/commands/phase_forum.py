@@ -94,6 +94,7 @@ class ForumCommand(Command):
 
     def _apply_market_decisions(self, player_id: str, faction):
         """为指定派系应用市场环节的 AI 决策（招募、竞标、凯旋投票）"""
+        print(f"[DEBUG] 为派系 {faction.name} 执行自动市场决策", flush=True)
         # 1. 招募
         try:
             available_figures = self.state.curia.get_all_available()
@@ -1152,14 +1153,27 @@ class ForumCommand(Command):
                 else:
                     print(i18n.get("error_unknown_command"), file=sys.stderr)
                     sys.stderr.flush()
-        else:
-            # AI 分支（正常模式下的AI玩家）
+        else:  # _handle_step_1 AI 分支（正常模式下的AI玩家）
+            print(f"[DEBUG] AI玩家 {player_id} 进入自动裁员环节", flush=True)
             self._print_ui_03_1(player_id, player.faction_id)
             faction = self.state.get_faction(player.faction_id)
             try:
                 fig_id = self.retirement_decider.decide_whom_to_retire(faction)
                 if fig_id is not None:
-                    forum_api.retire_figure(self.state, player_id, fig_id)
+                    figure = self.state.get_member(fig_id)
+                    if figure and figure.faction_id == faction.id:
+                        # 从派系中移除
+                        faction.remove_member(fig_id)
+                        # 加入广场
+                        self.state.curia.add_figure(figure)
+                        figure.faction_id = None
+                        figure.is_faction_leader = False
+                        # 记录操作
+                        self.state.add_forum_action("retirements", fig_id)
+                        self.state.log_event(f"人物被淘汰: {figure.get_formal_name()}", level=logging.INFO,
+                                             extra={"figure_id": figure.id})
+                        # 可选：输出提示（便于观察）
+                        print(f"   🤖 AI {faction.name} 淘汰了 {figure.get_formal_name()}", flush=True)
             except Exception as e:
                 print(f"!!! 裁员环节 AI 决策异常: {e}", file=sys.stderr)
                 traceback.print_exc(file=sys.stderr)
@@ -1218,8 +1232,8 @@ class ForumCommand(Command):
                 else:
                     print(i18n.get("error_unknown_command"), file=sys.stderr)
                     sys.stderr.flush()
-        else:
-            # AI 分支
+        else:  # AI 分支
+            print(f"[DEBUG] AI玩家 {player_id} 进入市场竞价环节", flush=True)
             self._print_ui_03_2(player_id, player.faction_id)
             faction = self.state.get_faction(player.faction_id)
             if faction:
@@ -1423,7 +1437,8 @@ class ForumCommand(Command):
 
     def _get_step_players(self) -> List[str]:
         if self._step == 1 or self._step == 2:
-            return [p.player_id for p in self.state.get_all_players() if p.player_type.value == "human"]
+            # 返回所有玩家（包括AI和人类）
+            return [p.player_id for p in self.state.get_all_players()]
         elif self._step == 4:
             return self._get_quaestor_players()
         return []
