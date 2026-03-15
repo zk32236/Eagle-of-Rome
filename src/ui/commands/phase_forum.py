@@ -94,7 +94,11 @@ class ForumCommand(Command):
 
     def _apply_market_decisions(self, player_id: str, faction):
         """为指定派系应用市场环节的 AI 决策（招募、竞标、凯旋投票）"""
-        print(f"[DEBUG] 为派系 {faction.name} 执行自动市场决策", flush=True)
+        self.state.log_event(
+            f"[DEBUG] 为派系 {faction.name} 执行自动市场决策",
+            level=logging.DEBUG,
+            extra={"function": "_apply_market_decisions", "faction_id": faction.id}
+        )
         # 1. 招募
         try:
             available_figures = self.state.curia.get_all_available()
@@ -1154,7 +1158,17 @@ class ForumCommand(Command):
                     print(i18n.get("error_unknown_command"), file=sys.stderr)
                     sys.stderr.flush()
         else:  # _handle_step_1 AI 分支（正常模式下的AI玩家）
-            print(f"[DEBUG] AI玩家 {player_id} 进入自动裁员环节", flush=True)
+            player = self.state.get_player(player_id)
+            faction = self.state.get_faction(player.faction_id) if player else None
+            self.state.log_event(
+                f"[DEBUG] AI玩家 {player_id} 进入自动裁员环节",
+                level=logging.DEBUG,
+                extra={
+                    "function": "_handle_step_1",
+                    "player_id": player_id,
+                    "faction_id": faction.id if faction else None
+                }
+            )
             self._print_ui_03_1(player_id, player.faction_id)
             faction = self.state.get_faction(player.faction_id)
             try:
@@ -1173,10 +1187,10 @@ class ForumCommand(Command):
                         self.state.log_event(f"人物被淘汰: {figure.get_formal_name()}", level=logging.INFO,
                                              extra={"figure_id": figure.id})
                         # 可选：输出提示（便于观察）
-                        print(f"   🤖 AI {faction.name} 淘汰了 {figure.get_formal_name()}", flush=True)
+                        print(f"\n   🤖 AI {faction.name} 淘汰了 {figure.get_formal_name()}\n", flush=True)
             except Exception as e:
-                print(f"!!! 裁员环节 AI 决策异常: {e}", file=sys.stderr)
-                traceback.print_exc(file=sys.stderr)
+                logging.exception(f"裁员环节 AI 决策异常: {e}")
+                print(f"⚠️ AI玩家自动决策出错（已跳过）", file=sys.stderr)  # 简短的错误提示
             self._handle_next([])
 
     def _handle_step_2(self):
@@ -1232,13 +1246,25 @@ class ForumCommand(Command):
                 else:
                     print(i18n.get("error_unknown_command"), file=sys.stderr)
                     sys.stderr.flush()
-        else:  # AI 分支
-            print(f"[DEBUG] AI玩家 {player_id} 进入市场竞价环节", flush=True)
+        else:  # _handle_step_2 AI 分支
+            player = self.state.get_player(player_id)
+            faction = self.state.get_faction(player.faction_id) if player else None
+            self.state.log_event(
+                f"[DEBUG] AI玩家 {player_id} 进入市场竞价环节",
+                level=logging.DEBUG,
+                extra={
+                    "function": "_handle_step_1",
+                    "player_id": player_id,
+                    "faction_id": faction.id if faction else None
+                }
+            )
             self._print_ui_03_2(player_id, player.faction_id)
             faction = self.state.get_faction(player.faction_id)
             if faction:
                 try:
                     self._apply_market_decisions(player_id, faction)
+                    self._apply_market_decisions(player_id, faction)
+                    print(f"\n   🤖 AI {faction.name} 已完成市场决策，等待公示\n", flush=True)
                 except Exception as e:
                     logging.exception("市场环节自动决策异常") # 即使发生异常，也尝试继续推进，避免阶段卡死
             self._handle_next([])
@@ -1338,8 +1364,8 @@ class ForumCommand(Command):
                                 members = faction.get_members(self.state)
                                 faction.update_total_land(members)
                         except Exception as e:
-                            print(f"!!! 交易市场结算异常: {e}", file=sys.stderr)
-                            traceback.print_exc(file=sys.stderr)
+                            logging.exception(f"交易市场结算异常: {e}")
+                            print(f"⚠️ 交易市场结算出错（已跳过）", file=sys.stderr)
                         self._handle_next([])
                         return
                 else:
