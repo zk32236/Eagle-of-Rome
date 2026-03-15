@@ -131,20 +131,13 @@ def buy_land(state: GameState, player_id: str, amount: int) -> dict:
 
 
 def vote_triumph(state: GameState, player_id: str, war_id: str, vote: bool) -> dict:
-    """
-    凯旋投票：记录投票（True=支持，False=反对）。
-    """
     if not state.config.get("testing.bypass_player_check", False):
         if not state.is_current_player(player_id):
             return api_response(False, i18n.get("error_not_your_turn"))
-
     player = state.get_player(player_id)
-    state.add_forum_action("triumph_votes", (war_id, player.faction_id, vote))
     if not player:
         return api_response(False, i18n.get("error_no_current_player"))
-
-    state.add_forum_action("triumph_votes", (player.faction_id, vote))
-
+    state.add_forum_action("triumph_votes", (war_id, player.faction_id, vote))
     message = i18n.get("info_vote_recorded", vote="支持" if vote else "反对")
     return api_response(True, message, data={"vote": vote})
 
@@ -282,53 +275,58 @@ def resolve_forum(state: GameState) -> dict:
         for war_id, faction_id, vote in pending["triumph_votes"]:
             votes_by_war.setdefault(war_id, []).append((faction_id, vote))
 
+    if war_system:
     # 遍历所有待凯旋战争
-    for war in war_system._war_discard:
-        # 修正：使用 triumph_commander_id，且必须不为 None
-        if war.soldier_share <= 0 or war.status != WarStatus.RESOLVED or war.triumph_commander_id is None:
-            continue
+        for war in war_system._war_discard:
+            # 修正：使用 triumph_commander_id，且必须不为 None
+            if war.soldier_share <= 0 or war.status != WarStatus.RESOLVED or war.triumph_commander_id is None:
+                continue
 
-        commander = state.get_member(war.triumph_commander_id)  # 使用 triumph_commander_id
-        if not commander or commander.is_dead:
-            war.set_soldier_share(0)
-            results.append(f"⚠️ 战争 {war.name} 指挥官已死，凯旋失效")
-            continue
+            commander = state.get_member(war.triumph_commander_id)  # 使用 triumph_commander_id
+            if not commander or commander.is_dead:
+                war.set_soldier_share(0)
+                results.append(f"⚠️ 战争 {war.name} 指挥官已死，凯旋失效")
+                continue
 
-        votes = votes_by_war.get(war.id, [])
-        if not votes:
-            # 没有投票，但指挥官存活，视为无有效投票
-            war.set_soldier_share(0)
-            results.append(f"⚠️ 战争 {war.name} 无有效投票")
-            continue
+            votes = votes_by_war.get(war.id, [])
+            if not votes:
+                # 没有投票，但指挥官存活，视为无有效投票
+                war.set_soldier_share(0)
+                results.append(f"⚠️ 战争 {war.name} 无有效投票")
+                continue
 
-        # 有投票，统计支持率
-        votes_for = 0
-        votes_against = 0
-        total_influence = 0
-        for faction_id, vote in votes:
-            faction = state.get_faction(faction_id)
-            if faction:
-                influence = sum(m.influence for m in faction.get_members(state))
-                total_influence += influence
-                if vote:
-                    votes_for += influence
+            # 有投票，统计支持率
+            votes_for = 0
+            votes_against = 0
+            total_influence = 0
+            for faction_id, vote in votes:
+                faction = state.get_faction(faction_id)
+                if faction:
+                    influence = sum(m.influence for m in faction.get_members(state))
+                    total_influence += influence
+                    if vote:
+                        votes_for += influence
+                    else:
+                        votes_against += influence
+            if total_influence > 0:
+                support_rate = votes_for / total_influence
+                if support_rate > 0.5:
+                    duration = state.config.get("combat_rules.triumph_veteran_duration", 5)
+                    per_turn = war.soldier_share // duration
+                    if per_turn > 0:
+                        commander.add_temp_influence_task(per_turn, duration)
+                    war.set_triumph_approved(True)
+                    results.append(f"✅ 战争 {war.name} 的凯旋仪式获得批准（支持率 {support_rate:.1%}）")
                 else:
-                    votes_against += influence
-        if total_influence > 0:
-            support_rate = votes_for / total_influence
-            if support_rate > 0.5:
-                duration = state.config.get("combat_rules.triumph_veteran_duration", 5)
-                per_turn = war.soldier_share // duration
-                if per_turn > 0:
-                    commander.add_temp_influence_task(per_turn, duration)
-                war.set_triumph_approved(True)
-                results.append(f"✅ 战争 {war.name} 的凯旋仪式获得批准（支持率 {support_rate:.1%}）")
+                    results.append(f"❌ 战争 {war.name} 的凯旋仪式被否决（支持率 {support_rate:.1%}）")
             else:
-                results.append(f"❌ 战争 {war.name} 的凯旋仪式被否决（支持率 {support_rate:.1%}）")
-        else:
-            results.append(f"⚠️ 战争 {war.name} 无有效投票")
+                results.append(f"⚠️ 战争 {war.name} 无有效投票")
 
-        war.set_soldier_share(0)
+            war.set_soldier_share(0)
+
+    else:
+        # 记录日志（可选）
+        state.log_event("resolve_forum: 无战争系统，跳过凯旋结算", level=logging.WARNING)
 
     # 清除临时数据
     state.clear_forum_pending()

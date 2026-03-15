@@ -1024,7 +1024,7 @@ class ForumCommand(Command):
             italy = self.state.get_province(0)
             if italy:
                 italy.update_land_type(0, amount)  # 公地不变，私地增加
-                italy._turns_since_last_land_distribution = 0
+                italy.reset_turns_since_last_distribution()
                 italy.set_grievance(0)
             print(f"      ✅ 平民分地 {amount} C 土地（占国家公地 {percent * 100:.1f}%），转入意大利私地，民怨重置。")
         except Exception as e:
@@ -1067,6 +1067,7 @@ class ForumCommand(Command):
                 self.state.add_treasury(sold * land_price)
                 print(
                     f"      共售出 {sold} C，国库 +{sold * land_price} Talents，国家公地剩余 {self.state.get_national_public_land()} C")
+
             else:
                 print(f"      无土地售出。")
         except Exception as e:
@@ -1274,6 +1275,9 @@ class ForumCommand(Command):
                 land_result = forum_api.resolve_land_trades(self.state)
                 if land_result["message"]:
                     print(land_result["message"])
+                for faction in self.state.factions.values():
+                    members = faction.get_members(self.state)
+                    faction.update_total_land(members)
             except Exception as e:
                 logging.exception("交易市场结算异常")
             self._handle_next([])
@@ -1306,6 +1310,9 @@ class ForumCommand(Command):
                             land_result = forum_api.resolve_land_trades(self.state)
                             if land_result["message"]:
                                 print(land_result["message"])
+                            for faction in self.state.factions.values():
+                                members = faction.get_members(self.state)
+                                faction.update_total_land(members)
                         except Exception as e:
                             print(f"!!! 交易市场结算异常: {e}", file=sys.stderr)
                             traceback.print_exc(file=sys.stderr)
@@ -1338,6 +1345,9 @@ class ForumCommand(Command):
                             land_result = forum_api.resolve_land_trades(self.state)
                             if land_result["message"]:
                                 print(land_result["message"])
+                            for faction in self.state.factions.values():
+                                members = faction.get_members(self.state)
+                                faction.update_total_land(members)
                         except Exception as e:
                             print(f"!!! 交易市场结算异常: {e}", file=sys.stderr)
                             traceback.print_exc(file=sys.stderr)

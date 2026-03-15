@@ -206,6 +206,10 @@ class Province:
         return self._city_ids.copy()
 
     # ---------- 公共方法 ----------
+    def reset_turns_since_last_distribution(self):
+        """重置自上次分地以来的回合数（用于意大利本土）"""
+        self._turns_since_last_land_distribution = 0
+
     def update_land_type(self, public_change: int, private_change: int) -> None:
         """调整公地/私地数量，保证非负。"""
         self._land_public = max(0, self._land_public + public_change)
