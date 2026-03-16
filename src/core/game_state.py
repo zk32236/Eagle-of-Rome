@@ -90,6 +90,7 @@ class GameState:
         self._city_id_counter: int = 1
 
         # ---------- 新增：玩家系统 MVP0.7.11-12 ----------
+
         self._players: Dict[str, 'Player'] = {}  # 玩家ID -> Player对象
         self._current_player_id: Optional[str] = None  # 当前操作玩家ID
         self._turn_order: List[str] = []  # 回合顺序（玩家ID列表）
@@ -101,6 +102,12 @@ class GameState:
             "land_purchases": [],  # 公地认购记录，每个元素为 (faction_id, amount)
             "triumph_votes": [],  # 凯旋投票记录，每个元素为 (faction_id, vote)  # vote为True/False
             "land_trades": [],  # 土地交易记录，每个元素为 (seller_id, buyer_id, land, price)
+        }
+
+        # 人口阶段临时存储
+        self._population_pending = {
+            "campaigns": [],  # 每个元素为 (player_id, figure_id, amount)
+            "votes": []  # 每个元素为 (player_id, office, figure_id)
         }
 
         # 初始化时调用 reset，确保状态一致性
@@ -148,6 +155,10 @@ class GameState:
         self._current_player_id = None
         self._turn_order.clear()
         self._forum_pending = {k: [] for k in self._forum_pending}
+        self._population_pending = {
+            "campaigns": [],
+            "votes": []
+        }
 
     #========================= 功能函数 ===================================
 
@@ -369,6 +380,10 @@ class GameState:
             "_players": {pid: player.to_dict() for pid, player in self._players.items()},
             "_current_player_id": self._current_player_id,
             "_turn_order": self._turn_order.copy(),
+            "_population_pending": {
+                "campaigns": self._population_pending["campaigns"].copy(),
+                "votes": self._population_pending["votes"].copy(),
+            },
         }
         return data
 
@@ -446,6 +461,15 @@ class GameState:
             self._players[pid] = Player.from_dict(player_data)
         self._current_player_id = data.get("_current_player_id")
         self._turn_order = data.get("_turn_order", []).copy()
+        self._population_pending = data.get("_population_pending", {
+            "campaigns": [],
+            "votes": []
+        })
+        # 确保结构完整
+        if "campaigns" not in self._population_pending:
+            self._population_pending["campaigns"] = []
+        if "votes" not in self._population_pending:
+            self._population_pending["votes"] = []
 
     def _initialize_mortality_pool(self):
         """初始化天命池"""
@@ -515,6 +539,10 @@ class GameState:
             "land_purchases": [],
             "triumph_votes": [],
             "land_trades": [],
+        }
+        instance._population_pending = {
+            "campaigns": [],
+            "votes": []
         }
 
         return instance
