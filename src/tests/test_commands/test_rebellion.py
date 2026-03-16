@@ -25,7 +25,7 @@ def test_rebellion_trigger():
     state.is_phase_executed = lambda p: p == "revenue"
 
     cmd = ForumCommand(state)
-    cmd._print_civil_unrest()
+    cmd._update_civil_unrest()
 
     war_system = state.get_war_system()
     active_wars = war_system.get_active_wars()

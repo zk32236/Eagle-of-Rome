@@ -10,16 +10,17 @@ import sys
 import traceback
 import random
 import logging
-from typing import List, Optional, Dict, Any, TYPE_CHECKING
+from typing import List, Optional, Dict, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
-from src.api import forum_api, figure_api, player_api
+from src.api import forum_api, figure_api
 from src.core.i18n import i18n
 from src.core.entities.figure import Figure, ClassTier
 from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.core.localization import TerminologyService
 from src.core.systems.war_system import War, WarStatus
 from src.core.entities.player import PlayerType
-from src.ui.processors.auto_player_processor import AutoPlayerProcessor
+from src.core.entities.figure import RomanNameGenerator
+
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -210,35 +211,107 @@ class ForumCommand(Command):
 
     # ==================== 原有功能函数移植 ====================
 
-    def _generate_new_figures(self):
-        """生成新人物并加入 curia"""
-        rules = self.state.config.get("forum_rules", {})
-        count = rules.get("new_figures_count", 3)
-        class_probs = rules.get("class_probabilities", {
-            "nobile": 0.5,
-            "eques": 0.3,
-            "plebeian": 0.2
-        })
-
+    def _generate_new_figures(self) -> List[Figure]:
+        """生成新人物，包括普通人和英雄，返回新人物列表"""
         new_figures = []
+        forum_rules = self.state.config.get("forum_rules", {})
+        count = forum_rules.get("new_figures_count", 3)
+        probs = forum_rules.get("class_probabilities", {})
+        nobile_prob = probs.get("nobile", 0.1)
+        eques_prob = probs.get("eques", 0.25)
+        pleb_prob = 1 - nobile_prob - eques_prob
+        if pleb_prob < 0:
+            pleb_prob = 0.65
+
+        # 生成普通新人
         for _ in range(count):
-            tier = random.choices(
-                list(class_probs.keys()),
-                weights=list(class_probs.values())
-            )[0]
-            figure_id = self.state.allocate_id()
-            if tier == "nobile":
-                fig = Figure.create_nobile(figure_id, None, age=random.randint(30, 50))
-            elif tier == "eques":
-                fig = Figure.create_eques(figure_id, None, age=random.randint(25, 45))
+            tier_roll = random.random()
+            if tier_roll < nobile_prob:
+                fig = Figure.create_nobile(self.state.allocate_id(), None, age=random.randint(30, 50))
+            elif tier_roll < nobile_prob + eques_prob:
+                fig = Figure.create_eques(self.state.allocate_id(), None, age=random.randint(25, 40))
             else:
-                fig = Figure.create_plebeian(figure_id, None, age=random.randint(20, 40))
+                fig = Figure.create_plebeian(self.state.allocate_id(), None, age=random.randint(20, 35))
             self.state.add_member(fig)
             self.state.curia.add_figure(fig)
             new_figures.append(fig)
-        if new_figures:
-            print(f"\n   📢 {len(new_figures)} new figure(s) arrive in the Rome:")
-            sys.stdout.flush()
+
+        # ===== 天降猛男：额外生成英雄 =====
+        if self.state.hero_spawned_this_turn and self.state.hero_to_spawn:
+            hero_info = self.state.hero_to_spawn
+            if hero_info["type"] == "historical":
+                hero = self._create_historical_hero(hero_info["data"])
+            else:
+                hero = self._create_random_mighty_man()
+
+            self.state.add_member(hero)
+            self.state.curia.add_figure(hero)
+            new_figures.append(hero)
+            print(f"      🌟 英雄降临: {hero.get_formal_name()} "
+                  f"(军略 {hero.martial}, 智略 {hero.intelligence}, "
+                  f"魅力 {hero.charisma}, 热诚 {hero.zeal})")
+            self.state.log_event(
+                f"天降猛男生成: {hero.get_formal_name()}",
+                extra={"type": "hero_spawn", "figure_id": hero.id}
+            )
+
+            # 清除标记
+            self.state.hero_spawned_this_turn = False
+            self.state.hero_to_spawn = None
+
+        return new_figures
+
+    def _create_historical_hero(self, data: dict) -> Figure:
+        """根据历史英雄数据创建人物"""
+        birth_year = data["birth_year"]
+        current_year = self.state.turn.year
+        # 计算年龄：公元前年份差取绝对值
+        age = abs(current_year - birth_year)
+        figure_id = self.state.allocate_id()
+        hero = Figure(
+            id=figure_id,
+            name=data["name"],
+            age=age,
+            martial=data["martial"],
+            intelligence=data["intelligence"],
+            charisma=data["charisma"],
+            zeal=data["zeal"],
+            family_prestige=data.get("family_prestige", 0)
+        )
+        hero.class_tier = ClassTier.NOBILE
+        self.state.add_spawned_hero_id(data["id"])
+        return hero
+
+    def _create_random_mighty_man(self) -> Figure:
+        """生成随机猛人，属性基于当前存活人物最大值"""
+        living = self.state.get_living_members()
+        if living:
+            max_martial = max(f.martial for f in living)
+            max_intel = max(f.intelligence for f in living)
+            max_charisma = max(f.charisma for f in living)
+            max_zeal = max(f.zeal for f in living)
+        else:
+            # 无存活人物时使用默认值
+            max_martial = max_intel = max_charisma = max_zeal = 5
+
+        # 生成罗马名字
+        praenomen, nomen, cognomen, full_name = RomanNameGenerator.generate_nobile_name()
+        figure_id = self.state.allocate_id()
+        hero = Figure(
+            id=figure_id,
+            name=full_name,
+            age=random.randint(30, 45),
+            martial=max_martial,
+            intelligence=max_intel,
+            charisma=max_charisma,
+            zeal=max_zeal,
+            family_prestige=random.randint(1, 3)
+        )
+        hero.class_tier = ClassTier.NOBILE
+        hero.praenomen = praenomen
+        hero.nomen = nomen
+        hero.cognomen = cognomen
+        return hero
 
     def _generate_contracts(self):
         """生成新合同（包税、工程、舰队建造），仅对已征服行省生效，意大利本土只生成工程合同"""

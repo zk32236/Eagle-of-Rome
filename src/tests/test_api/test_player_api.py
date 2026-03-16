@@ -31,6 +31,8 @@ class TestPlayerAPI(unittest.TestCase):
         self.state._current_player_id = "p1"
         self.state.is_current_player.side_effect = lambda pid: pid == "p1"
         self.state.get_faction.side_effect = lambda fid: self.faction1 if fid == "optimates" else self.faction2
+        # 确保 bypass_player_check 为 False
+        self.state.config.get.return_value = False
 
     def test_get_players(self):
         result = player_api.get_players(self.state)

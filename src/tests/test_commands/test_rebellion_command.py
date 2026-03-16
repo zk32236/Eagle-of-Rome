@@ -188,7 +188,7 @@ def test_rebellion_war_timeline(
     province.set_grievance(3)
 
     forum_cmd = ForumCommand(state)
-    forum_cmd._print_civil_unrest()
+    forum_cmd._update_civil_unrest()
 
     war_system = state.get_war_system()
     active_wars = war_system.get_active_wars()

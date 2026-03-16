@@ -25,6 +25,10 @@ def mock_state():
     state.get_national_public_land.return_value = 1000
     # 默认是当前玩家（测试权限时覆盖）
     state.is_current_player.return_value = True
+    # 配置相关：确保 bypass_player_check 为 False
+    state.config.get.return_value = False
+    # 阶段执行状态：默认未执行
+    state.is_phase_executed.return_value = False
     return state
 
 def test_get_status_summary(mock_state):
