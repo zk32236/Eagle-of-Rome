@@ -19,6 +19,7 @@ from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.core.localization import TerminologyService
 from src.core.systems.war_system import War, WarStatus
 from src.core.entities.player import PlayerType
+from src.ui.processors.auto_player_processor import AutoPlayerProcessor
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -38,18 +39,17 @@ class ForumCommand(Command):
                  land_trade_decider=None,
                  triumph_decider=None):
         super().__init__(state)
-        # 步骤顺序：0: 公告, 1: 裁员, 2: 市场, 3: 交易市场, 4: 公示, 5: 完成
         self._step = 0
         self._current_player_index = 0
         self._players = []
         self.terms = TerminologyService.get()
-        self._resolution_done = False  # 控制公示只执行一次
-        self._auto_mode = False        # 是否处于自动模式（由配置决定，用于UI显示）
+        self._resolution_done = False
+        self._auto_mode = False
         self._war_events = []
 
-        # 根据配置创建决策器实例
         auto_forum = state.config.get("testing.auto_forum", False)
 
+        # 初始化决策器（必须先赋值，供处理器使用）
         if retirement_decider is not None:
             self.retirement_decider = retirement_decider
         else:
@@ -79,6 +79,13 @@ class ForumCommand(Command):
         else:
             from src.core.deciders.impl.auto_triumph_decider import AutoTriumphDecider
             self.triumph_decider = AutoTriumphDecider()
+
+        # 创建自动玩家处理器（此时所有决策器已就绪）
+        from src.ui.processors.auto_player_processor import AutoPlayerProcessor
+        self.auto_processor = AutoPlayerProcessor(
+            state,
+            retirement_decider=self.retirement_decider
+        )
 
     # ==================== 辅助函数 ====================
 
@@ -1158,7 +1165,6 @@ class ForumCommand(Command):
                     print(i18n.get("error_unknown_command"), file=sys.stderr)
                     sys.stderr.flush()
         else:  # _handle_step_1 AI 分支（正常模式下的AI玩家）
-            player = self.state.get_player(player_id)
             faction = self.state.get_faction(player.faction_id) if player else None
             self.state.log_event(
                 f"[DEBUG] AI玩家 {player_id} 进入自动裁员环节",
@@ -1169,29 +1175,10 @@ class ForumCommand(Command):
                     "faction_id": faction.id if faction else None
                 }
             )
-            self._print_ui_03_1(player_id, player.faction_id)
-            faction = self.state.get_faction(player.faction_id)
-            try:
-                fig_id = self.retirement_decider.decide_whom_to_retire(faction)
-                if fig_id is not None:
-                    figure = self.state.get_member(fig_id)
-                    if figure and figure.faction_id == faction.id:
-                        # 从派系中移除
-                        faction.remove_member(fig_id)
-                        # 加入广场
-                        self.state.curia.add_figure(figure)
-                        figure.faction_id = None
-                        figure.is_faction_leader = False
-                        # 记录操作
-                        self.state.add_forum_action("retirements", fig_id)
-                        self.state.log_event(f"人物被淘汰: {figure.get_formal_name()}", level=logging.INFO,
-                                             extra={"figure_id": figure.id})
-                        # 可选：输出提示（便于观察）
-                        print(f"\n   🤖 AI {faction.name} 淘汰了 {figure.get_formal_name()}\n", flush=True)
-            except Exception as e:
-                logging.exception(f"裁员环节 AI 决策异常: {e}")
-                print(f"⚠️ AI玩家自动决策出错（已跳过）", file=sys.stderr)  # 简短的错误提示
+            # 调用处理器执行裁员（内部已处理异常）
+            self.auto_processor.process_retirement(player_id, faction)
             self._handle_next([])
+
 
     def _handle_step_2(self):
         """处理市场环节（招募、竞标、凯旋投票）"""
