@@ -219,7 +219,14 @@ def resolve_forum(state: GameState) -> dict:
                 top_bidders = [b for b in bids if b[2] == max_amount]
                 winner_figure, winner_faction, amount = random.choice(top_bidders)
                 contract.mark_winner(winner_figure, state.turn.turn_number, 0)
-                # 资金转移等（原有逻辑）
+
+                # 计算并设置税率
+                base_tax_rate = state.get_economic_rule("province_tax_rate", 0.1)  # 基础税率
+                r = (amount / contract.base_cost) - 1.0  # 加价比例
+                contract._tax_rate = base_tax_rate * (1 + r)  # 实际税率
+
+                results.append(
+                    f"✅ 包税合同 {contract.name} 中标者: {state.get_faction(winner_faction).name}，出价 {max_amount}，税率 {contract._tax_rate * 100:.1f}%")
             else:
                 # 工程合同：价低者得
                 min_amount = min(b[2] for b in bids)

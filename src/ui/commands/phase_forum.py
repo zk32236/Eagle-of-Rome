@@ -466,6 +466,15 @@ class ForumCommand(Command):
             if contracts:
                 for contract in contracts:
                     tax_rate = getattr(contract, 'tax_rate', 0.0)
+                    # ===== 新增防御性检查 =====
+                    if tax_rate is None:
+                        self.state.log_event(
+                            f"⚠️ 合同 {contract.id} 税率未设置，已跳过",
+                            level=logging.WARNING,
+                            extra={"contract_id": contract.id}
+                        )
+                        continue
+                    # =========================
                     if tax_rate > base_tax_rate:
                         if province.grievance < 1:
                             province.set_grievance(1)
