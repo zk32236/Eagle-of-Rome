@@ -243,6 +243,9 @@ class PopulationCommand(Command):
                         f"凯旋式: {commander.name} 举行凯旋",
                         extra={"type": "triumph", "commander_id": commander.id, "war_id": war.id}
                     )
+                    # ==== 新增：重置凯旋标记 ====
+                    war.set_triumph_approved(False)
+                    # ==========================
 
             # 解散参与该战争的所有军团
             if war.legion_numbers:
