@@ -39,6 +39,7 @@ class ForumCommand(Command):
                  land_trade_decider=None,
                  triumph_decider=None):
         super().__init__(state)
+        # 步骤顺序：0: 公告, 1: 裁员, 2: 市场, 3: 交易市场, 4: 公示, 5: 完成
         self._step = 0
         self._current_player_index = 0
         self._players = []
@@ -49,7 +50,7 @@ class ForumCommand(Command):
 
         auto_forum = state.config.get("testing.auto_forum", False)
 
-        # 初始化决策器（必须先赋值，供处理器使用）
+        # 初始化决策器
         if retirement_decider is not None:
             self.retirement_decider = retirement_decider
         else:
@@ -80,11 +81,14 @@ class ForumCommand(Command):
             from src.core.deciders.impl.auto_triumph_decider import AutoTriumphDecider
             self.triumph_decider = AutoTriumphDecider()
 
-        # 创建自动玩家处理器（此时所有决策器已就绪）
+        # 创建自动玩家处理器，传入所有需要的决策器
         from src.ui.processors.auto_player_processor import AutoPlayerProcessor
         self.auto_processor = AutoPlayerProcessor(
             state,
-            retirement_decider=self.retirement_decider
+            retirement_decider=self.retirement_decider,
+            recruitment_decider=self.recruitment_decider,
+            bid_decider=self.bid_decider,
+            triumph_decider=self.triumph_decider
         )
 
     # ==================== 辅助函数 ====================
@@ -1179,7 +1183,6 @@ class ForumCommand(Command):
             self.auto_processor.process_retirement(player_id, faction)
             self._handle_next([])
 
-
     def _handle_step_2(self):
         """处理市场环节（招募、竞标、凯旋投票）"""
         player_id = self._get_current_player_id()
@@ -1233,27 +1236,19 @@ class ForumCommand(Command):
                 else:
                     print(i18n.get("error_unknown_command"), file=sys.stderr)
                     sys.stderr.flush()
-        else:  # _handle_step_2 AI 分支
-            player = self.state.get_player(player_id)
+        else:  # AI 分支
             faction = self.state.get_faction(player.faction_id) if player else None
             self.state.log_event(
                 f"[DEBUG] AI玩家 {player_id} 进入市场竞价环节",
                 level=logging.DEBUG,
                 extra={
-                    "function": "_handle_step_1",
+                    "function": "_handle_step_2",
                     "player_id": player_id,
                     "faction_id": faction.id if faction else None
                 }
             )
-            self._print_ui_03_2(player_id, player.faction_id)
-            faction = self.state.get_faction(player.faction_id)
-            if faction:
-                try:
-                    self._apply_market_decisions(player_id, faction)
-                    self._apply_market_decisions(player_id, faction)
-                    print(f"\n   🤖 AI {faction.name} 已完成市场决策，等待公示\n", flush=True)
-                except Exception as e:
-                    logging.exception("市场环节自动决策异常") # 即使发生异常，也尝试继续推进，避免阶段卡死
+            # 调用处理器执行市场决策
+            self.auto_processor.process_market(player_id, faction)
             self._handle_next([])
 
     def _handle_step_3(self):
