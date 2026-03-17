@@ -11,6 +11,8 @@ from src.core.deciders.retirement_decider import RetirementDecider
 from src.core.deciders.recruitment_decider import RecruitmentDecider
 from src.core.deciders.bid_decider import BidDecider
 from src.core.deciders.triumph_decider import TriumphDecider
+from src.core.deciders.festival_decider import FestivalDecider
+from src.core.deciders.vote_decider import VoteDecider
 
 
 class AutoPlayerProcessor:
@@ -19,12 +21,104 @@ class AutoPlayerProcessor:
                  retirement_decider: RetirementDecider,
                  recruitment_decider: RecruitmentDecider,
                  bid_decider: BidDecider,
-                 triumph_decider: TriumphDecider):
+                 triumph_decider: TriumphDecider,
+                 festival_decider: Optional[FestivalDecider] = None,
+                 vote_decider: Optional[VoteDecider] = None):
         self.state = state
         self.retirement_decider = retirement_decider
         self.recruitment_decider = recruitment_decider
         self.bid_decider = bid_decider
         self.triumph_decider = triumph_decider
+        self.festival_decider = festival_decider
+        self.vote_decider = vote_decider
+
+    def process_festival(self, player_id: str, faction: Faction) -> None:
+        """自动举办庆典：为派系内候选人随机举办庆典"""
+        if not self.festival_decider:
+            self.state.log_event(
+                "[WARNING] AutoPlayerProcessor: festival_decider 未设置，跳过庆典",
+                level=logging.WARNING
+            )
+            return
+
+        try:
+            # 获取候选人列表（所有公职候选人）
+            from src.api.population_api import get_candidates
+            cand_result = get_candidates(self.state)
+            if not cand_result["success"]:
+                return
+            all_candidates = []
+            for office, cands in cand_result["data"].items():
+                all_candidates.extend([c["id"] for c in cands])
+
+            # 转换为 Figure 对象
+            candidates = []
+            for cid in all_candidates:
+                fig = self.state.get_member(cid)
+                if fig and not fig.is_dead and fig.faction_id == faction.id:
+                    candidates.append(fig)
+
+            # 使用庆典决策器决定花费
+            decisions = self.festival_decider.decide_festivals(faction, candidates, self.state)
+            for fig_id, amount in decisions.items():
+                # 调用 API 执行庆典（需绕过权限检查）
+                from src.api import population_api
+                # 临时绕过权限：设置 bypass_player_check 为 True 或直接操作？这里直接调用 API，但 API 内有权限检查，自动模式下应绕过。
+                # 简单起见，直接操作人物（但为了统一，建议 API 支持 bypass 模式）
+                # 这里我们直接调用 API 并依赖配置中的 bypass_player_check（自动模式下通常为 True）
+                result = population_api.campaign(self.state, player_id, fig_id, amount)
+                if result["success"]:
+                    self.state.log_event(
+                        f"AI 庆典: 派系 {faction.name} 为人物 {fig_id} 花费 {amount}",
+                        extra={"player_id": player_id, "figure_id": fig_id, "amount": amount}
+                    )
+                else:
+                    self.state.log_event(
+                        f"AI 庆典失败: {result['message']}",
+                        level=logging.WARNING
+                    )
+        except Exception as e:
+            logging.exception(f"庆典环节 AI 决策异常: {e}")
+
+    def process_vote(self, player_id: str, faction: Faction) -> None:
+        """自动投票：为每个公职决定投票对象"""
+        if not self.vote_decider:
+            self.state.log_event(
+                "[WARNING] AutoPlayerProcessor: vote_decider 未设置，跳过投票",
+                level=logging.WARNING
+            )
+            return
+
+        try:
+            from src.api.population_api import get_candidates, vote
+            cand_result = get_candidates(self.state)
+            if not cand_result["success"]:
+                return
+
+            for office, cands in cand_result["data"].items():
+                if not cands:
+                    continue
+                # 转换为 Figure 列表
+                candidate_figures = []
+                for c in cands:
+                    fig = self.state.get_member(c["id"])
+                    if fig:
+                        candidate_figures.append(fig)
+                chosen_id = self.vote_decider.decide_vote(office, candidate_figures, faction, self.state)
+                if chosen_id is not None:
+                    result = vote(self.state, player_id, office, chosen_id)
+                    if result["success"]:
+                        self.state.log_event(
+                            f"AI 投票: 派系 {faction.name} 为 {office} 投给 {chosen_id}",
+                            extra={"player_id": player_id, "office": office, "figure_id": chosen_id}
+                        )
+                    else:
+                        self.state.log_event(
+                            f"AI 投票失败: {result['message']}",
+                            level=logging.WARNING
+                        )
+        except Exception as e:
+            logging.exception(f"投票环节 AI 决策异常: {e}")
 
     def process_retirement(self, player_id: str, faction: Faction) -> bool:
         """执行裁员决策。返回 True 表示执行了淘汰，否则 False。"""

@@ -1,50 +1,406 @@
 # src/ui/commands/phase_population.py
 """
-人口阶段命令（公民大会） - 优化布局，仅显示关键信息
+人口阶段命令 - 多步骤交互版本
+支持手动庆典、投票，自动/手动模式切换
 """
-
-import random
+import sys
 import logging
+from typing import List, Optional, Dict
+
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
-from src.core.entities.figure import OfficeTerm, Figure
-from src.ui.utils import get_progress_bar
-from src.core.deciders.impl.auto_festival_decider import AutoFestivalDecider
-from src.core.deciders.festival_decider import FestivalDecider
-from typing import List, Optional, Dict, TYPE_CHECKING
-from collections import defaultdict
+from src.core.entities.figure import Figure, ClassTier
+from src.core.entities.player import PlayerType
 from src.core.entities.war import WarStatus
-from src.core.deciders.fleet_disband_decider import FleetDisbandDecider
-from src.core.deciders.impl.auto_fleet_disband_decider import AutoFleetDisbandDecider
-
-if TYPE_CHECKING:
-    from src.core.game_state import GameState
+from src.core.entities.contract import ContractStatus
+from src.api import population_api
+from src.api import figure_api
+from src.core.i18n import i18n
+from src.core.deciders.impl.auto_festival_decider import AutoFestivalDecider
+from src.core.deciders.impl.auto_vote_decider import AutoVoteDecider
 
 
 class PopulationCommand(Command):
-    """人口阶段命令（公民大会）"""
+    """人口阶段命令 - 支持多步骤玩家交互"""
 
     name = "population"
     aliases = ["p"]
-    description = "执行人口阶段 (Population Phase) - 举行公职选举、评估共和国状态、处理军团"
+    description = "执行人口阶段 (Population Phase) - 举办庆典、投票选举、凯旋式"
 
-    def __init__(self, state: "GameState", festival_decider: Optional[FestivalDecider] = None,
-                 fleet_disband_decider: Optional[FleetDisbandDecider] = None):
+    def __init__(self, state):
         super().__init__(state)
-        self.festival_decider = festival_decider or AutoFestivalDecider()
-        self.fleet_disband_decider = fleet_disband_decider or AutoFleetDisbandDecider()
+        self._step = 0
+        self._players = []
+        self._current_player_index = 0
+        self._auto_mode = False
+        self._resolution_done = False
+        self.terms = TerminologyService.get()
 
+        from src.ui.processors.auto_player_processor import AutoPlayerProcessor
+        from src.core.deciders.impl.auto_retirement_decider import AutoRetirementDecider
+        from src.core.deciders.impl.auto_recruitment_decider import AutoRecruitmentDecider
+        from src.core.deciders.impl.auto_bid_decider import AutoBidDecider
+        from src.core.deciders.impl.auto_triumph_decider import AutoTriumphDecider
+        from src.core.deciders.impl.auto_fleet_disband_decider import AutoFleetDisbandDecider
+
+        self.auto_processor = AutoPlayerProcessor(
+            state,
+            retirement_decider=AutoRetirementDecider(state),
+            recruitment_decider=AutoRecruitmentDecider(),
+            bid_decider=AutoBidDecider(),
+            triumph_decider=AutoTriumphDecider()
+        )
+        self.auto_processor.festival_decider = AutoFestivalDecider()
+        self.auto_processor.vote_decider = AutoVoteDecider()
+        self.fleet_disband_decider = AutoFleetDisbandDecider()
+        self._startup_done = False
+
+    # ---------- 核心执行 ----------
     def execute(self, args: List[str]) -> bool:
-
         if not self.state.is_phase_executed("forum"):
-            print("⚠️ 必须先执行广场阶段 (forum)")
+            print("⚠️ 必须先执行广场阶段 (forum)", file=sys.stderr, flush=True)
             return False
 
         if self.state.is_phase_executed("population"):
-            print("⚠️ 人口阶段在本回合已执行过")
+            print("⚠️ 人口阶段在本回合已执行过", file=sys.stderr, flush=True)
             return False
 
-        # 清理广场中未被招募的人物
+        self._auto_mode = self.state.config.get("testing.auto_forum", False)
+
+        # 初始化状态机
+        self._step = 0
+        self._players = self._get_step_players()
+        self._current_player_index = 0
+        self._resolution_done = False
+        self._startup_done = False
+
+        while self._step < 5:
+            if self._step == 0:
+                self._handle_step_0()
+            elif self._step == 1:
+                self._handle_step_1()
+            elif self._step == 2:
+                self._handle_step_2()
+            elif self._step == 3:
+                self._handle_step_3()
+            elif self._step == 4:
+                self._handle_step_4()
+
+        self.state.mark_phase_executed("population")
+        return True
+
+    # ---------- 步骤0：公告 ----------
+    def _handle_step_0(self):
+        """公告环节：显示阶段预览和凯旋信息"""
+        # 打印标题和阶段预览
+        #self._print_ui_04_0()
+
+        # 只在第一次进入步骤0时执行凯旋、解散等操作
+        if not self._startup_done:
+            # 凯旋信息
+            self._process_legion_disbandment_and_triumphs()
+            if self.state.naval_system:
+                disbanded = self.state.naval_system.disband_unused_fleets(
+                    self.state.turn.turn_number,
+                    self.fleet_disband_decider
+                )
+                if disbanded:
+                    print(f"      ⚓ 舰队 {disbanded} 已解散（无需要海战的战争）")
+            self._convert_battlefield_commanders()
+            # 清理广场中未被招募的人物
+            curia = self.state.curia
+            if not curia.is_empty():
+                ids_to_remove = [fig.id for fig in curia.get_all_available()]
+                for fid in ids_to_remove:
+                    if fid in self.state._members:
+                        del self.state._members[fid]
+                curia.clear()
+                print(f"      🗑️ {len(ids_to_remove)} 名未被招募的人物已从罗马消失，不知去向。")
+            print()  # 空行分隔
+            self._startup_done = True
+
+        # 打印操作提示
+        print("\n🔧 本阶段可操作(ANYONE)：")
+        print("   1. next/n → 进入庆典环节")
+        sys.stdout.flush()
+
+        if self._auto_mode:
+            self._step += 1
+            return
+
+        while True:
+            print("\n> 请输入操作(ANYONE): ", end="", file=sys.stderr, flush=True)
+            cmd_input = input().strip()
+            if not cmd_input:
+                continue
+            parts = cmd_input.split()
+            cmd = parts[0].lower()
+            if cmd in ("next", "n"):
+                self._step += 1
+                break
+            else:
+                print(i18n.get("error_unknown_command"), file=sys.stderr, flush=True)
+
+    def _print_ui_04_0(self):
+        """打印UI-04-0标题和阶段预览"""
+        print("\n############################################################")
+        print(f" 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 人口阶段 [4/7] (UI-04-0)")
+        print("############################################################")
+        print("\n--- 阶段预览 ---")
+        print("决定罗马的未来领袖！各派系为候选人举办庆典、拉拢人心，你的影响力将在此刻化")
+        print("为选票。谁能当选执政官？谁将掌控元老院？每一步决策都在重塑权力格局。胜利者")
+        print("获得无上荣耀，失败者只能等待明年再来。你的影响力，即是罗马的力量。现在就行")
+        print("动，让你的派系站在权力之巅！")
+        print()
+        sys.stdout.flush()
+
+    def _display_triumph_info(self):
+        """显示待凯旋信息（仅显示，不修改标记）"""
+        ws = self.state.get_war_system()
+        if not ws:
+            return
+        displayed = False
+        for war in ws._war_discard:
+            if war.status == WarStatus.RESOLVED and war.triumph_approved:
+                commander_id = war.triumph_commander_id or war.commander_id
+                commander = self.state.get_member(commander_id) if commander_id else None
+                if commander and not commander.is_dead:
+                    if not displayed:
+                        print("\n==========================================================")
+                        print("   🏛️  Legions Return Rome from Battlefield")
+                        print("==========================================================")
+                        displayed = True
+                    print(f"      🏛️ {commander.name} 的军团举行凯旋式！")
+        if displayed:
+            print()
+
+    # ---------- 步骤1：庆典环节 ----------
+    def _handle_step_1(self):
+        """庆典环节：玩家为候选人举办庆典"""
+        # 重置玩家列表，确保从第一个玩家开始
+        player_id = self._get_current_player_id()
+        if not player_id:
+            self._step += 1
+            return
+        player = self.state.get_player(player_id)
+        if not player:
+            self._step += 1
+            return
+
+        if self._auto_mode:
+            # 全自动模式：自动为所有玩家执行庆典
+            self._auto_mode_festival()
+            self._step += 1
+            return
+
+        bypass = self.state.config.get("testing.bypass_player_check", False)
+        if bypass or player.player_type == PlayerType.HUMAN:
+            self._print_ui_04_1(player_id, player.faction_id)
+            while True:
+                print(f"\n> 请输入操作(PLAYER {player_id}): ", end="", file=sys.stderr, flush=True)
+                cmd_input = input().strip()
+                if not cmd_input:
+                    continue
+                parts = cmd_input.split()
+                cmd = parts[0].lower()
+                args = parts[1:]
+
+                if cmd in ("next", "n"):
+                    next_id = self._next_player()
+                    if next_id:
+                        # 切换到下一个玩家
+                        print(i18n.get("info_next_player", player=next_id), file=sys.stderr, flush=True)
+                        # 继续本步骤循环（实际会在下次循环处理新玩家）
+                        break
+                    else:
+                        # 所有玩家完成，进入下一步
+                        self._step += 1
+                        return
+                elif cmd == "campaign":
+                    self._handle_campaign(args)
+                elif cmd == "investigate":
+                    self._handle_investigate(args)
+                else:
+                    print(i18n.get("error_unknown_command"), file=sys.stderr, flush=True)
+        else:
+            # AI玩家：自动处理
+            faction = self.state.get_faction(player.faction_id) if player else None
+            self.auto_processor.process_festival(player_id, faction)
+            self._next_player()  # 切换到下一个玩家（本步骤内自动）
+            # 注意：如果所有玩家完成，_next_player 会返回 None，需要判断
+            if self._current_player_index >= len(self._players):
+                self._step += 1
+
+    def _print_ui_04_1(self, player_id: str, faction_id: str):
+        """打印庆典环节UI"""
+        faction = self.state.get_faction(faction_id)
+        faction_name = faction.name if faction else "未知"
+        print("\n############################################################")
+        print(f" UI-04-1 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 人口阶段 [4/7]")
+        print("############################################################")
+        print("\n--- 庆典环节 ---")
+        print("举办庆典可以提升候选人在选民中的声望，但需要从个人财富中支出。")
+        print("每花费1塔兰特，增加1点人气，并提升影响力。")
+
+        # 显示候选人列表
+        result = population_api.get_candidates(self.state)
+        if result["success"] and result["message"]:
+            print(result["message"])
+
+        # 显示本派系资金
+        if faction:
+            print(f"\n   💰 派系 {faction_name} 资金: {faction.treasury}")
+
+        print(f"\n🔧 本阶段可操作(PLAYER {player_id} {faction_name})：")
+        print("   1. investigate → 查看人物私库余额")
+        print("   2. campaign <人物ID> <金额> → 举办庆典")
+        print("   3. next/n → 下一个玩家")
+        sys.stdout.flush()
+
+    def _handle_campaign(self, args):
+        if len(args) != 2:
+            print(i18n.get("error_usage_campaign", default="用法: campaign <人物ID> <金额>"), file=sys.stderr, flush=True)
+            return
+        try:
+            fig_id = int(args[0])
+            amount = int(args[1])
+        except ValueError:
+            print(i18n.get("error_invalid_id"), file=sys.stderr, flush=True)
+            return
+
+        player_id = self._get_current_player_id()
+        if not player_id:
+            return
+        result = population_api.campaign(self.state, player_id, fig_id, amount)
+        print(result["message"], flush=True)
+
+    # ---------- 步骤2：投票环节 ----------
+    def _handle_step_2(self):
+        """投票环节：玩家为公职候选人投票"""
+        # 如果当前玩家无效（索引超出），则重置到第一个玩家
+        if self._get_current_player_id() is None:
+            self._current_player_index = 0
+        player_id = self._get_current_player_id()
+        if not player_id:
+            self._step += 1
+            return
+
+        # 新增：获取 player 对象
+        player = self.state.get_player(player_id)
+        if not player:
+            self._step += 1
+            return
+
+        if self._auto_mode:
+            # 全自动模式：自动为所有玩家投票
+            self._auto_mode_vote()
+            self._step += 1
+            return
+
+        bypass = self.state.config.get("testing.bypass_player_check", False)
+        if bypass or player.player_type == PlayerType.HUMAN:
+            self._print_ui_04_2(player_id, player.faction_id)
+            while True:
+                print(f"\n> 请输入操作(PLAYER {player_id}): ", end="", file=sys.stderr, flush=True)
+                cmd_input = input().strip()
+                if not cmd_input:
+                    continue
+                parts = cmd_input.split()
+                cmd = parts[0].lower()
+                args = parts[1:]
+
+                if cmd in ("next", "n"):
+                    next_id = self._next_player()
+                    if next_id:
+                        print(i18n.get("info_next_player", player=next_id), file=sys.stderr, flush=True)
+                        break
+                    else:
+                        self._step += 1
+                        return
+                elif cmd == "vote":
+                    self._handle_vote(args)
+                else:
+                    print(i18n.get("error_unknown_command"), file=sys.stderr, flush=True)
+        else:
+            # AI玩家
+            faction = self.state.get_faction(player.faction_id) if player else None
+            self.auto_processor.process_vote(player_id, faction)
+            self._next_player()
+            if self._current_player_index >= len(self._players):
+                self._step += 1
+
+    def _print_ui_04_2(self, player_id: str, faction_id: str):
+        """打印投票环节UI"""
+        faction = self.state.get_faction(faction_id)
+        faction_name = faction.name if faction else "未知"
+        print("\n############################################################")
+        print(f" UI-04-2 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 人口阶段 [4/7]")
+        print("############################################################")
+        print("\n--- 投票环节 ---")
+        print("每个派系可以为每个公职投票一次。你的投票将基于派系影响力加权。")
+
+        # 显示候选人列表
+        result = population_api.get_candidates(self.state)
+        if result["success"] and result["message"]:
+            print(result["message"])
+
+        print(f"\n🔧 本阶段可操作(PLAYER {player_id} {faction_name})：")
+        print("   1. vote <公职> <人物ID> → 投票（公职可选：consul/censor/praetor/quaestor/tribune）")
+        print("   2. next/n → 下一个玩家")
+        sys.stdout.flush()
+
+    def _handle_vote(self, args):
+        if len(args) != 2:
+            print(i18n.get("error_usage_vote", default="用法: vote <公职> <人物ID>"), file=sys.stderr, flush=True)
+            return
+        office = args[0].lower()
+        try:
+            fig_id = int(args[1])
+        except ValueError:
+            print(i18n.get("error_invalid_id"), file=sys.stderr, flush=True)
+            return
+        player_id = self._get_current_player_id()
+        if not player_id:
+            return
+        result = population_api.vote(self.state, player_id, office, fig_id)
+        print(result["message"], flush=True)
+
+    # ---------- 步骤3：公示环节 ----------
+    def _handle_step_3(self):
+        """公示环节：统计选举结果，执行凯旋、军团解散等"""
+        if not self._resolution_done:
+            self._do_resolution()
+            self._resolution_done = True
+        if self._auto_mode:
+            self._step += 1
+            return
+        # 公示环节不需要重置玩家列表，因为只有一个全局步骤
+        while True:
+            print("\n🔧 本阶段可操作(ANYONE):", file=sys.stderr, flush=True)
+            print("   1. next/n → 进入元老院阶段", file=sys.stderr, flush=True)
+            print("\n> 请输入操作(ANYONE): ", end="", file=sys.stderr, flush=True)
+            cmd_input = input().strip()
+            if not cmd_input:
+                continue
+            parts = cmd_input.split()
+            cmd = parts[0].lower()
+            if cmd in ("next", "n"):
+                self._step += 1
+                break
+            else:
+                print(i18n.get("error_unknown_command"), file=sys.stderr, flush=True)
+
+    def _do_resolution(self):
+        """执行公示结算：选举统计、凯旋、军团解散等"""
+        # 1. 执行选举统计
+        result = population_api.resolve_election(self.state)
+        if result["message"]:
+            print(result["message"])
+
+        # 2. 执行凯旋、军团解散等原有逻辑（确保只执行一次，不重复）
+        self._process_legion_disbandment_and_triumphs()
+
+        # 3. 清理广场中未被招募的人物（原有逻辑）
         curia = self.state.curia
         if not curia.is_empty():
             ids_to_remove = [fig.id for fig in curia.get_all_available()]
@@ -54,186 +410,33 @@ class PopulationCommand(Command):
             curia.clear()
             print(f"      🗑️ {len(ids_to_remove)} 名未被招募的人物已从罗马消失，不知去向。")
 
-        terms = TerminologyService.get()
-        print(f"\n--- {terms.phase_population} Phase (Year {abs(self.state.turn.year)} BC) ---\n")
+        # 4. 战场指挥官转换（原有逻辑）
+        self._convert_battlefield_commanders()
 
-        # ========== 1. 军团凯旋与解散 ==========
-        print("=" * 58)
-        print("   🏛️  Legions Return Rome from Battlefield")
-        print("=" * 58)
-        self._process_legion_disbandment_and_triumphs()
-        print()
-
+        # 5. 舰队解散
         if self.state.naval_system:
             disbanded = self.state.naval_system.disband_unused_fleets(
                 self.state.turn.turn_number,
-                self.fleet_disband_decider
+                self.fleet_disband_decider  # 需要传入决策器，这里略，后续可添加
             )
             if disbanded:
                 print(f"      ⚓ 舰队 {disbanded} 已解散（无需要海战的战争）")
 
-        # ========== 2. 卸任所有现任官员（普通卸任） ==========
-        election_order = ["consul", "censor", "praetor", "quaestor", "tribune"]
-        for office_type in election_order:
-            self._remove_office_holders(office_type)
-
-        # ===== MVP0.7.01 战场指挥官转换（在普通卸任后执行） =====
-        self._convert_battlefield_commanders()
-
-        # ========== 3. 庆典盛况 ==========
-        print("=" * 58)
-        print("   🏛️  ELECTIONS Campaign")
-        print("=" * 58)
-
-        # 计算候选人并按派系分组
-        candidates_by_faction = self._compute_candidates_by_faction()
-
-        # 获取庆典前各派系影响力
-        pre_influences = self._get_faction_influences()
-
-        # 自动举办庆典（内部统计总花费，不逐条打印）
-        total_spent, total_boost = self._process_automatic_festivals(candidates_by_faction)
-
-        # 获取庆典后各派系影响力
-        post_influences = self._get_faction_influences()
-
-        # 打印影响力变化表格
-        self._print_influence_table(pre_influences, post_influences, total_spent, total_boost)
-
-        # ========== 4. 公职选举 ==========
-        print()
-        election_results = {}
-        for office_type in election_order:
-            count = self.state.get_offices_per_election(office_type)
-            winners = []
-            for i in range(count):
-                winner = self._elect_single_magistrate(office_type, terms)
-                if winner:
-                    winners.append(winner)
-                    if office_type == "consul":
-                        if winner.id not in self.state.turn.leader_ids:
-                            self.state.turn.leader_ids.append(winner.id)
-            election_results[office_type] = winners
-
-        # 打印选举结果
-        self._print_election_results(election_results)
-
-        # 打印选举后各派系影响力
-        post_election_influences = self._get_faction_influences()
-        self._print_faction_summary("选举后", post_election_influences)
-
-        self.state.mark_phase_executed("population")
-
-        return True
-
-    # ================================= MVP 0.7 ===========================================
-
-    # ======== MVP 0.7.1 停战议和 =======
-
-    def _convert_battlefield_commanders(self):
-        """
-        将战场上（is_absent=True）的执政官/大法官转为 proconsul/propraetor，
-        同时记录历史官职。
-        """
-        current_turn = self.state.turn.turn_number
-        war_system = self.state.get_war_system()
-        if not war_system:
-            return
-
-        # 获取所有存活人物中 is_absent=True 且 office 为 consul/praetor 的
-        for figure in self.state.get_living_members():
-            if not figure.is_absent:
-                continue
-            if figure.office not in ('consul', 'praetor'):
-                continue
-
-            old_office = figure.office
-            # 查找该人物指挥的战争
-            war = war_system.get_war_by_commander(figure.id)
-            if not war:
-                # 理论上不应发生，但若找不到则用当前回合-1作为上任回合的近似
-                assigned_turn = current_turn - 1
-                self.state.log_event(
-                    f"警告：战场指挥官 {figure.name} 找不到指挥的战争，使用默认上任回合",
-                    extra={'type': 'truce_conversion_warning', 'figure_id': figure.id},
-                    level=logging.WARNING
-                )
-            else:
-                assigned_turn = war.commander_assigned_turn or (current_turn - 1)
-
-            # 记录历史官职（卸任）
-            figure.add_office_history(old_office, assigned_turn, current_turn - 1)
-
-            # 授予前线官职
-            new_office = 'proconsul' if old_office == 'consul' else 'propraetor'
-            figure.office = new_office
-            figure.update_influence()
-
-            # ===== 新增：更新战争中的上任回合 =====
-            if war:
-                war.set_commander_assigned_turn(current_turn)
-
-            # 输出日志
-            print(f"      🔄 战场指挥官 {figure.name} 转为 {new_office}，继续指挥战争。")
-            self.state.log_event(
-                f"战场指挥官 {figure.name} 转为 {new_office}",
-                extra={
-                    'type': 'commander_conversion',
-                    'figure_id': figure.id,
-                    'old_office': old_office,
-                    'new_office': new_office,
-                    'assigned_turn': assigned_turn
-                }
-            )
-
-    # ================================= MVP 0.1-0.5 =======================================
-
-    # ---------- 辅助方法 ----------
-    def _get_faction_influences(self) -> Dict[str, int]:
-        """获取各派系当前总影响力"""
-        return {faction.id: faction.get_total_influence(self.state) for faction in self.state.factions.values()}
-
-    def _print_influence_table(self, pre: Dict[str, int], post: Dict[str, int], spent: int, boost: int):
-        """打印庆典前后影响力表格"""
-        print("\n   📊 各派系影响力：\t\t庆典前\t\t庆典后")
-        for faction in self.state.factions.values():
-            pre_val = pre.get(faction.id, 0)
-            post_val = post.get(faction.id, 0)
-            print(f"      {faction.name}:\t\t{pre_val}\t\t{post_val}")
-        print(f"\n      总计花费 {spent}，增加人气 {boost}")
-
-    def _print_election_results(self, results: Dict[str, List[Figure]]):
-        """打印选举结果"""
-        print("\n   📋 选举结果：")
-        for office_type, winners in results.items():
-            emoji = {"consul": "🏛️", "censor": "📜", "praetor": "⚖", "quaestor": "💰", "tribune": "🛡️"}.get(office_type, "📋")
-            if len(winners) == 1:
-                faction_name = self.state.get_faction(winners[0].faction_id).name if winners[0].faction_id else "无"
-                print(f"      {emoji} {office_type.upper()}: {winners[0].name} ({faction_name})")
-            else:
-                names = ", ".join([f"{w.name}({self.state.get_faction(w.faction_id).name if w.faction_id else '无'})" for w in winners])
-                print(f"      {emoji} {office_type.upper()} ({len(winners)} seats): {names}")
-
-    def _print_faction_summary(self, label: str, influences: Dict[str, int]):
-        """打印派系影响力汇总"""
-        print(f"\n   📊 各派系影响力（{label}）：")
-        for faction in self.state.factions.values():
-            val = influences.get(faction.id, 0)
-            print(f"      {faction.name}: {val}")
+        # 6. 清除临时数据
+        self.state._population_pending["campaigns"] = []
+        self.state._population_pending["votes"] = []
 
     def _process_legion_disbandment_and_triumphs(self):
-        """处理军团解散和凯旋式"""
+        """处理军团解散和凯旋式（仅执行一次）"""
         ws = self.state.get_war_system()
         ms = self.state.get_military_system()
         if not ws or not ms:
             return
 
-        # 遍历所有已解决的战争
         for war in ws._war_discard:
             if war.status != WarStatus.RESOLVED:
                 continue
 
-            # 凯旋式
             if war.triumph_approved:
                 commander_id = war.triumph_commander_id or war.commander_id
                 commander = self.state.get_member(commander_id) if commander_id else None
@@ -243,161 +446,116 @@ class PopulationCommand(Command):
                         f"凯旋式: {commander.name} 举行凯旋",
                         extra={"type": "triumph", "commander_id": commander.id, "war_id": war.id}
                     )
-                    # ==== 新增：重置凯旋标记 ====
+                    # 重置标记，避免重复
                     war.set_triumph_approved(False)
-                    # ==========================
 
-            # 解散参与该战争的所有军团
             if war.legion_numbers:
                 disbanded, errors = ms.disband_legions_for_war(war.legion_numbers)
                 if disbanded > 0:
                     print(f"      解散 {disbanded} 个参与 {war.name} 的军团")
-                    self.state.log_event(
-                        f"军团解散: 战争 {war.name} 解散 {disbanded} 个军团",
-                        extra={"type": "legion_disband", "war_id": war.id, "count": disbanded}
-                    )
                 for err in errors:
                     print(f"      ⚠️ {err}")
                 war.clear_legion_numbers()
 
-        # 处理小胜后需解散的军团
         if ws._legions_to_disband:
             disbanded, errors = ms.disband_legions_for_war(ws._legions_to_disband)
             if disbanded > 0:
                 print(f"      解散 {disbanded} 个从降级战争返回的军团")
-                self.state.log_event(
-                    f"军团解散: 小胜返回军团 {disbanded} 个",
-                    extra={"type": "legion_disband", "count": disbanded}
-                )
             for err in errors:
                 print(f"      ⚠️ {err}")
             ws._legions_to_disband.clear()
 
-    def _process_automatic_festivals(self, candidates_by_faction: Dict[str, List[Figure]]) -> (int, int):
-        """自动举办庆典，返回（总花费，总人气增加）"""
-        total_spent = 0
-        total_boost = 0
-        for faction in self.state.factions.values():
-            candidates = candidates_by_faction.get(faction.id, [])
-            if not candidates:
+    def _convert_battlefield_commanders(self):
+        """战场指挥官转换（从原有逻辑复制）"""
+        current_turn = self.state.turn.turn_number
+        war_system = self.state.get_war_system()
+        if not war_system:
+            return
+
+        for figure in self.state.get_living_members():
+            if not figure.is_absent:
                 continue
-            decisions = self.festival_decider.decide_festivals(faction, candidates, self.state)
-            for fig_id, amount in decisions.items():
-                figure = self.state.get_member(fig_id)
-                if not figure or figure.is_dead or figure.wealth < amount:
-                    continue
-                figure.wealth -= amount
-                figure.add_popularity(amount)
+            if figure.office not in ('consul', 'praetor'):
+                continue
+
+            old_office = figure.office
+            war = war_system.get_war_by_commander(figure.id)
+            if war:
+                assigned_turn = war.commander_assigned_turn or (current_turn - 1)
+                figure.add_office_history(old_office, assigned_turn, current_turn - 1)
+                new_office = 'proconsul' if old_office == 'consul' else 'propraetor'
+                figure.office = new_office
                 figure.update_influence()
-                total_spent += amount
-                total_boost += amount
-        return total_spent, total_boost
+                if war:
+                    war.set_commander_assigned_turn(current_turn)
+                print(f"      🔄 战场指挥官 {figure.name} 转为 {new_office}，继续指挥战争。")
 
-    def _remove_office_holders(self, office_type: str):
-        """
-        卸任所有现任官员（不包括战场指挥官，由 _convert_battlefield_commanders 处理）。
-        """
-        for fig in self.state.get_living_members():
-            if fig.office != office_type:
-                continue
+    # ---------- 步骤4：完成 ----------
+    def _handle_step_4(self):
+        """完成环节：标记阶段结束"""
+        print("\n--- 人口阶段完成 ---", flush=True)
+        self._step += 1
 
-            # 战场指挥官由专门方法处理，这里跳过
-            if fig.is_absent and office_type in ('consul', 'praetor'):
-                continue
+    # ---------- 辅助方法 ----------
+    def _get_step_players(self) -> List[str]:
+        """获取当前步骤的玩家列表（所有玩家）"""
+        return [p.player_id for p in self.state.get_all_players()]
 
-            # 普通卸任
-            fig.add_office_history(office_type, self.state.turn.turn_number - 1, self.state.turn.turn_number)
-            fig.office = f"ex-{office_type}"
-            fig.update_influence()
-
-            if office_type == "consul" and fig.id in self.state.turn.leader_ids:
-                self.state.turn.leader_ids.remove(fig.id)
-
-    def _elect_single_magistrate(self, office_type: str, terms) -> Optional['Figure']:
-        """选举单个官员（不打印过程）"""
-        current_turn = self.state.turn.turn_number
-        num_candidates = self.state.config.get("political_rules", {}).get("candidates_per_election", {}).get(office_type, 2)
-
-        eligible = []
-        for fig in self.state.get_living_members():
-            can_hold, _ = fig.can_hold_office(office_type, current_turn, self.state.config)
-            if can_hold:
-                eligible.append(fig)
-
-        if not eligible:
+    def _next_player(self) -> Optional[str]:
+        """切换到下一个玩家，返回新玩家ID，如果已轮完则返回None"""
+        if not self._players:
             return None
+        self._current_player_index += 1
+        if self._current_player_index >= len(self._players):
+            return None
+        return self._players[self._current_player_index]
 
-        top_candidates = self._get_top_candidates_by_attribute(eligible, office_type, num_candidates)
-        votes = self._conduct_influence_voting(top_candidates)
+    def _get_current_player_id(self) -> Optional[str]:
+        """获取当前正在操作的玩家ID"""
+        if 0 <= self._current_player_index < len(self._players):
+            return self._players[self._current_player_index]
+        return None
 
-        if not votes or all(v == 0 for v in votes.values()):
-            return max(top_candidates, key=lambda c: c.get_qualification_attribute(office_type))
-        winner_id = max(votes, key=votes.get)
-        winner = next((c for c in top_candidates if c.id == winner_id), None)
-        if winner:
-            winner.office = office_type
-            winner.update_influence()
-
-            faction = self.state.get_faction(winner.faction_id)
+    def _auto_mode_festival(self):
+        """全自动模式：为所有玩家执行庆典"""
+        for player in self.state.get_all_players():
+            faction = self.state.get_faction(player.faction_id)
             if faction:
-                faction.update_faction_leader(self.state)
+                self.auto_processor.process_festival(player.player_id, faction)
 
-        # ===== 新增日志 =====
-        self.state.log_event(
-            f"选举结果: {office_type} 当选者 {winner.name} (派系 {faction.name if faction else '无'})",
-            extra={"type": "election", "office": office_type, "figure_id": winner.id}
-        )
+    def _auto_mode_vote(self):
+        """全自动模式：为所有玩家执行投票"""
+        for player in self.state.get_all_players():
+            faction = self.state.get_faction(player.faction_id)
+            if faction:
+                self.auto_processor.process_vote(player.player_id, faction)
 
-        return winner
-
-    def _get_top_candidates_by_attribute(self, candidates: List['Figure'], office_type: str, n: int) -> List['Figure']:
-        sorted_candidates = sorted(
-            candidates,
-            key=lambda f: f.get_qualification_attribute(office_type),
-            reverse=True
-        )
-        return sorted_candidates[:n]
-
-    def _conduct_influence_voting(self, candidates: List['Figure']) -> dict:
-        votes = {c.id: 0 for c in candidates}
-        for faction in self.state.factions.values():
-            faction_influence = sum(
-                m.influence for m in faction.get_members(self.state)
-                if not m.is_dead
-            )
-            own = [c for c in candidates if c.faction_id == faction.id]
-            if own:
-                target = max(own, key=lambda c: c.influence)
-            else:
-                target = random.choice(candidates)
-            votes[target.id] += faction_influence
-        return votes
-
-    def _compute_candidates_by_faction(self) -> Dict[str, List[Figure]]:
-        candidates_by_faction = defaultdict(list)
-        election_order = ["consul", "censor", "praetor", "quaestor", "tribune"]
-        for office_type in election_order:
-            num_candidates = self.state.config.get("political_rules", {}).get("candidates_per_election", {}).get(
-                office_type, 2)
-            eligible = self._get_eligible_for_office(office_type)
-            if not eligible:
-                continue
-            top_candidates = self._get_top_candidates_by_attribute(eligible, office_type, num_candidates)
-            for fig in top_candidates:
-                if fig.faction_id:
-                    candidates_by_faction[fig.faction_id].append(fig)
-        for faction_id in list(candidates_by_faction.keys()):
-            unique = {fig.id: fig for fig in candidates_by_faction[faction_id]}
-            candidates_by_faction[faction_id] = list(unique.values())
-        return candidates_by_faction
-
-    def _get_eligible_for_office(self, office_type: str) -> List[Figure]:
-        current_turn = self.state.turn.turn_number
-        eligible = []
-        for fig in self.state.get_living_members():
-            if fig.is_absent:  # 不在罗马不能参选
-                continue
-            can_hold, _ = fig.can_hold_office(office_type, current_turn, self.state.config)
-            if can_hold:
-                eligible.append(fig)
-        return eligible
+    def _handle_investigate(self, args):
+        """复用原有 investigate 逻辑（简化）"""
+        if len(args) == 0:
+            # 显示本派系人物列表
+            player_id = self._get_current_player_id()
+            if not player_id:
+                return
+            player = self.state.get_player(player_id)
+            if not player:
+                return
+            faction = self.state.get_faction(player.faction_id)
+            if not faction:
+                return
+            members = faction.get_members(self.state)
+            print("\n================================================================================")
+            print(f"   👥 {faction.name} 存活派系人物列表")
+            print("================================================================================")
+            for m in members:
+                print(f"      🟢 ID:{m.id} {m.get_formal_name()} 影响力:{m.influence} 财富:{m.wealth}")
+        elif len(args) == 1:
+            try:
+                fig_id = int(args[0])
+            except ValueError:
+                print(i18n.get("error_invalid_id"), file=sys.stderr, flush=True)
+                return
+            result = figure_api.get_figure_info(self.state, fig_id)
+            print(result["message"])
+        else:
+            print(i18n.get("error_usage_investigate"), file=sys.stderr, flush=True)

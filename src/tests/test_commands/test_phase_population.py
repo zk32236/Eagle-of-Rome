@@ -1,249 +1,437 @@
 # src/tests/test_commands/test_phase_population.py
-"""人口阶段命令单元测试 - 适配新打印布局"""
-
+"""
+命令层功能测试 - 人口阶段 (PopulationCommand)
+"""
+import pytest
 import unittest
-import sys
-import os
 from unittest.mock import MagicMock, patch
-import io
-from contextlib import redirect_stdout
-
-# 添加项目根目录到路径
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
 
 from src.core.game_state import GameState
-from src.core.entities.entities import GameTurn, Faction
 from src.core.entities.figure import Figure, ClassTier, OfficeTerm
+from src.core.entities.entities import Faction, GameTurn
+from src.core.entities.player import Player, PlayerType
 from src.ui.commands.phase_population import PopulationCommand
-from src.core.localization import TerminologyService
-from src.core.systems.military_system import MilitarySystem
-from src.core.systems.war_system import WarSystem
+from src.core.entities.war import WarStatus
+from src.api import population_api
 
 
-class TestPopulationCommand(unittest.TestCase):
-    """人口阶段命令测试类"""
+@pytest.fixture
+def state_base():
+    """基础状态"""
+    config = {
+        "testing": {"bypass_player_check": False, "auto_forum": False},
+        "economic_rules": {"faction_member_limit": 6},
+        "political_rules": {
+            "min_ages": {"consul": 40, "praetor": 35},
+            "office_cooldowns": {"consul": 2},
+            "offices_per_election": {"consul": 1, "praetor": 1},
+        },
+    }
+    state = GameState.create_for_testing(config)
+    state.turn = GameTurn(turn_number=1, year=-282)
+    state._population_pending = {"campaigns": [], "votes": []}
+    state._executed_phases = set()
+    return state
 
-    def setUp(self):
-        """每个测试前创建测试用 GameState"""
-        test_config = {
-            "political_rules": {
-                "candidates_per_election": {"consul": 2, "censor": 2, "praetor": 2, "quaestor": 2, "tribune": 2},
-                "min_ages": {"consul": 40, "censor": 42, "praetor": 35, "quaestor": 30, "tribune": 30},
-                "office_cooldowns": {"consul": 2, "censor": 2, "praetor": 2, "quaestor": 2, "tribune": 2},
-                "offices_per_election": {"consul": 1, "censor": 1, "praetor": 1, "quaestor": 2, "tribune": 1}
-            },
-            "economic_rules": {
-                "faction_member_limit": 6
-            }
-        }
-        self.state = GameState.create_for_testing(test_config)
-        self.state.turn = GameTurn(turn_number=1, year=-264)
-        self.state.mark_phase_executed("forum")
 
-        # 添加测试派系
-        self.faction1 = Faction(id="senate", name="元老院派", treasury=100)
-        self.faction2 = Faction(id="plebs", name="平民派", treasury=80)
-        self.faction3 = Faction(id="equites", name="骑士派", treasury=60)
-        self.state.add_faction(self.faction1)
-        self.state.add_faction(self.faction2)
-        self.state.add_faction(self.faction3)
+@pytest.fixture
+def state_with_players(state_base):
+    """添加玩家和派系"""
+    p1 = Player("p1", "f1", PlayerType.HUMAN)
+    p2 = Player("p2", "f2", PlayerType.AI)
+    state_base.add_player(p1)
+    state_base.add_player(p2)
+    state_base.set_turn_order(["p1", "p2"])
+    state_base.set_current_player("p1")
 
-        # 添加测试人物到派系（贵族，有官职历史）
-        self.noble1 = Figure(id=1, name="senate_noble1", faction_id="senate", class_tier=ClassTier.NOBILE, age=45, wealth=50)
-        self.noble1.office_history = [OfficeTerm("quaestor", -8), OfficeTerm("praetor", -5), OfficeTerm("consul", -2)]
-        self.noble1.influence = 30
-        self.state.add_member(self.noble1)
-        self.faction1.member_ids.append(1)
+    f1 = Faction("f1", "Faction1", 1000)
+    f2 = Faction("f2", "Faction2", 1000)
+    state_base.add_faction(f1)
+    state_base.add_faction(f2)
 
-        self.noble2 = Figure(id=2, name="senate_noble2", faction_id="senate", class_tier=ClassTier.NOBILE, age=42, wealth=50)
-        self.noble2.office_history = [OfficeTerm("quaestor", -7), OfficeTerm("praetor", -4)]
-        self.noble2.influence = 25
-        self.state.add_member(self.noble2)
-        self.faction1.member_ids.append(2)
+    # 人物
+    fig1 = Figure.create_nobile(1, "f1", 45)
+    fig1.wealth = 50
+    fig1.popularity = 10
+    fig1.update_influence()
+    state_base.add_member(fig1)
 
-        self.noble3 = Figure(id=3, name="senate_noble3", faction_id="senate", class_tier=ClassTier.NOBILE, age=38, wealth=50)
-        self.noble3.office_history = [OfficeTerm("quaestor", -6)]
-        self.noble3.influence = 20
-        self.state.add_member(self.noble3)
-        self.faction1.member_ids.append(3)
+    fig2 = Figure.create_nobile(2, "f2", 50)
+    fig2.wealth = 60
+    fig2.popularity = 12
+    fig2.update_influence()
+    state_base.add_member(fig2)
 
-        self.populares1 = Figure(id=4, name="populares_noble1", faction_id="plebs", class_tier=ClassTier.NOBILE, age=45, wealth=50)
-        self.populares1.office_history = [OfficeTerm("quaestor", -8), OfficeTerm("praetor", -5), OfficeTerm("consul", -2)]
-        self.populares1.influence = 28
-        self.state.add_member(self.populares1)
-        self.faction2.member_ids.append(4)
+    return state_base
 
-        self.populares2 = Figure(id=5, name="populares_noble2", faction_id="plebs", class_tier=ClassTier.NOBILE, age=42, wealth=50)
-        self.populares2.office_history = [OfficeTerm("quaestor", -7), OfficeTerm("praetor", -4)]
-        self.populares2.influence = 24
-        self.state.add_member(self.populares2)
-        self.faction2.member_ids.append(5)
 
-        self.populares3 = Figure(id=6, name="populares_noble3", faction_id="plebs", class_tier=ClassTier.NOBILE, age=38, wealth=50)
-        self.populares3.office_history = [OfficeTerm("quaestor", -6)]
-        self.populares3.influence = 18
-        self.state.add_member(self.populares3)
-        self.faction2.member_ids.append(6)
+@pytest.fixture
+def state_normal_mode(state_with_players):
+    """正常模式（人类手动，AI自动）"""
+    state_with_players.config._config["testing"]["auto_forum"] = False
+    state_with_players.config._config["testing"]["bypass_player_check"] = False
+    return state_with_players
 
-        self.equites1 = Figure(id=7, name="equites_noble1", faction_id="equites", class_tier=ClassTier.NOBILE, age=42, wealth=50)
-        self.equites1.office_history = [OfficeTerm("quaestor", -7), OfficeTerm("praetor", -4)]
-        self.equites1.influence = 22
-        self.state.add_member(self.equites1)
-        self.faction3.member_ids.append(7)
 
-        self.equites2 = Figure(id=8, name="equites_noble2", faction_id="equites", class_tier=ClassTier.NOBILE, age=42, wealth=50)
-        self.equites2.office_history = [OfficeTerm("quaestor", -7), OfficeTerm("praetor", -4)]
-        self.equites2.influence = 21
-        self.state.add_member(self.equites2)
-        self.faction3.member_ids.append(8)
+@pytest.fixture
+def state_auto_mode(state_with_players):
+    """全自动模式"""
+    state_with_players.config._config["testing"]["auto_forum"] = True
+    return state_with_players
 
-        self.equites3 = Figure(id=9, name="equites_noble3", faction_id="equites", class_tier=ClassTier.NOBILE, age=38, wealth=50)
-        self.equites3.office_history = [OfficeTerm("quaestor", -6)]
-        self.equites3.influence = 16
-        self.state.add_member(self.equites3)
-        self.faction3.member_ids.append(9)
 
-        # 添加骑士和平民（用于庆典和选举）
-        self.knight1 = Figure(id=10, name="senate_eques1", faction_id="senate", class_tier=ClassTier.EQUES, age=35, wealth=40)
-        self.knight1.influence = 5
-        self.state.add_member(self.knight1)
-        self.faction1.member_ids.append(10)
+@pytest.fixture
+def state_bypass_mode(state_with_players):
+    """全人工测试模式"""
+    state_with_players.config._config["testing"]["bypass_player_check"] = True
+    return state_with_players
 
-        self.knight2 = Figure(id=11, name="senate_eques2", faction_id="senate", class_tier=ClassTier.EQUES, age=32, wealth=40)
-        self.knight2.influence = 4
-        self.state.add_member(self.knight2)
-        self.faction1.member_ids.append(11)
 
-        self.plebeian1 = Figure(id=12, name="populares_eques1", faction_id="plebs", class_tier=ClassTier.PLEBEIAN, age=30, wealth=20)
-        self.plebeian1.influence = 2
-        self.state.add_member(self.plebeian1)
-        self.faction2.member_ids.append(12)
+# ========== 基础流程测试 ==========
 
-        self.plebeian2 = Figure(id=13, name="populares_eques2", faction_id="plebs", class_tier=ClassTier.PLEBEIAN, age=30, wealth=20)
-        self.plebeian2.influence = 1
-        self.state.add_member(self.plebeian2)
-        self.faction2.member_ids.append(13)
+class TestPopulationCommandBase:
+    """基础流程测试"""
 
-        self.plebeian3 = Figure(id=14, name="equites_eques1", faction_id="equites", class_tier=ClassTier.PLEBEIAN, age=30, wealth=20)
-        self.plebeian3.influence = 1
-        self.state.add_member(self.plebeian3)
-        self.faction3.member_ids.append(14)
-
-        # 设置军事系统和战争系统（模拟）
-        self.mock_military = MagicMock(spec=MilitarySystem)
-        self.state._military_system = self.mock_military
-
-        self.mock_war = MagicMock(spec=WarSystem)
-        self.mock_war._war_discard = []  # 添加私有属性，避免 AttributeError
-        self.mock_war._legions_to_disband = []
-        self.state._war_system = self.mock_war
-
-    # ========== 测试用例 ==========
-
-    def test_already_executed(self):
-        """测试阶段已执行时再次执行应返回False"""
-        self.state.mark_phase_executed("population")
-        cmd = PopulationCommand(self.state)
-        result = cmd.execute([])
-        self.assertFalse(result)
-
-    def test_execute_success(self):
-        """测试成功执行人口阶段"""
-        cmd = PopulationCommand(self.state)
-        f = io.StringIO()
-        with redirect_stdout(f):
+    def test_already_executed(self, state_normal_mode):
+        """阶段已执行时再次执行应失败"""
+        state_normal_mode.mark_phase_executed("forum")
+        state_normal_mode.mark_phase_executed("population")
+        cmd = PopulationCommand(state_normal_mode)
+        with patch('builtins.print') as mock_print:
             result = cmd.execute([])
-        output = f.getvalue()
+            assert result is False
+            mock_print.assert_any_call("⚠️ 人口阶段在本回合已执行过", file=unittest.mock.ANY, flush=True)
 
-        self.assertTrue(result)
-        self.assertIn("Population Phase", output)
-        self.assertIn("ELECTIONS Campaign", output)
-        self.assertIn("📋 选举结果：", output)
-        self.assertIn("📊 各派系影响力（选举后）：", output)
+    def test_forum_not_executed(self, state_normal_mode):
+        """前置阶段（forum）未执行时失败"""
+        cmd = PopulationCommand(state_normal_mode)
+        with patch('builtins.print') as mock_print:
+            result = cmd.execute([])
+            assert result is False
+            mock_print.assert_any_call("⚠️ 必须先执行广场阶段 (forum)", file=unittest.mock.ANY, flush=True)
 
-    def test_automatic_festivals(self):
-        """测试自动庆典功能"""
-        # 模拟庆典决策器返回一些花费
-        mock_decider = MagicMock()
-        mock_decider.decide_festivals.return_value = {1: 10, 2: 5}  # 人物ID: 花费
 
-        cmd = PopulationCommand(self.state, festival_decider=mock_decider)
-        f = io.StringIO()
-        with redirect_stdout(f):
+# ========== 自动模式测试 ==========
+
+class TestPopulationCommandAuto:
+    """自动模式测试"""
+
+    def test_auto_mode_full_auto(self, state_auto_mode):
+        """全自动模式：自动庆典、自动投票、自动选举"""
+        fig1 = state_auto_mode.get_member(1)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        state_auto_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_auto_mode)
+        cmd.auto_processor.process_festival = MagicMock()
+        cmd.auto_processor.process_vote = MagicMock()
+        with patch('builtins.print'):
+            result = cmd.execute([])
+        assert result is True
+        assert cmd.auto_processor.process_festival.call_count >= 1
+        assert cmd.auto_processor.process_vote.call_count >= 1
+        assert state_auto_mode.is_phase_executed("population") is True
+
+
+# ========== 手动模式测试 ==========
+
+class TestPopulationCommandManual:
+    """手动模式测试"""
+
+    def test_step0_display_candidates(self, state_normal_mode, capsys, monkeypatch):
+        """步骤0显示候选人列表"""
+        fig1 = state_normal_mode.get_member(1)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        state_normal_mode.mark_phase_executed("forum")
+        # 提供足够多的 "next" 输入以确保所有步骤都能完成
+        inputs = iter(["next"] * 10)
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.execute([])
+        captured = capsys.readouterr()
+        assert "候选人" in captured.out or "CONSUL" in captured.out
+
+    def test_step0_next_proceeds(self, state_normal_mode, monkeypatch):
+        """输入next进入步骤1"""
+        monkeypatch.setattr('builtins.input', lambda *args: "next")
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        with patch('builtins.print'):
             cmd.execute([])
-        output = f.getvalue()
 
-        # 检查输出中是否包含庆典统计
-        self.assertIn("总计花费", output)
-        self.assertIn("增加人气", output)
+    def test_step1_campaign_success(self, state_normal_mode, monkeypatch):
+        """庆典环节成功举办庆典"""
+        inputs = iter(["next", "campaign 1 10", "next", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.auto_processor.process_festival = MagicMock()  # 禁止AI自动庆典干扰
+        with patch('src.api.population_api.campaign') as mock_campaign:
+            mock_campaign.return_value = {"success": True, "message": "庆典成功"}
+            with patch('builtins.print'):
+                cmd.execute([])
+        mock_campaign.assert_called_once()
+        args = mock_campaign.call_args[0]
+        assert args[1] == "p1"
+        assert args[2] == 1
+        assert args[3] == 10
 
-    def test_censor_election(self):
-        """测试监察官选举：检查选举结果中是否有监察官"""
-        cmd = PopulationCommand(self.state)
-        f = io.StringIO()
-        with redirect_stdout(f):
+    def test_step1_campaign_failure(self, state_normal_mode, monkeypatch, capsys):
+        """庆典失败时输出错误信息"""
+        inputs = iter(["next", "campaign 1 1000", "next", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.auto_processor.process_festival = MagicMock()
+        with patch('src.api.population_api.campaign') as mock_campaign:
+            mock_campaign.return_value = {"success": False, "message": "财富不足"}
             cmd.execute([])
-        output = f.getvalue()
+        captured = capsys.readouterr()
+        assert "财富不足" in captured.out
 
-        # 检查选举结果中是否包含监察官行
-        self.assertIn("📜 CENSOR:", output)
-
-    def test_tribune_class_restriction(self):
-        """测试保民官仅限骑士和平民"""
-        # 创建一个贵族候选人尝试参选保民官（应不出现）
-        noble = Figure(id=100, name="贵族", faction_id="senate", class_tier=ClassTier.NOBILE, age=35)
-        noble.office_history = []
-        self.state.add_member(noble)
-        self.faction1.member_ids.append(100)
-
-        # 创建一个骑士候选人
-        knight = Figure(id=101, name="骑士", faction_id="equites", class_tier=ClassTier.EQUES, age=35)
-        knight.office_history = []
-        self.state.add_member(knight)
-        self.faction3.member_ids.append(101)
-
-        cmd = PopulationCommand(self.state)
-        f = io.StringIO()
-        with redirect_stdout(f):
+    def test_step1_ai_process_festival(self, state_normal_mode, monkeypatch):
+        """AI玩家自动调用process_festival"""
+        inputs = iter(["next", "next", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.auto_processor.process_festival = MagicMock()
+        with patch('builtins.print'):
             cmd.execute([])
-        output = f.getvalue()
+        cmd.auto_processor.process_festival.assert_called_once_with("p2", unittest.mock.ANY)
 
-        # 检查选举结果中是否有保民官行
-        self.assertIn("🛡️ TRIBUNE:", output)
-        # 确保贵族没有当选（此处简化验证，信任选举逻辑）
+    def test_step1_player_switching(self, state_normal_mode, monkeypatch):
+        """多个玩家时next切换玩家"""
+        inputs = iter(["next", "next", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        with patch('builtins.print'):
+            cmd.execute([])
 
-    def test_remove_office_holders(self):
-        """测试卸任官员"""
-        # 先设置一些现任官员
-        self.noble1.office = "consul"
-        self.noble2.office = "censor"
-        self.noble3.office = "praetor"
+    def test_step2_vote_success(self, state_normal_mode, monkeypatch):
+        """投票环节成功投票"""
+        fig1 = state_normal_mode.get_member(1)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        # 输入序列：step0 next, step1 next, step2 vote consul 1, step2 next, step3 next
+        inputs = iter(["next", "next", "vote consul 1", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.auto_processor.process_vote = MagicMock()  # 禁止AI自动投票干扰
+        with patch('src.api.population_api.get_candidates') as mock_get_candidates, \
+             patch('src.api.population_api.vote') as mock_vote:
+            mock_get_candidates.return_value = {
+                "success": True,
+                "data": {"consul": [{"id": 1, "name": "Fig1"}]},
+                "message": ""
+            }
+            mock_vote.return_value = {"success": True, "message": "投票成功"}
+            with patch('builtins.print'):
+                cmd.execute([])
+        mock_vote.assert_called_once()
+        args = mock_vote.call_args[0]
+        assert args[1] == "p1"
+        assert args[2] == "consul"
+        assert args[3] == 1
 
-        cmd = PopulationCommand(self.state)
+    def test_step2_vote_invalid_office(self, state_normal_mode, monkeypatch, capsys):
+        """无效公职名称提示错误"""
+        fig1 = state_normal_mode.get_member(1)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        inputs = iter(["next", "next", "vote invalid 1", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.auto_processor.process_vote = MagicMock()
+        with patch('src.api.population_api.get_candidates') as mock_get_candidates:
+            mock_get_candidates.return_value = {
+                "success": True,
+                "data": {"consul": [{"id": 1}]},
+                "message": ""
+            }
+            cmd.execute([])
+        captured = capsys.readouterr()
+        assert "无效的公职名称" in captured.out
 
-        # 分别调用卸任方法，不执行整个阶段
-        cmd._remove_office_holders("consul")
-        self.assertEqual(self.noble1.office, "ex-consul")
-        self.assertEqual(len(self.noble1.office_history), 4)  # 原3+1
-        self.assertEqual(self.noble1.office_history[-1].office_type, "consul")
-        self.assertEqual(self.noble1.office_history[-1].start_turn, self.state.turn.turn_number - 1)
+    def test_step2_ai_process_vote(self, state_normal_mode, monkeypatch):
+        """AI玩家自动调用process_vote"""
+        fig1 = state_normal_mode.get_member(1)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        inputs = iter(["next", "next", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.auto_processor.process_vote = MagicMock()
+        with patch('src.api.population_api.get_candidates') as mock_get_candidates:
+            mock_get_candidates.return_value = {
+                "success": True,
+                "data": {"consul": [{"id": 1}]},
+                "message": ""
+            }
+            with patch('builtins.print'):
+                cmd.execute([])
+        cmd.auto_processor.process_vote.assert_called_once_with("p2", unittest.mock.ANY)
 
-        cmd._remove_office_holders("censor")
-        self.assertEqual(self.noble2.office, "ex-censor")
-        self.assertEqual(len(self.noble2.office_history), 3)  # 原2+1
-        self.assertEqual(self.noble2.office_history[-1].office_type, "censor")
+    def test_step3_resolve_election_called(self, state_normal_mode, monkeypatch):
+        """公示环节调用resolve_election API"""
+        fig1 = state_normal_mode.get_member(1)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        inputs = iter(["next", "next", "vote consul 1", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.auto_processor.process_vote = MagicMock()
+        with patch('src.api.population_api.get_candidates') as mock_get_candidates, \
+             patch('src.api.population_api.resolve_election') as mock_resolve:
+            mock_get_candidates.return_value = {
+                "success": True,
+                "data": {"consul": [{"id": 1}]},
+                "message": ""
+            }
+            mock_resolve.return_value = {"success": True, "message": "选举结果"}
+            with patch('builtins.print'):
+                cmd.execute([])
+        mock_resolve.assert_called_once()
 
-        cmd._remove_office_holders("praetor")
-        self.assertEqual(self.noble3.office, "ex-praetor")
-        self.assertEqual(len(self.noble3.office_history), 2)  # 原1+1
-        self.assertEqual(self.noble3.office_history[-1].office_type, "praetor")
+    def test_step3_display_results(self, state_normal_mode, monkeypatch, capsys):
+        """公示环节打印选举结果"""
+        fig1 = state_normal_mode.get_member(1)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        inputs = iter(["next", "next", "vote consul 1", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.auto_processor.process_vote = MagicMock()
+        with patch('src.api.population_api.get_candidates') as mock_get_candidates, \
+             patch('src.api.population_api.resolve_election') as mock_resolve:
+            mock_get_candidates.return_value = {
+                "success": True,
+                "data": {"consul": [{"id": 1}]},
+                "message": ""
+            }
+            mock_resolve.return_value = {"success": True, "message": "选举结果: 某人当选"}
+            cmd.execute([])
+        captured = capsys.readouterr()
+        assert "选举结果" in captured.out
 
-        # 验证影响力已更新（可选）
-        self.assertGreater(self.noble1.influence, 0)
+    def test_step3_clear_pending(self, state_normal_mode, monkeypatch):
+        """公示后清空_population_pending"""
+        fig1 = state_normal_mode.get_member(1)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        state_normal_mode._population_pending["votes"] = [("p1", "consul", 1)]
+        inputs = iter(["next", "next", "vote consul 1", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.auto_processor.process_vote = MagicMock()
+        with patch('src.api.population_api.get_candidates') as mock_get_candidates:
+            mock_get_candidates.return_value = {
+                "success": True,
+                "data": {"consul": [{"id": 1}]},
+                "message": ""
+            }
+            with patch('builtins.print'):
+                cmd.execute([])
+        assert state_normal_mode._population_pending["votes"] == []
+        assert state_normal_mode._population_pending["campaigns"] == []
+
+    def test_step3_legion_triumph_display(self, state_normal_mode, monkeypatch, capsys):
+        """凯旋式信息在公示环节正确显示"""
+        war_system = MagicMock()
+        war_system._war_discard = []
+        war_system._legions_to_disband = []  # 防止进入解散分支
+        war = MagicMock()
+        war.status = WarStatus.RESOLVED
+        war.triumph_approved = True
+        war.triumph_commander_id = 1
+        war.commander_id = 1
+        war.legion_numbers = []
+        war.set_triumph_approved = MagicMock()
+        war_system._war_discard = [war]
+        state_normal_mode.get_war_system = MagicMock(return_value=war_system)
+
+        ms = MagicMock()
+        ms.disband_legions_for_war.return_value = (0, [])  # 模拟解散返回
+        state_normal_mode.get_military_system = MagicMock(return_value=ms)
+
+        fig1 = state_normal_mode.get_member(1)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        inputs = iter(["next", "next", "vote consul 1", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.auto_processor.process_vote = MagicMock()
+        with patch('src.api.population_api.get_candidates') as mock_get_candidates:
+            mock_get_candidates.return_value = {
+                "success": True,
+                "data": {"consul": [{"id": 1}]},
+                "message": ""
+            }
+            cmd.execute([])
+        captured = capsys.readouterr()
+        assert "凯旋式" in captured.out
+
+    def test_full_manual_flow(self, state_normal_mode, monkeypatch):
+        """模拟完整玩家操作序列"""
+        fig1 = state_normal_mode.get_member(1)
+        fig2 = state_normal_mode.get_member(2)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        fig2.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        inputs = iter([
+            "next",                # step0
+            "campaign 1 10",       # step1 p1 campaign
+            "next",                # step1 p1 next -> p2
+            "vote consul 1",       # step2 p1 vote
+            "next",                # step2 p1 next -> p2
+            "next"                 # step3 next
+        ])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.auto_processor.process_festival = MagicMock()
+        cmd.auto_processor.process_vote = MagicMock()
+        with patch('src.api.population_api.get_candidates') as mock_get_candidates, \
+             patch('src.api.population_api.campaign') as mock_campaign, \
+             patch('src.api.population_api.vote') as mock_vote, \
+             patch('src.api.population_api.resolve_election') as mock_resolve:
+            mock_get_candidates.return_value = {
+                "success": True,
+                "data": {"consul": [{"id": 1}, {"id": 2}]},
+                "message": ""
+            }
+            mock_campaign.return_value = {"success": True, "message": "庆典成功"}
+            mock_vote.return_value = {"success": True, "message": "投票成功"}
+            mock_resolve.return_value = {"success": True, "message": "选举结果"}
+            cmd.execute([])
+        assert mock_campaign.call_count == 1
+        assert mock_vote.call_count == 1
+        assert mock_resolve.call_count == 1
+        assert cmd.auto_processor.process_festival.call_count == 1
+        assert cmd.auto_processor.process_vote.call_count == 1
 
 
-if __name__ == "__main__":
-    unittest.main()
+# ========== 全人工测试模式 ==========
+
+class TestPopulationCommandBypass:
+    """全人工测试模式测试"""
+
+    def test_bypass_mode_all_manual(self, state_bypass_mode, monkeypatch):
+        """bypass_player_check=True时，权限检查绕过"""
+        fig1 = state_bypass_mode.get_member(1)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        # 输入序列：step0 next, step1 p1 next, step1 p2 next, step2 vote consul 1, step2 p1 next, step2 p2 next, step3 next
+        inputs = iter(["next", "next", "next", "vote consul 1", "next", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_bypass_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_bypass_mode)
+        cmd.auto_processor.process_vote = MagicMock()
+        with patch('src.api.population_api.get_candidates') as mock_get_candidates, \
+             patch('src.api.population_api.vote') as mock_vote:
+            mock_get_candidates.return_value = {
+                "success": True,
+                "data": {"consul": [{"id": 1}]},
+                "message": ""
+            }
+            mock_vote.return_value = {"success": True, "message": "投票成功"}
+            cmd.execute([])
+        mock_vote.assert_called_once()

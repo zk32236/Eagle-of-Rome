@@ -152,5 +152,12 @@
     "no_members_in_faction": "派系 {faction} 无存活成员",
     "info_skip_quaestor_phase": "⚠️ 罗马城里没有财务官，本环节跳过。",
     "error_wrong_step": "当前步骤不允许执行该命令（只能在 {step} 执行）",
-    "error_no_vacancies": "⚠️ 派系 {faction} 已经没有空缺名额，无法继续招募。"
+    "error_no_vacancies": "⚠️ 派系 {faction} 已经没有空缺名额，无法继续招募。",
+    "error_usage_campaign": "用法: campaign <人物ID> <金额>",
+    "error_usage_vote": "用法: vote <公职> <人物ID>",
+    "error_insufficient_wealth": "财富不足，当前 {wealth}",
+    "info_campaign_success": "{name} 花费 {amount} 举办了庆典，人气 +{amount}！",
+    "info_vote_recorded": "投票成功：{office} 投给 {name}",
+    "error_invalid_office": "无效的公职名称",
+    "error_figure_not_candidate": "该人物不是此公职的合法候选人"
 }
