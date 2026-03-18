@@ -474,6 +474,75 @@ class TestPopulationCommandManual:
         assert captured.out.count("举行凯旋式") == 1
         assert captured.out.count("解散") == 1
 
+    def test_office_holders_removed_before_festival(self, state_normal_mode, monkeypatch, capsys):
+        """验证卸任发生在庆典之前：非战场官员被卸任，战场指挥官不被卸任，卸任官员出现在候选人列表中"""
+        from src.core.entities.figure import Figure, OfficeTerm
+        from unittest.mock import MagicMock
+
+        # 获取现有的人物
+        fig1 = state_normal_mode.get_member(1)  # 非战场执政官
+        fig1.office = 'consul'
+        fig1.is_absent = False
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+
+        fig2 = state_normal_mode.get_member(2)  # 非战场大法官
+        fig2.office = 'praetor'
+        fig2.is_absent = False
+        fig2.office_history.append(OfficeTerm(office_type="quaestor", start_turn=-12, end_turn=-11))
+
+        # 创建战场指挥官（新人物）
+        fig3 = Figure.create_nobile(3, "f2", 40)  # 使用派系 f2
+        fig3.id = 3
+        fig3.office = 'consul'
+        fig3.is_absent = True
+        fig3.faction_id = "f2"
+        state_normal_mode.add_member(fig3)
+        faction2 = state_normal_mode.get_faction("f2")
+        if faction2:
+            faction2.member_ids.append(3)
+
+        # 确保 leader_ids 包含 fig1
+        state_normal_mode.turn.leader_ids.append(fig1.id)
+
+        # 模拟战争系统，使战场指挥官能被转换
+        war_system = MagicMock()
+        war = MagicMock()
+        war.commander_assigned_turn = 8
+        war_system.get_war_by_commander.return_value = war
+        state_normal_mode.get_war_system = MagicMock(return_value=war_system)
+
+        # 模拟输入序列，完成整个阶段
+        inputs = iter(["next", "next", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.execute([])
+
+        # 验证非战场官员已卸任
+        assert fig1.office == 'ex-consul'
+        assert fig2.office == 'ex-praetor'
+        # 验证战场指挥官已被转换为 proconsul
+        assert fig3.office == 'proconsul'
+
+        # 验证 fig1 从 leader_ids 中移除
+        assert fig1.id not in state_normal_mode.turn.leader_ids
+
+        # 获取候选人列表，验证卸任官员出现在正确官职中
+        cand_result = population_api.get_candidates(state_normal_mode)
+        consul_ids = [c['id'] for c in cand_result['data']['consul']]
+        praetor_ids = [c['id'] for c in cand_result['data']['praetor']]
+
+        # fig1 刚卸任执政官，有冷却期，不应出现在任何候选人列表中
+        assert fig1.id not in consul_ids
+        assert fig1.id not in praetor_ids
+
+        # fig2 卸任大法官，且满足执政官资格，应出现在执政官候选人中
+        assert fig2.id in consul_ids
+
+        # fig3 是战场指挥官，不应出现在任何候选人中
+        assert fig3.id not in consul_ids
+        assert fig3.id not in praetor_ids
+
     def test_fleet_disband_once(self, state_normal_mode, capsys, monkeypatch):
         """验证舰队解散信息只输出一次"""
         from unittest.mock import MagicMock
