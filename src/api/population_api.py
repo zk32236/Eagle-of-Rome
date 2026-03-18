@@ -173,7 +173,7 @@ def _get_eligible_for_office(state: GameState, office_type: str) -> List[Figure]
 
 
 def _format_candidates_message(data: Dict[str, List[Dict]]) -> str:
-    """格式化候选人消息，只显示ID、姓名、派系和四维属性"""
+    """格式化候选人消息，与设计文档一致（包括图标、缩进、属性）"""
     lines = []
     office_names = {
         "consul": "🏛️ CONSUL",
@@ -183,12 +183,14 @@ def _format_candidates_message(data: Dict[str, List[Dict]]) -> str:
         "tribune": "🛡️ TRIBUNE"
     }
     for office, cands in data.items():
-        if not cands:
-            continue
+        # 每个官职标题一行
         lines.append(f"\n   {office_names.get(office, office.upper())}: ")
+        if not cands:
+            # 若无候选人，可选择不显示或显示占位，当前可能不显示该官职，但设计文档要求显示标题？我们保持现状。
+            continue
         for c in cands:
             faction_disp = f"({c['faction_name']})" if c['faction_name'] != "无" else ""
-            # 显示格式：ID 姓名 (派系) 军略X 智略X 魅力X 热忱X
+            # 缩进6空格，格式：ID:1 姓名 (派系) 军略X 智略X 魅力X 热忱X
             lines.append(
                 f"      ID:{c['id']} {c['name']} {faction_disp} "
                 f"军略{c['martial']} 智略{c['intelligence']} 魅力{c['charisma']} 热忱{c['zeal']}"
@@ -196,7 +198,6 @@ def _format_candidates_message(data: Dict[str, List[Dict]]) -> str:
     if not lines:
         return "\n   📋 当前无候选人"
     return "\n".join(lines)
-
 
 def resolve_election(state: GameState) -> dict:
     """

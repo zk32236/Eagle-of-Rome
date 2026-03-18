@@ -272,6 +272,81 @@ class TestVote:
 class TestGetCandidates:
     """测试 get_candidates API"""
 
+    def test_candidates_sorted_by_qualification(self, state_normal_mode):
+        """验证候选人按资格属性降序排序"""
+        # 准备：让 fig1 和 fig2 都成为 consul 候选人
+        fig1 = state_normal_mode.get_member(1)
+        fig2 = state_normal_mode.get_member(2)
+        # 添加资格历史
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        fig2.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        # 设置不同的资格属性（魅力）
+        fig1.charisma = 10
+        fig2.charisma = 5
+        fig1.update_influence()
+        fig2.update_influence()
+
+        result = population_api.get_candidates(state_normal_mode)
+        consul_cands = result["data"]["consul"]
+        # 应至少有两个候选人
+        assert len(consul_cands) >= 2
+        # 验证排序：第一个的资格属性 >= 第二个
+        attr1 = consul_cands[0]["charisma"]
+        attr2 = consul_cands[1]["charisma"]
+        assert attr1 >= attr2
+
+    def test_candidates_unique_highest_office(self, state_normal_mode):
+        """验证一个人物只出现在最高官职的候选人列表中"""
+        # 准备：让 fig1 同时满足 consul 和 praetor 资格
+        fig1 = state_normal_mode.get_member(1)
+        # 添加历史官职：先 praetor 后 consul 需要的条件
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))  # 满足 consul 需要 praetor 历史
+        fig1.office_history.append(OfficeTerm(office_type="quaestor", start_turn=-12, end_turn=-11))  # 满足 praetor 需要 quaestor 历史
+        # 确保年龄足够
+        fig1.age = 45
+
+        # 让 fig2 只满足 praetor 资格（用于对比）
+        fig2 = state_normal_mode.get_member(2)
+        fig2.office_history.append(OfficeTerm(office_type="quaestor", start_turn=-12, end_turn=-11))
+        fig2.age = 35
+
+        result = population_api.get_candidates(state_normal_mode)
+        consul_ids = [c["id"] for c in result["data"]["consul"]]
+        praetor_ids = [c["id"] for c in result["data"]["praetor"]]
+
+        # fig1 应出现在 consul 中，而不在 praetor 中
+        assert fig1.id in consul_ids
+        assert fig1.id not in praetor_ids
+        # fig2 应出现在 praetor 中（因为不符合 consul 资格）
+        assert fig2.id in praetor_ids
+
+    def test_candidates_message_format(self, state_normal_mode):
+        """验证候选人列表的字符串格式与设计文档基本一致"""
+        # 先让至少有一个候选人
+        fig1 = state_normal_mode.get_member(1)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        result = population_api.get_candidates(state_normal_mode)
+        msg = result["message"]
+
+        # 检查包含各官职标题图标
+        assert "🏛️ CONSUL" in msg
+        assert "📜 CENSOR" in msg
+        assert "⚖ PRAETOR" in msg
+        assert "💰 QUAESTOR" in msg
+        assert "🛡️ TRIBUNE" in msg
+
+        # 检查候选人行的缩进（以6空格开头）和包含必要字段
+        lines = msg.split('\n')
+        for line in lines:
+            if line.strip().startswith("ID:"):
+                # 应该是缩进行，检查是否以6空格开头
+                assert line.startswith("      ")
+                # 检查包含属性字段
+                assert "军略" in line
+                assert "智略" in line
+                assert "魅力" in line
+                assert "热忱" in line
+
     def test_returns_dict_with_all_offices(self, state_normal_mode):
         """返回字典包含所有公职键"""
         result = population_api.get_candidates(state_normal_mode)

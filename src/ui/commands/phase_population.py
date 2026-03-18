@@ -65,7 +65,7 @@ class PopulationCommand(Command):
             print("⚠️ 人口阶段在本回合已执行过", file=sys.stderr, flush=True)
             return False
 
-        self._auto_mode = self.state.config.get("testing.auto_forum", False)
+        self._auto_mode = self.state.config.get("testing.auto_population", False)
 
         # 初始化状态机
         self._step = 0
