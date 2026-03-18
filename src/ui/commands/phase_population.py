@@ -74,17 +74,15 @@ class PopulationCommand(Command):
         self._resolution_done = False
         self._startup_done = False
 
-        while self._step < 5:
+        while self._step < 4:  # 原5改为4
             if self._step == 0:
                 self._handle_step_0()
             elif self._step == 1:
-                self._handle_step_1()
+                self._handle_step_1()  # 合并后的庆典+投票环节
             elif self._step == 2:
-                self._handle_step_2()
+                self._handle_step_2()  # 公示环节（原步骤3）
             elif self._step == 3:
-                self._handle_step_3()
-            elif self._step == 4:
-                self._handle_step_4()
+                self._handle_step_3()  # 完成环节（原步骤4）
 
         self.state.mark_phase_executed("population")
         return True
@@ -211,7 +209,7 @@ class PopulationCommand(Command):
 
     # ---------- 步骤1：庆典环节 ----------
     def _handle_step_1(self):
-        """庆典环节：玩家为候选人举办庆典"""
+        """合并环节：玩家可进行庆典和投票"""
         # 重置玩家列表，确保从第一个玩家开始
         player_id = self._get_current_player_id()
         if not player_id:
@@ -223,8 +221,48 @@ class PopulationCommand(Command):
             return
 
         if self._auto_mode:
-            # 全自动模式：自动为所有玩家执行庆典
-            self._auto_mode_festival()
+            # 打印自动模式下的 UI
+            print("\n" + "=" * 58)
+            print("   🏛️  ELECTIONS Campaign")
+            print("=" * 58)
+
+            # 获取庆典前影响力
+            pre_influences = self._get_faction_influences()
+            print("\n   📊 各派系影响力：\t\t当前")
+            for faction in self.state.factions.values():
+                val = pre_influences.get(faction.id, 0)
+                print(f"      {faction.name}:\t\t{val}")
+
+            # 打印候选人列表
+            result = population_api.get_candidates(self.state)
+            if result["success"] and result["message"]:
+                print(result["message"])
+            else:
+                print("\n   📋 当前无候选人")
+
+            # 执行自动庆典和投票
+            for player in self.state.get_all_players():
+                faction = self.state.get_faction(player.faction_id)
+                if faction:
+                    self.auto_processor.process_festival(player.player_id, faction)
+            for player in self.state.get_all_players():
+                faction = self.state.get_faction(player.faction_id)
+                if faction:
+                    self.auto_processor.process_vote(player.player_id, faction)
+
+            # 统计总花费
+            total_spent = 0
+            campaigns = self.state._population_pending.get("campaigns", [])
+            for _, _, amount in campaigns:
+                total_spent += amount
+            total_boost = total_spent
+
+            # 获取庆典后影响力
+            post_influences = self._get_faction_influences()
+
+            # 打印影响力变化表格
+            self._print_influence_table(pre_influences, post_influences, total_spent, total_boost)
+
             self._step += 1
             return
 
@@ -243,31 +281,43 @@ class PopulationCommand(Command):
                 if cmd in ("next", "n"):
                     next_id = self._next_player()
                     if next_id:
-                        # 切换到下一个玩家
                         print(i18n.get("info_next_player", player=next_id), file=sys.stderr, flush=True)
-                        # 继续本步骤循环（实际会在下次循环处理新玩家）
                         break
                     else:
-                        # 所有玩家完成，进入下一步
                         self._step += 1
                         return
                 elif cmd == "campaign":
                     self._handle_campaign(args)
+                elif cmd == "vote":
+                    self._handle_vote(args)
                 elif cmd == "investigate":
                     self._handle_investigate(args)
                 else:
                     print(i18n.get("error_unknown_command"), file=sys.stderr, flush=True)
         else:
-            # AI玩家：自动处理
+            # AI玩家自动处理（此分支实际上不会进入，因为自动模式已单独处理，但保留以作备用）
             faction = self.state.get_faction(player.faction_id) if player else None
             self.auto_processor.process_festival(player_id, faction)
-            self._next_player()  # 切换到下一个玩家（本步骤内自动）
-            # 注意：如果所有玩家完成，_next_player 会返回 None，需要判断
+            self.auto_processor.process_vote(player_id, faction)
+            self._next_player()
             if self._current_player_index >= len(self._players):
                 self._step += 1
+    def _auto_mode_festival_and_vote(self):
+        """全自动模式：为所有玩家依次执行庆典和投票"""
+        # 先执行所有玩家的庆典
+        for player in self.state.get_all_players():
+            faction = self.state.get_faction(player.faction_id)
+            if faction:
+                self.auto_processor.process_festival(player.player_id, faction)
+
+        # 再执行所有玩家的投票
+        for player in self.state.get_all_players():
+            faction = self.state.get_faction(player.faction_id)
+            if faction:
+                self.auto_processor.process_vote(player.player_id, faction)
 
     def _print_ui_04_1(self, player_id: str, faction_id: str):
-        """打印庆典环节UI"""
+        """打印合并环节UI（庆典+投票）"""
         faction = self.state.get_faction(faction_id)
         faction_name = faction.name if faction else "未知"
         print("\n############################################################")
@@ -289,7 +339,8 @@ class PopulationCommand(Command):
         print(f"\n🔧 本阶段可操作(PLAYER {player_id} {faction_name})：")
         print("   1. investigate → 查看人物私库余额")
         print("   2. campaign <人物ID> <金额> → 举办庆典")
-        print("   3. next/n → 下一个玩家")
+        print("   3. vote <公职> <人物ID> → 投票")
+        print("   4. next/n → 下一个玩家")
         sys.stdout.flush()
 
     def _handle_campaign(self, args):
@@ -309,60 +360,6 @@ class PopulationCommand(Command):
         result = population_api.campaign(self.state, player_id, fig_id, amount)
         print(result["message"], flush=True)
 
-    # ---------- 步骤2：投票环节 ----------
-    def _handle_step_2(self):
-        """投票环节：玩家为公职候选人投票"""
-        # 如果当前玩家无效（索引超出），则重置到第一个玩家
-        if self._get_current_player_id() is None:
-            self._current_player_index = 0
-        player_id = self._get_current_player_id()
-        if not player_id:
-            self._step += 1
-            return
-
-        # 新增：获取 player 对象
-        player = self.state.get_player(player_id)
-        if not player:
-            self._step += 1
-            return
-
-        if self._auto_mode:
-            # 全自动模式：自动为所有玩家投票
-            self._auto_mode_vote()
-            self._step += 1
-            return
-
-        bypass = self.state.config.get("testing.bypass_player_check", False)
-        if bypass or player.player_type == PlayerType.HUMAN:
-            self._print_ui_04_2(player_id, player.faction_id)
-            while True:
-                print(f"\n> 请输入操作(PLAYER {player_id}): ", end="", file=sys.stderr, flush=True)
-                cmd_input = input().strip()
-                if not cmd_input:
-                    continue
-                parts = cmd_input.split()
-                cmd = parts[0].lower()
-                args = parts[1:]
-
-                if cmd in ("next", "n"):
-                    next_id = self._next_player()
-                    if next_id:
-                        print(i18n.get("info_next_player", player=next_id), file=sys.stderr, flush=True)
-                        break
-                    else:
-                        self._step += 1
-                        return
-                elif cmd == "vote":
-                    self._handle_vote(args)
-                else:
-                    print(i18n.get("error_unknown_command"), file=sys.stderr, flush=True)
-        else:
-            # AI玩家
-            faction = self.state.get_faction(player.faction_id) if player else None
-            self.auto_processor.process_vote(player_id, faction)
-            self._next_player()
-            if self._current_player_index >= len(self._players):
-                self._step += 1
 
     def _print_ui_04_2(self, player_id: str, faction_id: str):
         """打印投票环节UI"""
@@ -401,7 +398,7 @@ class PopulationCommand(Command):
         print(result["message"], flush=True)
 
     # ---------- 步骤3：公示环节 ----------
-    def _handle_step_3(self):
+    def _handle_step_2(self):
         """公示环节：统计选举结果，执行凯旋、军团解散等"""
         if not self._resolution_done:
             self._do_resolution()
@@ -501,7 +498,7 @@ class PopulationCommand(Command):
                 print(f"      🔄 战场指挥官 {figure.name} 转为 {new_office}，继续指挥战争。")
 
     # ---------- 步骤4：完成 ----------
-    def _handle_step_4(self):
+    def _handle_step_3(self):
         """完成环节：标记阶段结束"""
         print("\n--- 人口阶段完成 ---", flush=True)
         self._step += 1
@@ -539,54 +536,6 @@ class PopulationCommand(Command):
         if 0 <= self._current_player_index < len(self._players):
             return self._players[self._current_player_index]
         return None
-
-    def _auto_mode_festival(self):
-        """全自动模式：为所有玩家执行庆典，并打印庆典前信息及影响力变化表格"""
-        # 打印庆典标题
-        print("\n" + "=" * 58)
-        print("   🏛️  ELECTIONS Campaign")
-        print("=" * 58)
-
-        # 获取庆典前各派系影响力
-        pre_influences = self._get_faction_influences()
-        # 打印当前影响力表格（简化版，只显示当前）
-        print("\n   📊 各派系影响力：\t\t当前")
-        for faction in self.state.factions.values():
-            val = pre_influences.get(faction.id, 0)
-            print(f"      {faction.name}:\t\t{val}")
-
-        # 打印候选人名单
-        result = population_api.get_candidates(self.state)
-        if result["success"] and result["message"]:
-            print(result["message"])
-        else:
-            print("\n   📋 当前无候选人")
-
-        # 执行自动庆典
-        for player in self.state.get_all_players():
-            faction = self.state.get_faction(player.faction_id)
-            if faction:
-                self.auto_processor.process_festival(player.player_id, faction)
-
-        # 从临时记录中统计总花费
-        total_spent = 0
-        campaigns = self.state._population_pending.get("campaigns", [])
-        for _, _, amount in campaigns:
-            total_spent += amount
-        total_boost = total_spent
-
-        # 记录庆典后各派系影响力
-        post_influences = self._get_faction_influences()
-
-        # 打印影响力变化表格
-        self._print_influence_table(pre_influences, post_influences, total_spent, total_boost)
-
-    def _auto_mode_vote(self):
-        """全自动模式：为所有玩家执行投票"""
-        for player in self.state.get_all_players():
-            faction = self.state.get_faction(player.faction_id)
-            if faction:
-                self.auto_processor.process_vote(player.player_id, faction)
 
     def _handle_investigate(self, args):
         """复用原有 investigate 逻辑（简化）"""

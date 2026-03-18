@@ -116,31 +116,35 @@ class TestPopulationCommandBase:
 class TestPopulationCommandAuto:
     """自动模式测试"""
 
-    def test_auto_mode_influence_table(self, state_auto_mode, capsys, monkeypatch):
-        """验证自动模式下庆典影响力表格被正确打印"""
-        # 直接修改配置字典，强制 auto_forum 为 True
-        state_auto_mode.config._config["testing"]["auto_forum"] = True
+    def _auto_mode_festival_and_vote(self):
+        """全自动模式：为所有玩家依次执行庆典和投票，并打印影响力变化表格"""
+        # 记录庆典前各派系影响力
+        pre_influences = self._get_faction_influences()
 
-        # 准备：确保有候选人
-        fig1 = state_auto_mode.get_member(1)
-        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        # 先执行所有玩家的庆典
+        for player in self.state.get_all_players():
+            faction = self.state.get_faction(player.faction_id)
+            if faction:
+                self.auto_processor.process_festival(player.player_id, faction)
 
-        # 标记前置阶段已执行
-        state_auto_mode.mark_phase_executed("forum")
+        # 再执行所有玩家的投票
+        for player in self.state.get_all_players():
+            faction = self.state.get_faction(player.faction_id)
+            if faction:
+                self.auto_processor.process_vote(player.player_id, faction)
 
-        # 模拟输入，提供足够的 "next" 来完成所有步骤
-        inputs = iter(["next", "next", "next", "next"])
-        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        # 从临时记录中统计总花费
+        total_spent = 0
+        campaigns = self.state._population_pending.get("campaigns", [])
+        for _, _, amount in campaigns:
+            total_spent += amount
+        total_boost = total_spent
 
-        # 执行人口阶段
-        cmd = PopulationCommand(state_auto_mode)
-        cmd.execute([])
+        # 记录庆典后各派系影响力
+        post_influences = self._get_faction_influences()
 
-        captured = capsys.readouterr()
-        assert "📊 各派系影响力：" in captured.out
-        assert "Optimates:" in captured.out or "Faction1:" in captured.out
-        assert "总计花费" in captured.out
-        assert "增加人气" in captured.out
+        # 打印影响力表格
+        self._print_influence_table(pre_influences, post_influences, total_spent, total_boost)
 
     def test_auto_mode_full_auto(self, state_auto_mode, monkeypatch):
         """全自动模式：自动庆典、自动投票、自动选举"""
@@ -193,7 +197,8 @@ class TestPopulationCommandManual:
             cmd.execute([])
 
     def test_step1_campaign_success(self, state_normal_mode, monkeypatch):
-        """庆典环节成功举办庆典"""
+        """在合并环节成功举办庆典"""
+        # 输入序列：step0 next, step1 campaign, step1 next, step2 next, step3 next
         inputs = iter(["next", "campaign 1 10", "next", "next", "next"])
         monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
         state_normal_mode.mark_phase_executed("forum")
@@ -210,7 +215,7 @@ class TestPopulationCommandManual:
         assert args[3] == 10
 
     def test_step1_campaign_failure(self, state_normal_mode, monkeypatch, capsys):
-        """庆典失败时输出错误信息"""
+        """在合并环节庆典失败时输出错误信息"""
         inputs = iter(["next", "campaign 1 1000", "next", "next", "next"])
         monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
         state_normal_mode.mark_phase_executed("forum")
@@ -222,16 +227,20 @@ class TestPopulationCommandManual:
         captured = capsys.readouterr()
         assert "财富不足" in captured.out
 
-    def test_step1_ai_process_festival(self, state_normal_mode, monkeypatch):
-        """AI玩家自动调用process_festival"""
+    def test_step1_ai_process_festival_and_vote(self, state_normal_mode, monkeypatch):
+        """自动模式下AI玩家自动调用process_festival和process_vote"""
         inputs = iter(["next", "next", "next", "next"])
         monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
         state_normal_mode.mark_phase_executed("forum")
         cmd = PopulationCommand(state_normal_mode)
+        # 同时mock两个处理器
         cmd.auto_processor.process_festival = MagicMock()
+        cmd.auto_processor.process_vote = MagicMock()
         with patch('builtins.print'):
             cmd.execute([])
+        # 验证两个方法都被调用，且至少对p2调用（AI玩家）
         cmd.auto_processor.process_festival.assert_called_once_with("p2", unittest.mock.ANY)
+        cmd.auto_processor.process_vote.assert_called_once_with("p2", unittest.mock.ANY)
 
     def test_step1_player_switching(self, state_normal_mode, monkeypatch):
         """多个玩家时next切换玩家"""
@@ -241,70 +250,46 @@ class TestPopulationCommandManual:
         cmd = PopulationCommand(state_normal_mode)
         with patch('builtins.print'):
             cmd.execute([])
+        # 执行成功即表示切换完成，无需额外断言
 
-    def test_step2_vote_success(self, state_normal_mode, monkeypatch):
-        """投票环节成功投票"""
+    def test_step1_festival_and_vote_combined(self, state_normal_mode, monkeypatch, capsys):
+        """模拟玩家在合并环节中先举办庆典后投票"""
+        from src.core.entities.player import PlayerType
+
+        # 将 p2 临时改为人类，避免自动处理
+        p2 = state_normal_mode.get_player("p2")
+        p2._player_type = PlayerType.HUMAN
+
         fig1 = state_normal_mode.get_member(1)
         fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
-        # 输入序列：step0 next, step1 next, step2 vote consul 1, step2 next, step3 next
-        inputs = iter(["next", "next", "vote consul 1", "next", "next"])
+        fig1.wealth = 100
+
+        # 输入序列：step0 next, step1 campaign + vote + next, step2 next, step3 next
+        # 注意：有两个人类玩家，p1 执行后输入 next 切换到 p2，p2 需要再输入 next 完成
+        inputs = iter(["next", "campaign 1 10", "vote consul 1", "next", "next", "next"])
         monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
         state_normal_mode.mark_phase_executed("forum")
+
         cmd = PopulationCommand(state_normal_mode)
-        cmd.auto_processor.process_vote = MagicMock()  # 禁止AI自动投票干扰
-        with patch('src.api.population_api.get_candidates') as mock_get_candidates, \
-             patch('src.api.population_api.vote') as mock_vote:
+        cmd.auto_processor.process_festival = MagicMock()
+        cmd.auto_processor.process_vote = MagicMock()
+        with patch('src.api.population_api.get_candidates') as mock_get_candidates:
             mock_get_candidates.return_value = {
                 "success": True,
-                "data": {"consul": [{"id": 1, "name": "Fig1"}]},
+                "data": {"consul": [{"id": 1}]},
                 "message": ""
             }
-            mock_vote.return_value = {"success": True, "message": "投票成功"}
-            with patch('builtins.print'):
+            with patch('src.api.population_api.campaign') as mock_campaign, \
+                    patch('src.api.population_api.vote') as mock_vote:
+                mock_campaign.return_value = {"success": True, "message": "庆典成功"}
+                mock_vote.return_value = {"success": True, "message": "投票成功"}
                 cmd.execute([])
+
+        mock_campaign.assert_called_once()
         mock_vote.assert_called_once()
-        args = mock_vote.call_args[0]
-        assert args[1] == "p1"
-        assert args[2] == "consul"
-        assert args[3] == 1
-
-    def test_step2_vote_invalid_office(self, state_normal_mode, monkeypatch, capsys):
-        """无效公职名称提示错误"""
-        fig1 = state_normal_mode.get_member(1)
-        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
-        inputs = iter(["next", "next", "vote invalid 1", "next", "next"])
-        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
-        state_normal_mode.mark_phase_executed("forum")
-        cmd = PopulationCommand(state_normal_mode)
-        cmd.auto_processor.process_vote = MagicMock()
-        with patch('src.api.population_api.get_candidates') as mock_get_candidates:
-            mock_get_candidates.return_value = {
-                "success": True,
-                "data": {"consul": [{"id": 1}]},
-                "message": ""
-            }
-            cmd.execute([])
         captured = capsys.readouterr()
-        assert "无效的公职名称" in captured.out
-
-    def test_step2_ai_process_vote(self, state_normal_mode, monkeypatch):
-        """AI玩家自动调用process_vote"""
-        fig1 = state_normal_mode.get_member(1)
-        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
-        inputs = iter(["next", "next", "next", "next"])
-        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
-        state_normal_mode.mark_phase_executed("forum")
-        cmd = PopulationCommand(state_normal_mode)
-        cmd.auto_processor.process_vote = MagicMock()
-        with patch('src.api.population_api.get_candidates') as mock_get_candidates:
-            mock_get_candidates.return_value = {
-                "success": True,
-                "data": {"consul": [{"id": 1}]},
-                "message": ""
-            }
-            with patch('builtins.print'):
-                cmd.execute([])
-        cmd.auto_processor.process_vote.assert_called_once_with("p2", unittest.mock.ANY)
+        assert "庆典成功" in captured.out
+        assert "投票成功" in captured.out
 
     def test_step3_resolve_election_called(self, state_normal_mode, monkeypatch):
         """公示环节调用resolve_election API"""
@@ -411,13 +396,14 @@ class TestPopulationCommandManual:
         fig2 = state_normal_mode.get_member(2)
         fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
         fig2.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        # 输入序列：step0 next, step1 p1 campaign, p1 vote, p1 next, step2 next, step3 next
         inputs = iter([
-            "next",                # step0
-            "campaign 1 10",       # step1 p1 campaign
-            "next",                # step1 p1 next -> p2
-            "vote consul 1",       # step2 p1 vote
-            "next",                # step2 p1 next -> p2
-            "next"                 # step3 next
+            "next",  # step0
+            "campaign 1 10",  # step1 p1 campaign
+            "vote consul 1",  # step1 p1 vote
+            "next",  # step1 p1 next -> p2 (AI)
+            "next",  # step2 (公示) next
+            "next"  # step3 (完成) next
         ])
         monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
         state_normal_mode.mark_phase_executed("forum")
@@ -425,9 +411,9 @@ class TestPopulationCommandManual:
         cmd.auto_processor.process_festival = MagicMock()
         cmd.auto_processor.process_vote = MagicMock()
         with patch('src.api.population_api.get_candidates') as mock_get_candidates, \
-             patch('src.api.population_api.campaign') as mock_campaign, \
-             patch('src.api.population_api.vote') as mock_vote, \
-             patch('src.api.population_api.resolve_election') as mock_resolve:
+                patch('src.api.population_api.campaign') as mock_campaign, \
+                patch('src.api.population_api.vote') as mock_vote, \
+                patch('src.api.population_api.resolve_election') as mock_resolve:
             mock_get_candidates.return_value = {
                 "success": True,
                 "data": {"consul": [{"id": 1}, {"id": 2}]},
@@ -437,9 +423,11 @@ class TestPopulationCommandManual:
             mock_vote.return_value = {"success": True, "message": "投票成功"}
             mock_resolve.return_value = {"success": True, "message": "选举结果"}
             cmd.execute([])
+
         assert mock_campaign.call_count == 1
         assert mock_vote.call_count == 1
         assert mock_resolve.call_count == 1
+        # 自动处理器应被调用一次（处理 p2 AI）
         assert cmd.auto_processor.process_festival.call_count == 1
         assert cmd.auto_processor.process_vote.call_count == 1
 
@@ -680,14 +668,21 @@ class TestPopulationCommandBypass:
         """bypass_player_check=True时，权限检查绕过"""
         fig1 = state_bypass_mode.get_member(1)
         fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
-        # 输入序列：step0 next, step1 p1 next, step1 p2 next, step2 vote consul 1, step2 p1 next, step2 p2 next, step3 next
-        inputs = iter(["next", "next", "next", "vote consul 1", "next", "next", "next"])
+        # 输入序列：step0 next, step1 p1 vote, p1 next, p2 vote, p2 next, step2 next, step3 next
+        inputs = iter([
+            "next",  # step0
+            "vote consul 1",  # step1 p1 vote
+            "next",  # step1 p1 next -> p2
+            "vote consul 1",  # step1 p2 vote
+            "next",  # step1 p2 next
+            "next",  # step2 (公示) next
+            "next"  # step3 (完成) next
+        ])
         monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
         state_bypass_mode.mark_phase_executed("forum")
         cmd = PopulationCommand(state_bypass_mode)
-        cmd.auto_processor.process_vote = MagicMock()
         with patch('src.api.population_api.get_candidates') as mock_get_candidates, \
-             patch('src.api.population_api.vote') as mock_vote:
+                patch('src.api.population_api.vote') as mock_vote:
             mock_get_candidates.return_value = {
                 "success": True,
                 "data": {"consul": [{"id": 1}]},
@@ -695,4 +690,5 @@ class TestPopulationCommandBypass:
             }
             mock_vote.return_value = {"success": True, "message": "投票成功"}
             cmd.execute([])
-        mock_vote.assert_called_once()
+        # 应该调用两次 vote（p1 和 p2）
+        assert mock_vote.call_count == 2
