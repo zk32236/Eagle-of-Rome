@@ -106,7 +106,8 @@ class PopulationCommand(Command):
                 )
                 if disbanded:
                     print(f"      ⚓ 舰队 {disbanded} 已解散（无需要海战的战争）")
-            self._convert_battlefield_commanders()
+
+
             # 清理广场中未被招募的人物
             curia = self.state.curia
             if not curia.is_empty():
@@ -121,6 +122,9 @@ class PopulationCommand(Command):
             election_order = ["consul", "censor", "praetor", "quaestor", "tribune"]
             for office_type in election_order:
                 self._remove_office_holders(office_type)
+
+            # 转换战场指挥官
+            self._convert_battlefield_commanders()
 
             print()  # 空行分隔
             self._startup_done = True
@@ -423,9 +427,6 @@ class PopulationCommand(Command):
         result = population_api.resolve_election(self.state)
         if result["message"]:
             print(result["message"])
-
-        # 3. 战场指挥官转换（原有逻辑）
-        self._convert_battlefield_commanders()
 
         # 6. 清除临时数据
         self.state._population_pending["campaigns"] = []

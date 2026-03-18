@@ -565,6 +565,77 @@ class TestPopulationCommandManual:
         assert "舰队 [1, 2] 已解散" in captured.out
         assert captured.out.count("舰队") == 1
 
+    def test_commander_conversion_once(self, state_normal_mode, monkeypatch, capsys):
+        """验证战场指挥官转换只执行一次，且状态正确"""
+        state_normal_mode.turn.turn_number = 10
+        from unittest.mock import MagicMock, patch
+        from src.core.entities.war import War
+
+        # 准备：出征的执政官
+        fig1 = state_normal_mode.get_member(1)  # 使用现有的人物1
+        fig1.is_absent = True
+        fig1.office = 'consul'
+        fig1.add_office_history = MagicMock()
+        fig1.update_influence = MagicMock()
+
+        # 出征的大法官
+        fig2 = state_normal_mode.get_member(2)  # 使用现有的人物2
+        fig2.is_absent = True
+        fig2.office = 'praetor'
+        fig2.add_office_history = MagicMock()
+        fig2.update_influence = MagicMock()
+
+        # 模拟战争系统
+        war_system = MagicMock()
+        war1 = MagicMock(spec=War)
+        war1.commander_assigned_turn = 8
+        war1.set_commander_assigned_turn = MagicMock()
+        war2 = MagicMock(spec=War)
+        war2.commander_assigned_turn = 7
+        war2.set_commander_assigned_turn = MagicMock()
+
+        def get_war_by_commander(cid):
+            if cid == 1:
+                return war1
+            elif cid == 2:
+                return war2
+            return None
+        war_system.get_war_by_commander.side_effect = get_war_by_commander
+
+        state_normal_mode.get_war_system = MagicMock(return_value=war_system)
+
+        # 模拟输入序列：完成整个阶段（需要足够 next）
+        inputs = iter(["next", "next", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.execute([])
+
+        captured = capsys.readouterr()
+
+        # 断言转换信息只出现一次
+        assert captured.out.count("转为 proconsul") == 1
+        assert captured.out.count("转为 propraetor") == 1
+
+        # 验证官职变更
+        assert fig1.office == 'proconsul'
+        assert fig2.office == 'propraetor'
+
+        # 验证历史记录被调用
+        fig1.add_office_history.assert_called_once_with('consul', 8, 9)
+        fig2.add_office_history.assert_called_once_with('praetor', 7, 9)
+
+        # 验证影响力更新被调用
+        fig1.update_influence.assert_called_once()
+        fig2.update_influence.assert_called_once()
+
+        # 验证战争的上任回合被更新
+        war1.set_commander_assigned_turn.assert_called_once_with(10)  # 当前回合=10? 测试中需要明确回合数
+        war2.set_commander_assigned_turn.assert_called_once_with(10)
+
+        # 验证没有重复转换（例如战争系统 get_war_by_commander 被调用了正确次数）
+        assert war_system.get_war_by_commander.call_count == 2
+
 
 # ========== 全人工测试模式 ==========
 
