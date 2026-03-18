@@ -109,38 +109,42 @@ def vote(state: GameState, player_id: str, office: str, figure_id: int) -> dict:
 def get_candidates(state: GameState) -> dict:
     """
     获取所有公职的候选人列表（结构化数据）。
-    每个候选人只出现在其能担任的最高职位，且每个职位只返回配置数量的候选人（按资格属性排序取前N名）。
+    按官职优先级从高到低处理，每个官职从所有符合资格且未被更高官职录用的人选中选出前N名。
     """
-    # 官职优先级顺序（从高到低）
-    office_priority = ["consul", "censor", "praetor", "quaestor", "tribune"]
-    result_data = {office: [] for office in office_priority}
+    office_priority = ["consul", "censor", "praetor", "quaestor", "tribune"]  # 从高到低
+    final_data = {office: [] for office in office_priority}
+    used_figure_ids = set()  # 已入选更高官职的人物ID
 
-    # 先为每个人物确定能竞选的最高职位
     current_turn = state.turn.turn_number
-    for fig in state.get_living_members():
-        if fig.is_absent:  # 不在罗马不能参选
-            continue
-        # 从高到低检查
-        for office in office_priority:
+
+    for office in office_priority:
+        # 收集所有存活且未占用且符合该官职资格的人物
+        candidates = []
+        for fig in state.get_living_members():
+            if fig.is_absent:
+                continue
+            if fig.id in used_figure_ids:
+                continue
             can_hold, _ = fig.can_hold_office(office, current_turn, state.config)
             if can_hold:
-                # 将该人物加入该职位的候选池
-                result_data[office].append(fig)
-                break  # 只加入最高职位
+                candidates.append(fig)
 
-    # 对每个职位，按资格属性排序并截取前N名
-    final_data = {}
-    for office in office_priority:
-        candidates = result_data[office]
         # 按资格属性排序
         sorted_candidates = sorted(
             candidates,
             key=lambda fig: fig.get_qualification_attribute(office),
             reverse=True
         )
+
+        # 取前N名
         num_candidates = state.config.get("political_rules", {}).get("candidates_per_election", {}).get(office, 2)
         top_candidates = sorted_candidates[:num_candidates]
 
+        # 记录录用者
+        for fig in top_candidates:
+            used_figure_ids.add(fig.id)
+
+        # 构建输出列表
         cand_list = []
         for fig in top_candidates:
             cand_list.append({
@@ -258,6 +262,10 @@ def resolve_election(state: GameState) -> dict:
         if winner:
             winner.office = office
             winner.update_influence()
+            if office == "consul":
+                # 将执政官加入 leader_ids（如果不在的话）
+                if winner.id not in state.turn.leader_ids:
+                    state.turn.leader_ids.append(winner.id)
             elected_figures.append(winner)
 
             faction = state.get_faction(winner.faction_id)

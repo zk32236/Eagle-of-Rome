@@ -295,17 +295,13 @@ class TestGetCandidates:
         attr2 = consul_cands[1]["charisma"]
         assert attr1 >= attr2
 
-    def test_candidates_unique_highest_office(self, state_normal_mode):
-        """验证一个人物只出现在最高官职的候选人列表中"""
-        # 准备：让 fig1 同时满足 consul 和 praetor 资格
+    def test_candidates_appear_in_multiple_offices(self, state_normal_mode):
+        """验证符合多个官职资格的人物出现在所有对应官职的候选池中"""
         fig1 = state_normal_mode.get_member(1)
-        # 添加历史官职：先 praetor 后 consul 需要的条件
-        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))  # 满足 consul 需要 praetor 历史
-        fig1.office_history.append(OfficeTerm(office_type="quaestor", start_turn=-12, end_turn=-11))  # 满足 praetor 需要 quaestor 历史
-        # 确保年龄足够
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        fig1.office_history.append(OfficeTerm(office_type="quaestor", start_turn=-12, end_turn=-11))
         fig1.age = 45
 
-        # 让 fig2 只满足 praetor 资格（用于对比）
         fig2 = state_normal_mode.get_member(2)
         fig2.office_history.append(OfficeTerm(office_type="quaestor", start_turn=-12, end_turn=-11))
         fig2.age = 35
@@ -314,11 +310,10 @@ class TestGetCandidates:
         consul_ids = [c["id"] for c in result["data"]["consul"]]
         praetor_ids = [c["id"] for c in result["data"]["praetor"]]
 
-        # fig1 应出现在 consul 中，而不在 praetor 中
         assert fig1.id in consul_ids
-        assert fig1.id not in praetor_ids
-        # fig2 应出现在 praetor 中（因为不符合 consul 资格）
+        assert fig1.id in praetor_ids  # 现在应出现在两个列表中
         assert fig2.id in praetor_ids
+        assert fig2.id not in consul_ids
 
     def test_candidates_message_format(self, state_normal_mode):
         """验证候选人列表的字符串格式与设计文档基本一致"""

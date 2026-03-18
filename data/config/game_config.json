@@ -10,7 +10,7 @@
     "budget_always_pass": false,
     "war_always_pass": false,
     "force_battle_result": "",
-    "bypass_player_check": true,
+    "bypass_player_check": false,
     "auto_forum": true,
     "auto_population": true
   },
@@ -48,7 +48,7 @@
       "quaestor": 1,
       "tribune": 1
     },
-    "candidates_per_election": {
+      "candidates_per_election": {
       "consul": 2,
       "censor": 2,
       "praetor": 2,
