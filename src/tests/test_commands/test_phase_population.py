@@ -409,6 +409,30 @@ class TestPopulationCommandManual:
         assert cmd.auto_processor.process_festival.call_count == 1
         assert cmd.auto_processor.process_vote.call_count == 1
 
+    def test_curia_cleaned(self, state_normal_mode, capsys, monkeypatch):
+        """验证公告环节正确清理广场中未被招募的人物"""
+        # 准备：在curia中添加几个人物
+        from src.core.entities.figure import Figure
+        fig1 = Figure.create_plebeian(999, None, 30)
+        fig2 = Figure.create_plebeian(998, None, 25)
+        state_normal_mode.curia.add_figure(fig1)
+        state_normal_mode.curia.add_figure(fig2)
+        # 必须手动加入 _members，否则清理时无法删除（实际代码中 curia 中的人物原本就在 _members 中）
+        state_normal_mode._members[999] = fig1
+        state_normal_mode._members[998] = fig2
+
+        # 模拟输入：只需一个next进入步骤0并触发_startup_done
+        monkeypatch.setattr('builtins.input', lambda *args: "next")
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.execute([])
+
+        captured = capsys.readouterr()
+        assert "🗑️ 2 名未被招募的人物已从罗马消失，不知去向。" in captured.out
+        assert state_normal_mode.curia.is_empty() is True
+        assert state_normal_mode.get_member(999) is None
+        assert state_normal_mode.get_member(998) is None
+
 
 # ========== 全人工测试模式 ==========
 

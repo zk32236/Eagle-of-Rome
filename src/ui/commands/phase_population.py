@@ -400,20 +400,10 @@ class PopulationCommand(Command):
         # 2. 执行凯旋、军团解散等原有逻辑（确保只执行一次，不重复）
         self._process_legion_disbandment_and_triumphs()
 
-        # 3. 清理广场中未被招募的人物（原有逻辑）
-        curia = self.state.curia
-        if not curia.is_empty():
-            ids_to_remove = [fig.id for fig in curia.get_all_available()]
-            for fid in ids_to_remove:
-                if fid in self.state._members:
-                    del self.state._members[fid]
-            curia.clear()
-            print(f"      🗑️ {len(ids_to_remove)} 名未被招募的人物已从罗马消失，不知去向。")
-
-        # 4. 战场指挥官转换（原有逻辑）
+        # 3. 战场指挥官转换（原有逻辑）
         self._convert_battlefield_commanders()
 
-        # 5. 舰队解散
+        # 4. 舰队解散
         if self.state.naval_system:
             disbanded = self.state.naval_system.disband_unused_fleets(
                 self.state.turn.turn_number,
