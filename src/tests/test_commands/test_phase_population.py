@@ -116,11 +116,45 @@ class TestPopulationCommandBase:
 class TestPopulationCommandAuto:
     """自动模式测试"""
 
-    def test_auto_mode_full_auto(self, state_auto_mode):
+    def test_auto_mode_influence_table(self, state_auto_mode, capsys, monkeypatch):
+        """验证自动模式下庆典影响力表格被正确打印"""
+        # 直接修改配置字典，强制 auto_forum 为 True
+        state_auto_mode.config._config["testing"]["auto_forum"] = True
+
+        # 准备：确保有候选人
+        fig1 = state_auto_mode.get_member(1)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+
+        # 标记前置阶段已执行
+        state_auto_mode.mark_phase_executed("forum")
+
+        # 模拟输入，提供足够的 "next" 来完成所有步骤
+        inputs = iter(["next", "next", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+
+        # 执行人口阶段
+        cmd = PopulationCommand(state_auto_mode)
+        cmd.execute([])
+
+        captured = capsys.readouterr()
+        assert "📊 各派系影响力：" in captured.out
+        assert "Optimates:" in captured.out or "Faction1:" in captured.out
+        assert "总计花费" in captured.out
+        assert "增加人气" in captured.out
+
+    def test_auto_mode_full_auto(self, state_auto_mode, monkeypatch):
         """全自动模式：自动庆典、自动投票、自动选举"""
+        # 直接修改配置字典
+        state_auto_mode.config._config["testing"]["auto_forum"] = True
+
         fig1 = state_auto_mode.get_member(1)
         fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
         state_auto_mode.mark_phase_executed("forum")
+
+        # 模拟输入，提供足够的 "next"
+        inputs = iter(["next", "next", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+
         cmd = PopulationCommand(state_auto_mode)
         cmd.auto_processor.process_festival = MagicMock()
         cmd.auto_processor.process_vote = MagicMock()

@@ -523,11 +523,28 @@ class PopulationCommand(Command):
         return None
 
     def _auto_mode_festival(self):
-        """全自动模式：为所有玩家执行庆典"""
+        """全自动模式：为所有玩家执行庆典，并打印影响力变化表格"""
+        # 记录庆典前各派系影响力
+        pre_influences = self._get_faction_influences()
+
+        # 执行自动庆典
         for player in self.state.get_all_players():
             faction = self.state.get_faction(player.faction_id)
             if faction:
                 self.auto_processor.process_festival(player.player_id, faction)
+
+        # 从临时记录中统计总花费（每花费1塔兰特增加1点人气）
+        total_spent = 0
+        campaigns = self.state._population_pending.get("campaigns", [])
+        for _, _, amount in campaigns:
+            total_spent += amount
+        total_boost = total_spent  # 花费与增加的人气相等
+
+        # 记录庆典后各派系影响力
+        post_influences = self._get_faction_influences()
+
+        # 打印影响力表格
+        self._print_influence_table(pre_influences, post_influences, total_spent, total_boost)
 
     def _auto_mode_vote(self):
         """全自动模式：为所有玩家执行投票"""
