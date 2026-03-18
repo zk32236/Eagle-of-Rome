@@ -9,24 +9,22 @@ from src.core.game_state import GameState
 
 
 class AutoVoteDecider(VoteDecider):
-    """自动投票决策器：随机选择本派系候选人，若无则从所有候选人中随机选一人"""
+    """自动投票决策器：有本派系候选人时选影响力最高者，否则随机选一人"""
 
     def decide_vote(self, office: str, candidates: List[Figure], faction: Faction, state: GameState) -> Optional[int]:
         if not candidates:
-            # 无候选人，弃权
             return None
 
         # 过滤出本派系的候选人
         own_candidates = [c for c in candidates if c.faction_id == faction.id]
 
         if own_candidates:
-            # 有本派系候选人，随机选择一个
-            chosen = random.choice(own_candidates)
+            # 选择本派系中影响力最高的候选人
+            chosen = max(own_candidates, key=lambda c: c.influence)
             chosen_id = chosen.id
-            reason = "本派系候选人"
+            reason = f"本派系候选人中影响力最高({chosen.influence})"
         else:
-            # 无本派系候选人，从所有候选人中随机选一个（可调整策略，如弃权）
-            # 简单起见，我们仍随机选一个（模拟“随意投票”）
+            # 无本派系候选人，从所有候选人中随机选一个
             chosen = random.choice(candidates)
             chosen_id = chosen.id
             reason = "随机候选人"

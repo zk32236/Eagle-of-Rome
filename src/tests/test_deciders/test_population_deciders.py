@@ -131,34 +131,56 @@ class TestAutoVoteDecider:
         result = decider.decide_vote("consul", [], faction, test_state)
         assert result is None
 
-    def test_own_faction_candidate(self, test_state, faction, candidates):
-        """有本派系候选人时，随机选本派系"""
-        # 候选人列表包含本派系和其他派系
-        all_candidates = candidates  # 包含本派系和其他派系
+    def test_own_faction_candidate(self, test_state, faction):
+        """有本派系候选人时，选择影响力最高的"""
+        # 创建几个本派系候选人，影响力不同
+        fig1 = Figure.create_nobile(101, faction.id, 40)
+        fig1.influence = 100
+        fig2 = Figure.create_nobile(102, faction.id, 45)
+        fig2.influence = 80
+        fig3 = Figure.create_nobile(103, faction.id, 38)
+        fig3.influence = 120  # 最高
+        test_state.add_member(fig1)
+        test_state.add_member(fig2)
+        test_state.add_member(fig3)
+
+        # 其他派系候选人
+        fig4 = Figure.create_nobile(104, "other_faction", 50)
+        fig4.influence = 200
+        test_state.add_member(fig4)
+
+        candidates = [fig1, fig2, fig3, fig4]
         decider = AutoVoteDecider()
-        # 多次调用，确保有时选到本派系（理论上总是选本派系，因为本派系存在）
-        chosen = decider.decide_vote("consul", all_candidates, faction, test_state)
-        chosen_fig = test_state.get_member(chosen)
-        assert chosen_fig.faction_id == faction.id
+        chosen_id = decider.decide_vote("consul", candidates, faction, test_state)
+        # 应选择影响力最高的 fig3 (ID 103)
+        assert chosen_id == 103
 
     def test_no_own_faction_candidate(self, test_state, faction):
-        """无本派系候选人时，从所有候选人中随机选"""
-        # 创建两个其他派系的候选人
-        fig1 = Figure.create_nobile(10, "f2", 40)
-        fig1.wealth = 100
+        """无本派系候选人时，从所有候选人中随机选择（可mock随机固定结果）"""
+        # 创建两个其他派系候选人
+        fig1 = Figure.create_nobile(105, "f2", 40)
+        fig1.influence = 50
+        fig2 = Figure.create_nobile(106, "f3", 45)
+        fig2.influence = 60
         test_state.add_member(fig1)
-        fig2 = Figure.create_nobile(11, "f3", 45)
-        fig2.wealth = 200
         test_state.add_member(fig2)
         candidates = [fig1, fig2]
 
         decider = AutoVoteDecider()
-        chosen = decider.decide_vote("consul", candidates, faction, test_state)
-        assert chosen in [10, 11]
+        with patch('random.choice') as mock_choice:
+            mock_choice.return_value = fig1
+            chosen_id = decider.decide_vote("consul", candidates, faction, test_state)
+            assert chosen_id == 105
+            mock_choice.assert_called_once_with(candidates)
 
-    def test_logging(self, test_state, faction, candidates):
+    def test_logging(self, test_state, faction):
         """检查是否记录了DEBUG日志"""
+        fig1 = Figure.create_nobile(107, faction.id, 40)
+        fig1.influence = 50
+        test_state.add_member(fig1)
+        candidates = [fig1]
+
         decider = AutoVoteDecider()
         with patch.object(test_state, 'log_event') as mock_log:
             result = decider.decide_vote("consul", candidates, faction, test_state)
-            assert mock_log.call_count >= 1
+            mock_log.assert_called_once()
