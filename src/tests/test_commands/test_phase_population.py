@@ -433,6 +433,69 @@ class TestPopulationCommandManual:
         assert state_normal_mode.get_member(999) is None
         assert state_normal_mode.get_member(998) is None
 
+    def test_triumph_only_once(self, state_normal_mode, capsys, monkeypatch):
+        """验证凯旋信息和军团解散信息只输出一次"""
+        from src.core.entities.war import War, WarStatus
+        from unittest.mock import MagicMock
+
+        # 创建模拟战争
+        war = War(id="test_war", name="Test War")
+        war.status = WarStatus.RESOLVED
+        war.set_triumph_approved(True)
+        war.set_triumph_commander(1)
+        war.add_legion_number(1)
+        war.add_legion_number(2)
+
+        # 模拟战争系统
+        ws = MagicMock()
+        ws._war_discard = [war]
+        ws._legions_to_disband = []
+
+        # 模拟军事系统
+        ms = MagicMock()
+        ms.disband_legions_for_war.return_value = (2, [])
+
+        # 将模拟系统注入 state
+        state_normal_mode.get_war_system = MagicMock(return_value=ws)
+        state_normal_mode.get_military_system = MagicMock(return_value=ms)
+
+        # 确保指挥官存活
+        fig = state_normal_mode.get_member(1)
+        fig.is_dead = False
+
+        # 模拟输入序列
+        inputs = iter(["next", "next", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.execute([])
+
+        captured = capsys.readouterr()
+        assert captured.out.count("举行凯旋式") == 1
+        assert captured.out.count("解散") == 1
+
+    def test_fleet_disband_once(self, state_normal_mode, capsys, monkeypatch):
+        """验证舰队解散信息只输出一次"""
+        from unittest.mock import MagicMock
+        # 模拟海军系统
+        state_normal_mode.naval_system = MagicMock()
+        state_normal_mode.naval_system.disband_unused_fleets.return_value = [1, 2]
+
+        # 模拟输入序列
+        inputs = iter(["next", "next", "next", "next"])
+        monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
+
+        state_normal_mode.mark_phase_executed("forum")
+        cmd = PopulationCommand(state_normal_mode)
+        cmd.execute([])
+
+        # 断言 disband_unused_fleets 只被调用一次
+        state_normal_mode.naval_system.disband_unused_fleets.assert_called_once()
+
+        captured = capsys.readouterr()
+        assert "舰队 [1, 2] 已解散" in captured.out
+        assert captured.out.count("舰队") == 1
+
 
 # ========== 全人工测试模式 ==========
 

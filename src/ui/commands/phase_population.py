@@ -97,7 +97,7 @@ class PopulationCommand(Command):
 
         # 只在第一次进入步骤0时执行凯旋、解散等操作
         if not self._startup_done:
-            # 凯旋信息
+            # 凯旋信息,解散军团
             self._process_legion_disbandment_and_triumphs()
             if self.state.naval_system:
                 disbanded = self.state.naval_system.disband_unused_fleets(
@@ -397,20 +397,8 @@ class PopulationCommand(Command):
         if result["message"]:
             print(result["message"])
 
-        # 2. 执行凯旋、军团解散等原有逻辑（确保只执行一次，不重复）
-        self._process_legion_disbandment_and_triumphs()
-
         # 3. 战场指挥官转换（原有逻辑）
         self._convert_battlefield_commanders()
-
-        # 4. 舰队解散
-        if self.state.naval_system:
-            disbanded = self.state.naval_system.disband_unused_fleets(
-                self.state.turn.turn_number,
-                self.fleet_disband_decider  # 需要传入决策器，这里略，后续可添加
-            )
-            if disbanded:
-                print(f"      ⚓ 舰队 {disbanded} 已解散（无需要海战的战争）")
 
         # 6. 清除临时数据
         self.state._population_pending["campaigns"] = []
