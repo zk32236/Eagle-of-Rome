@@ -98,6 +98,10 @@ class PopulationCommand(Command):
         # 只在第一次进入步骤0时执行凯旋、解散等操作
         if not self._startup_done:
             # 凯旋信息,解散军团
+            # 打印军团凯旋标题
+            print("=" * 58)
+            print("   🏛️  Legions Return Rome from Battlefield")
+            print("=" * 58)
             self._process_legion_disbandment_and_triumphs()
             if self.state.naval_system:
                 disbanded = self.state.naval_system.disband_unused_fleets(
@@ -503,6 +507,20 @@ class PopulationCommand(Command):
         self._step += 1
 
     # ---------- 辅助方法 ----------
+
+    def _get_faction_influences(self) -> Dict[str, int]:
+        """获取各派系当前总影响力"""
+        return {faction.id: faction.get_total_influence(self.state) for faction in self.state.factions.values()}
+
+    def _print_influence_table(self, pre: Dict[str, int], post: Dict[str, int], spent: int, boost: int):
+        """打印庆典前后影响力表格"""
+        print("\n   📊 各派系影响力：\t\t庆典前\t\t庆典后")
+        for faction in self.state.factions.values():
+            pre_val = pre.get(faction.id, 0)
+            post_val = post.get(faction.id, 0)
+            print(f"      {faction.name}:\t\t{pre_val}\t\t{post_val}")
+        print(f"\n      总计花费 {spent}，增加人气 {boost}")
+
     def _get_step_players(self) -> List[str]:
         """获取当前步骤的玩家列表（所有玩家）"""
         return [p.player_id for p in self.state.get_all_players()]
@@ -523,9 +541,26 @@ class PopulationCommand(Command):
         return None
 
     def _auto_mode_festival(self):
-        """全自动模式：为所有玩家执行庆典，并打印影响力变化表格"""
-        # 记录庆典前各派系影响力
+        """全自动模式：为所有玩家执行庆典，并打印庆典前信息及影响力变化表格"""
+        # 打印庆典标题
+        print("\n" + "=" * 58)
+        print("   🏛️  ELECTIONS Campaign")
+        print("=" * 58)
+
+        # 获取庆典前各派系影响力
         pre_influences = self._get_faction_influences()
+        # 打印当前影响力表格（简化版，只显示当前）
+        print("\n   📊 各派系影响力：\t\t当前")
+        for faction in self.state.factions.values():
+            val = pre_influences.get(faction.id, 0)
+            print(f"      {faction.name}:\t\t{val}")
+
+        # 打印候选人名单
+        result = population_api.get_candidates(self.state)
+        if result["success"] and result["message"]:
+            print(result["message"])
+        else:
+            print("\n   📋 当前无候选人")
 
         # 执行自动庆典
         for player in self.state.get_all_players():
@@ -533,17 +568,17 @@ class PopulationCommand(Command):
             if faction:
                 self.auto_processor.process_festival(player.player_id, faction)
 
-        # 从临时记录中统计总花费（每花费1塔兰特增加1点人气）
+        # 从临时记录中统计总花费
         total_spent = 0
         campaigns = self.state._population_pending.get("campaigns", [])
         for _, _, amount in campaigns:
             total_spent += amount
-        total_boost = total_spent  # 花费与增加的人气相等
+        total_boost = total_spent
 
         # 记录庆典后各派系影响力
         post_influences = self._get_faction_influences()
 
-        # 打印影响力表格
+        # 打印影响力变化表格
         self._print_influence_table(pre_influences, post_influences, total_spent, total_boost)
 
     def _auto_mode_vote(self):

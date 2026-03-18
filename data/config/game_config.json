@@ -12,7 +12,7 @@
     "force_battle_result": "",
     "bypass_player_check": true,
     "auto_forum": true,
-    "auto_population": false
+    "auto_population": true
   },
   "logging": {
     "enabled": true,
