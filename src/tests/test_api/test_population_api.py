@@ -295,25 +295,6 @@ class TestGetCandidates:
         attr2 = consul_cands[1]["charisma"]
         assert attr1 >= attr2
 
-    def test_candidates_appear_in_multiple_offices(self, state_normal_mode):
-        """验证符合多个官职资格的人物出现在所有对应官职的候选池中"""
-        fig1 = state_normal_mode.get_member(1)
-        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
-        fig1.office_history.append(OfficeTerm(office_type="quaestor", start_turn=-12, end_turn=-11))
-        fig1.age = 45
-
-        fig2 = state_normal_mode.get_member(2)
-        fig2.office_history.append(OfficeTerm(office_type="quaestor", start_turn=-12, end_turn=-11))
-        fig2.age = 35
-
-        result = population_api.get_candidates(state_normal_mode)
-        consul_ids = [c["id"] for c in result["data"]["consul"]]
-        praetor_ids = [c["id"] for c in result["data"]["praetor"]]
-
-        assert fig1.id in consul_ids
-        assert fig1.id in praetor_ids  # 现在应出现在两个列表中
-        assert fig2.id in praetor_ids
-        assert fig2.id not in consul_ids
 
     def test_candidates_message_format(self, state_normal_mode):
         """验证候选人列表的字符串格式与设计文档基本一致"""

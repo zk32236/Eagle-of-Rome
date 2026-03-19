@@ -90,8 +90,6 @@ class PopulationCommand(Command):
     # ---------- 步骤0：公告 ----------
     def _handle_step_0(self):
         """公告环节：显示阶段预览和凯旋信息"""
-        # 打印标题和阶段预览
-        #self._print_ui_04_0()
 
         # 只在第一次进入步骤0时执行凯旋、解散等操作
         if not self._startup_done:
@@ -153,38 +151,6 @@ class PopulationCommand(Command):
             else:
                 print(i18n.get("error_unknown_command"), file=sys.stderr, flush=True)
 
-    def _print_ui_04_0(self):
-        """打印UI-04-0标题和阶段预览"""
-        print("\n############################################################")
-        print(f" 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 人口阶段 [4/7] (UI-04-0)")
-        print("############################################################")
-        print("\n--- 阶段预览 ---")
-        print("决定罗马的未来领袖！各派系为候选人举办庆典、拉拢人心，你的影响力将在此刻化")
-        print("为选票。谁能当选执政官？谁将掌控元老院？每一步决策都在重塑权力格局。胜利者")
-        print("获得无上荣耀，失败者只能等待明年再来。你的影响力，即是罗马的力量。现在就行")
-        print("动，让你的派系站在权力之巅！")
-        print()
-        sys.stdout.flush()
-
-    def _display_triumph_info(self):
-        """显示待凯旋信息（仅显示，不修改标记）"""
-        ws = self.state.get_war_system()
-        if not ws:
-            return
-        displayed = False
-        for war in ws._war_discard:
-            if war.status == WarStatus.RESOLVED and war.triumph_approved:
-                commander_id = war.triumph_commander_id or war.commander_id
-                commander = self.state.get_member(commander_id) if commander_id else None
-                if commander and not commander.is_dead:
-                    if not displayed:
-                        print("\n==========================================================")
-                        print("   🏛️  Legions Return Rome from Battlefield")
-                        print("==========================================================")
-                        displayed = True
-                    print(f"      🏛️ {commander.name} 的军团举行凯旋式！")
-        if displayed:
-            print()
 
     def _remove_office_holders(self, office_type: str):
         """
@@ -359,27 +325,6 @@ class PopulationCommand(Command):
             return
         result = population_api.campaign(self.state, player_id, fig_id, amount)
         print(result["message"], flush=True)
-
-
-    def _print_ui_04_2(self, player_id: str, faction_id: str):
-        """打印投票环节UI"""
-        faction = self.state.get_faction(faction_id)
-        faction_name = faction.name if faction else "未知"
-        print("\n############################################################")
-        print(f" UI-04-2 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 人口阶段 [4/7]")
-        print("############################################################")
-        print("\n--- 投票环节 ---")
-        print("每个派系可以为每个公职投票一次。你的投票将基于派系影响力加权。")
-
-        # 显示候选人列表
-        result = population_api.get_candidates(self.state)
-        if result["success"] and result["message"]:
-            print(result["message"])
-
-        print(f"\n🔧 本阶段可操作(PLAYER {player_id} {faction_name})：")
-        print("   1. vote <公职> <人物ID> → 投票（公职可选：consul/censor/praetor/quaestor/tribune）")
-        print("   2. next/n → 下一个玩家")
-        sys.stdout.flush()
 
     def _handle_vote(self, args):
         if len(args) != 2:

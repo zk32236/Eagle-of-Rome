@@ -80,6 +80,7 @@ def test_no_war_found_uses_default_turn(mock_state, mock_war_system):
     figure = Figure(id=103, name='Test Commander')
     figure.is_absent = True
     figure.office = 'consul'
+    figure.office_history = []  # 清空历史
 
     mock_state.turn = SimpleTurn(10)
     mock_state.get_living_members.return_value = [figure]
@@ -87,12 +88,17 @@ def test_no_war_found_uses_default_turn(mock_state, mock_war_system):
     mock_war_system.get_war_by_commander.return_value = None
 
     cmd = PopulationCommand(mock_state)
-    with patch.object(figure, 'add_office_history') as mock_add, \
-         patch('logging.warning'):
+    with patch('logging.warning'):
         cmd._convert_battlefield_commanders()
-        mock_add.assert_called_once_with('consul', 9, 9)
-    assert figure.office == 'proconsul'
 
+    # 验证历史官职已添加
+    assert len(figure.office_history) == 1
+    term = figure.office_history[0]
+    assert term.office_type == 'consul'
+    assert term.start_turn == 9
+    assert term.end_turn == 9
+    # 验证官职已转换
+    assert figure.office == 'proconsul'
 
 def test_ignores_non_absent_or_wrong_office(mock_state, mock_war_system):
     mock_state.turn = SimpleTurn(10)
@@ -102,15 +108,21 @@ def test_ignores_non_absent_or_wrong_office(mock_state, mock_war_system):
         Figure(id=2, name='B', is_absent=True, office='quaestor'),
         Figure(id=3, name='C', is_absent=True, office='consul'),
     ]
+    for f in figures:
+        f.office_history = []  # 清空历史
 
     mock_state.get_living_members.return_value = figures
     mock_state.get_war_system.return_value = mock_war_system
     mock_war_system.get_war_by_commander.return_value = None
 
     cmd = PopulationCommand(mock_state)
-    with patch.object(figures[2], 'add_office_history') as mock_add:
-        cmd._convert_battlefield_commanders()
-        assert figures[0].office == 'consul'
-        assert figures[1].office == 'quaestor'
-        assert figures[2].office == 'proconsul'
-        mock_add.assert_called_once_with('consul', 9, 9)
+    cmd._convert_battlefield_commanders()
+
+    assert figures[0].office == 'consul'   # 未变
+    assert figures[1].office == 'quaestor' # 未变
+    assert figures[2].office == 'proconsul' # 已变
+    assert len(figures[2].office_history) == 1
+    term = figures[2].office_history[0]
+    assert term.office_type == 'consul'
+    assert term.start_turn == 9
+    assert term.end_turn == 9
