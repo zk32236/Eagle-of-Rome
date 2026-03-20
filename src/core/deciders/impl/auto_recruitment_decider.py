@@ -22,11 +22,12 @@ class AutoRecruitmentDecider(RecruitmentDecider):
         if faction.treasury <= 0 or vacancies <= 0:
             extra["result"] = {}
             extra["reason"] = "insufficient_treasury_or_no_vacancy"
-            state.log_event(
-                f"[DEBUG] {self.__class__.__name__}.decide_bids: 派系 {faction.name} 国库 {faction.treasury} 空缺 {vacancies}，无法出价",
-                level=logging.DEBUG,
-                extra=extra
-            )
+            if state:  # ← 添加保护
+                state.log_event(
+                    f"[DEBUG] {self.__class__.__name__}.decide_bids: 派系 {faction.name} 国库 {faction.treasury} 空缺 {vacancies}，无法出价",
+                    level=logging.DEBUG,
+                    extra=extra
+                )
             return {}
 
         eligible = [fig for fig in available_figures
@@ -36,11 +37,12 @@ class AutoRecruitmentDecider(RecruitmentDecider):
         if not eligible:
             extra["result"] = {}
             extra["reason"] = "no_eligible"
-            state.log_event(
-                f"[DEBUG] {self.__class__.__name__}.decide_bids: 派系 {faction.name} 无可招募人物",
-                level=logging.DEBUG,
-                extra=extra
-            )
+            if state:  # ← 添加保护
+                state.log_event(
+                    f"[DEBUG] {self.__class__.__name__}.decide_bids: 派系 {faction.name} 无可招募人物",
+                    level=logging.DEBUG,
+                    extra=extra
+                )
             return {}
 
         random.shuffle(eligible)
@@ -53,9 +55,10 @@ class AutoRecruitmentDecider(RecruitmentDecider):
         extra["result"] = {str(k): v for k, v in bids.items()}  # 转为字符串键便于日志
         extra["bid_count"] = len(bids)
         extra["total_bid"] = sum(bids.values())
-        state.log_event(
-            f"[DEBUG] {self.__class__.__name__}.decide_bids: 派系 {faction.name} 决定出价 {len(bids)} 人，总预算 {sum(bids.values())}",
-            level=logging.DEBUG,
-            extra=extra
+        if state:  # ← 添加保护
+            state.log_event(
+                f"[DEBUG] {self.__class__.__name__}.decide_bids: 派系 {faction.name} 决定出价 {len(bids)} 人，总预算 {sum(bids.values())}",
+                level=logging.DEBUG,
+                extra=extra
         )
         return bids

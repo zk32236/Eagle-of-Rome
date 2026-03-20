@@ -439,7 +439,7 @@ class PopulationCommand(Command):
             ws._legions_to_disband.clear()
 
     def _convert_battlefield_commanders(self):
-        """战场指挥官转换（从原有逻辑复制）"""
+        """战场指挥官转换（支持无战争情况）"""
         current_turn = self.state.turn.turn_number
         war_system = self.state.get_war_system()
         if not war_system:
@@ -453,15 +453,24 @@ class PopulationCommand(Command):
 
             old_office = figure.office
             war = war_system.get_war_by_commander(figure.id)
+
+            # 确定任职开始回合
+            assigned_turn = (war.commander_assigned_turn if war and war.commander_assigned_turn is not None
+                             else current_turn - 1)
+
+            # 添加历史记录（使用 assigned_turn 和结束回合 current_turn-1）
+            figure.add_office_history(old_office, assigned_turn, current_turn - 1)
+
+            # 转换官职
+            new_office = 'proconsul' if old_office == 'consul' else 'propraetor'
+            figure.office = new_office
+            figure.update_influence()
+
+            # 如果有战争，更新其 commander_assigned_turn
             if war:
-                assigned_turn = war.commander_assigned_turn or (current_turn - 1)
-                figure.add_office_history(old_office, assigned_turn, current_turn - 1)
-                new_office = 'proconsul' if old_office == 'consul' else 'propraetor'
-                figure.office = new_office
-                figure.update_influence()
-                if war:
-                    war.set_commander_assigned_turn(current_turn)
-                print(f"      🔄 战场指挥官 {figure.name} 转为 {new_office}，继续指挥战争。")
+                war.set_commander_assigned_turn(current_turn)
+
+            print(f"      🔄 战场指挥官 {figure.name} 转为 {new_office}，继续指挥战争。")
 
     # ---------- 步骤4：完成 ----------
     def _handle_step_3(self):

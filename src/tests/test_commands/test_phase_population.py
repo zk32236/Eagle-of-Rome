@@ -239,8 +239,8 @@ class TestPopulationCommandManual:
         with patch('builtins.print'):
             cmd.execute([])
         # 验证两个方法都被调用，且至少对p2调用（AI玩家）
-        cmd.auto_processor.process_festival.assert_called_once_with("p2", unittest.mock.ANY)
-        cmd.auto_processor.process_vote.assert_called_once_with("p2", unittest.mock.ANY)
+        cmd.auto_processor.process_festival.assert_called_once_with("p2", unittest.mock.ANY, bypass_permission=True)
+        cmd.auto_processor.process_vote.assert_called_once_with("p2", unittest.mock.ANY, bypass_permission=True)
 
     def test_step1_player_switching(self, state_normal_mode, monkeypatch):
         """多个玩家时next切换玩家"""
@@ -501,6 +501,12 @@ class TestPopulationCommandManual:
         from src.core.entities.figure import Figure, OfficeTerm
         from unittest.mock import MagicMock
 
+        # 强制关闭自动模式，避免自动投票
+        state_normal_mode.config._config["testing"]["auto_population"] = False
+        # 清空可能存在的投票记录
+        state_normal_mode._population_pending["votes"] = []
+        state_normal_mode._population_pending["campaigns"] = []
+
         # 获取现有的人物
         fig1 = state_normal_mode.get_member(1)  # 非战场执政官
         fig1.office = 'consul'
@@ -538,6 +544,8 @@ class TestPopulationCommandManual:
         monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
         state_normal_mode.mark_phase_executed("forum")
         cmd = PopulationCommand(state_normal_mode)
+        cmd.auto_processor.process_festival = MagicMock()
+        cmd.auto_processor.process_vote = MagicMock()
         cmd.execute([])
 
         # 验证非战场官员已卸任
