@@ -110,6 +110,9 @@ class GameState:
             "votes": []  # 每个元素为 (player_id, office, figure_id)
         }
 
+        # 元老院阶段临时存储
+        self._pending_land_sale_quota: int = 0  # 新增：贵族买地法案待售公地数量
+
         # 初始化时调用 reset，确保状态一致性
         self.reset()
 
@@ -159,9 +162,9 @@ class GameState:
             "campaigns": [],
             "votes": []
         }
+        self._pending_land_sale_quota: int = 0  # 新增：贵族买地法案待售公地数量
 
     #========================= 功能函数 ===================================
-
 
     # 广场阶段玩家操作
     def add_forum_action(self, category: str, data) -> None:
@@ -544,6 +547,7 @@ class GameState:
             "campaigns": [],
             "votes": []
         }
+        instance._pending_land_sale_quota = 0
 
         return instance
 
@@ -857,6 +861,24 @@ class GameState:
         return True
 
     # ========== 属性访问 ==========
+
+    @property
+    def pending_land_sale_quota(self) -> int:
+        """获取待售公地配额"""
+        return self._pending_land_sale_quota
+
+    def set_pending_land_sale_quota(self, quota: int) -> None:
+        """设置待售公地配额（用于元老院通过贵族买地法案）"""
+        self._pending_land_sale_quota = quota
+        self.log_event(
+            f"设置待售公地配额: {quota} C",
+            level=logging.DEBUG,
+            extra={"quota": quota}
+        )
+
+    def clear_pending_land_sale_quota(self) -> None:
+        """清除待售公地配额（公示结算后调用）"""
+        self._pending_land_sale_quota = 0
 
     @property
     def active_events(self) -> Dict[str, Any]:

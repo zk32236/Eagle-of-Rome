@@ -120,7 +120,7 @@
     "error_usage_retire": "用法: retire <人物ID>",
     "error_usage_recruit": "用法: recruit <人物ID> <金额>",
     "error_usage_bid": "用法: bid <合同ID> <金额>",
-    "error_usage_buy": "用法: buy <数量>",
+    "error_usage_buy": "用法: buy <人物ID> <数量>",
     "error_usage_vote": "用法: vote yes/no",
     "error_usage_transact": "用法: transact <卖家ID> <买家ID> <土地数量> <价格>",
     "error_usage_investigate": "用法: investigate <人物ID>",

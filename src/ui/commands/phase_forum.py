@@ -715,9 +715,14 @@ class ForumCommand(Command):
             print("\n   🏞️ 执行土地法案：")
             for act in acts:
                 if act['type'] == 'distribution':
-                    print(f"      ✅ 平民分地 {act['amount']} C 土地（占国家公地 {act['percent']*100:.1f}%），转入意大利私地，民怨重置。")
-                elif act['type'] == 'sale':
-                    print(f"      🏛️ 贵族买地：出售 {act['amount']} C 国家公地。")
+                    print(
+                        f"      ✅ 平民分地 {act['amount']} C 土地（占国家公地 {act['percent'] * 100:.1f}%），转入意大利私地，民怨重置。")
+                # 卖地法案不再出现在这里
+
+        # 显示待售公地配额（来自元老院通过的卖地法案）
+        pending_quota = self.state.pending_land_sale_quota
+        if pending_quota > 0:
+            print(f"\n   🏞️ 待售公地配额：{pending_quota} C（可通过 buy <人物ID> <数量> 认购）")
 
         # 凯旋信息
         triumph = self._get_war_triumph()
@@ -729,7 +734,7 @@ class ForumCommand(Command):
         print("   1. investigate → 查看人才详情")
         print("   2. recruit <人物ID> <金额> → 招募新人")
         print("   3. bid <合同ID> <金额> → 竞标合同")
-        print("   4. buy <数量> → 认购公地")
+        print("   4. buy <人物ID> <数量> → 认购公地")
         print("   5. vote yes/no → 投票授予凯旋")
         print("   6. balance → 查询派系金库；")
         print("   7. next → 下一个玩家；")
@@ -881,26 +886,41 @@ class ForumCommand(Command):
         return result["success"]
 
     def _handle_buy(self, args: List[str]) -> bool:
-        if len(args) != 1:
+        if len(args) != 2:
             print(i18n.get("error_usage_buy"), file=sys.stderr)
             sys.stderr.flush()
             return False
         try:
-            amount = int(args[0])
+            figure_id = int(args[0])
+            amount = int(args[1])
         except ValueError:
-            print(i18n.get("error_invalid_amount"), file=sys.stderr)
+            print(i18n.get("error_invalid_id"), file=sys.stderr)
             sys.stderr.flush()
             return False
-        if self._get_available_land_for_sale() == 0:
-            print("   📭 没有公地可购买", file=sys.stderr)
+
+        # 检查人物是否存在且存活
+        figure = self.state.get_member(figure_id)
+        if not figure or figure.is_dead:
+            print(i18n.get("figure_not_found", id=figure_id), file=sys.stderr)
             sys.stderr.flush()
             return False
+
+        # 检查人物是否属于当前玩家派系
         player_id = self._get_current_player_id()
         if not player_id:
             print(i18n.get("error_no_current_player"), file=sys.stderr)
             sys.stderr.flush()
             return False
-        result = forum_api.buy_land(self.state, player_id, amount)
+        player = self.state.get_player(player_id)
+        if not player:
+            return False
+        if figure.faction_id != player.faction_id:
+            print(i18n.get("error_figure_not_in_your_faction"), file=sys.stderr)
+            sys.stderr.flush()
+            return False
+
+        # 调用新的 API
+        result = forum_api.buy_land(self.state, player_id, figure_id, amount)
         print(result["message"])
         sys.stdout.flush()
         sys.stderr.flush()
@@ -1106,11 +1126,12 @@ class ForumCommand(Command):
                 if act['type'] == 'distribution':
                     self._execute_land_distribution(act, land_price)
                 elif act['type'] == 'sale':
-                    self._execute_land_sale(act, land_price)
+                    # 卖地法案已经在元老院阶段设置了配额，这里无需处理
+                    # 仅打印提示，避免遗漏
+                    print(f"      🏛️ 贵族买地法案已批准，配额 {act.get('amount', 0)} C 待认购")
             except Exception as e:
                 print(f"      ⚠️ 执行土地法案异常（已跳过）: {e}", file=sys.stderr)
                 logging.exception(f"执行土地法案异常: act={act}")
-                # 继续处理下一个法案
                 continue
         self.state.clear_pending_land_acts()
 
@@ -1139,48 +1160,6 @@ class ForumCommand(Command):
             logging.exception(f"执行分地法案异常: act={act}")
             raise
 
-    def _execute_land_sale(self, act, land_price):
-        try:
-            national_land = self.state.get_national_public_land()
-            if 'percent' not in act:
-                raise ValueError("法案缺少 'percent' 字段")
-            percent = act['percent']
-            if not isinstance(percent, (int, float)):
-                raise TypeError(f"percent 类型错误: {type(percent)}")
-            amount = int(national_land * percent)
-            if amount <= 0:
-                print(f"      ⚠️ 国家公地不足，无法出售。")
-                return
-            print(f"      🏛️ 贵族买地：出售 {amount} C 国家公地。")
-            nobles = [fig for fig in self.state.get_living_members() if fig.class_tier.value == "nobile"]
-            nobles.sort(key=lambda f: f.influence, reverse=True)
-            remaining = amount
-            for fig in nobles:
-                if remaining <= 0:
-                    break
-                max_buy = fig.wealth // land_price
-                if max_buy <= 0:
-                    continue
-                buy = random.randint(1, min(remaining, max_buy))
-                cost = buy * land_price
-                # 使用 Figure 的公共方法 buy_land（需确保其存在且正确）
-                if fig.buy_land(buy, land_price):
-                    remaining -= buy
-                    print(f"         {fig.name} 购买 {buy} C，花费 {cost}，剩余土地 {remaining} C")
-                else:
-                    print(f"         {fig.name} 购买失败（财富不足？）")
-            sold = amount - remaining
-            if sold > 0:
-                self.state.add_national_public_land(-sold)
-                self.state.add_treasury(sold * land_price)
-                print(
-                    f"      共售出 {sold} C，国库 +{sold * land_price} Talents，国家公地剩余 {self.state.get_national_public_land()} C")
-
-            else:
-                print(f"      无土地售出。")
-        except Exception as e:
-            logging.exception(f"执行卖地法案异常: act={act}")
-            raise  # 重新抛出以便上层捕获
 
     # ==================== 步骤处理函数 ====================
 

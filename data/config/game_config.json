@@ -10,9 +10,9 @@
     "budget_always_pass": false,
     "war_always_pass": false,
     "force_battle_result": "",
-    "bypass_player_check": true,
-    "auto_forum": true,
-    "auto_population": true
+    "bypass_player_check": false,
+    "auto_forum": false,
+    "auto_population": false
   },
   "logging": {
     "enabled": true,
@@ -98,7 +98,7 @@
       "Aemilius": 2,
       "Servilius": 2
     },
-    "tribune_veto_chance": 0
+    "tribune_veto_chance": 0.3
   },
   "forum_rules": {
     "new_figures_count": 3,

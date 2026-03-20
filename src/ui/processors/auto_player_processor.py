@@ -1,5 +1,6 @@
 # src/ui/processors/auto_player_processor.py
 import logging
+import random
 from typing import Optional
 
 from src.core.game_state import GameState
@@ -255,6 +256,31 @@ class AutoPlayerProcessor:
                             "triumph_votes",
                             (war.id, faction.id, vote)
                         )
+
+            # 4. 公地认购（仅当有待售配额时）
+            if self.state.pending_land_sale_quota > 0:
+                try:
+                    # 获取当前派系所有存活人物，筛选出影响力最高且财富足够的人
+                    members = faction.get_members(self.state)
+                    eligible = [m for m in members if m.wealth > 0 and not m.is_dead]
+                    if eligible:
+                        # 按影响力降序排序，选择影响力最高者
+                        eligible.sort(key=lambda m: m.influence, reverse=True)
+                        best = eligible[0]
+                        # 认购数量：不超过剩余配额，不超过财富允许的最大值，可简单设为 min(配额, 财富/单价)
+                        land_price = self.state.get_economic_rule("land_price_per_unit", 10)
+                        max_by_wealth = best.wealth // land_price
+                        if max_by_wealth > 0:
+                            quota = self.state.pending_land_sale_quota
+                            # 认购数量可随机 1 到 min(配额, max_by_wealth)
+                            amount = random.randint(1, min(quota, max_by_wealth))
+                            self.state.add_forum_action("land_purchases", (best.id, amount))
+                            self.state.log_event(
+                                f"AI {faction.name} 为人物 {best.get_formal_name()} 认购 {amount} C 公地",
+                                level=logging.DEBUG
+                            )
+                except Exception as e:
+                    logging.exception(f"公地认购 AI 决策异常: {e}")
 
         except Exception as e:
             logging.exception(f"市场环节 AI 决策异常: {e}")

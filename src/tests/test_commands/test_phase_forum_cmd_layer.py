@@ -455,7 +455,43 @@ class TestForumCommand:
         assert sicily.grievance == 1
         assert output.count("民怨升至 1 级") == 1
 
-    # ========== 自动土地交易测试 ==========
+    # ========== 土地交易测试 ==========
+    def test_auto_land_purchase_ai_decision(self, test_state, mock_deciders):
+        """测试自动模式下 AI 派系自动发出公地认购请求"""
+        test_state.config._config["testing"] = {"auto_forum": True, "bypass_player_check": False}
+        # 设置配额
+        test_state.set_pending_land_sale_quota(100)
+        # 模拟决策器
+        retirement, recruitment, bid, land_trade, triumph = mock_deciders
+        retirement.decide_whom_to_retire.return_value = None
+        recruitment.decide_bids.return_value = {}
+        bid.decide_tax_bid.return_value = None
+        bid.decide_works_bid.return_value = None
+        bid.decide_fleet_bid.return_value = None
+        land_trade.decide_trade.return_value = None
+        triumph.decide_triumph.return_value = False
+
+        # 确保 AI 派系（f2）有影响力最高且财富足够的人物
+        fig_ai = test_state.get_member(7)  # f2 的人物
+        fig_ai.wealth = 200
+        fig_ai.influence = 100
+
+        cmd = ForumCommand(test_state,
+                           retirement_decider=retirement,
+                           recruitment_decider=recruitment,
+                           bid_decider=bid,
+                           land_trade_decider=land_trade,
+                           triumph_decider=triumph)
+
+        # 直接调用市场决策方法，避免完整阶段流程的干扰
+        faction = test_state.get_faction("f2")
+        with patch('random.randint', return_value=1):
+            cmd.auto_processor.process_market("p2", faction)
+
+        pending = test_state.get_forum_pending()
+        found = any(isinstance(rec, tuple) and len(rec) == 2 and rec[0] == 7 for rec in pending["land_purchases"])
+        assert found, "AI 认购请求未记录"
+
     def test_auto_land_trade_success(self, test_state, mock_deciders):
         """自动土地交易成功执行"""
         test_state.config._config["testing"] = {"auto_forum": True, "bypass_player_check": False}

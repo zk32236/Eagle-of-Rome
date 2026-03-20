@@ -104,9 +104,9 @@ def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int
     return api_response(True, message, data={"contract_id": contract_id, "amount": amount})
 
 
-def buy_land(state: GameState, player_id: str, amount: int) -> dict:
+def buy_land(state: GameState, player_id: str, figure_id: int, amount: int) -> dict:
     """
-    认购公地：记录认购。
+    认购公地：记录认购请求（人物ID + 数量）。
     """
     if not state.config.get("testing.bypass_player_check", False):
         if not state.is_current_player(player_id):
@@ -116,14 +116,21 @@ def buy_land(state: GameState, player_id: str, amount: int) -> dict:
     if not player:
         return api_response(False, i18n.get("error_no_current_player"))
 
+    figure = state.get_member(figure_id)
+    if not figure or figure.is_dead:
+        return api_response(False, i18n.get("figure_not_found", id=figure_id))
+
+    if figure.faction_id != player.faction_id:
+        return api_response(False, i18n.get("error_figure_not_in_your_faction"))
+
     if amount <= 0:
         return api_response(False, i18n.get("error_invalid_amount"))
 
-    # 检查国库是否有足够公地（暂不检查，公示时处理）
-    state.add_forum_action("land_purchases", (player.faction_id, amount))
+    # 记录请求（人物ID，数量）
+    state.add_forum_action("land_purchases", (figure_id, amount))
 
     message = i18n.get("info_land_purchase_recorded", amount=amount)
-    return api_response(True, message, data={"amount": amount})
+    return api_response(True, message, data={"figure_id": figure_id, "amount": amount})
 
 
 def vote_triumph(state: GameState, player_id: str, war_id: str, vote: bool) -> dict:
@@ -248,37 +255,54 @@ def resolve_forum(state: GameState) -> dict:
                 results.append(
                     f"✅ 工程合同 {contract.name} 中标者: {state.get_faction(winner_faction).name}，出价 {min_amount}")
 
-    # 3. 公地认购结算
+    # 3. 公地认购结算（按人物影响力分配）
     if pending["land_purchases"]:
-        # 按派系影响力排序（影响力大的优先）
-        factions = list(state.factions.values())
-        # 计算每个派系的影响力（使用派系总影响力）
-        faction_influence = {f.id: sum(m.influence for m in f.get_members(state)) for f in factions}
-        sorted_factions = sorted(factions, key=lambda f: faction_influence[f.id], reverse=True)
-
-        land_price = state.get_economic_rule("land_price_per_unit", 10)
-        total_purchased = 0
-        for faction_id, amount in pending["land_purchases"]:
-            # 查找派系对象
-            faction = state.get_faction(faction_id)
-            if not faction:
-                continue
-            # 检查国库是否有足够公地
-            available_land = state.get_national_public_land()
-            if available_land < total_purchased + amount:
-                # 不足则分配剩余
-                amount = available_land - total_purchased
-            if amount > 0:
-                cost = amount * land_price
-                if faction.treasury >= cost:
-                    faction.treasury -= cost
-                    state.add_national_public_land(-amount)
-                    total_purchased += amount
-                    results.append(f"🏛️ {faction.name} 认购 {amount} C 公地，花费 {cost}")
+        quota = state.pending_land_sale_quota
+        if quota <= 0:
+            results.append("📭 本回合无可售公地配额")
+        else:
+            # 获取所有认购请求，转换为 (figure_id, amount) 列表
+            purchases = pending["land_purchases"]  # 格式 [(figure_id, amount), ...]
+            # 按人物影响力降序排序
+            purchases_with_influence = []
+            for fig_id, amount in purchases:
+                figure = state.get_member(fig_id)
+                if figure and not figure.is_dead:
+                    purchases_with_influence.append((figure, amount, figure.influence))
                 else:
-                    results.append(f"⚠️ {faction.name} 资金不足，认购失败")
-            else:
-                results.append(f"⚠️ 公地不足，{faction.name} 认购失败")
+                    results.append(f"⚠️ 人物 {fig_id} 不存在或已死亡，认购请求无效")
+            purchases_with_influence.sort(key=lambda x: x[2], reverse=True)
+
+            land_price = state.get_economic_rule("land_price_per_unit", 10)
+            remaining_quota = quota
+            for figure, amount, _ in purchases_with_influence:
+                if remaining_quota <= 0:
+                    break
+                # 检查人物财富是否足够
+                max_buy_by_wealth = figure.wealth // land_price
+                if max_buy_by_wealth <= 0:
+                    results.append(f"⚠️ {figure.get_formal_name()} 资金不足，无法认购")
+                    continue
+
+                actual_buy = min(amount, remaining_quota, max_buy_by_wealth)
+                if actual_buy <= 0:
+                    continue
+
+                # 执行认购：扣款，增加私地，减少国家公地，更新影响力
+                cost = actual_buy * land_price
+                figure.wealth -= cost
+                figure._land_private += actual_buy
+                figure.update_influence()
+                state.add_treasury(cost)  # 国库增收
+                state.add_national_public_land(-actual_buy)
+
+                remaining_quota -= actual_buy
+                results.append(f"✅ {figure.get_formal_name()} 认购 {actual_buy} C 公地，花费 {cost} 塔兰特")
+
+            if remaining_quota > 0:
+                results.append(f"📭 剩余未售公地配额 {remaining_quota} C 作废")
+            # 清除配额
+            state.clear_pending_land_sale_quota()
 
     # 4. 凯旋投票结算
     war_system = state.get_war_system()

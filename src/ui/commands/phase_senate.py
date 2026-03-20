@@ -217,11 +217,20 @@ class SenateCommand(Command):
 
         # 5.6 存入土地法案
         for act in passed_land_acts:
-            self.state.add_pending_land_act(act)
-            print(f"      ✅ {act['description']} 通过，等待下回合执行")
+            if act['type'] == 'sale':
+                # 卖地法案：直接设置配额
+                national_land = self.state.get_national_public_land()
+                amount = int(national_land * act['percent'])
+                self.state.set_pending_land_sale_quota(amount)
+                print(f"      ✅ {act['description']} 通过，批准出售 {amount} C 国家公地，待下回合认购。")
+            else:
+                # 分地法案：存入待执行列表
+                self.state.add_pending_land_act(act)
+                # 使用 act 中已存储的 amount
+                amount_disp = act.get('amount', 0)
+                print(f"      ✅ {act['description']} 通过，批准分配 {amount_disp} C 国家公地，待下回合执行。")
 
         self.state.mark_phase_executed("senate")
-
         return True
 
     # =================================== MVP 0.7 =============================================
