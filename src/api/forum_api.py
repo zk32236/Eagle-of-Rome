@@ -233,6 +233,15 @@ def resolve_forum(state: GameState) -> dict:
                 top_bidders = [b for b in bids if b[2] == min_amount]
                 winner_figure, winner_faction, amount = random.choice(top_bidders)
                 contract.mark_winner(winner_figure, state.turn.turn_number, 0)
+                contract.awarded_faction = winner_faction  # 新增：设置中标派系
+                # ===== 新增：设置施工期和质保期 =====
+                default_construction = state.get_economic_rule("project_theoretical_construction", 3)
+                default_warranty = state.get_economic_rule("project_theoretical_warranty", 10)
+                contract.remaining_years = default_construction
+                contract._construction_years = default_construction
+                contract._warranty_years = default_warranty
+                contract._warranty_remaining = default_warranty
+                # ====================================
                 # 如果是舰队建造合同，通知海军系统
                 if getattr(contract, '_is_fleet_construction', False) and state.naval_system:
                     state.naval_system.on_contract_awarded(contract, winner_figure)

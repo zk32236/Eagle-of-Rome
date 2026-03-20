@@ -88,6 +88,9 @@ class RevenueCommand(Command):
 
         # 3. 合同收益结算（只执行一次）
         self._collect_contract_revenues(terms, faction_tax_collected, tax_rate)
+        # ===== 新增：处理质保期递减 =====
+        self._process_contract_warranty()
+        # ================================
 
         # 4.1 军团维护费（只执行一次） + 赔偿金处理
         ms = self.state.get_military_system()
@@ -236,6 +239,19 @@ class RevenueCommand(Command):
                     war.set_indemnity_due(0)  # 清除赔款
 
     # ================================= MVP 0.1-0.5 =======================================
+
+    def _process_contract_warranty(self):
+        """处理已竣工合同的质保期递减"""
+        for contract in self.state.contracts:
+            if contract.status == ContractStatus.COMPLETED:
+                if contract._warranty_remaining > 0:
+                    contract._warranty_remaining -= 1
+                    if contract._warranty_remaining <= 0:
+                        contract.status = ContractStatus.EXPIRED
+                        self.state.log_event(
+                            f"工程合同质保期结束: {contract.name}",
+                            extra={"type": "warranty_expired", "contract_id": contract.id}
+                        )
 
     def _collect_private_land_income(self, terms, faction_tax_collected: Dict[str, float], tax_rate: float) -> List[
         Tuple[int, str, int, int]]:
