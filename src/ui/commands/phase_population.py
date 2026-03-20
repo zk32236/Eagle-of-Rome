@@ -139,7 +139,7 @@ class PopulationCommand(Command):
             return
 
         while True:
-            print("\n> 请输入操作(ANYONE): ", end="", file=sys.stderr, flush=True)
+            print("\n> 请输入操作(ANYONE): ", end="", flush=True)
             cmd_input = input().strip()
             if not cmd_input:
                 continue
@@ -210,11 +210,11 @@ class PopulationCommand(Command):
             for player in self.state.get_all_players():
                 faction = self.state.get_faction(player.faction_id)
                 if faction:
-                    self.auto_processor.process_festival(player.player_id, faction)
+                    self.auto_processor.process_festival(player.player_id, faction, bypass_permission=True)
             for player in self.state.get_all_players():
                 faction = self.state.get_faction(player.faction_id)
                 if faction:
-                    self.auto_processor.process_vote(player.player_id, faction)
+                    self.auto_processor.process_vote(player.player_id, faction, bypass_permission=True)
 
             # 统计总花费
             total_spent = 0
@@ -236,7 +236,7 @@ class PopulationCommand(Command):
         if bypass or player.player_type == PlayerType.HUMAN:
             self._print_ui_04_1(player_id, player.faction_id)
             while True:
-                print(f"\n> 请输入操作(PLAYER {player_id}): ", end="", file=sys.stderr, flush=True)
+                print(f"\n> 请输入操作(PLAYER {player_id}): ", end="", flush=True)
                 cmd_input = input().strip()
                 if not cmd_input:
                     continue
@@ -247,7 +247,7 @@ class PopulationCommand(Command):
                 if cmd in ("next", "n"):
                     next_id = self._next_player()
                     if next_id:
-                        print(i18n.get("info_next_player", player=next_id), file=sys.stderr, flush=True)
+                        print(i18n.get("info_next_player", player=next_id), flush=True)
                         break
                     else:
                         self._step += 1
@@ -263,24 +263,22 @@ class PopulationCommand(Command):
         else:
             # AI玩家自动处理（此分支实际上不会进入，因为自动模式已单独处理，但保留以作备用）
             faction = self.state.get_faction(player.faction_id) if player else None
-            self.auto_processor.process_festival(player_id, faction)
-            self.auto_processor.process_vote(player_id, faction)
+            self.auto_processor.process_festival(player.player_id, faction, bypass_permission=True)
+            self.auto_processor.process_vote(player.player_id, faction, bypass_permission=True)
             self._next_player()
             if self._current_player_index >= len(self._players):
                 self._step += 1
-    def _auto_mode_festival_and_vote(self):
-        """全自动模式：为所有玩家依次执行庆典和投票"""
-        # 先执行所有玩家的庆典
-        for player in self.state.get_all_players():
-            faction = self.state.get_faction(player.faction_id)
-            if faction:
-                self.auto_processor.process_festival(player.player_id, faction)
 
-        # 再执行所有玩家的投票
+    def _auto_mode_festival_and_vote(self):
+        """全自动模式：为所有玩家依次执行庆典和投票（绕过权限）"""
         for player in self.state.get_all_players():
             faction = self.state.get_faction(player.faction_id)
             if faction:
-                self.auto_processor.process_vote(player.player_id, faction)
+                self.auto_processor.process_festival(player.player_id, faction, bypass_permission=True)
+        for player in self.state.get_all_players():
+            faction = self.state.get_faction(player.faction_id)
+            if faction:
+                self.auto_processor.process_vote(player.player_id, faction, bypass_permission=True)
 
     def _print_ui_04_1(self, player_id: str, faction_id: str):
         """打印合并环节UI（庆典+投票）"""
@@ -353,9 +351,9 @@ class PopulationCommand(Command):
             return
         # 公示环节不需要重置玩家列表，因为只有一个全局步骤
         while True:
-            print("\n🔧 本阶段可操作(ANYONE):", file=sys.stderr, flush=True)
-            print("   1. next/n → 进入元老院阶段", file=sys.stderr, flush=True)
-            print("\n> 请输入操作(ANYONE): ", end="", file=sys.stderr, flush=True)
+            print("\n🔧 本阶段可操作(ANYONE):", flush=True)
+            print("   1. next/n → 进入元老院阶段", flush=True)
+            print("\n> 请输入操作(ANYONE): ", end="", flush=True)
             cmd_input = input().strip()
             if not cmd_input:
                 continue

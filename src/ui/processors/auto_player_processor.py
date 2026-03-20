@@ -32,7 +32,7 @@ class AutoPlayerProcessor:
         self.festival_decider = festival_decider
         self.vote_decider = vote_decider
 
-    def process_festival(self, player_id: str, faction: Faction) -> None:
+    def process_festival(self, player_id: str, faction: Faction, bypass_permission: bool = False) -> None:
         """自动举办庆典：为派系内候选人随机举办庆典"""
         if not self.festival_decider:
             self.state.log_event(
@@ -42,7 +42,6 @@ class AutoPlayerProcessor:
             return
 
         try:
-            # 获取候选人列表（所有公职候选人）
             from src.api.population_api import get_candidates
             cand_result = get_candidates(self.state)
             if not cand_result["success"]:
@@ -58,29 +57,43 @@ class AutoPlayerProcessor:
                 if fig and not fig.is_dead and fig.faction_id == faction.id:
                     candidates.append(fig)
 
-            # 使用庆典决策器决定花费
             decisions = self.festival_decider.decide_festivals(faction, candidates, self.state)
             for fig_id, amount in decisions.items():
-                # 调用 API 执行庆典（需绕过权限检查）
-                from src.api import population_api
-                # 临时绕过权限：设置 bypass_player_check 为 True 或直接操作？这里直接调用 API，但 API 内有权限检查，自动模式下应绕过。
-                # 简单起见，直接操作人物（但为了统一，建议 API 支持 bypass 模式）
-                # 这里我们直接调用 API 并依赖配置中的 bypass_player_check（自动模式下通常为 True）
-                result = population_api.campaign(self.state, player_id, fig_id, amount)
-                if result["success"]:
-                    self.state.log_event(
-                        f"AI 庆典: 派系 {faction.name} 为人物 {fig_id} 花费 {amount}",
-                        extra={"player_id": player_id, "figure_id": fig_id, "amount": amount}
-                    )
+                if bypass_permission:
+                    # 直接操作游戏状态
+                    figure = self.state.get_member(fig_id)
+                    if figure and not figure.is_dead and figure.wealth >= amount:
+                        figure.wealth -= amount
+                        figure.popularity += amount
+                        figure.update_influence()
+                        self.state._population_pending["campaigns"].append((player_id, fig_id, amount))
+                        self.state.log_event(
+                            f"AI 庆典 (直接): 派系 {faction.name} 为人物 {fig_id} 花费 {amount}",
+                            extra={"player_id": player_id, "figure_id": fig_id, "amount": amount}
+                        )
+                    else:
+                        self.state.log_event(
+                            f"AI 庆典失败 (直接): 人物 {fig_id} 财富不足或已死亡",
+                            level=logging.WARNING
+                        )
                 else:
-                    self.state.log_event(
-                        f"AI 庆典失败: {result['message']}",
-                        level=logging.WARNING
-                    )
+                    # 调用API
+                    from src.api import population_api
+                    result = population_api.campaign(self.state, player_id, fig_id, amount)
+                    if result["success"]:
+                        self.state.log_event(
+                            f"AI 庆典: 派系 {faction.name} 为人物 {fig_id} 花费 {amount}",
+                            extra={"player_id": player_id, "figure_id": fig_id, "amount": amount}
+                        )
+                    else:
+                        self.state.log_event(
+                            f"AI 庆典失败: {result['message']}",
+                            level=logging.WARNING
+                        )
         except Exception as e:
             logging.exception(f"庆典环节 AI 决策异常: {e}")
 
-    def process_vote(self, player_id: str, faction: Faction) -> None:
+    def process_vote(self, player_id: str, faction: Faction, bypass_permission: bool = False) -> None:
         """自动投票：为每个公职决定投票对象"""
         if not self.vote_decider:
             self.state.log_event(
@@ -98,7 +111,6 @@ class AutoPlayerProcessor:
             for office, cands in cand_result["data"].items():
                 if not cands:
                     continue
-                # 转换为 Figure 列表
                 candidate_figures = []
                 for c in cands:
                     fig = self.state.get_member(c["id"])
@@ -106,17 +118,33 @@ class AutoPlayerProcessor:
                         candidate_figures.append(fig)
                 chosen_id = self.vote_decider.decide_vote(office, candidate_figures, faction, self.state)
                 if chosen_id is not None:
-                    result = vote(self.state, player_id, office, chosen_id)
-                    if result["success"]:
+                    if bypass_permission:
+                        # 直接记录投票
+                        # 移除该玩家对该公职的旧投票（如有）
+                        votes = self.state._population_pending["votes"]
+                        new_votes = []
+                        for v in votes:
+                            if v[0] == player_id and v[1] == office:
+                                continue
+                            new_votes.append(v)
+                        new_votes.append((player_id, office, chosen_id))
+                        self.state._population_pending["votes"] = new_votes
                         self.state.log_event(
-                            f"AI 投票: 派系 {faction.name} 为 {office} 投给 {chosen_id}",
+                            f"AI 投票 (直接): 派系 {faction.name} 为 {office} 投给 {chosen_id}",
                             extra={"player_id": player_id, "office": office, "figure_id": chosen_id}
                         )
                     else:
-                        self.state.log_event(
-                            f"AI 投票失败: {result['message']}",
-                            level=logging.WARNING
-                        )
+                        result = vote(self.state, player_id, office, chosen_id)
+                        if result["success"]:
+                            self.state.log_event(
+                                f"AI 投票: 派系 {faction.name} 为 {office} 投给 {chosen_id}",
+                                extra={"player_id": player_id, "office": office, "figure_id": chosen_id}
+                            )
+                        else:
+                            self.state.log_event(
+                                f"AI 投票失败: {result['message']}",
+                                level=logging.WARNING
+                            )
         except Exception as e:
             logging.exception(f"投票环节 AI 决策异常: {e}")
 
