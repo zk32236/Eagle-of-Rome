@@ -649,7 +649,9 @@ class GameState:
 
     # ========== 新增：公地增减方法 ==========
     def add_national_public_land(self, amount: int) -> None:
+        old = self._national_public_land
         self._national_public_land += amount
+        print(f"      [DEBUG add_national_public_land] {old} -> {self._national_public_land}")  # 添加
         self.sync_italy_public_land()
 
     # ========== 配置获取（通过 Config 实例）==========
@@ -1110,10 +1112,10 @@ class GameState:
         return True
 
     def sync_italy_public_land(self):
-        """将国家公地同步到意大利行省"""
         italy = self.get_province(0)
         if italy:
             italy._land_public = self._national_public_land
+            italy.recalc_total_land()  # 新增：更新总土地
 
     def resolve_auction(self, contract_id: int) -> bool:
         contract = self.get_contract(contract_id)

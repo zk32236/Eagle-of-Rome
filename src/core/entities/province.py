@@ -206,6 +206,11 @@ class Province:
         return self._city_ids.copy()
 
     # ---------- 公共方法 ----------
+
+    def recalc_total_land(self):
+        """根据公地和私地重新计算总土地"""
+        self._total_land = self._land_public + self._land_private
+
     def reset_turns_since_last_distribution(self):
         """重置自上次分地以来的回合数（用于意大利本土）"""
         self._turns_since_last_land_distribution = 0

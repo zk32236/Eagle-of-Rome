@@ -437,7 +437,9 @@ class WarSystem:
                 # 土地奖励
                 land_reward = rewards.get('land', 0)
                 if land_reward > 0:
+                    print(f"      [DEBUG] 增加前国家公地: {self.state.get_national_public_land()}")  # 添加
                     self.state.add_national_public_land(land_reward)
+                    print(f"      [DEBUG] 增加后国家公地: {self.state.get_national_public_land()}")  # 添加
                     self.state.log_event(f"战争 {war.name} 土地: 国家公地 +{land_reward}")
 
                 # 家族声望
