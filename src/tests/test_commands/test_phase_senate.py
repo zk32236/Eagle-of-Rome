@@ -13,6 +13,8 @@ from src.core.deciders.tribune_veto_decider import TribuneVetoDecider
 from src.core.systems.war_system import WarSystem
 from src.core.systems.military_system import MilitarySystem
 from src.core.entities.player import Player
+from src.core.entities.war import WarType
+from src.core.systems.naval_system import NavalSystem
 
 # 添加项目根目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -954,6 +956,7 @@ class TestManualTakeover(unittest.TestCase):
         # 初始化战争和军事系统
         self.state._war_system = WarSystem(self.state)
         self.state._military_system = MilitarySystem(self.state)
+        self.state._naval_system = NavalSystem(self.state)
 
         # 创建派系和人物
         self.faction = Faction(id="optimates", name="Optimates", treasury=100)
@@ -990,6 +993,8 @@ class TestManualTakeover(unittest.TestCase):
         )
         self.war.status = WarStatus.ACTIVE
         self.state._war_system._active_wars.append(self.war)
+        # 初始化海军系统
+
 
     @patch('builtins.input')
     def test_manual_takeover_war(self, mock_input):
@@ -1140,6 +1145,75 @@ class TestManualTakeover(unittest.TestCase):
         self.assertIsNone(rebellion.commander_id)
         # 确保接管命令是针对外国战争的，没有尝试接管起义战争
         self.assertIn("已接管战争，增援 3 个军团", output)
+
+    @patch('builtins.input')
+    def test_manual_war_declaration_with_naval_no_fleet(self, mock_input):
+        """测试需要海战但无舰队时，宣战失败"""
+        # 创建需要海战的战争，并加入威胁列表
+        war = War(
+            id="naval_war",
+            name="海战战争",
+            war_type=WarType.FOREIGN,
+            strength=10,
+            naval_required=True
+        )
+        war.status = WarStatus.THREAT
+        self.state._war_system._threats.append(war)
+
+        # 模拟无可用舰队
+        self.state.naval_system.get_available_fleets = MagicMock(return_value=[])
+
+        # 模拟用户输入：步骤0 next，步骤1 propose B01 6
+        mock_input.side_effect = ["next", "propose B01 6", "next"]
+
+        cmd = SenateCommand(self.state)
+        cmd._auto_mode = False
+
+        with io.StringIO() as out, io.StringIO() as err, redirect_stdout(out), redirect_stderr(err):
+            result = cmd.execute([])
+            output = out.getvalue()
+            error = err.getvalue()
+
+        self.assertTrue(result)  # 阶段仍正常完成
+        self.assertIn("战争需要海战，但当前无可用舰队，无法宣战。请先建造舰队。", output + error)
+
+        # 验证战争未被激活（仍然在威胁列表）
+        self.assertIn(war, self.state._war_system._threats)
+        self.assertNotIn(war, self.state._war_system._active_wars)
+
+    @patch('builtins.input')
+    def test_manual_war_declaration_with_naval_has_fleet(self, mock_input):
+        """测试需要海战且有舰队时，宣战成功"""
+        war = War(
+            id="naval_war",
+            name="海战战争",
+            war_type=WarType.FOREIGN,
+            strength=10,
+            naval_required=True
+        )
+        war.status = WarStatus.THREAT
+        self.state._war_system._threats.append(war)
+
+        # 模拟有可用舰队
+        mock_fleet = MagicMock()
+        self.state.naval_system.get_available_fleets = MagicMock(return_value=[mock_fleet])
+
+        mock_input.side_effect = ["next", "propose B01 6", "next"]
+
+        cmd = SenateCommand(self.state)
+        cmd._auto_mode = False
+        # 确保投票决策器总是返回支持
+        cmd.vote_decider = MagicMock()
+        cmd.vote_decider.decide_vote.return_value = True
+
+        with io.StringIO() as buf, redirect_stdout(buf):
+            result = cmd.execute([])
+            output = buf.getvalue()
+
+        self.assertTrue(result)
+        self.assertIn("✅ 对 海战战争 宣战，申请征召 6 个军团", output)
+        self.assertNotIn(war, self.state._war_system._threats)
+        self.assertIn(war, self.state._war_system._active_wars)
 
 if __name__ == "__main__":
     unittest.main()

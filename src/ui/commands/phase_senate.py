@@ -384,40 +384,44 @@ class SenateCommand(Command):
         self._handle_next([])
 
     def _handle_step_5(self):
-        # 原执行逻辑
-        # 5.1 宣战
-        for war, consul_id, legions in self._passed_wars:
-            self._execute_war_declaration(war, consul_id, legions)
-
-        # 5.2 总督任命
-        self._execute_governor_appointments()
-        self._assign_rebellion_commanders()
-
-        # 5.3 战争接管
-        self._process_war_takeover()
-
-        # 5.4 停战草案执行
-        self._execute_passed_peace_treaties()
-
-        # 5.5 合同状态变更
-        for contract in self._passed_contracts:
-            contract.status = ContractStatus.BUDGETED
-            print(f"      ✅ {contract.name} 预算通过，状态变为 BUDGETED")
-            self.state.log_event(f"合同预算通过：{contract.name}")
-
-        # 5.6 土地法案存储
-        for act in self._passed_land_acts:
-            if act['type'] == 'sale':
-                national_land = self.state.get_national_public_land()
-                amount = int(national_land * act['percent'])
-                self.state.set_pending_land_sale_quota(amount)
-                print(f"      ✅ {act['description']} 通过，批准出售 {amount} C 国家公地，待下回合认购。")
+        if self._auto_mode:
+            # 自动模式：使用原有的 _passed_wars 等变量（保持原有逻辑不变）
+            # 5.1 宣战
+            for war, consul_id, legions in self._passed_wars:
+                self._execute_war_declaration(war, consul_id, legions)
+            # 5.2 总督任命
+            self._execute_governor_appointments()
+            self._assign_rebellion_commanders()
+            # 5.3 战争接管
+            self._process_war_takeover()
+            # 5.4 停战草案执行
+            self._execute_passed_peace_treaties()
+            # 5.5 合同状态变更
+            for contract in self._passed_contracts:
+                contract.status = ContractStatus.BUDGETED
+                print(f"      ✅ {contract.name} 预算通过，状态变为 BUDGETED")
+                self.state.log_event(f"合同预算通过：{contract.name}")
+            # 5.6 土地法案存储
+            for act in self._passed_land_acts:
+                if act['type'] == 'sale':
+                    national_land = self.state.get_national_public_land()
+                    amount = int(national_land * act['percent'])
+                    self.state.set_pending_land_sale_quota(amount)
+                    print(f"      ✅ {act['description']} 通过，批准出售 {amount} C 国家公地，待下回合认购。")
+                else:
+                    self.state.add_pending_land_act(act)
+                    amount_disp = act.get('amount', 0)
+                    print(f"      ✅ {act['description']} 通过，批准分配 {amount_disp} C 国家公地，待下回合执行。")
+        else:
+            # 手动模式：使用 resolve_senate 统一处理所有提案
+            from src.api import senate_api
+            result = senate_api.resolve_senate(self.state, vote_decider=self.vote_decider)
+            if result["success"]:
+                # 打印执行结果（可能包含多行）
+                if result["message"]:
+                    print(result["message"])
             else:
-                self.state.add_pending_land_act(act)
-                amount_disp = act.get('amount', 0)
-                print(f"      ✅ {act['description']} 通过，批准分配 {amount_disp} C 国家公地，待下回合执行。")
-
-        # 自动模式下直接完成（无下一步）
+                print(f"❌ 结算失败: {result['message']}", file=sys.stderr)
         self._step += 1  # 退出循环
 
     def _handle_next(self, args: List[str]):
@@ -563,6 +567,19 @@ class SenateCommand(Command):
                 print("❌ 军团数量必须是数字", file=sys.stderr)
                 return
             kwargs["legions"] = legions
+
+            # 检查战争是否需要海战，若需要则验证舰队可用性
+            war_id = kwargs["war_id"]
+            ws = self.state.get_war_system()
+            war = ws.get_war_by_id(war_id) if ws else None
+            if not war:
+                print("❌ 战争不存在", file=sys.stderr)
+                return
+            if war.naval_required:
+                naval_system = self.state.naval_system
+                if not naval_system or not naval_system.get_available_fleets():
+                    print("❌ 战争需要海战，但当前无可用舰队，无法宣战。请先建造舰队。", file=sys.stderr)
+                    return
 
         elif proposal_type == "peace":
             # 停战不需要额外参数
