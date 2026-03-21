@@ -232,8 +232,12 @@ def resolve_forum(state: GameState) -> dict:
                 r = (amount / contract.base_cost) - 1.0  # 加价比例
                 contract._tax_rate = base_tax_rate * (1 + r)  # 实际税率
 
+                winner_person = state.get_member(winner_figure)
+                winner_name = winner_person.get_formal_name() if winner_person else f"ID:{winner_figure}"
+                winner_faction_name = state.get_faction(winner_faction).name if winner_faction else "未知"
                 results.append(
-                    f"✅ 包税合同 {contract.name} 中标者: {state.get_faction(winner_faction).name}，出价 {max_amount}，税率 {contract._tax_rate * 100:.1f}%")
+                    f"✅ 包税合同 {contract.name} 中标者: {winner_name} ({winner_faction_name})，出价 {max_amount}，税率 {contract._tax_rate * 100:.1f}%")
+
             else:
                 # 工程合同：价低者得
                 min_amount = min(b[2] for b in bids)
@@ -252,8 +256,12 @@ def resolve_forum(state: GameState) -> dict:
                 # 如果是舰队建造合同，通知海军系统
                 if getattr(contract, '_is_fleet_construction', False) and state.naval_system:
                     state.naval_system.on_contract_awarded(contract, winner_figure)
+
+                winner_person = state.get_member(winner_figure)
+                winner_name = winner_person.get_formal_name() if winner_person else f"ID:{winner_figure}"
+                winner_faction_name = state.get_faction(winner_faction).name if winner_faction else "未知"
                 results.append(
-                    f"✅ 工程合同 {contract.name} 中标者: {state.get_faction(winner_faction).name}，出价 {min_amount}")
+                    f"✅ 工程合同 {contract.name} 中标者: {winner_name} ({winner_faction_name})，出价 {min_amount}")
 
     # 3. 公地认购结算（按人物影响力分配）
     if pending["land_purchases"]:

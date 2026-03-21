@@ -334,7 +334,10 @@ class TestResolveForum:
         winner = test_state.get_member(3)
         assert winner.faction_id == "f2"
         assert contract.status == ContractStatus.ACTIVE
-        assert "中标者: Faction2，出价 80" in result["message"]
+        # 修改消息断言以适应新格式
+        assert "中标者:" in result["message"]
+        assert "Faction2" in result["message"]
+        assert "出价 80" in result["message"]
 
     def test_land_purchase(self, test_state):
         """测试公地认购：配额分配，按人物影响力排序"""
@@ -504,7 +507,10 @@ class TestResolveForum:
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
         assert "加入 Faction1" in result["message"]
-        assert "中标者: Faction2，出价 120" in result["message"]
+        # 修改合同中标消息断言
+        assert "中标者:" in result["message"]
+        assert "Faction2" in result["message"]
+        assert "出价 120" in result["message"]
         # 人物2财富30，单价10，最多买3，所以认购3
         assert "认购 3 C" in result["message"]
         # 凯旋投票通过，但可能因战争系统 mock 问题，暂时不检查

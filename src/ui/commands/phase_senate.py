@@ -260,8 +260,6 @@ class SenateCommand(Command):
 
             if peace_proposals:
                 self.passed_peace_treaties = self._vote_on_peace_proposals(peace_proposals)
-                for war in self.passed_peace_treaties:
-                    print(f"  - {war.name}")
             self._handle_next([])
         else:
             # 正常模式：获取执政官人物及其所属玩家
@@ -291,8 +289,6 @@ class SenateCommand(Command):
                 peace_proposals = self._process_peace_proposals(TerminologyService.get())
                 if peace_proposals:
                     self.passed_peace_treaties = self._vote_on_peace_proposals(peace_proposals)
-                    for war in self.passed_peace_treaties:
-                        print(f"  - {war.name}")
 
                 # 显示可选提案列表
                 self._print_proposal_options()
@@ -329,43 +325,63 @@ class SenateCommand(Command):
 
                 if peace_proposals:
                     self.passed_peace_treaties = self._vote_on_peace_proposals(peace_proposals)
-                    for war in self.passed_peace_treaties:
-                        print(f"  - {war.name}")
 
                 self._handle_next([])
 
     def _handle_step_2(self):
-        # 投票环节：对已有提案进行自动投票
-        # 1. 宣战投票
-        self._process_war_proposals(self._passed_wars)  # 注意：此处 _passed_wars 在手动模式下可能为空，需从 _senate_pending 转换
-        # 2. 停战草案投票
-        peace_proposals = self._process_peace_proposals(TerminologyService.get())
-        if peace_proposals:
-            self.passed_peace_treaties = self._vote_on_peace_proposals(peace_proposals)
-            for war in self.passed_peace_treaties:
-                print(f"  - {war.name}")
-        # 3. 总督任命（已自动生成，无需投票）
-        self._process_governor_appointments(TerminologyService.get())
-        # 4. 预算合同投票
-        self._process_budget_proposals(TerminologyService.get(), self._passed_contracts)
-        # 5. 土地法案投票
-        self._process_land_proposals(TerminologyService.get(), self._passed_land_acts)
+        # 投票环节
+        if self._auto_mode:
+            # 自动模式：步骤1已完成提案生成与投票，此处直接推进
+            self._handle_next([])
+        else:
+            # 手动模式：从 _senate_pending 读取提案并投票
+            proposals = self.state.get_senate_proposals()
+            if not proposals:
+                print("\n 📭 无待表决提案")
+                self._handle_next([])
+                return
 
-        # 推进到下一步
-        self._handle_next([])
+            # 显示提案列表
+            print("\n 📜 待表决提案：")
+            for prop in proposals:
+                prop_id = prop["id"]
+                desc = self._generate_proposal_description(prop["type"], prop)
+                print(f" B{prop_id:02d}: {desc}")
+
+            # 执行投票统计
+            self._vote_on_proposals(proposals)
+
+            # 打印投票结果
+            self._print_vote_results(proposals)
+
+            self._handle_next([])
 
     def _handle_step_3(self):
         # 公示环节：输出投票结果（已在上面步骤中打印，可空）
         self._handle_next([])
 
-    def _handle_step_3(self):
-        # 公示环节（现有逻辑中结果已在提案时打印，直接跳过）
-        #if self._auto_mode:
-        self._handle_next([])
-
     def _handle_step_4(self):
         tribune = self._get_tribune()
-        if tribune:
+        if not tribune:
+            print(f"\n   🛡️ 当前无保民官，不行使否决权")
+            self._handle_next([])
+            return
+
+        if self._auto_mode:
+            # ========== 自动模式：检查是否有通过提案 ==========
+            has_proposals = (
+                    len(self._passed_wars) > 0 or
+                    len(self.passed_peace_treaties) > 0 or
+                    len(self.proposed_governors) > 0 or
+                    len(self._passed_contracts) > 0 or
+                    len(self._passed_land_acts) > 0
+            )
+
+            if not has_proposals:
+                print(f"\n   🛡️ 无提案需要通过保民官否决")
+                self._handle_next([])
+                return
+
             print(f"\n   🛡️ 保民官 {tribune.name} 正在审查通过的提案...")
             # 宣战否决
             new_wars = []
@@ -433,11 +449,27 @@ class SenateCommand(Command):
                 else:
                     new_acts.append(act)
             self._passed_land_acts = new_acts
-        else:
-            print(f"\n   🛡️ 当前无保民官，不行使否决权")
+            self._handle_next([])
 
-        # 无论自动还是手动，都推进到下一步
-        self._handle_next([])
+        else:
+            # ========== 手动模式：从 _senate_pending 获取已通过提案并应用否决 ==========
+            passed_proposals = self._get_passed_proposals()
+            if not passed_proposals:
+                print("\n 📭 无提案需要通过保民官否决")
+                self._handle_next([])
+                return
+
+            print(f"\n   🛡️ 保民官 {tribune.name} 正在审查通过的提案...")
+            for proposal in passed_proposals:
+                issue = self._build_issue_from_proposal(proposal)
+                # 调用否决决策器
+                if self.veto_decider.decide_veto(issue, tribune.id, self.state):
+                    print(f"      ❌ 保民官否决了提案：{self._generate_proposal_description(proposal['type'], proposal)}")
+                    self.state.record_senate_veto(proposal["id"])
+                else:
+                    print(f"      ✅ 保民官未否决提案：{self._generate_proposal_description(proposal['type'], proposal)}")
+
+            self._handle_next([])
 
     def _handle_step_5(self):
         if self._auto_mode:
@@ -868,6 +900,157 @@ class SenateCommand(Command):
                 })
             # 其他类型（peace, governor, takeover）暂不处理，因为当前自动模式中已自动生成
 
+    def _vote_on_proposals(self, proposals: list):
+        """对提案列表进行投票统计，结果存入 _senate_pending["votes"]"""
+        for proposal in proposals:
+            pid = proposal["id"]
+            # 遍历所有派系
+            for faction in self.state.get_active_factions():
+                player = self.state.get_player_by_faction(faction.id)
+                if not player:
+                    continue
+                player_id = player.player_id
+
+                # 检查该玩家是否已对此提案投票
+                if (player_id in self.state._senate_pending["votes"] and
+                        pid in self.state._senate_pending["votes"][player_id]):
+                    continue
+
+                # 构造 issue
+                issue = self._build_issue_from_proposal(proposal)
+                # 调用决策器
+                support = self.vote_decider.decide_vote(issue, faction, self.state)
+                # 记录投票
+                self.state.record_senate_vote(player_id, pid, support)
+
+                # 日志
+                self.state.log_event(
+                    f"自动投票: 派系 {faction.name} 对提案 {pid} 投票 {support}",
+                    level=logging.DEBUG,
+                    extra={"proposal_id": pid, "faction_id": faction.id, "vote": support}
+                )
+
+    def _build_issue_from_proposal(self, proposal: dict):
+        """根据提案类型构造 issue 对象，供决策器使用，包含 proposer_faction"""
+        ptype = proposal["type"]
+        proposer_faction = proposal.get("proposer_faction")  # 提案发起派系
+
+        if ptype == "war":
+            ws = self.state.get_war_system()
+            war = ws.get_war_by_id(proposal["war_id"]) if ws else None
+            return {"type": "war", "war": war, "proposer_faction": proposer_faction}
+        elif ptype == "peace":
+            return {
+                "type": "peace",
+                "war_id": proposal["war_id"],
+                "treaty": proposal.get("treaty"),
+                "proposer_faction": proposer_faction
+            }
+        elif ptype == "governor":
+            return {
+                "type": "governor",
+                "province_id": proposal["province_id"],
+                "candidate_id": proposal["candidate_id"],
+                "old_governor_id": proposal.get("old_governor_id"),
+                "proposer_faction": proposer_faction
+            }
+        elif ptype == "budget":
+            contract = self.state.get_contract(proposal["contract_id"])
+            return {
+                "type": "contract",
+                "contract": contract,
+                "proposer_faction": proposer_faction
+            }
+        elif ptype == "land":
+            return {
+                "type": "land",
+                "act_type": proposal["act_type"],
+                "percent": proposal["percent"],
+                "proposer_faction": proposer_faction
+            }
+        else:
+            return None
+
+    def _print_vote_results(self, proposals: list):
+        """打印每个提案的投票结果（仅用于手动模式展示）"""
+        votes = self.state._senate_pending["votes"]
+        print("\n 📊 投票结果统计：")
+        for prop in proposals:
+            pid = prop["id"]
+            support_influence = 0
+            oppose_influence = 0
+            total_influence = 0
+            for faction in self.state.get_active_factions():
+                influence = faction.get_senate_influence(self.state)
+                if influence == 0:
+                    continue
+                total_influence += influence
+                player = self.state.get_player_by_faction(faction.id)
+                if not player:
+                    continue
+                player_id = player.player_id
+                if player_id in votes and pid in votes[player_id]:
+                    if votes[player_id][pid]:
+                        support_influence += influence
+                    else:
+                        oppose_influence += influence
+                # 未投票的派系在 _vote_on_proposals 中已补投，此处应有记录
+            if total_influence == 0:
+                continue
+            support_ratio = support_influence / total_influence
+            status = "✅ 通过" if support_ratio > 0.5 else "❌ 否决"
+            print(f"   提案 {pid}: 支持率 {support_ratio:.1%} ({support_influence}/{total_influence}) {status}")
+
+    def _get_passed_proposals(self) -> list:
+        """获取已通过且未被否决的提案列表"""
+        proposals = self.state.get_senate_proposals()
+        votes = self.state._senate_pending["votes"]
+        vetoes = self.state._senate_pending["vetoes"]
+        passed = []
+
+        for proposal in proposals:
+            pid = proposal["id"]
+            if pid in vetoes:
+                continue
+
+            support_influence = 0
+            oppose_influence = 0
+            total_influence = 0
+
+            for faction in self.state.get_active_factions():
+                influence = faction.get_senate_influence(self.state)
+                if influence == 0:
+                    continue
+                total_influence += influence
+
+                player = self.state.get_player_by_faction(faction.id)
+                if not player:
+                    continue
+                player_id = player.player_id
+
+                # 优先使用已记录投票
+                if player_id in votes and pid in votes[player_id]:
+                    if votes[player_id][pid]:
+                        support_influence += influence
+                    else:
+                        oppose_influence += influence
+                else:
+                    # 未投票的派系，使用决策器补投（与 resolve_senate 逻辑一致）
+                    issue = self._build_issue_from_proposal(proposal)
+                    support = self.vote_decider.decide_vote(issue, faction, self.state)
+                    if support:
+                        support_influence += influence
+                    else:
+                        oppose_influence += influence
+
+            if total_influence == 0:
+                continue
+            support_ratio = support_influence / total_influence
+            if support_ratio > 0.5:
+                passed.append(proposal)
+
+        return passed
+
     # ==================== 新增：MVP 0.7-4 行省起义镇压 ====================
     def _assign_rebellion_commanders(self):
         """为起义战争指派总督作为指挥官并征召军团"""
@@ -999,10 +1182,6 @@ class SenateCommand(Command):
                 if war_system:
                     war_system._move_to_active(war)
 
-
-        for war in passed:
-            print(f"  - {war.name}")
-
         return passed
 
     def _execute_passed_peace_treaties(self):
@@ -1012,7 +1191,6 @@ class SenateCommand(Command):
             return
 
         for war in self.passed_peace_treaties:
-            print(f"  - {war.name}")
             treaty = war.peace_treaty
             if not treaty or treaty.get('status') != 'submitted':
                 continue
@@ -1198,18 +1376,13 @@ class SenateCommand(Command):
         if not consul:
             return
 
-        # 征召军团并指派
-        ms = self.state.get_military_system()
-        if ms:
-            # 原有自动征召逻辑（可复用 _auto_recruit_and_assign_legions_for_war）
-            self._auto_recruit_and_assign_legions_for_war(war, consul_id)
-
-        consul.is_absent = True
-        self.state.log_event(f"宣战通过：{war.name}，执政官 {consul.name} 出征，批准军团 {legions}")
-        print(f"      ✅ 宣战通过！执政官 {consul.name} 出征，影响力不再计入元老院。")
+        # 征召军团并指派（会自动打印宣战及征召信息）
+        self._auto_recruit_and_assign_legions_for_war(war, consul_id, action="declare")
         new_presiding = self.state.get_presiding_officer()
         if new_presiding:
             print(f"      元老院新主持人：{new_presiding.name}（官职 {new_presiding.office}）")
+
+
 
     def _process_land_proposals(self, terms, passed_land_acts: List[dict]):
         """处理土地法案提案，通过的放入 passed_land_acts"""
@@ -1383,7 +1556,6 @@ class SenateCommand(Command):
 
         # 打印每个战争的当前状态
         for war in active_wars:
-            print(f"  - {war.name}, status: {war.status}, commander_id: {war.commander_id}")
             self.state.log_event(
                 f"[DEBUG] _process_war_takeover 检查战争: {war.id}, 状态={war.status.value}, 指挥官ID={war.commander_id}",
                 level=logging.DEBUG,
@@ -1406,35 +1578,27 @@ class SenateCommand(Command):
                 if takeover_decision:
                     war.commander_id = consul.id
                     consul.is_absent = True
-                    print(f"      ✅ 执政官 {consul.name} 接管战争 {war.name}")
-                    self._auto_recruit_and_assign_legions_for_war(war, consul.id)
+                    self._auto_recruit_and_assign_legions_for_war(war, consul.id, action="takeover")
                     self.state.log_event(f"执政官 {consul.name} 接管 {war.name}")
                 else:
                     print(f"      ⏳ 执政官 {consul.name} 决定不接管 {war.name}")
+
             else:
                 old_cmd = self.state.get_member(war.commander_id)
-                if not old_cmd:
-                    self.state.log_event(
-                        f"[DEBUG] _process_war_takeover: 战争 {war.id} 的指挥官 {war.commander_id} 不存在，跳过",
-                        level=logging.DEBUG,
-                        extra={"function": "_process_war_takeover", "war_id": war.id, "reason": "old_commander_missing"}
-                    )
-                    continue
-                if old_cmd.office in ("proconsul", "ex-consul") and old_cmd.is_absent:
+                if old_cmd and old_cmd.office in ("proconsul", "ex-consul") and old_cmd.is_absent:
                     takeover_decision = self.takeover_decider.decide_takeover(war, consul, old_cmd, self.state)
-                    self.state.log_event(
-                        f"[DEBUG] _process_war_takeover: 已有指挥官战争 {war.id}, 旧指挥官={old_cmd.id}, 接管决策={takeover_decision}",
-                        level=logging.DEBUG,
-                        extra={"function": "_process_war_takeover", "war_id": war.id, "branch": "has_commander",
-                               "old_commander_id": old_cmd.id, "takeover_decision": takeover_decision}
-                    )
+                    self.state.log_event(...)
                     if takeover_decision:
                         old_cmd.is_absent = False
                         old_cmd.office = "ex-proconsul"
                         war.commander_id = consul.id
                         consul.is_absent = True
-                        print(f"      🔄 执政官 {consul.name} 接管战争 {war.name}，原指挥官 {old_cmd.name} 返回罗马")
-                        self._auto_recruit_and_assign_legions_for_war(war, consul.id)
+                        recruit_count, total_cost = self._auto_recruit_and_assign_legions_for_war(war, consul.id)
+                        if recruit_count > 0:
+                            print(
+                                f"      🔄 执政官 {consul.name} 接管战争 {war.name}，原指挥官 {old_cmd.name} 返回罗马，征召 {recruit_count} 个军团，总花费 {total_cost} Talents，国库剩余 {self.state.treasury} Talents")
+                        else:
+                            print(f"      🔄 执政官 {consul.name} 接管战争 {war.name}，原指挥官 {old_cmd.name} 返回罗马")
                         self.state.log_event(f"执政官 {consul.name} 接管战争 {war.name}，原指挥官 {old_cmd.name} 返回")
                     else:
                         print(f"      ⏳ 执政官 {consul.name} 决定不接管 {war.name}，由 {old_cmd.name} 继续指挥")
@@ -1451,18 +1615,25 @@ class SenateCommand(Command):
             extra={"function": "_process_war_takeover", "phase": "exit"}
         )
 
-    def _auto_recruit_and_assign_legions_for_war(self, war, consul_id):
-        """自动征召军团并指派给战争（用于宣战和接管）"""
+    # src/ui/commands/phase_senate.py
+
+    def _auto_recruit_and_assign_legions_for_war(self, war, consul_id, action="declare"):
+        """
+        自动征召军团并指派给战争。
+        参数:
+            action: "declare" 或 "takeover"，用于打印不同前缀
+        返回: (征召数量, 总花费)
+        """
         ms = self.state.get_military_system()
         if not ms:
             print("      ⚠️ 军事系统不可用，无法征召军团")
-            return
+            return 0, 0
 
-        # 检查战争是否已有军团，如果有则直接使用现有军团，不再征召
+        # 检查战争是否已有军团
         existing_legions = ms.get_legions_for_battle(war.id) if ms else []
         if existing_legions:
             print(f"      ℹ️ 战争已有 {len(existing_legions)} 个军团，无需征召")
-            return
+            return 0, 0
 
         # 获取应征召的军团数量
         legions = getattr(war, 'proposed_legions', 0)
@@ -1475,24 +1646,41 @@ class SenateCommand(Command):
         available = ms.get_available_legions()
         recruit_cost = self.state.get_economic_rule("legion_recruit_cost", 10)
 
-        # 移除国库资金限制，允许负债征召
-        recruit_count = min(legions, len(available))  # 只受可用军团数和需求数限制
+        recruit_count = min(legions, len(available))
         if recruit_count == 0:
             print("      ⚠️ 没有可用军团，无法征召")
-            return
+            return 0, 0
 
         results = ms.recruit_multiple(recruit_count)
         recruited_numbers = [r[0] for r in results if r[1]]
         if not recruited_numbers:
             print("      ⚠️ 军团征召失败")
-            return
+            return 0, 0
 
         assigned, msg = ms.assign_to_war(recruited_numbers, war.id, consul_id)
-        print(f"      {msg}")
-        for num in recruited_numbers:
-            war.add_legion_number(num)
+        if assigned > 0:
+            for num in recruited_numbers:
+                war.add_legion_number(num)
+        else:
+            print(f"      {msg}")
+            return 0, 0
 
-        self.state.log_event(f"宣战 {war.name}，征召 {len(recruited_numbers)} 军团")
+        total_cost = recruit_cost * len(recruited_numbers)
+        consul = self.state.get_member(consul_id)
+        consul_name = consul.get_formal_name() if consul else "执政官"
+
+        # 根据 action 打印信息
+        if action == "takeover":
+            print(
+                f"      ✅ 执政官 {consul_name} 接管战争 {war.name}，征召 {recruit_count} 个军团，总花费 {total_cost} Talents，国库剩余 {self.state.treasury} Talents")
+        else:  # declare
+            print(f"      ✅ 宣战通过！执政官 {consul_name} 出征，影响力不再计入元老院。")
+            print(
+                f"      ✅ 征召 {recruit_count} 个军团，总花费 {total_cost} Talents，国库剩余 {self.state.treasury} Talents")
+
+        self.state.log_event(
+            f"{'宣战' if action == 'declare' else '接管'} {war.name}，征召 {len(recruited_numbers)} 军团")
+        return recruit_count, total_cost
 
     def _process_war_proposals(self, passed_wars: List[Tuple["War", int, int]]):
         """处理宣战提案，通过的放入 passed_wars"""
