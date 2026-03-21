@@ -631,7 +631,8 @@ class SenateCommand(Command):
         from src.api import senate_api
         result = senate_api.propose(self.state, player_id, proposal_type, **kwargs)
         if result["success"]:
-            print(f"✅ {result['message']}")
+            description = self._generate_proposal_description(proposal_type, kwargs)
+            print(f"✅ {description}")
         else:
             print(f"❌ {result['message']}", file=sys.stderr)
 
@@ -725,6 +726,48 @@ class SenateCommand(Command):
             extra={"war_id": war.id, "consul_id": consul.id, "legions": recruit_count}
         )
         return True
+
+    def _generate_proposal_description(self, proposal_type: str, kwargs: dict) -> str:
+        """根据提案类型和参数生成友好描述"""
+        if proposal_type == "war":
+            war_id = kwargs.get("war_id")
+            legions = kwargs.get("legions")
+            war = self.state.get_war_system().get_war_by_id(war_id) if war_id else None
+            war_name = war.name if war else "未知战争"
+            return f"对 {war_name} 宣战，申请征召 {legions} 个军团"
+        elif proposal_type == "peace":
+            war_id = kwargs.get("war_id")
+            war = self.state.get_war_system().get_war_by_id(war_id) if war_id else None
+            war_name = war.name if war else "未知战争"
+            return f"对 {war_name} 的停战协议进行表决"
+        elif proposal_type == "governor":
+            province_id = kwargs.get("province_id")
+            candidate_id = kwargs.get("candidate_id")
+            province = self.state.get_province(province_id) if province_id else None
+            candidate = self.state.get_member(candidate_id) if candidate_id else None
+            province_name = province.name if province else f"ID {province_id}"
+            candidate_name = candidate.get_formal_name() if candidate else f"ID {candidate_id}"
+            return f"任命 {candidate_name} 为 {province_name} 行省总督"
+        elif proposal_type == "budget":
+            contract_id = kwargs.get("contract_id")
+            modified_budget = kwargs.get("modified_budget")
+            contract = self.state.get_contract(contract_id) if contract_id else None
+            contract_name = contract.name if contract else f"合同 {contract_id}"
+            budget_display = modified_budget if modified_budget else (contract.base_cost if contract else "?")
+            return f"{contract_name} 预算 {budget_display} 塔兰特"
+        elif proposal_type == "land":
+            act_type = kwargs.get("act_type")
+            percent = kwargs.get("percent")
+            act_name = "公地出售法案" if act_type == "sale" else "公地分配法案"
+            return f"{act_name} {percent * 100:.1f}% 国家公地"
+        elif proposal_type == "takeover":
+            war_id = kwargs.get("war_id")
+            legions = kwargs.get("legions", 0)
+            war = self.state.get_war_system().get_war_by_id(war_id) if war_id else None
+            war_name = war.name if war else "未知战争"
+            return f"接管 {war_name}，增援 {legions} 个军团"
+        else:
+            return "提案已记录"
 
     # ==================== 新增：MVP 0.7-4 行省起义镇压 ====================
     def _assign_rebellion_commanders(self):
