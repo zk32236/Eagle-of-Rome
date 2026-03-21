@@ -112,6 +112,12 @@ class GameState:
 
         # 元老院阶段临时存储
         self._pending_land_sale_quota: int = 0  # 新增：贵族买地法案待售公地数量
+        self._senate_pending = {
+            "proposals": [],  # 列表，每个元素为提案字典
+            "votes": {},  # {player_id: {proposal_id: bool}}
+            "vetoes": set(),  # 被否决的提案ID集合
+            "proposal_id_counter": 1
+        }
 
         # 初始化时调用 reset，确保状态一致性
         self.reset()
@@ -163,8 +169,45 @@ class GameState:
             "votes": []
         }
         self._pending_land_sale_quota: int = 0  # 新增：贵族买地法案待售公地数量
+        self.clear_senate_pending()
 
     #========================= 功能函数 ===================================
+
+    # 元老阶段玩家操作
+    def add_senate_proposal(self, proposal: dict) -> int:
+        """添加提案，返回分配ID"""
+        proposal_id = self._senate_pending["proposal_id_counter"]
+        self._senate_pending["proposal_id_counter"] += 1
+        proposal["id"] = proposal_id
+        self._senate_pending["proposals"].append(proposal)
+        return proposal_id
+
+    def get_senate_proposals(self) -> list:
+        """获取当前所有提案的副本"""
+        return self._senate_pending["proposals"].copy()
+
+    def record_senate_vote(self, player_id: str, proposal_id: int, vote: bool) -> bool:
+        """记录投票，返回是否成功（未重复投票）"""
+        if player_id not in self._senate_pending["votes"]:
+            self._senate_pending["votes"][player_id] = {}
+        if proposal_id in self._senate_pending["votes"][player_id]:
+            return False  # 已投过票
+        self._senate_pending["votes"][player_id][proposal_id] = vote
+        return True
+
+    def record_senate_veto(self, proposal_id: int) -> bool:
+        """记录否决"""
+        self._senate_pending["vetoes"].add(proposal_id)
+        return True
+
+    def clear_senate_pending(self):
+        """清空所有元老院临时数据"""
+        self._senate_pending = {
+            "proposals": [],
+            "votes": {},
+            "vetoes": set(),
+            "proposal_id_counter": 1
+        }
 
     # 广场阶段玩家操作
     def add_forum_action(self, category: str, data) -> None:
@@ -548,6 +591,13 @@ class GameState:
             "votes": []
         }
         instance._pending_land_sale_quota = 0
+        instance._senate_pending = {
+            "proposals": [],
+            "votes": {},
+            "vetoes": set(),
+            "proposal_id_counter": 1
+        }
+
 
         return instance
 
