@@ -134,13 +134,14 @@ class TestSenateAPI(unittest.TestCase):
     @patch("src.api.senate_api.process_war_takeover")
     def test_resolve_senate(self, mock_takeover, mock_execute):
         # 添加提案、投票、否决
-        war_proposal_id = self.state.add_senate_proposal({"type": "war", "war_id": "war1", "legions": 6, "consul_id": 1})
+        war_proposal_id = self.state.add_senate_proposal(
+            {"type": "war", "war_id": "war1", "legions": 6, "consul_id": 1})
         self.state.record_senate_vote("player1", war_proposal_id, True)  # 支持
         # 模拟另一个派系投票（通过决策器）
-        # 将第二个玩家设置为 populares，其影响力会通过决策器计算
-        # 我们直接 mock 决策器返回支持
-        with patch("src.api.senate_api.AutoSenateVoteDecider.decide_vote", return_value=True):
-            result = senate_api.resolve_senate(self.state)
+        # 使用 mock 决策器返回支持
+        mock_decider = MagicMock()
+        mock_decider.decide_vote.return_value = True
+        result = senate_api.resolve_senate(self.state, vote_decider=mock_decider)
         self.assertTrue(result["success"])
         self.assertIn(war_proposal_id, result["data"]["passed_proposals"])
         mock_execute.assert_called_once()

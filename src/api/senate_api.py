@@ -11,9 +11,8 @@ from src.core.game_state import GameState
 from src.core.entities.contract import ContractStatus
 from src.core.entities.war import WarStatus
 from src.core.deciders.impl.auto_war_takeover_decider import AutoWarTakeoverDecider
-from src.core.deciders.impl.auto_tribune_veto_decider import AutoTribuneVetoDecider
+from src.core.deciders.senate_vote_decider import SenateVoteDecider
 from src.core.deciders.impl.auto_senate_vote_decider import AutoSenateVoteDecider
-from src.core.localization import TerminologyService
 
 def api_response(success: bool, message: str = "", data: Any = None, errors: List[str] = None) -> dict:
     """生成标准 API 返回格式"""
@@ -207,6 +206,11 @@ def propose(state: GameState, player_id: str, proposal_type: str, **kwargs) -> d
 
     # 存储提案
     proposal_id = state.add_senate_proposal(proposal)
+    state.log_event(
+        f"提案记录: {proposal_type} (ID:{proposal_id})",
+        level=logging.INFO,
+        extra={"proposal_id": proposal_id, "proposal_type": proposal_type, "player_id": player_id}
+    )
     return api_response(True, f"提案已记录 (ID: {proposal_id})", {"proposal_id": proposal_id})
 
 
@@ -240,9 +244,16 @@ def vote(state: GameState, player_id: str, proposal_ids: List[int], votes: List[
     for pid, vote_val in zip(proposal_ids, votes):
         if state.record_senate_vote(player_id, pid, vote_val):
             success_count += 1
+            # ===== 新增日志 =====
+            state.log_event(
+                f"玩家 {player_id} 对提案 {pid} 投票: {vote_val}",
+                level=logging.INFO,
+                extra={"player_id": player_id, "proposal_id": pid, "vote": vote_val}
+            )
 
     if success_count == 0:
         return api_response(False, "所有提案均已投过票", data={"recorded": 0})
+
     return api_response(True, f"已记录 {success_count} 个提案的投票", data={"recorded": success_count})
 
 
@@ -276,13 +287,20 @@ def veto(state: GameState, player_id: str, proposal_ids: List[int]) -> dict:
     for pid in proposal_ids:
         if state.record_senate_veto(pid):
             vetoed.append(pid)
+            # ===== 新增日志 =====
+            state.log_event(
+                f"玩家 {player_id} 否决提案 {pid}",
+                level=logging.INFO,
+                extra={"player_id": player_id, "proposal_id": pid}
+            )
 
     return api_response(True, f"已否决 {len(vetoed)} 个提案", data={"vetoed": vetoed})
 
 
-def resolve_senate(state: GameState) -> dict:
+def resolve_senate(state: GameState, vote_decider: Optional[SenateVoteDecider] = None) -> dict:
     """
     执行元老院阶段最终结算：统计投票结果、应用否决、执行所有通过的提案。
+    :param vote_decider: 投票决策器（可选），若为 None 则使用 AutoSenateVoteDecider
     """
     if not state:
         return api_response(False, "无效的游戏状态")
@@ -291,13 +309,17 @@ def resolve_senate(state: GameState) -> dict:
     votes = state._senate_pending["votes"]  # {player_id: {proposal_id: bool}}
     vetoed = state._senate_pending["vetoes"]
 
+    # 使用传入的决策器或默认决策器
+    if vote_decider is None:
+        vote_decider = AutoSenateVoteDecider()
+
     # 统计每个提案的投票结果
     passed_proposals = []
     rejected_proposals = []
     for proposal in proposals:
         pid = proposal["id"]
         if pid in vetoed:
-            continue  # 被否决的提案不参与投票统计（已直接否决）
+            continue  # 被否决的提案不参与投票统计
 
         # 计算支持/反对影响力
         support_influence = 0
@@ -321,8 +343,7 @@ def resolve_senate(state: GameState) -> dict:
                 else:
                     oppose_influence += influence
             else:
-                # 未投票的派系，使用默认投票决策器
-                decider = AutoSenateVoteDecider()
+                # 未投票的派系，使用决策器
                 # 根据提案类型构造 issue
                 if proposal["type"] == "war":
                     war_id = proposal["war_id"]
@@ -348,14 +369,13 @@ def resolve_senate(state: GameState) -> dict:
                 else:
                     continue
 
-                support = decider.decide_vote(issue, faction, state)
+                support = vote_decider.decide_vote(issue, faction, state)
                 if support:
                     support_influence += influence
                 else:
                     oppose_influence += influence
 
         if total_influence == 0:
-            # 无元老在场，提案不通过
             rejected_proposals.append(proposal)
         else:
             support_ratio = support_influence / total_influence
@@ -366,12 +386,10 @@ def resolve_senate(state: GameState) -> dict:
 
     # 执行通过的提案
     execution_messages = []
-    # 按类型分组执行
     for proposal in passed_proposals:
         ptype = proposal["type"]
         try:
             if ptype == "war":
-                # 宣战
                 ws = state.get_war_system()
                 if ws:
                     war = ws.get_war_by_id(proposal["war_id"])
@@ -380,14 +398,12 @@ def resolve_senate(state: GameState) -> dict:
                     execute_war_declaration(state, war, consul_id, legions)
                     execution_messages.append(f"宣战通过: {war.name} (军团 {legions})")
             elif ptype == "peace":
-                # 停战草案
                 ws = state.get_war_system()
                 if ws:
                     war = ws.get_war_by_id(proposal["war_id"])
                     execute_passed_peace_treaty(state, war)
                     execution_messages.append(f"停战草案通过: {war.name}")
             elif ptype == "governor":
-                # 总督任命
                 province = state.get_province(proposal["province_id"])
                 if province:
                     province._governor_designate_id = proposal["candidate_id"]
@@ -397,13 +413,11 @@ def resolve_senate(state: GameState) -> dict:
                         new_governor.is_absent = True
                     execution_messages.append(f"任命 {proposal['candidate_id']} 为 {province.name} 候任总督")
             elif ptype == "budget":
-                # 预算合同
                 contract = state.get_contract(proposal["contract_id"])
                 if contract:
                     contract.status = ContractStatus.BUDGETED
                     execution_messages.append(f"合同 {contract.name} 预算通过")
             elif ptype == "land":
-                # 土地法案
                 act_type = proposal["act_type"]
                 percent = proposal["percent"]
                 national_land = state.get_national_public_land()
@@ -428,6 +442,13 @@ def resolve_senate(state: GameState) -> dict:
 
     # 清空临时数据
     state.clear_senate_pending()
+
+    # 记录结算日志
+    state.log_event(
+        f"元老院结算完成: 通过 {len(passed_proposals)} 个提案，否决 {len(rejected_proposals)} 个提案",
+        level=logging.INFO,
+        extra={"passed": len(passed_proposals), "rejected": len(rejected_proposals)}
+    )
 
     return api_response(True, "\n".join(execution_messages), {
         "passed_proposals": [p["id"] for p in passed_proposals],
