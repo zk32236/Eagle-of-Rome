@@ -7,12 +7,12 @@ import unittest
 import sys
 import os
 import io
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 from src.core.deciders.impl.auto_budget_decider import AutoBudgetDecider
 from src.core.deciders.tribune_veto_decider import TribuneVetoDecider
-from src.core.entities.war import War, WarStatus
-
-from unittest.mock import MagicMock
+from src.core.systems.war_system import WarSystem
+from src.core.systems.military_system import MilitarySystem
+from src.core.entities.player import Player
 
 # 添加项目根目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -939,6 +939,207 @@ class TestSenateEdgeCases(unittest.TestCase):
         # 支持率 50% 应不通过，战争仍为威胁
         self.assertIn(war, ws._threats)
         self.assertNotIn(war, ws._active_wars)
+
+# ==================== 任务3：补充测试用例 ====================
+class TestManualTakeover(unittest.TestCase):
+    """手动模式下战争接管功能测试"""
+
+    def setUp(self):
+        # 创建测试状态
+        self.state = GameState.create_for_testing({})
+        self.state.turn = GameTurn(turn_number=1, year=-264)
+        self.state.mark_phase_executed("population")
+        self.state._treasury = 1000
+
+        # 初始化战争和军事系统
+        self.state._war_system = WarSystem(self.state)
+        self.state._military_system = MilitarySystem(self.state)
+
+        # 创建派系和人物
+        self.faction = Faction(id="optimates", name="Optimates", treasury=100)
+        self.state.add_faction(self.faction)
+
+        self.consul = Figure(id=1, name="执政官", faction_id="optimates", age=40)
+        self.consul.office = "consul"
+        self.consul.class_tier = ClassTier.NOBILE
+        self.consul.influence = 100
+        self.state.add_member(self.consul)
+        self.faction.member_ids.append(1)
+
+        self.senator = Figure(id=2, name="元老", faction_id="optimates", age=50)
+        self.senator.class_tier = ClassTier.NOBILE
+        self.senator.influence = 50
+        self.state.add_member(self.senator)
+        self.faction.member_ids.append(2)
+
+        # 设置玩家
+        self.player = Player("player1", "optimates", "human")
+        self.state.add_player(self.player)
+        self.state.set_current_player("player1")
+        self.state.set_turn_order(["player1"])
+
+        # 创建一个活跃的外国战争（非起义）
+        from src.core.entities.war import WarType
+        self.war = War(
+            id="foreign_war",
+            name="外国战争",
+            war_type=WarType.FOREIGN,
+            strength=10,
+            naval_required=False,
+            rebellion_province_id=None
+        )
+        self.war.status = WarStatus.ACTIVE
+        self.state._war_system._active_wars.append(self.war)
+
+    @patch('builtins.input')
+    def test_manual_takeover_war(self, mock_input):
+        """测试手动模式下接管外国战争并增派军团"""
+        mock_input.side_effect = ["next", "propose B01 3", "next"]
+
+        cmd = SenateCommand(self.state)
+        cmd._auto_mode = False
+
+        with io.StringIO() as buf, redirect_stdout(buf):
+            result = cmd.execute([])
+            output = buf.getvalue()  # 在块内获取
+
+        self.assertTrue(result)
+
+        ws = self.state.get_war_system()
+        war = ws.get_war_by_id("foreign_war")
+        self.assertEqual(war.commander_id, 1)
+        consul = self.state.get_member(1)
+        self.assertTrue(consul.is_absent)
+
+        ms = self.state.get_military_system()
+        legions = ms.get_legions_for_battle(war.id)
+        self.assertEqual(len(legions), 3)
+        self.assertIn("已接管战争，增援 3 个军团", output)
+
+    @patch('builtins.input')
+    def test_manual_takeover_war_with_existing_commander(self, mock_input):
+        """测试接管已有指挥官的战争（如前任执政官指挥）"""
+        old_commander = Figure(id=3, name="前执政官", faction_id="optimates", age=45)
+        old_commander.office = "proconsul"
+        old_commander.is_absent = True
+        old_commander.class_tier = ClassTier.NOBILE
+        self.state.add_member(old_commander)
+        self.faction.member_ids.append(3)
+        self.war.commander_id = 3
+        self.war.set_commander_assigned_turn(1)  # 使用 setter
+
+        mock_input.side_effect = ["next", "propose B01 2", "next"]
+
+        cmd = SenateCommand(self.state)
+        cmd._auto_mode = False
+
+        with io.StringIO() as buf, redirect_stdout(buf):
+            result = cmd.execute([])
+            output = buf.getvalue()
+
+        self.assertTrue(result)
+
+        war = self.state.get_war_system().get_war_by_id("foreign_war")
+        self.assertEqual(war.commander_id, 1)
+        self.assertTrue(self.consul.is_absent)
+        self.assertFalse(old_commander.is_absent)
+        self.assertEqual(old_commander.office, "ex-proconsul")
+
+        ms = self.state.get_military_system()
+        legions = ms.get_legions_for_battle(war.id)
+        self.assertEqual(len(legions), 2)
+        self.assertIn("已接管战争，增援 2 个军团", output)
+
+    @patch('builtins.input')
+    def test_manual_takeover_insufficient_legions(self, mock_input):
+        """测试征召军团时可用军团不足（实际可用25个，征召30个）"""
+        mock_input.side_effect = ["next", "propose B01 30", "next"]
+
+        cmd = SenateCommand(self.state)
+        cmd._auto_mode = False
+
+        with io.StringIO() as buf, redirect_stdout(buf):
+            result = cmd.execute([])
+            output = buf.getvalue()
+
+        self.assertTrue(result)
+        war = self.state.get_war_system().get_war_by_id("foreign_war")
+        ms = self.state.get_military_system()
+        legions = ms.get_legions_for_battle(war.id)
+        self.assertEqual(len(legions), 25)
+        # 修正：实际征召25个，消息应为25
+        self.assertIn("已接管战争，增援 25 个军团", output)
+
+    @patch('builtins.input')
+    def test_manual_takeover_invalid_war_id(self, mock_input):
+        """测试接管不存在的战争"""
+        mock_input.side_effect = ["next", "propose B99 3", "next"]
+
+        cmd = SenateCommand(self.state)
+        cmd._auto_mode = False
+
+        # 同时捕获 stdout 和 stderr
+        with io.StringIO() as out, io.StringIO() as err, redirect_stdout(out), redirect_stderr(err):
+            result = cmd.execute([])
+            output = out.getvalue()
+            error = err.getvalue()
+        self.assertTrue(result)
+        self.assertIn("❌ 无效的法案ID: B99", output + error)
+
+    @patch('builtins.input')
+    def test_manual_takeover_no_consul(self, mock_input):
+        """测试当前玩家没有执政官人物"""
+        self.consul.is_dead = True
+        for member in self.state.get_living_members():
+            if member.office == "consul":
+                member.office = None
+
+        mock_input.side_effect = ["next", "propose B01 3", "next"]
+
+        cmd = SenateCommand(self.state)
+        cmd._auto_mode = False
+
+        with io.StringIO() as out, io.StringIO() as err, redirect_stdout(out), redirect_stderr(err):
+            result = cmd.execute([])
+            output = out.getvalue()
+            error = err.getvalue()
+        self.assertTrue(result)
+        self.assertIn("❌ 您没有在罗马的执政官可以出征", output + error)
+        war = self.state.get_war_system().get_war_by_id("foreign_war")
+        self.assertIsNone(war.commander_id)
+
+    @patch('builtins.input')
+    def test_manual_takeover_rebellion_war_not_shown(self, mock_input):
+        """测试起义战争不在接管列表中（通过 API 过滤）"""
+        # 创建起义战争
+        from src.core.entities.war import WarType
+        rebellion_war = War(
+            id="rebellion",
+            name="起义战争",
+            war_type=WarType.PROVINCIAL,
+            strength=5,
+            naval_required=False,
+            rebellion_province_id=1
+        )
+        rebellion_war.status = WarStatus.ACTIVE
+        self.state._war_system._active_wars.append(rebellion_war)
+
+        mock_input.side_effect = ["next", "propose B01 3", "next"]
+
+        cmd = SenateCommand(self.state)
+        cmd._auto_mode = False
+
+        with io.StringIO() as buf, redirect_stdout(buf):
+            result = cmd.execute([])
+            output = buf.getvalue()
+
+        self.assertTrue(result)
+        war = self.state.get_war_system().get_war_by_id("foreign_war")
+        self.assertEqual(war.commander_id, 1)
+        rebellion = self.state.get_war_system().get_war_by_id("rebellion")
+        self.assertIsNone(rebellion.commander_id)
+        # 确保接管命令是针对外国战争的，没有尝试接管起义战争
+        self.assertIn("已接管战争，增援 3 个军团", output)
 
 if __name__ == "__main__":
     unittest.main()

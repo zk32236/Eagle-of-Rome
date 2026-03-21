@@ -470,6 +470,12 @@ class SenateCommand(Command):
             print(f"       B{idx:02d} {war['name']}（威胁等级 {war['threat_level']}）")
             idx += 1
 
+        # 新增：进行中的外国战争（接管选项）
+        for war in data.get("active_foreign_wars", []):
+            proposals_map[f"B{idx:02d}"] = ("takeover", {"war_id": war["war_id"]})
+            print(f"       B{idx:02d} 接管 {war['name']}（进行中）")
+            idx += 1
+
         # 停战草案
         for peace in data.get("pending_peace_treaties", []):
             proposals_map[f"B{idx:02d}"] = ("peace", {"war_id": peace["war_id"]})
@@ -582,7 +588,6 @@ class SenateCommand(Command):
                 except ValueError:
                     print("❌ 修改预算必须是数字，忽略该参数", file=sys.stderr)
 
-
         elif proposal_type == "land":
             if len(args) < 2:
                 print("❌ 土地法案需要指定百分比（如 0.05 表示 5%）", file=sys.stderr)
@@ -600,6 +605,28 @@ class SenateCommand(Command):
             print("❌ 无法获取当前玩家", file=sys.stderr)
             return
 
+        # 特殊处理 takeover：直接执行，不经过 API
+        if proposal_type == "takeover":
+            if len(args) < 2:
+                print("❌ 接管战争需要指定增援军团数量", file=sys.stderr)
+                return
+            try:
+                additional_legions = int(args[1])
+            except ValueError:
+                print("❌ 军团数量必须是数字", file=sys.stderr)
+                return
+
+            war_id = kwargs["war_id"]
+            # 执行接管
+            success = self._execute_war_takeover_manual(war_id, player_id, additional_legions)
+            if success:
+                # 注意：实际征召数量在 _execute_war_takeover_manual 内部打印，无需额外打印
+                # print(f"✅ 已接管战争，增援 {additional_legions} 个军团")
+                pass
+            else:
+                print(f"❌ 接管失败，请检查战争状态或权限", file=sys.stderr)
+            return
+
         # 调用 API
         from src.api import senate_api
         result = senate_api.propose(self.state, player_id, proposal_type, **kwargs)
@@ -612,6 +639,92 @@ class SenateCommand(Command):
         """获取当前玩家ID（直接使用游戏状态中的当前玩家）"""
         player = self.state.get_current_player()
         return player.player_id if player else None
+
+    def _execute_war_takeover_manual(self, war_id: str, player_id: str, additional_legions: int) -> bool:
+        """手动执行战争接管：执政官接管外国战争并增派军团"""
+        player = self.state.get_player(player_id)
+        if not player:
+            return False
+        faction = self.state.get_faction(player.faction_id)
+        if not faction:
+            return False
+        # 获取执政官人物
+        consul = None
+        for member in faction.get_members(self.state):
+            if member.office == "consul" and not member.is_dead and not member.is_absent:
+                consul = member
+                break
+        if not consul:
+            print("❌ 您没有在罗马的执政官可以出征", file=sys.stderr)
+            return False
+
+        ws = self.state.get_war_system()
+        war = ws.get_war_by_id(war_id) if ws else None
+        if not war:
+            print("❌ 战争不存在", file=sys.stderr)
+            return False
+        if war.rebellion_province_id is not None:
+            print("❌ 起义战争应由总督自动接管，不能由执政官接管", file=sys.stderr)
+            return False
+        if war.status != WarStatus.ACTIVE:
+            print(f"❌ 战争 {war.name} 状态为 {war.status}，无法接管", file=sys.stderr)
+            return False
+        if war.commander_id is not None:
+            # 已有指挥官，但可能为其他执政官或前执政官
+            print(f"⚠️ 战争已有指挥官，执政官将接管并增派军团", file=sys.stderr)
+
+        # 执行接管
+        # 1. 设置指挥官
+        old_commander = self.state.get_member(war.commander_id) if war.commander_id else None
+        war.commander_id = consul.id
+        consul.is_absent = True
+
+        # 2. 增派军团
+        ms = self.state.get_military_system()
+        if not ms:
+            print("❌ 军事系统不可用", file=sys.stderr)
+            return False
+
+        # 获取可用军团
+        available = ms.get_available_legions()
+        if not available:
+            print("❌ 没有可用军团", file=sys.stderr)
+            return False
+
+        recruit_count = min(additional_legions, len(available))
+        if recruit_count == 0:
+            print("❌ 无法征召军团", file=sys.stderr)
+            return False
+        print(f"✅ 已接管战争，增援 {recruit_count} 个军团")
+
+        results = ms.recruit_multiple(recruit_count)
+        recruited_numbers = [r[0] for r in results if r[1]]
+        if not recruited_numbers:
+            print("❌ 军团征召失败", file=sys.stderr)
+            return False
+
+        # 指派军团到战争（不覆盖已有军团）
+        assigned, msg = ms.assign_to_war(recruited_numbers, war.id, consul.id)
+        if assigned > 0:
+            for num in recruited_numbers:
+                war.add_legion_number(num)
+            print(f"      {msg}")
+        else:
+            print(f"❌ 军团指派失败: {msg}", file=sys.stderr)
+            return False
+
+        # 如果旧指挥官存在且是 proconsul，将其召回
+        if old_commander and old_commander.office in ("proconsul", "ex-consul") and old_commander.is_absent:
+            old_commander.is_absent = False
+            old_commander.office = "ex-proconsul"
+            print(f"      🔄 原指挥官 {old_commander.name} 返回罗马")
+
+        self.state.log_event(
+            f"执政官 {consul.name} 手动接管战争 {war.name}，增援 {recruit_count} 个军团",
+            level=logging.INFO,
+            extra={"war_id": war.id, "consul_id": consul.id, "legions": recruit_count}
+        )
+        return True
 
     # ==================== 新增：MVP 0.7-4 行省起义镇压 ====================
     def _assign_rebellion_commanders(self):
