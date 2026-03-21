@@ -132,13 +132,11 @@ def get_senate_initial_info(state: GameState) -> dict:
         return api_response(False, f"获取信息失败: {e}", errors=[str(e)])
 
 
-def propose(state: GameState, player_id: str, proposal_type: str, **kwargs) -> dict:
-    """
-    记录一个提案。
-    """
+def propose(state: GameState, player_id: str, proposal_type: str, bypass_turn_check: bool = False, **kwargs) -> dict:
+
     if not state:
         return api_response(False, "无效的游戏状态")
-    if not state.is_current_player(player_id):
+    if not bypass_turn_check and not state.is_current_player(player_id):
         return api_response(False, "当前不是您的回合")
 
     # 检查权限：只有执政官可以提案

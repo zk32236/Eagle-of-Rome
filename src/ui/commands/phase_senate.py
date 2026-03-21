@@ -21,6 +21,7 @@ from src.core.deciders.impl.auto_land_proposal_decider import AutoLandProposalDe
 from src.core.deciders.land_proposal_decider import LandProposalDecider
 from src.core.deciders.tribune_veto_decider import TribuneVetoDecider
 from src.core.deciders.impl.auto_tribune_veto_decider import AutoTribuneVetoDecider
+from src.core.entities.player import PlayerType
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -250,7 +251,7 @@ class SenateCommand(Command):
 
     def _handle_step_1(self):
         if self._auto_mode:
-            # 自动模式：原有逻辑
+            # 全自动模式：原有逻辑
             self._process_war_proposals(self._passed_wars)
             peace_proposals = self._process_peace_proposals(TerminologyService.get())
             self._process_governor_appointments(TerminologyService.get())
@@ -261,45 +262,100 @@ class SenateCommand(Command):
                 self.passed_peace_treaties = self._vote_on_peace_proposals(peace_proposals)
                 for war in self.passed_peace_treaties:
                     print(f"  - {war.name}")
-            if self._auto_mode:
-                self._handle_next([])
-
+            self._handle_next([])
         else:
-            # 手动模式：获取当前玩家
-            player = self.state.get_current_player()
-            if not player:
-                print("⚠️ 无法获取当前玩家", file=sys.stderr)
+            # 正常模式：获取执政官人物及其所属玩家
+            consul_figure = None
+            for member in self.state.get_living_members():
+                if member.office == "consul" and not member.is_absent:
+                    consul_figure = member
+                    break
+
+            if not consul_figure:
+                print("⚠️ 没有执政官，无法进行提案", file=sys.stderr)
                 self._handle_next([])
                 return
 
-            # 先处理停战草案（自动投票）
-            peace_proposals = self._process_peace_proposals(TerminologyService.get())
-            if peace_proposals:
-                self.passed_peace_treaties = self._vote_on_peace_proposals(peace_proposals)
-                for war in self.passed_peace_treaties:
-                    print(f"  - {war.name}")
+            consul_player = self.state.get_player_by_faction(consul_figure.faction_id)
+            if not consul_player:
+                print("⚠️ 执政官无对应玩家", file=sys.stderr)
+                self._handle_next([])
+                return
 
-            # 显示可选提案列表并进入交互循环
-            self._print_proposal_options()
-            while True:
-                print("\n> 请输入操作(CONSUL): ", end="", flush=True)
-                cmd_input = input().strip()
-                if not cmd_input:
-                    continue
-                parts = cmd_input.split()
-                cmd = parts[0].lower()
-                if cmd in ("next", "n"):
-                    self._handle_next([])
-                    break
-                elif cmd == "propose":
-                    self._handle_propose(parts[1:])
-                else:
-                    print("未知命令，支持 propose 和 next", file=sys.stderr)
-                    sys.stderr.flush()
+            self._current_consul_player_id = consul_player.player_id
+
+            bypass = self.state.config.get("testing.bypass_player_check", False)
+            if bypass or consul_player.player_type == PlayerType.HUMAN:
+                # 人类玩家：手动交互
+                # 先处理停战草案（自动投票）
+                peace_proposals = self._process_peace_proposals(TerminologyService.get())
+                if peace_proposals:
+                    self.passed_peace_treaties = self._vote_on_peace_proposals(peace_proposals)
+                    for war in self.passed_peace_treaties:
+                        print(f"  - {war.name}")
+
+                # 显示可选提案列表
+                self._print_proposal_options()
+
+                while True:
+                    print("\n> 请输入操作(CONSUL): ", end="", flush=True)
+                    cmd_input = input().strip()
+                    if not cmd_input:
+                        continue
+                    parts = cmd_input.split()
+                    cmd = parts[0].lower()
+                    if cmd in ("next", "n"):
+                        # 玩家结束提案，将手动提案转换为自动变量
+                        self._convert_manual_proposals_to_auto()
+                        self._handle_next([])
+                        break
+                    elif cmd == "propose":
+                        self._handle_propose(parts[1:])
+                    else:
+                        print("未知命令，支持 propose 和 next", file=sys.stderr)
+                        sys.stderr.flush()
+            else:
+                # AI 玩家：自动提案
+                self.state.log_event(
+                    f"AI玩家 {consul_player.player_id} 进入自动提案环节",
+                    level=logging.INFO,
+                    extra={"player_id": consul_player.player_id}
+                )
+                self._process_war_proposals(self._passed_wars)
+                peace_proposals = self._process_peace_proposals(TerminologyService.get())
+                self._process_governor_appointments(TerminologyService.get())
+                self._process_budget_proposals(TerminologyService.get(), self._passed_contracts)
+                self._process_land_proposals(TerminologyService.get(), self._passed_land_acts)
+
+                if peace_proposals:
+                    self.passed_peace_treaties = self._vote_on_peace_proposals(peace_proposals)
+                    for war in self.passed_peace_treaties:
+                        print(f"  - {war.name}")
+
+                self._handle_next([])
 
     def _handle_step_2(self):
-        # 表决环节（现有逻辑中无单独表决，直接跳过）
-        #if self._auto_mode:
+        # 投票环节：对已有提案进行自动投票
+        # 1. 宣战投票
+        self._process_war_proposals(self._passed_wars)  # 注意：此处 _passed_wars 在手动模式下可能为空，需从 _senate_pending 转换
+        # 2. 停战草案投票
+        peace_proposals = self._process_peace_proposals(TerminologyService.get())
+        if peace_proposals:
+            self.passed_peace_treaties = self._vote_on_peace_proposals(peace_proposals)
+            for war in self.passed_peace_treaties:
+                print(f"  - {war.name}")
+        # 3. 总督任命（已自动生成，无需投票）
+        self._process_governor_appointments(TerminologyService.get())
+        # 4. 预算合同投票
+        self._process_budget_proposals(TerminologyService.get(), self._passed_contracts)
+        # 5. 土地法案投票
+        self._process_land_proposals(TerminologyService.get(), self._passed_land_acts)
+
+        # 推进到下一步
+        self._handle_next([])
+
+    def _handle_step_3(self):
+        # 公示环节：输出投票结果（已在上面步骤中打印，可空）
         self._handle_next([])
 
     def _handle_step_3(self):
@@ -501,7 +557,10 @@ class SenateCommand(Command):
         # 待审批合同
         for contract in data.get("pending_contracts", []):
             proposals_map[f"B{idx:02d}"] = ("budget", {"contract_id": contract["contract_id"]})
-            print(f"       B{idx:02d} {contract['name']} 预算案")
+            if contract["type"] == "tax_farming":
+                print(f"       B{idx:02d} {contract['name']} 税额案 {contract['expected_profit']}T")
+            else:
+                print(f"       B{idx:02d} {contract['name']} 预算案 {contract['base_cost']}T")
             idx += 1
 
         # 土地法案
@@ -617,10 +676,13 @@ class SenateCommand(Command):
             kwargs["percent"] = percent
 
         # 获取当前玩家
-        player_id = self._get_current_player_id()
-        if not player_id:
-            print("❌ 无法获取当前玩家", file=sys.stderr)
-            return
+        if hasattr(self, "_current_consul_player_id") and self._current_consul_player_id:
+            player_id = self._current_consul_player_id
+        else:
+            player_id = self._get_current_player_id()
+            if not player_id:
+                print("❌ 无法获取当前玩家", file=sys.stderr)
+                return
 
         # 特殊处理 takeover：直接执行，不经过 API
         if proposal_type == "takeover":
@@ -646,7 +708,7 @@ class SenateCommand(Command):
 
         # 调用 API
         from src.api import senate_api
-        result = senate_api.propose(self.state, player_id, proposal_type, **kwargs)
+        result = senate_api.propose(self.state, player_id, proposal_type, bypass_turn_check=True, **kwargs)
         if result["success"]:
             description = self._generate_proposal_description(proposal_type, kwargs)
             print(f"✅ {description}")
@@ -785,6 +847,26 @@ class SenateCommand(Command):
             return f"接管 {war_name}，增援 {legions} 个军团"
         else:
             return "提案已记录"
+
+    def _convert_manual_proposals_to_auto(self):
+        """将手动提案转换为自动变量，供后续步骤使用"""
+        proposals = self.state.get_senate_proposals()
+        for prop in proposals:
+            if prop["type"] == "war":
+                war = self.state.get_war_system().get_war_by_id(prop["war_id"])
+                if war:
+                    self._passed_wars.append((war, prop["consul_id"], prop["legions"]))
+            elif prop["type"] == "budget":
+                contract = self.state.get_contract(prop["contract_id"])
+                if contract:
+                    self._passed_contracts.append(contract)
+            elif prop["type"] == "land":
+                self._passed_land_acts.append({
+                    "type": prop["act_type"],
+                    "percent": prop["percent"],
+                    "description": self._get_land_act_description(prop["act_type"], prop["percent"])
+                })
+            # 其他类型（peace, governor, takeover）暂不处理，因为当前自动模式中已自动生成
 
     # ==================== 新增：MVP 0.7-4 行省起义镇压 ====================
     def _assign_rebellion_commanders(self):

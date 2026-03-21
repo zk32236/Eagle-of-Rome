@@ -953,6 +953,11 @@ class TestManualTakeover(unittest.TestCase):
         self.state.mark_phase_executed("population")
         self.state._treasury = 1000
 
+        # 确保手动模式配置
+        if "testing" not in self.state.config._config:
+            self.state.config._config["testing"] = {}
+        self.state.config._config["testing"]["auto_senate"] = False
+
         # 初始化战争和军事系统
         self.state._war_system = WarSystem(self.state)
         self.state._military_system = MilitarySystem(self.state)
@@ -975,8 +980,9 @@ class TestManualTakeover(unittest.TestCase):
         self.state.add_member(self.senator)
         self.faction.member_ids.append(2)
 
-        # 设置玩家
-        self.player = Player("player1", "optimates", "human")
+        # 设置玩家（使用枚举）
+        from src.core.entities.player import PlayerType
+        self.player = Player("player1", "optimates", PlayerType.HUMAN)
         self.state.add_player(self.player)
         self.state.set_current_player("player1")
         self.state.set_turn_order(["player1"])
@@ -993,7 +999,6 @@ class TestManualTakeover(unittest.TestCase):
         )
         self.war.status = WarStatus.ACTIVE
         self.state._war_system._active_wars.append(self.war)
-        # 初始化海军系统
 
 
     @patch('builtins.input')
@@ -1109,7 +1114,7 @@ class TestManualTakeover(unittest.TestCase):
             output = out.getvalue()
             error = err.getvalue()
         self.assertTrue(result)
-        self.assertIn("❌ 您没有在罗马的执政官可以出征", output + error)
+        self.assertIn("没有执政官，无法进行提案", output + error)
         war = self.state.get_war_system().get_war_by_id("foreign_war")
         self.assertIsNone(war.commander_id)
 
