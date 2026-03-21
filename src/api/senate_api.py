@@ -55,6 +55,19 @@ def get_senate_initial_info(state: GameState) -> dict:
                 "office": presiding.office or "无"
             }
 
+        # 获取活跃外国战争（非起义战争）
+        ws = state.get_war_system()
+        active_foreign_wars = []
+        if ws:
+            for war in ws.get_active_wars():
+                # 起义战争有 rebellion_province_id 字段，且应由总督自动接管，不显示在元老院
+                if war.rebellion_province_id is None:
+                    active_foreign_wars.append({
+                        "war_id": war.id,
+                        "name": war.name,
+                        "status": "active"
+                    })
+
         # 战争威胁
         ws = state.get_war_system()
         war_threats = []
@@ -105,6 +118,7 @@ def get_senate_initial_info(state: GameState) -> dict:
         return api_response(True, "", {
             "faction_leaders": faction_leaders,
             "presiding_officer": presiding_info,
+            "active_foreign_wars": active_foreign_wars,
             "war_threats": war_threats,
             "pending_peace_treaties": pending_peace,
             "governor_vacancies": {
