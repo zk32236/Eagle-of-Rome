@@ -106,7 +106,8 @@
       "nobile": 0.5,
       "eques": 0.3,
       "plebeian": 0.2
-    }
+    },
+    "enable_private_land_trade": false
   },
   "mortality_rules": {
     "death_count": 1,

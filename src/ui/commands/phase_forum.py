@@ -750,7 +750,7 @@ class ForumCommand(Command):
         print("\n############################################################")
         print(f" UI_03-4 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 广场阶段 [3/7]")
         print("\n############################################################")
-        print("\n--- 步骤说明 ---")
+        print("\n--- 步骤说明(未开放功能) ---")
         print("贵族有土地，骑士有金钱，土地是地位的象征，而金钱是权力的保证，没有比土地")
         print("交易更适合罗马城里权钱交易的游戏了。所有的土地交易都必须通过政府注册，因此")
         print("这将成为有据可查的反腐利器！")
@@ -958,6 +958,11 @@ class ForumCommand(Command):
         return result["success"]
 
     def _handle_transact(self, args: List[str]) -> bool:
+        enable_private_trade = self.state.config.get("forum_rules.enable_private_land_trade", False)
+        if not enable_private_trade:
+            print("⚠️ 私地交易功能暂未开放", file=sys.stderr)
+            sys.stderr.flush()
+            return False
         if len(args) != 4:
             print(i18n.get("error_usage_transact"), file=sys.stderr)
             sys.stderr.flush()
@@ -1086,17 +1091,26 @@ class ForumCommand(Command):
                 print(i18n.get("info_next_player", player=next_player_id, faction=faction.name if faction else "无"),
                       flush=True)
             else:
-                self._step += 1
-                self._players = self._get_step_players()
-                self._current_player_index = 0
-                if self._step == 2:
-                    print("\n--- 进入市场环节 ---", flush=True)
-                elif self._step == 3:
-                    print("\n--- 进入公示环节 ---", flush=True)
-                elif self._step == 4:
-                    print("\n--- 进入私地交易环节 ---", flush=True)
-                elif self._step == 5:
+                # 检查是否启用私地交易环节
+                enable_private_trade = self.state.config.get("forum_rules.enable_private_land_trade", False)
+                if self._step == 3 and not enable_private_trade:
+                    # 跳过步骤4，直接完成
+                    self._step = 5
+                    self._players = []
+                    self._current_player_index = 0
                     print("\n--- 广场阶段完成 ---", flush=True)
+                else:
+                    self._step += 1
+                    self._players = self._get_step_players()
+                    self._current_player_index = 0
+                    if self._step == 2:
+                        print("\n--- 进入市场环节 ---", flush=True)
+                    elif self._step == 3:
+                        print("\n--- 进入公示环节 ---", flush=True)
+                    elif self._step == 4:
+                        print("\n--- 进入私地交易环节 ---", flush=True)
+                    elif self._step == 5:
+                        print("\n--- 广场阶段完成 ---", flush=True)
         elif self._step == 4:
             self._step = 5
             self._players = []
@@ -1317,6 +1331,14 @@ class ForumCommand(Command):
         if not self._resolution_done:
             self._do_resolution()
             self._resolution_done = True
+
+        # 获取配置开关
+        enable_private_trade = self.state.config.get("forum_rules.enable_private_land_trade", False)
+
+        # 如果私地交易被禁用，直接跳过
+        if not enable_private_trade:
+            self._handle_next([])
+            return
 
         if self._auto_mode:
             self._handle_next([])

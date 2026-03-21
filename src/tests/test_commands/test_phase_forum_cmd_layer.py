@@ -200,7 +200,7 @@ class TestForumCommand:
         assert "UI_03-1" in output
         assert "UI_03-2" in output
         assert "UI_03-3" in output
-        assert "UI_03-4" in output
+        # 步骤4已屏蔽，不再检查 UI_03-4
         assert "广场阶段完成" in output
 
     def test_generate_figures(self, test_state, mock_deciders):
@@ -494,6 +494,7 @@ class TestForumCommand:
 
     def test_auto_land_trade_success(self, test_state, mock_deciders):
         """自动土地交易成功执行"""
+        test_state.config._config["forum_rules"]["enable_private_land_trade"] = True
         test_state.config._config["testing"] = {"auto_forum": True, "bypass_player_check": False}
         retirement, recruitment, bid, land_trade, triumph = mock_deciders
         land_trade.decide_trade.return_value = (2, 4, 3)
@@ -526,6 +527,7 @@ class TestForumCommand:
 
     def test_auto_land_trade_failure(self, test_state, mock_deciders):
         """自动土地交易失败（买方财富不足）"""
+        test_state.config._config["forum_rules"]["enable_private_land_trade"] = True
         test_state.config._config["testing"] = {"auto_forum": True, "bypass_player_check": False}
         retirement, recruitment, bid, land_trade, triumph = mock_deciders
         land_trade.decide_trade.return_value = (2, 4, 3)
@@ -557,6 +559,7 @@ class TestForumCommand:
 
     def test_auto_land_trade_no_opportunity(self, test_state, mock_deciders):
         """无交易机会时跳过"""
+        test_state.config._config["forum_rules"]["enable_private_land_trade"] = True
         test_state.config._config["testing"] = {"auto_forum": True, "bypass_player_check": False}
         retirement, recruitment, bid, land_trade, triumph = mock_deciders
         land_trade.decide_trade.return_value = None

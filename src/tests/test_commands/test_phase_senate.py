@@ -554,5 +554,390 @@ class TestTribuneVeto(unittest.TestCase):
         self.assertIn(war, ws.get_active_wars())
         self.assertEqual(contract.status, ContractStatus.BUDGETED)
 
+# ==================== 任务1：补充测试用例 ====================
+class TestSenateEdgeCases(unittest.TestCase):
+    """元老院阶段边界情况及未覆盖场景测试"""
+
+    def setUp(self):
+        """每个测试前创建干净状态，并初始化所有必要系统"""
+        self.state = GameState.create_for_testing({})
+        self.state.turn = GameTurn(turn_number=1, year=-264)
+        self.state.mark_phase_executed("population")
+
+        # 初始化战争系统
+        from src.core.systems.war_system import WarSystem
+        self.state._war_system = WarSystem(self.state)
+        self.state._war_system._threats = []
+        self.state._war_system._active_wars = []
+        self.state._war_system._truce_wars = []
+        self.state._war_system._war_deck = []
+        self.state._war_system._war_discard = []
+        self.state._war_system._legions_to_disband = []
+
+        # 初始化军事系统
+        from src.core.systems.military_system import MilitarySystem
+        self.state._military_system = MilitarySystem(self.state)
+
+        # 初始化海军系统（避免后续扩展出错）
+        from src.core.systems.naval_system import NavalSystem
+        self.state._naval_system = NavalSystem(self.state)
+
+        # 确保国库充足（避免自动否决）
+        self.state._treasury = 500
+
+        # 创建派系
+        self.faction1 = Faction(id="senate", name="元老院派", treasury=50)
+        self.faction2 = Faction(id="populares", name="平民派", treasury=30)
+        self.state.add_faction(self.faction1)
+        self.state.add_faction(self.faction2)
+
+        # 创建元老（有影响力）
+        self.senator1 = Figure(id=101, name="元老1", faction_id="senate", age=50)
+        self.senator1.influence = 100
+        self.senator1.class_tier = ClassTier.NOBILE
+        self.state.add_member(self.senator1)
+        self.faction1.member_ids.append(101)
+
+        self.senator2 = Figure(id=102, name="元老2", faction_id="populares", age=45)
+        self.senator2.influence = 80
+        self.senator2.class_tier = ClassTier.NOBILE
+        self.state.add_member(self.senator2)
+        self.faction2.member_ids.append(102)
+
+        # 执政官
+        self.consul = Figure(id=201, name="执政官", faction_id="senate", age=42)
+        self.consul.office = "consul"
+        self.state.add_member(self.consul)
+        self.state.turn.leader_ids = [201]
+
+        # 模拟投票决策器（默认支持）
+        self.mock_vote_decider = MagicMock()
+        self.mock_vote_decider.decide_vote.return_value = True
+
+        # 模拟土地法案决策器（默认不生成提案）
+        self.mock_land_decider = MagicMock()
+        self.mock_land_decider.decide_proposal.return_value = None
+
+        # 模拟预算决策器（默认不生成合同）
+        self.mock_budget_decider = MagicMock()
+        self.mock_budget_decider.decide_proposals.return_value = []
+
+        # 模拟保民官否决器（默认不否决）
+        self.mock_veto_decider = MagicMock()
+        self.mock_veto_decider.decide_veto.return_value = False
+
+        # 测试配置：确保宣战提案总是提出
+        self.state.config._config["testing"] = {
+            "propose_war_chance": 1.0,
+            "always_declare": True,
+            "min_legions": 4,
+            "max_legions": 8
+        }
+
+    # ==================== 辅助方法 ====================
+    def _create_threat_war(self, war_id="test_war", name="测试战争", naval_required=False):
+        """创建威胁状态的战争"""
+        # 使用正确的构造函数（根据 war_system.py 中的用法）
+        from src.core.entities.war import War, WarType
+        war = War(
+            id=war_id,
+            name=name,
+            war_type=WarType.FOREIGN,
+            strength=5,
+            naval_required=naval_required
+        )
+        war.status = WarStatus.THREAT
+        war._threat_level = 2
+        ws = self.state.get_war_system()
+        ws._threats.append(war)
+        return war
+
+    def _create_truce_war_with_pending_treaty(self, war_id="truce_war", name="停战战争"):
+        """创建停战状态且含有待决草案的战争"""
+        from src.core.entities.war import War, WarType
+        war = War(
+            id=war_id,
+            name=name,
+            war_type=WarType.FOREIGN,
+            strength=5
+        )
+        war.status = WarStatus.TRUCE
+        # 使用 set_peace_treaty 方法设置草案
+        treaty = {
+            "indemnity": 100,
+            "duration": 3,
+            "status": "pending",
+            "generated_turn": 1
+        }
+        war.set_peace_treaty(treaty)
+        ws = self.state.get_war_system()
+        ws._truce_wars.append(war)
+        return war
+
+    def _create_pending_contract(self, contract_id=1, name="测试合同"):
+        """创建待决合同"""
+        contract = Contract(
+            id=contract_id,
+            contract_type=ContractType.PUBLIC_WORKS,
+            name=name,
+            base_cost=50,
+            expected_profit=20,
+            status=ContractStatus.PENDING
+        )
+        self.state._contracts_dict[contract.id] = contract
+        return contract
+
+    # ==================== 宣战被否决 ====================
+    def test_war_proposal_rejected(self):
+        """测试宣战提案被元老院否决，战争保持威胁状态"""
+        # 让执政官出征，使其影响力不计入
+        self.consul.is_absent = True
+        # 将执政官派系的其他成员移出，避免自动支持
+        # 将 senator1 从 senate 派系移除，添加到 populares
+        self.faction1.member_ids.remove(101)
+        self.senator1.faction_id = "populares"
+        self.faction2.member_ids.append(101)
+        # 确保所有派系投票反对
+        self.mock_vote_decider.decide_vote.return_value = False
+
+        war = self._create_threat_war()
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[],
+            veto_decider=self.mock_veto_decider
+        )
+        cmd.budget_decider = self.mock_budget_decider
+        cmd.execute([])
+
+        ws = self.state.get_war_system()
+        # 战争仍为威胁状态
+        self.assertIn(war, ws._threats)
+        self.assertNotIn(war, ws._active_wars)
+        self.assertEqual(war.status, WarStatus.THREAT)
+
+    # ==================== 停战草案通过 ====================
+    def test_peace_treaty_passed(self):
+        """测试停战草案通过：赔款、停战回合、军团待解散标记"""
+        war = self._create_truce_war_with_pending_treaty()
+
+        # 模拟投票支持
+        self.mock_vote_decider.decide_vote.return_value = True
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[],
+            veto_decider=self.mock_veto_decider
+        )
+        cmd.budget_decider = self.mock_budget_decider
+        cmd.execute([])
+
+        ws = self.state.get_war_system()
+        # 检查草案状态变为 approved
+        self.assertEqual(war.peace_treaty["status"], "approved")
+        # 检查赔款设置
+        self.assertEqual(war.indemnity_due, 100)
+        # 检查停战结束回合（当前回合1 + 3 = 4）
+        self.assertEqual(war.truce_end_turn, 4)
+        # 检查军团待解散标记（由于没有实际军团，列表为空）
+        self.assertEqual(ws._legions_to_disband, [])
+
+    # ==================== 停战草案被否决 ====================
+    def test_peace_treaty_rejected(self):
+        """测试停战草案被元老院否决：战争恢复活跃，草案清除"""
+        war = self._create_truce_war_with_pending_treaty()
+
+        # 修改投票决策器：所有派系反对
+        self.mock_vote_decider.decide_vote.return_value = False
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[],
+            veto_decider=self.mock_veto_decider
+        )
+        cmd.budget_decider = self.mock_budget_decider
+        cmd.execute([])
+
+        ws = self.state.get_war_system()
+        # 战争应被移回活跃列表
+        self.assertIn(war, ws._active_wars)
+        self.assertNotIn(war, ws._truce_wars)
+        self.assertEqual(war.status, WarStatus.ACTIVE)
+        # 草案应被清除
+        self.assertIsNone(war.peace_treaty)
+
+    # ==================== 预算合同被否决 ====================
+    def test_budget_contract_rejected(self):
+        """测试预算合同被元老院否决，状态保持 PENDING"""
+        contract = self._create_pending_contract()
+
+        # 预算决策器返回该合同
+        self.mock_budget_decider.decide_proposals.return_value = [contract]
+        # 投票决策器反对
+        self.mock_vote_decider.decide_vote.return_value = False
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[],
+            veto_decider=self.mock_veto_decider
+        )
+        cmd.budget_decider = self.mock_budget_decider
+        cmd.execute([])
+
+        self.assertEqual(contract.status, ContractStatus.PENDING)
+
+    # ==================== 卖地法案通过 ====================
+    def test_land_sale_act_passed(self):
+        """测试卖地法案通过后，pending_land_sale_quota 设置正确"""
+        # 配置土地法案决策器：只在 populares 派系返回提案
+        self.mock_land_decider.decide_proposal.side_effect = (
+            lambda faction_id, state: ("sale", 0.05) if faction_id == "populares" else None
+        )
+        self.state._national_public_land = 1000
+        self.state.config._config["political_rules"] = {
+            "land_proposal": {"submit_chance": 1.0}
+        }
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[self.mock_land_decider],
+            veto_decider=self.mock_veto_decider
+        )
+        cmd.budget_decider = self.mock_budget_decider
+        cmd.execute([])
+
+        self.assertEqual(self.state.pending_land_sale_quota, 50)  # 1000 * 0.05 = 50
+
+    # ==================== 分地法案通过 ====================
+    def test_land_distribution_act_passed(self):
+        """测试分地法案通过后，法案存入 _pending_land_acts"""
+        # 配置土地法案决策器：只在 populares 派系返回提案
+        self.mock_land_decider.decide_proposal.side_effect = (
+            lambda faction_id, state: ("distribution", 0.05) if faction_id == "populares" else None
+        )
+        self.state._national_public_land = 1000
+        self.state.config._config["political_rules"] = {
+            "land_proposal": {"submit_chance": 1.0}
+        }
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[self.mock_land_decider],
+            veto_decider=self.mock_veto_decider
+        )
+        cmd.budget_decider = self.mock_budget_decider
+        cmd.execute([])
+
+        acts = self.state.get_pending_land_acts()
+        self.assertEqual(len(acts), 1)
+        self.assertEqual(acts[0]["type"], "distribution")
+        self.assertEqual(acts[0]["amount"], 50)  # 1000 * 0.05 = 50
+
+    # ==================== 无提案 ====================
+    def test_no_proposals(self):
+        """测试没有任何提案时，阶段正常执行"""
+        self.mock_land_decider.decide_proposal.return_value = None
+        self.mock_budget_decider.decide_proposals.return_value = []
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[self.mock_land_decider],
+            veto_decider=self.mock_veto_decider
+        )
+        cmd.budget_decider = self.mock_budget_decider
+
+        result = cmd.execute([])
+        self.assertTrue(result)
+
+    # ==================== 无元老在场 ====================
+    def test_no_senators_present(self):
+        """测试所有元老缺席（影响力为0）时，所有提案不通过"""
+        # 将所有元老设置为缺席
+        self.senator1.is_absent = True
+        self.senator2.is_absent = True
+        # 执政官出征，不计影响力
+        self.consul.is_absent = True
+
+        # 创建宣战提案
+        war = self._create_threat_war()
+        # 创建停战提案
+        truce_war = self._create_truce_war_with_pending_treaty()
+        # 创建合同提案
+        contract = self._create_pending_contract()
+        self.mock_budget_decider.decide_proposals.return_value = [contract]
+        # 土地法案决策器返回提案（只在 populares 派系返回）
+        self.mock_land_decider.decide_proposal.side_effect = (
+            lambda faction_id, state: ("sale", 0.05) if faction_id == "populares" else None
+        )
+        self.state._national_public_land = 1000
+        self.state.config._config["political_rules"] = {
+            "land_proposal": {"submit_chance": 1.0}
+        }
+
+        # 投票决策器即使返回支持，但由于总影响力为0，算法会跳过投票
+        self.mock_vote_decider.decide_vote.return_value = True
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[self.mock_land_decider],
+            veto_decider=self.mock_veto_decider
+        )
+        cmd.budget_decider = self.mock_budget_decider
+        cmd.execute([])
+
+        ws = self.state.get_war_system()
+        # 宣战提案未通过：战争仍在威胁列表
+        self.assertIn(war, ws._threats)
+        self.assertNotIn(war, ws._active_wars)
+
+        # 停战草案未通过：战争仍在停战列表（草案未执行）
+        self.assertIn(truce_war, ws._truce_wars)
+
+        # 合同未通过：状态保持 PENDING
+        self.assertEqual(contract.status, ContractStatus.PENDING)
+
+        # 土地法案未通过：无待执行法案
+        self.assertEqual(self.state.pending_land_sale_quota, 0)
+        self.assertEqual(len(self.state.get_pending_land_acts()), 0)
+
+    # ==================== 投票平局 ====================
+    def test_tie_vote(self):
+        """测试支持率 = 50% 时，提案不通过（边界条件）"""
+        war = self._create_threat_war()
+
+        # 控制投票：让两个派系影响力相等，一个支持一个反对
+        self.senator1.influence = 100
+        self.senator2.influence = 100
+
+        # 定义投票决策器：senate 支持，populares 反对
+        def vote_side(issue, faction, state):
+            if faction.id == "senate":
+                return True
+            else:
+                return False
+        self.mock_vote_decider.decide_vote.side_effect = vote_side
+
+        cmd = SenateCommand(
+            self.state,
+            vote_decider=self.mock_vote_decider,
+            land_proposal_deciders=[],
+            veto_decider=self.mock_veto_decider
+        )
+        cmd.budget_decider = self.mock_budget_decider
+        cmd.execute([])
+
+        ws = self.state.get_war_system()
+        # 支持率 50% 应不通过，战争仍为威胁
+        self.assertIn(war, ws._threats)
+        self.assertNotIn(war, ws._active_wars)
+
 if __name__ == "__main__":
     unittest.main()
