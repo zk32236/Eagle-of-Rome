@@ -52,8 +52,20 @@ class SenateCommand(Command):
         self.passed_peace_treaties = []  # 存储通过的停战草案
         self.rejected_peace_treaties = []  # 存储被否决的停战草案（待恢复战争）
 
-    def execute(self, args: List[str]) -> bool:
+        # 状态机变量
+        self._step = 0
+        self._current_player_index = 0
+        self._players = []
+        self._auto_mode = state.config.get("testing.auto_senate", True)
 
+        # 步骤间传递的临时数据
+        self._passed_wars = []
+        self._passed_contracts = []
+        self._passed_land_acts = []
+        self._peace_proposals = []
+
+    def execute(self, args: List[str]) -> bool:
+        # 原有前置检查（是否已执行、是否先执行人口阶段等）保持不变
         if not self.state.is_phase_executed("population"):
             print("⚠️ 必须先执行人口阶段 (population)")
             return False
@@ -65,77 +77,103 @@ class SenateCommand(Command):
         terms = TerminologyService.get()
         print(f"\n--- {terms.phase_senate} Phase (Year {abs(self.state.turn.year)} BC) ---")
 
-        # ========== 1. 更新派系领袖 ==========
+        # 初始化状态机
+        self._step = 0
+        self._players = self._get_step_players()
+        self._current_player_index = 0
+        # 重置临时数据
+        self._passed_wars = []
+        self._passed_contracts = []
+        self._passed_land_acts = []
+        self._peace_proposals = []
+
+        # 状态机主循环
+        while self._step <= 5:
+            if self._step == 0:
+                self._handle_step_0()
+            elif self._step == 1:
+                self._handle_step_1()
+            elif self._step == 2:
+                self._handle_step_2()
+            elif self._step == 3:
+                self._handle_step_3()
+            elif self._step == 4:
+                self._handle_step_4()
+            elif self._step == 5:
+                self._handle_step_5()
+
+        self.state.mark_phase_executed("senate")
+        return True
+
+    # =================================== MVP 0.7 =============================================
+
+    # ==================== 新增：MVP0.7-11 ====================
+    def _handle_step_0(self):
         print(f"\n   👑 Faction Leaders Updated:")
         for faction in self.state.factions.values():
             leader = faction.update_faction_leader(self.state)
             if leader:
                 print(f"      {faction.name}: {leader.name} (Influence: {leader.influence})")
 
-        # ========== 2. 主持人确定 ==========
         presiding = self.state.get_presiding_officer()
         if not presiding:
             self.state.log_event("Error: No presiding officer!")
-            return False
-        office_display = presiding.office if presiding.office else "无"
-        print(f"\n   🎤 Presiding Officer: {presiding.name} ({office_display})")
+            print("   ⚠️ 无主持人，元老院无法正常运作。")
+        else:
+            office_display = presiding.office if presiding.office else "无"
+            print(f"\n   🎤 Presiding Officer: {presiding.name} ({office_display})")
 
-        # ========== 3. 收集所有通过的提案 ==========
-        # 宣战提案列表：每个元素为 (war, consul_id, legions)
-        passed_wars: List[Tuple["War", int, int]] = []
-        # 通过的合同列表（需要状态变为 BUDGETED）
-        passed_contracts: List["Contract"] = []
-        # 通过的土地法案列表
-        passed_land_acts: List[dict] = []
-        # 通过的行省总督列表
-        self.proposed_governors = []  # 清空之前的提案
-        self.passed_peace_treaties = []  # 清空之前的停战草案
-        self.rejected_peace_treaties = []
+        if self._auto_mode:
+            self._handle_next([])
 
-        # 3.1 宣战提案处理
-        self._process_war_proposals(passed_wars)
+    def _handle_step_1(self):
+        # 原提案收集逻辑全部移入此处
+        # 注意：_process_war_proposals, _process_peace_proposals 等会使用 self._passed_wars 等实例变量
+        self._process_war_proposals(self._passed_wars)
+        peace_proposals = self._process_peace_proposals(TerminologyService.get())
+        self._process_governor_appointments(TerminologyService.get())
+        self._process_budget_proposals(TerminologyService.get(), self._passed_contracts)
+        self._process_land_proposals(TerminologyService.get(), self._passed_land_acts)
 
-        # 3.2 停战草案处理（收集并自动提交）
-        peace_proposals = self._process_peace_proposals(terms)
-
-        # 3.3 行省总督任命提案
-        self._process_governor_appointments(terms)
-
-        # 3.4 预算审批（合同授权），收集通过的合同
-        self._process_budget_proposals(terms, passed_contracts)
-
-        # 3.5 土地法案，收集通过的提案
-        self._process_land_proposals(terms, passed_land_acts)
-
-        # 3.6 对停战草案进行投票（如果存在）
+        # 停战草案投票（原逻辑）
         if peace_proposals:
             self.passed_peace_treaties = self._vote_on_peace_proposals(peace_proposals)
+            for war in self.passed_peace_treaties:
+                print(f"  - {war.name}")
 
-        for war in self.passed_peace_treaties:
-            print(f"  - {war.name}")
+        # 自动模式直接推进
+        if self._auto_mode:
+            self._handle_next([])
 
-        # ========== 4. 保民官否决 ==========
+    def _handle_step_2(self):
+        # 表决环节（现有逻辑中无单独表决，直接跳过）
+        if self._auto_mode:
+            self._handle_next([])
+
+    def _handle_step_3(self):
+        # 公示环节（现有逻辑中结果已在提案时打印，直接跳过）
+        if self._auto_mode:
+            self._handle_next([])
+
+    def _handle_step_4(self):
         tribune = self._get_tribune()
         if tribune:
             print(f"\n   🛡️ 保民官 {tribune.name} 正在审查通过的提案...")
             # 宣战否决
-            for war in self.passed_peace_treaties:
-                print(f"  - {war.name}")
             new_wars = []
-            for war, consul_id, legions in passed_wars:
+            for war, consul_id, legions in self._passed_wars:
                 if self.veto_decider.decide_veto(war, tribune.id, self.state):
                     print(f"      ❌ 保民官否决了宣战：{war.name}")
                     self.state.log_event(f"保民官否决宣战: {war.name}")
                 else:
                     new_wars.append((war, consul_id, legions))
-            passed_wars = new_wars
+            self._passed_wars = new_wars
 
             # 停战草案否决
             new_peace = []
             for war in self.passed_peace_treaties:
                 issue = {'type': 'peace', 'war_id': war.id, 'treaty': war.peace_treaty}
-                veto_result = self.veto_decider.decide_veto(issue, tribune.id, self.state)  # 修正这里
-
+                veto_result = self.veto_decider.decide_veto(issue, tribune.id, self.state)
                 if veto_result:
                     print(f"      ❌ 保民官否决了 {war.name} 的停战草案")
                     self.state.log_event(f"保民官否决停战草案: {war.name}")
@@ -167,17 +205,17 @@ class SenateCommand(Command):
 
             # 合同否决
             new_contracts = []
-            for contract in passed_contracts:
+            for contract in self._passed_contracts:
                 if self.veto_decider.decide_veto(contract, tribune.id, self.state):
                     print(f"      ❌ 保民官否决了合同：{contract.name}")
                     self.state.log_event(f"保民官否决合同: {contract.name} (ID:{contract.id})")
                 else:
                     new_contracts.append(contract)
-            passed_contracts = new_contracts
+            self._passed_contracts = new_contracts
 
             # 土地法案否决
             new_acts = []
-            for act in passed_land_acts:
+            for act in self._passed_land_acts:
                 if self.veto_decider.decide_veto(act, tribune.id, self.state):
                     act_type = act['type']
                     percent = act['percent']
@@ -186,54 +224,67 @@ class SenateCommand(Command):
                     self.state.log_event(f"保民官否决土地法案: {desc}")
                 else:
                     new_acts.append(act)
-            passed_land_acts = new_acts
+            self._passed_land_acts = new_acts
         else:
             print(f"\n   🛡️ 当前无保民官，不行使否决权")
 
+        if self._auto_mode:
+            self._handle_next([])
 
-        # ========== 5. 执行通过的提案 ==========
-
-        # 5.1 执行宣战
-        for war, consul_id, legions in passed_wars:
+    def _handle_step_5(self):
+        # 原执行逻辑
+        # 5.1 宣战
+        for war, consul_id, legions in self._passed_wars:
             self._execute_war_declaration(war, consul_id, legions)
 
-        # 5.2.1 执行总督任命
+        # 5.2 总督任命
         self._execute_governor_appointments()
+        self._assign_rebellion_commanders()
 
-        # 5.2.2 镇压起义战争接管
-        self._assign_rebellion_commanders()  # 起义战争指派总督
-
-        # 5.3 战争接管处理（与原逻辑一致）
+        # 5.3 战争接管
         self._process_war_takeover()
 
-        # 5.4 执行通过的停战草案
+        # 5.4 停战草案执行
         self._execute_passed_peace_treaties()
 
-        # 5.5 标记合同为 BUDGETED
-        for contract in passed_contracts:
+        # 5.5 合同状态变更
+        for contract in self._passed_contracts:
             contract.status = ContractStatus.BUDGETED
             print(f"      ✅ {contract.name} 预算通过，状态变为 BUDGETED")
             self.state.log_event(f"合同预算通过：{contract.name}")
 
-        # 5.6 存入土地法案
-        for act in passed_land_acts:
+        # 5.6 土地法案存储
+        for act in self._passed_land_acts:
             if act['type'] == 'sale':
-                # 卖地法案：直接设置配额
                 national_land = self.state.get_national_public_land()
                 amount = int(national_land * act['percent'])
                 self.state.set_pending_land_sale_quota(amount)
                 print(f"      ✅ {act['description']} 通过，批准出售 {amount} C 国家公地，待下回合认购。")
             else:
-                # 分地法案：存入待执行列表
                 self.state.add_pending_land_act(act)
-                # 使用 act 中已存储的 amount
                 amount_disp = act.get('amount', 0)
                 print(f"      ✅ {act['description']} 通过，批准分配 {amount_disp} C 国家公地，待下回合执行。")
 
-        self.state.mark_phase_executed("senate")
-        return True
+        # 自动模式下直接完成（无下一步）
+        self._step += 1  # 退出循环
 
-    # =================================== MVP 0.7 =============================================
+    def _handle_next(self, args: List[str]):
+        """推进状态机到下一步（自动模式）或等待玩家输入（手动模式后续实现）"""
+        if self._auto_mode:
+            self._step += 1
+            # 重置玩家列表（当前步骤不需要玩家轮流）
+            self._players = self._get_step_players()
+            self._current_player_index = 0
+        else:
+            # 手动模式留空，后续任务实现
+            # 这里暂时直接推进，等待后续添加输入处理
+            self._step += 1
+
+    def _get_step_players(self) -> List[str]:
+        """返回当前步骤需要轮流的玩家列表（目前自动模式下返回空）"""
+        # 当前自动模式下无玩家轮流，返回空列表
+        # 后续手动模式可根据步骤返回相应玩家
+        return []
 
     # ==================== 新增：MVP 0.7-4 行省起义镇压 ====================
     def _assign_rebellion_commanders(self):
