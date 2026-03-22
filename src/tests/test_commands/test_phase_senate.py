@@ -1039,7 +1039,7 @@ class TestManualTakeover(unittest.TestCase):
     @patch('builtins.input')
     def test_manual_takeover_war(self, mock_input):
         """测试手动模式下接管外国战争并增派军团"""
-        mock_input.side_effect = ["next", "propose B01 3", "next"]
+        mock_input.side_effect = ["next", "propose B01 3", "next", "next"]
 
         cmd = SenateCommand(self.state)
         cmd._auto_mode = False
@@ -1073,7 +1073,7 @@ class TestManualTakeover(unittest.TestCase):
         self.war.commander_id = 3
         self.war.set_commander_assigned_turn(1)  # 使用 setter
 
-        mock_input.side_effect = ["next", "propose B01 2", "next"]
+        mock_input.side_effect = ["next", "propose B01 2", "next", "next"]
 
         cmd = SenateCommand(self.state)
         cmd._auto_mode = False
@@ -1098,7 +1098,7 @@ class TestManualTakeover(unittest.TestCase):
     @patch('builtins.input')
     def test_manual_takeover_insufficient_legions(self, mock_input):
         """测试征召军团时可用军团不足（实际可用25个，征召30个）"""
-        mock_input.side_effect = ["next", "propose B01 30", "next"]
+        mock_input.side_effect = ["next", "propose B01 30", "next", "next"]
 
         cmd = SenateCommand(self.state)
         cmd._auto_mode = False
@@ -1118,7 +1118,7 @@ class TestManualTakeover(unittest.TestCase):
     @patch('builtins.input')
     def test_manual_takeover_invalid_war_id(self, mock_input):
         """测试接管不存在的战争"""
-        mock_input.side_effect = ["next", "propose B99 3", "next"]
+        mock_input.side_effect = ["next", "propose B99 3", "next", "next"]
 
         cmd = SenateCommand(self.state)
         cmd._auto_mode = False
@@ -1169,7 +1169,7 @@ class TestManualTakeover(unittest.TestCase):
         rebellion_war.status = WarStatus.ACTIVE
         self.state._war_system._active_wars.append(rebellion_war)
 
-        mock_input.side_effect = ["next", "propose B01 3", "next"]
+        mock_input.side_effect = ["next", "propose B01 3", "next", "next"]
 
         cmd = SenateCommand(self.state)
         cmd._auto_mode = False
@@ -1204,7 +1204,7 @@ class TestManualTakeover(unittest.TestCase):
         self.state.naval_system.get_available_fleets = MagicMock(return_value=[])
 
         # 模拟用户输入：步骤0 next，步骤1 propose B01 6
-        mock_input.side_effect = ["next", "propose B01 6", "next"]
+        mock_input.side_effect = ["next", "propose B01 6", "next", "next"]
 
         cmd = SenateCommand(self.state)
         cmd._auto_mode = False

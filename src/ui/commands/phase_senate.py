@@ -251,6 +251,9 @@ class SenateCommand(Command):
                     sys.stderr.flush()
 
     def _handle_step_1(self):
+        # 清空上一回合的临时数据（提案、投票、否决）
+        self.state.clear_senate_pending()
+
         if self._auto_mode:
             # 获取执政官人物
             consul_figure = None
@@ -274,10 +277,19 @@ class SenateCommand(Command):
                 return
 
             self._current_consul_player_id = consul_player.player_id
+
+            # 打印提案环节标题
+            print("\n############################################################")
+            print(f" UI-05-1 回合 {abs(self.state.turn.year)} BC - 元老院阶段 [5/7] --- 提案环节")
+            print("############################################################\n")
             self._auto_generate_proposals()
             self._handle_next([])
         else:
             # 正常模式：获取执政官人物及其所属玩家
+            print("\n############################################################")
+            print(f" UI-05-1 回合 {abs(self.state.turn.year)} BC - 元老院阶段 [5/7] --- 提案环节")
+            print("############################################################\n")
+            print()
             consul_figure = None
             for member in self.state.get_living_members():
                 if member.office == "consul" and not member.is_absent:
@@ -350,7 +362,27 @@ class SenateCommand(Command):
             self._print_vote_results(proposals)
             self._handle_next([])
         else:
-            # 手动模式：轮流让每个玩家投票
+            # 手动模式
+            # 打印表决环节框
+            print("\n############################################################")
+            print(f" UI-05-2 回合 {abs(self.state.turn.year)} BC - 元老院阶段 [5/7] - 表决环节")
+            print("############################################################\n")
+            print("==========================================================")
+            print("   🏛️  Senate Vote Stage")
+            print("==========================================================\n")
+
+            print("\t📜 可表决法案：")
+            for prop in proposals:
+                prop_id = prop["id"]
+                desc = self._generate_proposal_description(prop["type"], prop)
+                print(f"\t\tB{prop_id:02d} {desc}")
+            print()
+
+            print("🔧 本阶段可操作（PLAYER X）：")
+            print("\t1. vote <法案ID1> <法案ID2>... → 表决支持")
+            print("\t2. next/n → 进入元老院表决环节")
+
+            # 获取所有玩家（按回合顺序）
             all_players = [p for p in self.state.get_all_players() if p.player_type != "auto"]
             if not all_players:
                 print("⚠️ 无有效玩家，跳过投票")
@@ -360,11 +392,8 @@ class SenateCommand(Command):
             # 重置投票记录
             self.state._senate_pending["votes"] = {}
 
-            print("\n 📜 待表决提案：")
-            for prop in proposals:
-                prop_id = prop["id"]
-                desc = self._generate_proposal_description(prop["type"], prop)
-                print(f" B{prop_id:02d}: {desc}")
+            # 保存原当前玩家，以便结束后恢复
+            original_player_id = self.state.get_current_player().player_id
 
             for player in all_players:
                 player_id = player.player_id
@@ -375,15 +404,58 @@ class SenateCommand(Command):
                 if influence == 0:
                     print(f"\n⚠️ {faction.name} 派系无元老在场，自动弃权。")
                     continue
-                print(f"\n🔹 轮到 {faction.name} 派系投票（玩家 {player_id}）")
-                self._prompt_player_vote(proposals, player_id, faction.name)
+
+                # 切换当前玩家
+                self.state.set_current_player(player_id)
+
+                if player.player_type == PlayerType.HUMAN:
+                    print(f"\n🔹 轮到 {faction.name} 派系投票（玩家 {player_id}）")
+                    self._prompt_player_vote(proposals, player_id, faction.name)
+                else:
+                    # AI 玩家自动投票（使用决策器）
+                    self._auto_vote_for_player(player_id, proposals)
+                    print(f"\n🤖 {faction.name} 派系已完成自动投票。")
+
+            # 恢复原当前玩家
+            self.state.set_current_player(original_player_id)
 
             self._print_vote_results(proposals)
             self._handle_next([])
 
     def _handle_step_3(self):
-        # 公示环节：输出投票结果（已在上面步骤中打印，可空）
-        self._handle_next([])
+        # 公示环节：输出投票结果（手动模式按 UI 格式）
+        if not self._auto_mode:
+            print("\n############################################################")
+            print(f" UI-05-3 回合 {abs(self.state.turn.year)} BC - 元老院阶段 [5/7] - 公示环节")
+            print("############################################################\n")
+            print("==========================================================")
+            print("   🏛️  Senate Result Stage")
+            print("==========================================================\n")
+            proposals = self.state.get_senate_proposals()
+            if proposals:
+                self._print_senate_results(proposals)
+            else:
+                print("   📭 无提案需要公示")
+            print("\n🔧 本阶段可操作（PLAYER X）：")
+            print("\t1. next/n → 进入保民官否决环节")
+            # 等待玩家输入 next
+            original_player_id = self.state.get_current_player().player_id
+            while True:
+                print("\n> 请输入操作（PLAYER X）：", end="", flush=True)
+                cmd_input = input().strip()
+                if not cmd_input:
+                    continue
+                parts = cmd_input.split()
+                cmd = parts[0].lower()
+                if cmd in ("next", "n"):
+                    break
+                else:
+                    print("未知命令，支持 next/n", file=sys.stderr)
+            self.state.set_current_player(original_player_id)
+            self._handle_next([])
+        else:
+            # 自动模式保持原样
+            self._handle_next([])
 
     def _handle_step_4(self):
         tribune = self._get_tribune()
@@ -408,12 +480,7 @@ class SenateCommand(Command):
             self._handle_next([])
             return
 
-        print("\n 📜 可否决法案：")
-        for prop in passed_proposals:
-            prop_id = prop["id"]
-            desc = self._generate_proposal_description(prop["type"], prop)
-            print(f" B{prop_id:02d}: {desc}")
-
+        # 获取保民官玩家
         tribune_player = self.state.get_player_by_faction(tribune.faction_id)
         if not tribune_player:
             print("⚠️ 无法获取保民官玩家，跳过否决")
@@ -430,6 +497,22 @@ class SenateCommand(Command):
                     print(f"      ✅ 保民官未否决提案：{self._generate_proposal_description(prop['type'], prop)}")
             self._handle_next([])
         else:
+            # 手动模式：打印 UI 标题框
+            print("\n############################################################")
+            print(f" UI-05-4 回合 {abs(self.state.turn.year)} BC - 元老院阶段 [5/7] - 否决环节")
+            print("############################################################\n")
+            print("\t📜 可否决法案：")
+            for prop in passed_proposals:
+                prop_id = prop["id"]
+                desc = self._generate_proposal_description(prop["type"], prop)
+                print(f"\t\tB{prop_id:02d} {desc}")
+            print()
+
+            # 保存原当前玩家并切换为保民官玩家
+            original_player_id = self.state.get_current_player().player_id
+            self.state.set_current_player(tribune_player.player_id)
+
+            # 构建提案映射
             proposal_map = {}
             for prop in passed_proposals:
                 real_id = prop["id"]
@@ -450,20 +533,25 @@ class SenateCommand(Command):
                     break
                 elif cmd == "veto":
                     veto_ids = []
+                    invalid = False
                     for token in parts[1:]:
                         if token.upper() in proposal_map:
                             veto_ids.append(proposal_map[token.upper()])
                         else:
                             print(f"❌ 无效的提案ID: {token}，请重新输入")
-                            continue
+                            invalid = True
+                            break
+                    if invalid:
+                        continue
                     if not veto_ids:
                         print("❌ 请指定至少一个提案ID")
                         continue
+
                     from src.api import senate_api
                     result = senate_api.veto(self.state, tribune_player.player_id, veto_ids)
                     if result["success"]:
                         print(f"✅ 已否决 {len(veto_ids)} 个提案")
-                        # 从列表中移除已否决的提案
+                        # 从本地列表中移除已否决的提案，并更新映射
                         for vid in veto_ids:
                             passed_proposals = [p for p in passed_proposals if p["id"] != vid]
                             for key in list(proposal_map.keys()):
@@ -472,34 +560,129 @@ class SenateCommand(Command):
                         if not passed_proposals:
                             print("📭 无其他提案需否决")
                             break
-                        print("\n 📜 剩余可否决法案：")
+                        # 打印剩余提案（保持格式）
+                        print("\n\t📜 剩余可否决法案：")
                         for prop in passed_proposals:
                             prop_id = prop["id"]
                             desc = self._generate_proposal_description(prop["type"], prop)
-                            print(f" B{prop_id:02d}: {desc}")
+                            print(f"\t\tB{prop_id:02d} {desc}")
+                        print()
                     else:
                         print(f"❌ 否决失败: {result['message']}")
                 else:
                     print("未知命令，支持 veto <提案ID> 或 next", file=sys.stderr)
+
+            # 恢复原当前玩家
+            self.state.set_current_player(original_player_id)
             self._handle_next([])
 
     def _handle_step_5(self):
-        from src.api import senate_api
-        result = senate_api.resolve_senate(self.state, vote_decider=self.vote_decider)
-        if result["success"]:
-            if result["message"]:
-                print(result["message"])
-            # 获取被否决的停战战争
-            rejected_peace_wars = result["data"].get("rejected_peace_wars", [])
-            # 获取未提交的停战草案（步骤1中未提交的）
+        if self._auto_mode:
+            from src.api import senate_api
+            result = senate_api.resolve_senate(self.state, vote_decider=self.vote_decider)
+            if result["success"]:
+                # 获取通过的提案列表
+                passed_proposal_ids = result["data"].get("passed_proposals", [])
+                all_proposals = self.state.get_senate_proposals()
+                passed_proposals = [p for p in all_proposals if p["id"] in passed_proposal_ids]
+                self._print_announcement_header(passed_proposals)
+                if result["message"]:
+                    print(result["message"])
+                # 处理停战恢复
+                rejected_peace_wars = result["data"].get("rejected_peace_wars", [])
+                ws = self.state.get_war_system()
+                pending_peace_wars = ws.get_truce_wars_with_pending_treaty() if ws else []
+                all_rejected = list(set(rejected_peace_wars + pending_peace_wars))
+                if all_rejected:
+                    self._restore_rejected_peace_wars(all_rejected)
+            else:
+                print(f"❌ 结算失败: {result['message']}", file=sys.stderr)
+        else:
+            # 手动模式
+            proposals = self.state.get_senate_proposals()
+            passed_proposals = self._get_passed_proposals_from_votes(proposals)
+            vetoes = self.state._senate_pending["vetoes"]
+            passed_proposals = [p for p in passed_proposals if p["id"] not in vetoes]
+
+            self._print_announcement_header(passed_proposals)
+
+            # 执行通过的提案（并打印分组详情）
+            for proposal in passed_proposals:
+                ptype = proposal["type"]
+                try:
+                    if ptype == "war":
+                        ws = self.state.get_war_system()
+                        if ws:
+                            war = ws.get_war_by_id(proposal["war_id"])
+                            consul_id = proposal["consul_id"]
+                            legions = proposal["legions"]
+                            self._execute_war_declaration(war, consul_id, legions)
+                    elif ptype == "peace":
+                        ws = self.state.get_war_system()
+                        if ws:
+                            war = ws.get_war_by_id(proposal["war_id"])
+                            self._execute_passed_peace_treaty(war)
+                    elif ptype == "governor":
+                        province = self.state.get_province(proposal["province_id"])
+                        if province:
+                            province._governor_designate_id = proposal["candidate_id"]
+                            province._old_governor_id = proposal.get("old_governor_id")
+                            new_governor = self.state.get_member(proposal["candidate_id"])
+                            if new_governor:
+                                new_governor.is_absent = True
+                            print(
+                                f"    ✅ {province.name} 任命新总督: {new_governor.get_formal_name() if new_governor else '未知'} (候任)，旧总督 {self.state.get_member(proposal.get('old_governor_id')) and self.state.get_member(proposal['old_governor_id']).get_formal_name() or '无'} 仍在任")
+                    elif ptype == "budget":
+                        contract = self.state.get_contract(proposal["contract_id"])
+                        if contract:
+                            contract.status = ContractStatus.BUDGETED
+                            print(f"    ✅ {contract.name} 预算通过，状态变为 BUDGETED")
+                    elif ptype == "land":
+                        act_type = proposal["act_type"]
+                        percent = proposal["percent"]
+                        national_land = self.state.get_national_public_land()
+                        amount = int(national_land * percent)
+                        if act_type == "sale":
+                            self.state.set_pending_land_sale_quota(amount)
+                            print(f"    ✅ 贵族买地法案（出售 {amount} C 国家公地） 通过，等待下回合执行")
+                        else:
+                            self.state.add_pending_land_act({
+                                "type": "distribution",
+                                "percent": percent,
+                                "amount": amount,
+                                "description": f"平民分地法案（分配 {percent * 100:.1f}% 国家公地）"
+                            })
+                            print(f"    ✅ 平民分地法案（分配 {amount} C 国家公地） 通过，等待下回合执行")
+                except Exception as e:
+                    print(f"执行提案 {proposal['id']} 失败: {e}")
+                    self.state.log_event(f"执行提案失败: {e}", level=logging.ERROR,
+                                         extra={"proposal_id": proposal["id"]})
+
+            # 处理停战恢复
             ws = self.state.get_war_system()
             pending_peace_wars = ws.get_truce_wars_with_pending_treaty() if ws else []
-            # 合并并恢复
-            all_rejected = list(set(rejected_peace_wars + pending_peace_wars))
+
+            # ===== 新增：收集被否决的停战战争（投票不通过或保民官否决）=====
+            rejected_peace_wars = []
+            passed_ids = set(p["id"] for p in passed_proposals)
+            for proposal in proposals:
+                if proposal["type"] == "peace":
+                    pid = proposal["id"]
+                    # 如果提案未通过（不在 passed_ids 中），则为被否决
+                    if pid not in passed_ids:
+                        war = ws.get_war_by_id(proposal["war_id"]) if ws else None
+                        if war:
+                            rejected_peace_wars.append(war)
+
+            # 合并未提交草案与被否决草案，去重后恢复
+            all_rejected = list(set(pending_peace_wars + rejected_peace_wars))
             if all_rejected:
                 self._restore_rejected_peace_wars(all_rejected)
-        else:
-            print(f"❌ 结算失败: {result['message']}", file=sys.stderr)
+
+            # ===== 新增：处理无指挥官的活跃战争（自动激活的战争）=====
+            if ws:
+                self._process_war_takeover()
+
         self._step += 1
 
     def _handle_next(self, args: List[str]):
@@ -542,12 +725,19 @@ class SenateCommand(Command):
         data = result["data"]
         print("\n   📜 可选法案：")
 
+        # 获取战争系统，用于后续过滤
+        ws = self.state.get_war_system()
+
         # 构建提案映射并分配 ID
         proposals_map = {}
         idx = 1
 
         # 战争威胁
         for war in data.get("war_threats", []):
+            # 确保 war 状态为 THREAT
+            war_obj = ws.get_war_by_id(war["war_id"]) if ws else None
+            if war_obj and war_obj.peace_treaty and war_obj.peace_treaty.get('status') == 'pending':
+                continue
             proposals_map[f"B{idx:02d}"] = ("war", {"war_id": war["war_id"]})
             print(f"       B{idx:02d} {war['name']}（威胁等级 {war['threat_level']}）")
             idx += 1
@@ -560,9 +750,12 @@ class SenateCommand(Command):
 
         # 停战草案
         for peace in data.get("pending_peace_treaties", []):
-            proposals_map[f"B{idx:02d}"] = ("peace", {"war_id": peace["war_id"]})
-            print(f"       B{idx:02d} {peace['name']}（赔款 {peace['indemnity']}）")
-            idx += 1
+            war_obj = ws.get_war_by_id(peace["war_id"]) if ws else None
+            if war_obj and war_obj.status == WarStatus.TRUCE and war_obj.peace_treaty and war_obj.peace_treaty.get(
+                    'status') == 'pending':
+                proposals_map[f"B{idx:02d}"] = ("peace", {"war_id": peace["war_id"]})
+                print(f"       B{idx:02d} {peace['name']}（赔款 {peace['indemnity']}）")
+                idx += 1
 
         # 行省空缺（proconsul）
         for prov in data.get("governor_vacancies", {}).get("proconsul", []):
@@ -1049,6 +1242,9 @@ class SenateCommand(Command):
         if not consul_player_id:
             return
 
+        # 收集成功提案的描述
+        proposal_descriptions = []
+
         # 1. 宣战提案（战争威胁）
         ws = self.state.get_war_system()
         if ws:
@@ -1060,6 +1256,9 @@ class SenateCommand(Command):
                 max_legions = self.state.config.get("testing.max_legions", 8)
 
                 for war in threats:
+                    # 如果战争已有 pending 停战草案，则跳过
+                    if war.peace_treaty and war.peace_treaty.get('status') == 'pending':
+                        continue
                     # 检查海战条件
                     if war.naval_required:
                         naval_system = self.state.naval_system
@@ -1074,27 +1273,27 @@ class SenateCommand(Command):
                             war_id=war.id,
                             legions=legions
                         )
-                        if not result["success"]:
-                            print(f"⚠️ 提案失败: {result['message']}", file=sys.stderr)
+                        if result["success"]:
+                            desc = self._generate_proposal_description("war", {"war_id": war.id, "legions": legions})
+                            proposal_descriptions.append(desc)
                         else:
-                            print(f"✅ 提案成功: {result['data']}", file=sys.stderr)
-                        if not result["success"]:
+                            print(f"⚠️ 提案失败: {result['message']}", file=sys.stderr)
                             self.state.log_event(f"AI自动宣战失败: {result['message']}", level=logging.WARNING)
 
         # 2. 停战草案（待决停战）
         if ws:
-            pending_peace = ws.get_truce_wars_with_pending_treaty()
+            pending_peace = [w for w in ws._truce_wars if w.peace_treaty and w.peace_treaty.get('status') == 'pending']
             for war in pending_peace:
                 result = senate_api.propose(
                     self.state, consul_player_id, "peace",
                     bypass_turn_check=True,
                     war_id=war.id
                 )
-                if not result["success"]:
-                    print(f"⚠️ 提案失败: {result['message']}", file=sys.stderr)
+                if result["success"]:
+                    desc = self._generate_proposal_description("peace", {"war_id": war.id})
+                    proposal_descriptions.append(desc)
                 else:
-                    print(f"✅ 提案成功: {result['data']}", file=sys.stderr)
-                if not result["success"]:
+                    print(f"⚠️ 提案失败: {result['message']}", file=sys.stderr)
                     self.state.log_event(f"AI自动停战提案失败: {result['message']}", level=logging.WARNING)
 
         # 3. 总督任命（行省空缺）
@@ -1123,7 +1322,7 @@ class SenateCommand(Command):
         praetors = get_candidates('praetor')
 
         used = set()
-        # 随机分配（与原有逻辑一致）
+
         def assign(provinces, candidates, used_set):
             remaining = list(provinces)
             random.shuffle(remaining)
@@ -1149,11 +1348,12 @@ class SenateCommand(Command):
                 province_id=province.province_id,
                 candidate_id=candidate.id
             )
-            if not result["success"]:
-                print(f"⚠️ 提案失败: {result['message']}", file=sys.stderr)
+            if result["success"]:
+                desc = self._generate_proposal_description("governor", {"province_id": province.province_id,
+                                                                        "candidate_id": candidate.id})
+                proposal_descriptions.append(desc)
             else:
-                print(f"✅ 提案成功: {result['data']}", file=sys.stderr)
-            if not result["success"]:
+                print(f"⚠️ 提案失败: {result['message']}", file=sys.stderr)
                 self.state.log_event(f"AI自动总督任命失败: {result['message']}", level=logging.WARNING)
 
         # 4. 预算合同
@@ -1166,11 +1366,11 @@ class SenateCommand(Command):
                     bypass_turn_check=True,
                     contract_id=contract.id
                 )
-                if not result["success"]:
-                    print(f"⚠️ 提案失败: {result['message']}", file=sys.stderr)
+                if result["success"]:
+                    desc = self._generate_proposal_description("budget", {"contract_id": contract.id})
+                    proposal_descriptions.append(desc)
                 else:
-                    print(f"✅ 提案成功: {result['data']}", file=sys.stderr)
-                if not result["success"]:
+                    print(f"⚠️ 提案失败: {result['message']}", file=sys.stderr)
                     self.state.log_event(f"AI自动预算提案失败: {result['message']}", level=logging.WARNING)
 
         # 5. 土地法案
@@ -1185,12 +1385,18 @@ class SenateCommand(Command):
                         act_type=act_type,
                         percent=percent
                     )
-                    if not result["success"]:
-                        print(f"⚠️ 提案失败: {result['message']}", file=sys.stderr)
+                    if result["success"]:
+                        desc = self._generate_proposal_description("land", {"act_type": act_type, "percent": percent})
+                        proposal_descriptions.append(desc)
                     else:
-                        print(f"✅ 提案成功: {result['data']}", file=sys.stderr)
-                    if not result["success"]:
+                        print(f"⚠️ 提案失败: {result['message']}", file=sys.stderr)
                         self.state.log_event(f"AI自动土地法案失败: {result['message']}", level=logging.WARNING)
+
+        # 打印成功提案列表
+        if proposal_descriptions:
+            print("\n✅ 执政官提案:")
+            for idx, desc in enumerate(proposal_descriptions, 1):
+                print(f"\tB{idx:02d} {desc}")
 
     def _prompt_player_vote(self, proposals: list, player_id: str, faction_name: str):
         proposal_map = {}
@@ -1210,13 +1416,18 @@ class SenateCommand(Command):
                 print(f"{faction_name} 派系未投票，视为弃权。")
                 break
             elif cmd == "vote":
+                # 解析提案ID，要求所有参数都是有效ID
                 vote_ids = []
+                invalid = False
                 for token in parts[1:]:
                     if token.upper() in proposal_map:
                         vote_ids.append(proposal_map[token.upper()])
                     else:
                         print(f"❌ 无效的提案ID: {token}，请重新输入")
-                        continue
+                        invalid = True
+                        break
+                if invalid:
+                    continue
                 if not vote_ids:
                     print("❌ 请指定至少一个提案ID")
                     continue
@@ -1305,6 +1516,96 @@ class SenateCommand(Command):
                 )
             else:
                 print(f" ⚠️ 战争 {war.name} 恢复，但无可用指挥官，请稍后指派。")
+
+    def _execute_passed_peace_treaty(self, war):
+        """执行通过的停战草案（手动模式）"""
+        treaty = war.peace_treaty
+        if not treaty or treaty.get("status") != "submitted":
+            return
+        war.set_peace_treaty_status("approved")
+        war.set_indemnity_due(treaty["indemnity"])
+        ms = self.state.get_military_system()
+        if ms:
+            ms.recall_from_war(war.id)
+        ws = self.state.get_war_system()
+        if war.legion_numbers:
+            ws.add_legions_to_disband(war.legion_numbers)
+        end_turn = self.state.turn.turn_number + treaty["duration"]
+        war.set_truce_end_turn(end_turn)
+        war.status = WarStatus.TRUCE
+
+    def _print_senate_results(self, proposals: list):
+        """打印元老院公示环节的详细投票结果（符合 UI 设计）"""
+        votes = self.state._senate_pending["votes"]
+        for prop in proposals:
+            pid = prop["id"]
+            desc = self._generate_proposal_description(prop["type"], prop)
+            print(f"\n   📋 {desc}")
+            support_influence = 0
+            oppose_influence = 0
+            total_influence = 0
+            faction_details = []
+            for faction in self.state.get_active_factions():
+                influence = faction.get_senate_influence(self.state)
+                if influence == 0:
+                    continue
+                total_influence += influence
+                player = self.state.get_player_by_faction(faction.id)
+                if not player:
+                    continue
+                player_id = player.player_id
+                if player_id in votes and pid in votes[player_id]:
+                    if votes[player_id][pid]:
+                        support_influence += influence
+                        faction_details.append(f"          {faction.name} 支持，影响力 {influence}")
+                    else:
+                        oppose_influence += influence
+                        faction_details.append(f"          {faction.name} 反对，影响力 {influence}")
+            if faction_details:
+                for detail in faction_details:
+                    print(detail)
+            else:
+                print("          无元老在场，无人投票。")
+            if total_influence > 0:
+                support_ratio = support_influence / total_influence
+                print(
+                    f"          总影响力：{total_influence}，支持 {support_influence}，反对 {oppose_influence}，支持率 {support_ratio:.1%}")
+                if support_ratio > 0.5:
+                    print("          ✅ 元老院批准")
+                else:
+                    print("          ❌ 元老院否决")
+            else:
+                print("          无元老在场，提案未通过。")
+
+    def _auto_vote_for_player(self, player_id: str, proposals: list):
+        """为指定玩家（派系）自动投票"""
+        player = self.state.get_player(player_id)
+        if not player:
+            return
+        faction = self.state.get_faction(player.faction_id)
+        if not faction:
+            return
+        for proposal in proposals:
+            pid = proposal["id"]
+            # 检查是否已投票
+            votes = self.state._senate_pending["votes"].get(player_id, {})
+            if pid in votes:
+                continue
+            issue = self._build_issue_from_proposal(proposal)
+            support = self.vote_decider.decide_vote(issue, faction, self.state)
+            self.state.record_senate_vote(player_id, pid, support)
+
+    def _print_announcement_header(self, passed_proposals: list):
+        """打印宣布环节标题框和通过的提案列表"""
+        print("\n############################################################")
+        print(f" UI 05-5 回合 {abs(self.state.turn.year)} BC - 元老院阶段 [5/7] - 宣布环节")
+        print("############################################################\n")
+        print("\t📜 元老院最终通过的法案：")
+        for prop in passed_proposals:
+            prop_id = prop["id"]
+            desc = self._generate_proposal_description(prop["type"], prop)
+            print(f"\t\tB{prop_id:02d} {desc}")
+        print()
 
 
     # ==================== 新增：MVP 0.7-4 行省起义镇压 ====================

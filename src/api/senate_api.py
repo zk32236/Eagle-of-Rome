@@ -134,18 +134,8 @@ def get_senate_initial_info(state: GameState) -> dict:
 
 def propose(state: GameState, player_id: str, proposal_type: str, bypass_turn_check: bool = False, **kwargs) -> dict:
 
-    print(f"\n[DEBUG propose] player_id={player_id}")
     player = state.get_player(player_id)
-    print(f"[DEBUG propose] player={player}, faction_id={player.faction_id}")
     faction = state.get_faction(player.faction_id)
-    print(f"[DEBUG propose] faction={faction}, member_ids={faction.member_ids}")
-    for mid in faction.member_ids:
-        m = state.get_member(mid)
-        print(f"  member {mid}: office={m.office if m else None}, is_dead={m.is_dead if m else None}")
-    print(f"[DEBUG propose] leader_ids={state.turn.leader_ids}")
-    for lid in state.turn.leader_ids:
-        l = state.get_member(lid)
-        print(f"  leader {lid}: office={l.office if l else None}, is_dead={l.is_dead if l else None}")
 
     # 检查权限：只有执政官可以提案
     player = state.get_player(player_id)
