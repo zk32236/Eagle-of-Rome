@@ -12,9 +12,10 @@ from src.core.deciders.impl.auto_budget_decider import AutoBudgetDecider
 from src.core.deciders.tribune_veto_decider import TribuneVetoDecider
 from src.core.systems.war_system import WarSystem
 from src.core.systems.military_system import MilitarySystem
-from src.core.entities.player import Player
+from src.core.entities.player import Player,PlayerType
 from src.core.entities.war import WarType
 from src.core.systems.naval_system import NavalSystem
+
 
 # 添加项目根目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -43,7 +44,6 @@ class TestSenateCommand(unittest.TestCase):
     """元老院阶段命令测试类"""
 
     def setUp(self):
-        """每个测试前创建测试用 GameState"""
         test_config = {}
         self.state = GameState.create_for_testing(test_config)
 
@@ -61,15 +61,35 @@ class TestSenateCommand(unittest.TestCase):
         figures = []
         for i, fid in enumerate(["senate", "populares", "equites"]):
             for j in range(3):
-                fig = Figure(id=i*10 + j + 1, name=f"{fid}_member_{j}", faction_id=fid, age=40)
+                fig = Figure(id=i * 10 + j + 1, name=f"{fid}_member_{j}", faction_id=fid, age=40)
                 fig.influence = 10 + j
                 self.state.add_member(fig)
-                figures.append(fig)
                 factions[i].member_ids.append(fig.id)
 
         # 设置领袖（影响力最高者）
         for faction in factions:
             faction.update_faction_leader(self.state)
+
+        # 设置执政官（假设 ID 1 是 senate_member_0）
+        consul = self.state.get_member(1)
+        if consul:
+            consul.office = "consul"
+            self.faction1.member_ids.append(consul.id)  # 确保在成员列表中
+
+        # 初始化战争系统、军事系统、海军系统
+        from src.core.systems.war_system import WarSystem
+        self.state._war_system = WarSystem(self.state)
+        self.state._war_system.load_wars_from_json("wars.json")
+        from src.core.systems.military_system import MilitarySystem
+        self.state._military_system = MilitarySystem(self.state)
+        from src.core.systems.naval_system import NavalSystem
+        self.state._naval_system = NavalSystem(self.state)
+
+        # 添加玩家映射
+        from src.core.entities.player import Player, PlayerType
+        self.state._players["player1"] = Player("player1", "senate", PlayerType.HUMAN)
+        self.state._players["player2"] = Player("player2", "populares", PlayerType.HUMAN)
+        self.state._players["player3"] = Player("player3", "equites", PlayerType.HUMAN)
 
         # 设置回合
         self.state.turn = GameTurn(turn_number=1, year=-264)
@@ -321,6 +341,7 @@ class TestTribuneVeto(unittest.TestCase):
 
     def setUp(self):
         """每个测试前创建测试用 GameState"""
+
         self.state = GameState.create_for_testing({})
         self.state.turn = GameTurn(turn_number=1, year=-264)
         self.state.mark_phase_executed("population")
@@ -328,6 +349,7 @@ class TestTribuneVeto(unittest.TestCase):
         # 初始化战争系统
         from src.core.systems.war_system import WarSystem
         self.state._war_system = WarSystem(self.state)
+        self.state._war_system.load_wars_from_json("wars.json")
 
         # 添加测试派系
         self.faction1 = Faction(id="senate", name="元老院派", treasury=50, is_player=True)
@@ -338,6 +360,7 @@ class TestTribuneVeto(unittest.TestCase):
         # 添加执政官（用于提案）
         self.consul = Figure(id=101, name="执政官", faction_id="senate", age=40)
         self.state.add_member(self.consul)
+        self.faction1.member_ids.append(self.consul.id)
         self.state.turn.leader_ids = [101]
 
         # 添加保民官
@@ -363,6 +386,10 @@ class TestTribuneVeto(unittest.TestCase):
         self.mock_vote_decider = MagicMock()
         self.mock_vote_decider.decide_vote.return_value = True
 
+        # 添加玩家映射（确保执政官派系存在玩家）
+        self.state._players["player1"] = Player("player1", "senate", PlayerType.HUMAN)
+        self.state._players["player2"] = Player("player2", "populares", PlayerType.HUMAN)
+
         # 设置土地法案提交概率为100%
         if "political_rules" not in self.state.config._config:
             self.state.config._config["political_rules"] = {}
@@ -370,12 +397,13 @@ class TestTribuneVeto(unittest.TestCase):
             self.state.config._config["political_rules"]["land_proposal"] = {}
         self.state.config._config["political_rules"]["land_proposal"]["submit_chance"] = 1.0
 
-        self.state.config._config["testing"] = {
-            "propose_war_chance": 1.0,
-            "always_declare": True,
-            "min_legions": 4,
-            "max_legions": 8
-        }
+        self.state.config._config.setdefault("testing", {})
+        self.state.config._config["testing"]["propose_war_chance"] = 1.0
+        self.state.config._config["testing"]["always_declare"] = True
+        self.state.config._config["testing"]["min_legions"] = 4
+        self.state.config._config["testing"]["max_legions"] = 8
+        # 确保 auto_senate 为 False（测试需要手动模式）
+        self.state.config._config["testing"]["auto_senate"] = True
 
     def _create_test_war(self):
         """创建测试用战争，不再通过构造函数传入 status"""
@@ -563,6 +591,7 @@ class TestSenateEdgeCases(unittest.TestCase):
 
     def setUp(self):
         """每个测试前创建干净状态，并初始化所有必要系统"""
+
         self.state = GameState.create_for_testing({})
         self.state.turn = GameTurn(turn_number=1, year=-264)
         self.state.mark_phase_executed("population")
@@ -576,6 +605,7 @@ class TestSenateEdgeCases(unittest.TestCase):
         self.state._war_system._war_deck = []
         self.state._war_system._war_discard = []
         self.state._war_system._legions_to_disband = []
+        self.state._war_system.load_wars_from_json("wars.json")
 
         # 初始化军事系统
         from src.core.systems.military_system import MilitarySystem
@@ -611,7 +641,12 @@ class TestSenateEdgeCases(unittest.TestCase):
         self.consul = Figure(id=201, name="执政官", faction_id="senate", age=42)
         self.consul.office = "consul"
         self.state.add_member(self.consul)
+        self.faction1.member_ids.append(self.consul.id)
         self.state.turn.leader_ids = [201]
+
+        # 添加玩家映射（确保执政官派系存在玩家）
+        self.state._players["player1"] = Player("player1", "senate", PlayerType.HUMAN)
+        self.state._players["player2"] = Player("player2", "populares", PlayerType.HUMAN)
 
         # 模拟投票决策器（默认支持）
         self.mock_vote_decider = MagicMock()
@@ -630,12 +665,12 @@ class TestSenateEdgeCases(unittest.TestCase):
         self.mock_veto_decider.decide_veto.return_value = False
 
         # 测试配置：确保宣战提案总是提出
-        self.state.config._config["testing"] = {
-            "propose_war_chance": 1.0,
-            "always_declare": True,
-            "min_legions": 4,
-            "max_legions": 8
-        }
+        self.state.config._config.setdefault("testing", {})
+        self.state.config._config["testing"]["propose_war_chance"] = 1.0
+        self.state.config._config["testing"]["always_declare"] = True
+        self.state.config._config["testing"]["min_legions"] = 4
+        self.state.config._config["testing"]["max_legions"] = 8
+        self.state.config._config["testing"]["auto_senate"] = True
 
     # ==================== 辅助方法 ====================
     def _create_threat_war(self, war_id="test_war", name="测试战争", naval_required=False):
@@ -1203,7 +1238,7 @@ class TestManualTakeover(unittest.TestCase):
         mock_fleet = MagicMock()
         self.state.naval_system.get_available_fleets = MagicMock(return_value=[mock_fleet])
 
-        mock_input.side_effect = ["next", "propose B01 6", "next"]
+        mock_input.side_effect = ["next", "propose B01 6", "next", "vote B01", "next"]
 
         cmd = SenateCommand(self.state)
         cmd._auto_mode = False
