@@ -705,7 +705,6 @@ class GameState:
     def add_national_public_land(self, amount: int) -> None:
         old = self._national_public_land
         self._national_public_land += amount
-        print(f"      [DEBUG add_national_public_land] {old} -> {self._national_public_land}")  # 添加
         self.sync_italy_public_land()
 
     # ========== 配置获取（通过 Config 实例）==========

@@ -145,3 +145,21 @@ class TestSenateAPI(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertIn(war_proposal_id, result["data"]["passed_proposals"])
         mock_execute.assert_called_once()
+
+    def test_propose_peace_manually(self):
+        """手动模式下停战提案应将草案状态设置为 submitted"""
+        # 创建一个停战战争，并设置 pending 草案
+        war = War(id="war_peace_test", name="停战测试战争", war_type=WarType.FOREIGN, strength=5)
+        war.status = WarStatus.TRUCE
+        treaty = {"indemnity": 100, "duration": 3, "status": "pending"}
+        war.set_peace_treaty(treaty)
+
+        ws = self.state.get_war_system()
+        ws._truce_wars.append(war)
+
+        # 调用 propose 提交停战提案
+        result = senate_api.propose(self.state, "player1", "peace", war_id="war_peace_test")
+
+        self.assertTrue(result["success"])
+        # 验证草案状态已变为 submitted
+        self.assertEqual(war.peace_treaty["status"], "submitted")

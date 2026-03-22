@@ -180,6 +180,7 @@ def propose(state: GameState, player_id: str, proposal_type: str, bypass_turn_ch
         war = ws.get_war_by_id(war_id) if ws else None
         if not war or not war.peace_treaty:
             return api_response(False, "战争无待决停战草案")
+        war.set_peace_treaty_status('submitted')
         proposal["treaty"] = war.peace_treaty
     elif proposal_type == "governor":
         province_id = kwargs.get("province_id")
@@ -505,6 +506,8 @@ def execute_passed_peace_treaty(state: GameState, war):
         ws.add_legions_to_disband(war.legion_numbers)
     end_turn = state.turn.turn_number + treaty["duration"]
     war.set_truce_end_turn(end_turn)
+    # 确保战争状态设为 TRUCE
+    war.status = WarStatus.TRUCE
 
 
 def _auto_recruit_and_assign_legions_for_war(state: GameState, war, consul_id: int):

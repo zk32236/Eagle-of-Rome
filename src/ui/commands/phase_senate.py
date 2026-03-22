@@ -251,7 +251,7 @@ class SenateCommand(Command):
 
     def _handle_step_1(self):
         if self._auto_mode:
-            # 全自动模式：原有逻辑
+            # 全自动模式：原有逻辑（不变）
             self._process_war_proposals(self._passed_wars)
             peace_proposals = self._process_peace_proposals(TerminologyService.get())
             self._process_governor_appointments(TerminologyService.get())
@@ -260,6 +260,8 @@ class SenateCommand(Command):
 
             if peace_proposals:
                 self.passed_peace_treaties = self._vote_on_peace_proposals(peace_proposals)
+                for war in self.passed_peace_treaties:
+                    print(f"  - {war.name}")
             self._handle_next([])
         else:
             # 正常模式：获取执政官人物及其所属玩家
@@ -285,11 +287,6 @@ class SenateCommand(Command):
             bypass = self.state.config.get("testing.bypass_player_check", False)
             if bypass or consul_player.player_type == PlayerType.HUMAN:
                 # 人类玩家：手动交互
-                # 先处理停战草案（自动投票）
-                peace_proposals = self._process_peace_proposals(TerminologyService.get())
-                if peace_proposals:
-                    self.passed_peace_treaties = self._vote_on_peace_proposals(peace_proposals)
-
                 # 显示可选提案列表
                 self._print_proposal_options()
 
@@ -301,8 +298,7 @@ class SenateCommand(Command):
                     parts = cmd_input.split()
                     cmd = parts[0].lower()
                     if cmd in ("next", "n"):
-                        # 玩家结束提案，将手动提案转换为自动变量
-                        self._convert_manual_proposals_to_auto()
+                        # 玩家结束提案，直接进入下一步（无需转换）
                         self._handle_next([])
                         break
                     elif cmd == "propose":
@@ -311,21 +307,14 @@ class SenateCommand(Command):
                         print("未知命令，支持 propose 和 next", file=sys.stderr)
                         sys.stderr.flush()
             else:
-                # AI 玩家：自动提案
+                # AI 玩家：自动生成提案
                 self.state.log_event(
                     f"AI玩家 {consul_player.player_id} 进入自动提案环节",
                     level=logging.INFO,
                     extra={"player_id": consul_player.player_id}
                 )
-                self._process_war_proposals(self._passed_wars)
-                peace_proposals = self._process_peace_proposals(TerminologyService.get())
-                self._process_governor_appointments(TerminologyService.get())
-                self._process_budget_proposals(TerminologyService.get(), self._passed_contracts)
-                self._process_land_proposals(TerminologyService.get(), self._passed_land_acts)
-
-                if peace_proposals:
-                    self.passed_peace_treaties = self._vote_on_peace_proposals(peace_proposals)
-
+                # 生成所有提案并存入 _senate_pending
+                self._auto_generate_proposals()
                 self._handle_next([])
 
     def _handle_step_2(self):
@@ -1051,6 +1040,138 @@ class SenateCommand(Command):
 
         return passed
 
+    def _auto_generate_proposals(self):
+        """为AI玩家自动生成所有提案，存入 _senate_pending"""
+        from src.api import senate_api
+
+        consul_player_id = self._current_consul_player_id
+        if not consul_player_id:
+            return
+
+        # 1. 宣战提案（战争威胁）
+        ws = self.state.get_war_system()
+        if ws:
+            threats = [w for w in ws._threats if w.status == WarStatus.THREAT]
+            if threats:
+                propose_chance = self.state.config.get("testing.propose_war_chance", 0.7)
+                always_declare = self.state.config.get("testing.always_declare", False)
+                min_legions = self.state.config.get("testing.min_legions", 4)
+                max_legions = self.state.config.get("testing.max_legions", 8)
+
+                for war in threats:
+                    # 检查海战条件
+                    if war.naval_required:
+                        naval_system = self.state.naval_system
+                        if not naval_system or not naval_system.get_available_fleets():
+                            continue
+
+                    if always_declare or random.random() < propose_chance:
+                        legions = random.randint(min_legions, max_legions)
+                        result = senate_api.propose(
+                            self.state, consul_player_id, "war",
+                            bypass_turn_check=True,
+                            war_id=war.id,
+                            legions=legions
+                        )
+                        if not result["success"]:
+                            self.state.log_event(f"AI自动宣战失败: {result['message']}", level=logging.WARNING)
+
+        # 2. 停战草案（待决停战）
+        if ws:
+            pending_peace = ws.get_truce_wars_with_pending_treaty()
+            for war in pending_peace:
+                result = senate_api.propose(
+                    self.state, consul_player_id, "peace",
+                    bypass_turn_check=True,
+                    war_id=war.id
+                )
+                if not result["success"]:
+                    self.state.log_event(f"AI自动停战提案失败: {result['message']}", level=logging.WARNING)
+
+        # 3. 总督任命（行省空缺）
+        all_provinces = [p for p in self.state.get_all_provinces() if p.conquered and p.province_id != 0]
+        proconsul_provinces = [p for p in all_provinces if p.governor_type == "proconsul"]
+        propraetor_provinces = [p for p in all_provinces if p.governor_type == "propraetor"]
+
+        def get_candidates(office_type: str):
+            cand_list = []
+            for fig in self.state.get_living_members():
+                if fig.is_absent:
+                    continue
+                if fig.office is not None and not fig.office.startswith("ex-"):
+                    continue
+                last_end = None
+                for term in fig.office_history:
+                    if term.office_type == office_type and term.end_turn is not None:
+                        if last_end is None or term.end_turn > last_end:
+                            last_end = term.end_turn
+                if last_end is not None:
+                    cand_list.append((fig, last_end))
+            cand_list.sort(key=lambda x: -x[1])
+            return [c[0] for c in cand_list]
+
+        consuls = get_candidates('consul')
+        praetors = get_candidates('praetor')
+
+        used = set()
+        # 随机分配（与原有逻辑一致）
+        def assign(provinces, candidates, used_set):
+            remaining = list(provinces)
+            random.shuffle(remaining)
+            assignments = []
+            for cand in candidates:
+                if cand.id in used_set:
+                    continue
+                if not remaining:
+                    break
+                chosen = random.choice(remaining)
+                remaining.remove(chosen)
+                assignments.append((chosen, cand))
+                used_set.add(cand.id)
+            return assignments
+
+        proconsul_assignments = assign(proconsul_provinces, consuls, used)
+        propraetor_assignments = assign(propraetor_provinces, praetors, used)
+
+        for province, candidate in proconsul_assignments + propraetor_assignments:
+            result = senate_api.propose(
+                self.state, consul_player_id, "governor",
+                bypass_turn_check=True,
+                province_id=province.province_id,
+                candidate_id=candidate.id
+            )
+            if not result["success"]:
+                self.state.log_event(f"AI自动总督任命失败: {result['message']}", level=logging.WARNING)
+
+        # 4. 预算合同
+        pending_contracts = [c for c in self.state.contracts if c.status == ContractStatus.PENDING]
+        if pending_contracts:
+            proposals = self.budget_decider.decide_proposals(pending_contracts, self.state)
+            for contract in proposals:
+                result = senate_api.propose(
+                    self.state, consul_player_id, "budget",
+                    bypass_turn_check=True,
+                    contract_id=contract.id
+                )
+                if not result["success"]:
+                    self.state.log_event(f"AI自动预算提案失败: {result['message']}", level=logging.WARNING)
+
+        # 5. 土地法案
+        for faction in self.state.factions.values():
+            for decider in self.land_proposal_deciders:
+                decider_result = decider.decide_proposal(faction.id, self.state)
+                if decider_result:
+                    act_type, percent = decider_result
+                    result = senate_api.propose(
+                        self.state, consul_player_id, "land",
+                        bypass_turn_check=True,
+                        act_type=act_type,
+                        percent=percent
+                    )
+                    if not result["success"]:
+                        self.state.log_event(f"AI自动土地法案失败: {result['message']}", level=logging.WARNING)
+
+
     # ==================== 新增：MVP 0.7-4 行省起义镇压 ====================
     def _assign_rebellion_commanders(self):
         """为起义战争指派总督作为指挥官并征召军团"""
@@ -1593,12 +1714,7 @@ class SenateCommand(Command):
                         old_cmd.office = "ex-proconsul"
                         war.commander_id = consul.id
                         consul.is_absent = True
-                        recruit_count, total_cost = self._auto_recruit_and_assign_legions_for_war(war, consul.id)
-                        if recruit_count > 0:
-                            print(
-                                f"      🔄 执政官 {consul.name} 接管战争 {war.name}，原指挥官 {old_cmd.name} 返回罗马，征召 {recruit_count} 个军团，总花费 {total_cost} Talents，国库剩余 {self.state.treasury} Talents")
-                        else:
-                            print(f"      🔄 执政官 {consul.name} 接管战争 {war.name}，原指挥官 {old_cmd.name} 返回罗马")
+                        self._auto_recruit_and_assign_legions_for_war(war, consul.id, action="takeover")
                         self.state.log_event(f"执政官 {consul.name} 接管战争 {war.name}，原指挥官 {old_cmd.name} 返回")
                     else:
                         print(f"      ⏳ 执政官 {consul.name} 决定不接管 {war.name}，由 {old_cmd.name} 继续指挥")
@@ -1617,12 +1733,12 @@ class SenateCommand(Command):
 
     # src/ui/commands/phase_senate.py
 
+    # src/ui/commands/phase_senate.py
+
     def _auto_recruit_and_assign_legions_for_war(self, war, consul_id, action="declare"):
         """
-        自动征召军团并指派给战争。
-        参数:
-            action: "declare" 或 "takeover"，用于打印不同前缀
-        返回: (征召数量, 总花费)
+        自动征召军团并指派给战争，返回 (征召数量, 总花费)
+        action: "declare" 或 "takeover"
         """
         ms = self.state.get_military_system()
         if not ms:
@@ -1632,7 +1748,10 @@ class SenateCommand(Command):
         # 检查战争是否已有军团
         existing_legions = ms.get_legions_for_battle(war.id) if ms else []
         if existing_legions:
-            print(f"      ℹ️ 战争已有 {len(existing_legions)} 个军团，无需征召")
+            if action == "takeover":
+                consul = self.state.get_member(consul_id)
+                consul_name = consul.get_formal_name() if consul else "执政官"
+                print(f"      ✅ 执政官 {consul_name} 接管战争 {war.name}（已有 {len(existing_legions)} 个军团）")
             return 0, 0
 
         # 获取应征召的军团数量
@@ -1658,12 +1777,12 @@ class SenateCommand(Command):
             return 0, 0
 
         assigned, msg = ms.assign_to_war(recruited_numbers, war.id, consul_id)
-        if assigned > 0:
-            for num in recruited_numbers:
-                war.add_legion_number(num)
-        else:
+        if assigned <= 0:
             print(f"      {msg}")
             return 0, 0
+
+        for num in recruited_numbers:
+            war.add_legion_number(num)
 
         total_cost = recruit_cost * len(recruited_numbers)
         consul = self.state.get_member(consul_id)
