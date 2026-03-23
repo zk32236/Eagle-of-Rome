@@ -523,16 +523,38 @@ class SenateCommand(Command):
                 print(f"\t\tB{prop_id:02d} {desc}")
             print()
 
-            # 保存原当前玩家并切换为保民官玩家
-            original_player_id = self.state.get_current_player().player_id
-            self.state.set_current_player(tribune_player.player_id)
+            # 获取保民官玩家对象
+            tribune_player = self.state.get_player_by_faction(tribune.faction_id)
+            if not tribune_player:
+                print("⚠️ 无法获取保民官玩家，跳过否决")
+                self._handle_next([])
+                return
 
-            # 构建提案映射
-            proposal_map = {}
-            for prop in passed_proposals:
-                real_id = prop["id"]
-                proposal_map[f"B{real_id:02d}"] = real_id
-                proposal_map[str(real_id)] = real_id
+            # 根据保民官玩家类型决定处理方式
+            if tribune_player.player_type != PlayerType.HUMAN:
+                # AI 保民官：自动执行否决决策
+                print(f"\n   🛡️ 保民官行使否决权（AI）:")
+                for prop in passed_proposals:
+                    issue = self._build_issue_from_proposal(prop)
+                    if self.veto_decider.decide_veto(issue, tribune.id, self.state):
+                        print(f"      ❌ 保民官已否决提案：{self._generate_proposal_description(prop['type'], prop)}")
+                        self.state.record_senate_veto(prop["id"])
+                    else:
+                        print(f"      ✅ 保民官未否决提案：{self._generate_proposal_description(prop['type'], prop)}")
+                self._handle_next([])
+                return
+            else:
+                # 人类保民官：手动交互模式
+                # 保存原当前玩家并切换为保民官玩家
+                original_player_id = self.state.get_current_player().player_id
+                self.state.set_current_player(tribune_player.player_id)
+
+                # 构建提案映射
+                proposal_map = {}
+                for prop in passed_proposals:
+                    real_id = prop["id"]
+                    proposal_map[f"B{real_id:02d}"] = real_id
+                    proposal_map[str(real_id)] = real_id
 
             while True:
                 print("\n🔧 本阶段可操作（TRIBUNE）：")

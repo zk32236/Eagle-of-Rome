@@ -10,7 +10,7 @@
     "budget_always_pass": false,
     "war_always_pass": false,
     "force_battle_result": "TRIUMPH",
-    "bypass_player_check": true,
+    "bypass_player_check": false,
     "auto_forum": true,
     "auto_population": true,
     "auto_senate": false
