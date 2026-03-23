@@ -13,6 +13,7 @@ from src.core.entities.war import WarStatus
 from src.core.deciders.impl.auto_war_takeover_decider import AutoWarTakeoverDecider
 from src.core.deciders.senate_vote_decider import SenateVoteDecider
 from src.core.deciders.impl.auto_senate_vote_decider import AutoSenateVoteDecider
+from src.core.entities.figure import Figure
 
 def api_response(success: bool, message: str = "", data: Any = None, errors: List[str] = None) -> dict:
     """生成标准 API 返回格式"""
@@ -195,12 +196,33 @@ def propose(state: GameState, player_id: str, proposal_type: str, bypass_turn_ch
         candidate_id = kwargs.get("candidate_id")
         if not province_id or not candidate_id:
             return api_response(False, "总督任命需要 province_id 和 candidate_id")
+
+        # 获取行省
+        province = state.get_province(province_id)
+        if not province:
+            return api_response(False, "行省不存在")
+        if not province.conquered:
+            return api_response(False, "行省未征服")
+
+        # 获取候选人
+        candidate = state.get_member(candidate_id)
+        if not candidate or candidate.is_dead:
+            return api_response(False, "候选人不存在或已死亡")
+
+        # 资格校验：使用统一函数
+        eligible_candidates = get_eligible_governor_candidates(state, province.governor_type)
+        if candidate not in eligible_candidates:
+            return api_response(False,
+                                f"{candidate.get_formal_name()} 不符合 {province.governor_type} 行省总督的任职资格")
+
+        # 检查是否已被任命
+        if is_governor_position_occupied(state, candidate_id):
+            return api_response(False, f"{candidate.get_formal_name()} 已被任命为其他行省总督")
+
+        # 原有逻辑
         proposal["province_id"] = province_id
         proposal["candidate_id"] = candidate_id
-        # 获取旧总督（用于记录）
-        province = state.get_province(province_id)
-        if province:
-            proposal["old_governor_id"] = province.governor_id
+        proposal["old_governor_id"] = province.governor_id
     elif proposal_type == "budget":
         contract_id = kwargs.get("contract_id")
         modified_budget = kwargs.get("modified_budget")
@@ -802,3 +824,49 @@ def assign_fleets_to_active_wars(state: GameState) -> dict:
     )
 
     return api_response(True, message, data={"assigned": assigned_details})
+
+def get_eligible_governor_candidates(state: GameState, governor_type: str) -> List[Figure]:
+    """
+    获取符合行省总督资格的人物列表（按卸任时间倒序排序）。
+    仅用于手动模式校验。
+    """
+    if not state:
+        return []
+
+    required_office = "consul" if governor_type == "proconsul" else "praetor"
+    candidates = []
+
+    for fig in state.get_living_members():
+        # 1. 必须存活且未出征（在罗马）
+        if fig.is_absent or fig.is_dead:
+            continue
+
+        # 2. 当前不能有现任官职（允许以 "ex-" 开头的卸任官职）
+        if fig.office is not None and not fig.office.startswith("ex-"):
+            continue
+
+        # 3. 必须在历史中担任过 required_office 且有卸任记录
+        last_end_turn = None
+        for term in fig.office_history:
+            if term.office_type == required_office and term.end_turn is not None:
+                if last_end_turn is None or term.end_turn > last_end_turn:
+                    last_end_turn = term.end_turn
+
+        if last_end_turn is None:
+            continue
+
+        candidates.append((fig, last_end_turn))
+
+    # 按卸任回合倒序排序，若相同则按人物ID排序（保持稳定）
+    candidates.sort(key=lambda x: (-x[1], x[0].id))
+    return [fig for fig, _ in candidates]
+
+
+def is_governor_position_occupied(state: GameState, figure_id: int) -> bool:
+    """检查人物是否已被任命为其他行省的总督（候任或现任）。"""
+    if not state:
+        return False
+    for province in state.get_all_provinces():
+        if province.governor_id == figure_id or province.governor_designate_id == figure_id:
+            return True
+    return False

@@ -623,6 +623,8 @@ class SenateCommand(Command):
                 fleet_result = senate_api.assign_fleets_to_active_wars(self.state)
                 if fleet_result["success"] and fleet_result["message"]:
                     print(fleet_result["message"])
+                # ===== 新增：为起义战争指派总督指挥官 =====
+                self._assign_rebellion_commanders()
             else:
                 print(f"❌ 结算失败: {result['message']}", file=sys.stderr)
 
@@ -717,6 +719,8 @@ class SenateCommand(Command):
             fleet_result = senate_api.assign_fleets_to_active_wars(self.state)
             if fleet_result["success"] and fleet_result["message"]:
                 print(fleet_result["message"])
+            # ===== 新增：为起义战争指派总督指挥官 =====
+            self._assign_rebellion_commanders()
 
         self._step += 1
 
@@ -1818,20 +1822,19 @@ class SenateCommand(Command):
     def _process_governor_appointments(self, terms):
         print("\n\t====================== 行省总督任命 ====================")
 
-        # 获取所有已征服的行省
+        # 获取所有已征服的行省（排除意大利行省 ID 0）
         all_provinces = [p for p in self.state.get_all_provinces() if p.conquered and p.province_id != 0]
 
-        # 行省分类（仅基于已征服行省）
+        # 行省分类
         proconsul_provinces = [p for p in all_provinces if p.governor_type == "proconsul"]
         propraetor_provinces = [p for p in all_provinces if p.governor_type == "propraetor"]
 
-        # 候选人获取函数（不变）
+        # 候选人获取函数（原内嵌函数）
         def get_candidates(office_type: str):
             cand_list = []
             for fig in self.state.get_living_members():
                 if fig.is_absent:
                     continue
-                # 排除现任官职（非 ex- 开头）
                 if fig.office is not None and not fig.office.startswith("ex-"):
                     continue
                 last_end = None
@@ -1847,7 +1850,7 @@ class SenateCommand(Command):
         consuls = get_candidates('consul')
         praetors = get_candidates('praetor')
 
-        # 修改 assign 函数，增加 used_set 参数
+        # 分配逻辑
         def assign(provinces, candidates, used_set):
             remaining = list(provinces)
             random.shuffle(remaining)
@@ -1867,7 +1870,7 @@ class SenateCommand(Command):
         proconsul_assignments = assign(proconsul_provinces, consuls, used)
         propraetor_assignments = assign(propraetor_provinces, praetors, used)
 
-        # 打印分配结果（不变）
+        # 打印分配结果
         def print_assignments(title, assignments):
             print(f"\n   {title}:")
             if not assignments:
@@ -1891,7 +1894,7 @@ class SenateCommand(Command):
         print_assignments("执政官行省 (Proconsul)", proconsul_assignments)
         print_assignments("大法官行省 (Propraetor)", propraetor_assignments)
 
-        # 提示未被分配的行省（仅针对已征服行省）
+        # 提示未被分配的行省
         all_provinces_set = set(proconsul_provinces + propraetor_provinces)
         assigned_provinces = set(p for p, _ in proconsul_assignments + propraetor_assignments)
         unassigned = all_provinces_set - assigned_provinces
@@ -1899,7 +1902,7 @@ class SenateCommand(Command):
             for p in unassigned:
                 print(f"      ⚠️ {p.name} 无合格候选人，现任总督留任一年")
 
-        # 构建提案（仅针对已征服行省）
+        # 构建提案
         self.proposed_governors = []
         for prov, cand in proconsul_assignments + propraetor_assignments:
             self.proposed_governors.append({

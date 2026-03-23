@@ -9,6 +9,8 @@ from src.core.entities.war import War, WarType, WarStatus  # 确保导入 WarTyp
 from src.core.systems.war_system import WarSystem
 from src.core.systems.military_system import MilitarySystem
 from src.core.systems.naval_system import NavalSystem
+from src.core.entities.province import Province
+from src.api.senate_api import get_eligible_governor_candidates, is_governor_position_occupied
 
 
 class TestSenateAPI(unittest.TestCase):
@@ -163,3 +165,71 @@ class TestSenateAPI(unittest.TestCase):
         self.assertTrue(result["success"])
         # 验证草案状态已变为 submitted
         self.assertEqual(war.peace_treaty["status"], "submitted")
+
+class TestGovernorEligibility(unittest.TestCase):
+    def setUp(self):
+        self.state = GameState.create_for_testing({})
+        self.state._provinces = {}  # 清空默认行省
+
+        # 创建一些测试人物
+        self.consul_history = Figure(id=1, name="卸任执政官", faction_id="test")
+        self.consul_history.office_history.append(type('Term', (), {'office_type': 'consul', 'end_turn': 10})())
+        self.consul_history.office = None
+
+        self.praetor_history = Figure(id=2, name="卸任大法官", faction_id="test")
+        self.praetor_history.office_history.append(type('Term', (), {'office_type': 'praetor', 'end_turn': 8})())
+        self.praetor_history.office = None
+
+        self.current_consul = Figure(id=3, name="现任执政官", faction_id="test")
+        self.current_consul.office_history.append(type('Term', (), {'office_type': 'consul', 'end_turn': 10})())
+        self.current_consul.office = "consul"
+
+        self.absent = Figure(id=4, name="出征人物", faction_id="test")
+        self.absent.is_absent = True
+
+        self.no_history = Figure(id=5, name="无历史", faction_id="test")
+
+        for fig in [self.consul_history, self.praetor_history, self.current_consul, self.absent, self.no_history]:
+            self.state.add_member(fig)
+
+    def test_get_eligible_proconsul(self):
+        candidates = get_eligible_governor_candidates(self.state, "proconsul")
+        ids = [c.id for c in candidates]
+        self.assertIn(1, ids)
+        self.assertNotIn(2, ids)
+        self.assertNotIn(3, ids)
+        self.assertNotIn(4, ids)
+        self.assertNotIn(5, ids)
+
+    def test_get_eligible_propraetor(self):
+        candidates = get_eligible_governor_candidates(self.state, "propraetor")
+        ids = [c.id for c in candidates]
+        self.assertIn(2, ids)
+        self.assertNotIn(1, ids)
+        self.assertNotIn(3, ids)
+        self.assertNotIn(4, ids)
+        self.assertNotIn(5, ids)
+
+    def test_sort_by_recent_turn(self):
+        # 添加一个卸任更早的执政官
+        older = Figure(id=6, name="更早卸任", faction_id="test")
+        older.office_history.append(type('Term', (), {'office_type': 'consul', 'end_turn': 5})())
+        older.office = None
+        self.state.add_member(older)
+        candidates = get_eligible_governor_candidates(self.state, "proconsul")
+        ids = [c.id for c in candidates]
+        # 卸任回合 10 的应在 5 之前
+        self.assertEqual(ids, [1, 6])  # 按卸任回合倒序
+
+    def test_is_governor_position_occupied(self):
+        # 创建行省
+        province1 = Province(1, "西西里", 1000)
+        province1._governor_id = 1
+        province2 = Province(2, "撒丁", 1000)
+        province2._governor_designate_id = 2
+        self.state.add_province(province1)
+        self.state.add_province(province2)
+
+        self.assertTrue(is_governor_position_occupied(self.state, 1))
+        self.assertTrue(is_governor_position_occupied(self.state, 2))
+        self.assertFalse(is_governor_position_occupied(self.state, 3))
