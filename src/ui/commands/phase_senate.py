@@ -316,7 +316,8 @@ class SenateCommand(Command):
                 self._print_proposal_options()
 
                 while True:
-                    print("\n> 请输入操作(CONSUL): ", end="", flush=True)
+                    consul_faction = self.state.get_faction(consul_figure.faction_id)
+                    print(f"\n> 请输入操作({consul_faction.id}_CONSUL): ", end="", flush=True)
                     cmd_input = input().strip()
                     if not cmd_input:
                         continue
@@ -441,12 +442,18 @@ class SenateCommand(Command):
                 self._print_senate_results(proposals)
             else:
                 print("   📭 无提案需要公示")
-            print("\n🔧 本阶段可操作（PLAYER X）：")
+            print("\n🔧 本阶段可操作（ANY）：")
             print("\t1. next/n → 进入保民官否决环节")
             # 等待玩家输入 next
             original_player_id = self.state.get_current_player().player_id
             while True:
-                print("\n> 请输入操作（PLAYER X）：", end="", flush=True)
+                player = self.state.get_player(original_player_id)
+                if player:
+                    faction = self.state.get_faction(player.faction_id)
+                    faction_display = faction.id if faction else "ANY"
+                else:
+                    faction_display = "ANY"
+                print(f"\n> 请输入操作（{faction_display}）：", end="", flush=True)
                 cmd_input = input().strip()
                 if not cmd_input:
                     continue
@@ -560,7 +567,8 @@ class SenateCommand(Command):
                 print("\n🔧 本阶段可操作（TRIBUNE）：")
                 print("   1. veto <提案ID1> <提案ID2> ... → 否决指定提案")
                 print("   2. next/n → 进入下一环节")
-                print("\n> 请输入操作（TRIBUNE）：", end="", flush=True)
+                tribune_faction = self.state.get_faction(tribune.faction_id)
+                print(f"\n> 请输入操作（{tribune_faction.id}_TRIBUNE）：", end="", flush=True)
                 cmd_input = input().strip()
                 if not cmd_input:
                     continue
@@ -1467,7 +1475,8 @@ class SenateCommand(Command):
             proposal_map[str(real_id)] = real_id
 
         while True:
-            print("\n> 请输入操作(PLAYER X): ", end="", flush=True)
+
+            print(f"\n> 请输入操作({faction_name}): ", end="", flush=True)
             cmd_input = input().strip()
             if not cmd_input:
                 continue
