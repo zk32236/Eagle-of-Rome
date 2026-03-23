@@ -700,3 +700,105 @@ def process_war_takeover(state: GameState, decider: Optional[AutoWarTakeoverDeci
                     level=logging.DEBUG,
                     extra={"war_id": war.id, "commander_id": old_cmd.id if old_cmd else None}
                 )
+
+def assign_fleets_to_active_wars(state: GameState) -> dict:
+    """
+    为需要海战且尚无舰队的活跃战争指派可用舰队（补漏函数）。
+    策略：按敌方海军力量降序排序，为每个战争分配尽可能多的可用舰队，
+          直到舰队用尽或战争需求满足。不会重复指派已有舰队的战争。
+    """
+    if not state:
+        return api_response(False, "无效的游戏状态")
+
+    ws = state.get_war_system()
+    if not ws:
+        return api_response(False, "战争系统不可用")
+
+    naval = state.naval_system
+    if not naval:
+        return api_response(False, "海军系统不可用")
+
+    # 获取需要海战且当前没有舰队指派的活跃战争
+    target_wars = [
+        w for w in ws.get_active_wars()
+        if w.naval_required and not w.assigned_fleet_ids
+    ]
+    if not target_wars:
+        return api_response(True, "无需指派舰队")
+
+    # 按敌方海军力量降序排列（强度高的优先）
+    target_wars.sort(key=lambda w: getattr(w, 'enemy_naval_current', 0), reverse=True)
+
+    # 获取所有可用舰队，并按战力降序排列
+    available_fleets = naval.get_available_fleets()
+    if not available_fleets:
+        return api_response(True, "无可指派舰队")
+
+    available_fleets.sort(key=lambda f: getattr(f, 'power', 0), reverse=True)
+
+    assigned_details = []
+    assigned_any = False
+
+    for war in target_wars:
+        # 再次检查，防止在循环中因其他原因已指派
+        if war.assigned_fleet_ids:
+            continue
+
+        needed_power = getattr(war, 'enemy_naval_current', 0)
+        if needed_power <= 0:
+            needed_power = 1   # 若无敌方海军数据，默认至少需要1艘
+
+        assigned_fleets = []
+        total_power = 0
+        fleets_to_remove = []
+
+        for fleet in available_fleets:
+            if total_power >= needed_power:
+                break
+            assigned_fleets.append(fleet.number)
+            total_power += getattr(fleet, 'power', 0)
+            fleets_to_remove.append(fleet)
+
+        if not assigned_fleets:
+            continue
+
+        # 执行指派
+        for fleet_num in assigned_fleets:
+            if naval.assign_fleet_to_war(fleet_num, war.id, "naval"):
+                war.assign_fleet(fleet_num)
+
+        # 从可用列表中移除已指派的舰队
+        for fleet in fleets_to_remove:
+            available_fleets.remove(fleet)
+
+        assigned_details.append({
+            "war_id": war.id,
+            "war_name": war.name,
+            "fleets": assigned_fleets,
+            "total_power": total_power,
+            "needed_power": needed_power
+        })
+        assigned_any = True
+
+        if not available_fleets:
+            break
+
+    if not assigned_any:
+        return api_response(True, "无符合条件的战争需要舰队，或可用舰队不足")
+
+    # 构建返回消息
+    message_lines = []
+    for detail in assigned_details:
+        message_lines.append(
+            f"⚓ 自动指派 {len(detail['fleets'])} 支舰队至 {detail['war_name']} "
+            f"（当前海军战力 {detail['total_power']}，需 {detail['needed_power']}）"
+        )
+    message = "\n".join(message_lines)
+
+    state.log_event(
+        f"舰队指派补漏：{len(assigned_details)} 个战争获得舰队",
+        level=logging.INFO,
+        extra={"assigned_wars": [d["war_id"] for d in assigned_details]}
+    )
+
+    return api_response(True, message, data={"assigned": assigned_details})

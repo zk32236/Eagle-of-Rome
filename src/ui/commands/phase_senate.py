@@ -619,6 +619,10 @@ class SenateCommand(Command):
                     self._restore_rejected_peace_wars(all_rejected)
                 # ===== 恢复调用，放在停战恢复之后 =====
                 senate_api.process_war_takeover(self.state, decider=self.takeover_decider)
+                # ===== 新增：舰队指派补漏 =====
+                fleet_result = senate_api.assign_fleets_to_active_wars(self.state)
+                if fleet_result["success"] and fleet_result["message"]:
+                    print(fleet_result["message"])
             else:
                 print(f"❌ 结算失败: {result['message']}", file=sys.stderr)
 
@@ -708,6 +712,11 @@ class SenateCommand(Command):
             if ws:
                 from src.api import senate_api
                 senate_api.process_war_takeover(self.state, decider=self.takeover_decider)
+
+            # ===== 新增：舰队指派补漏 =====
+            fleet_result = senate_api.assign_fleets_to_active_wars(self.state)
+            if fleet_result["success"] and fleet_result["message"]:
+                print(fleet_result["message"])
 
         self._step += 1
 
