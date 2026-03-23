@@ -338,6 +338,15 @@ def resolve_senate(state: GameState, vote_decider: Optional[SenateVoteDecider] =
     rejected_proposals = []
     rejected_peace_wars = []   # 存储被否决的停战战争对象
 
+    # ===== 新增：收集保民官否决的停战战争 =====
+    ws = state.get_war_system()
+    for proposal in proposals:
+        pid = proposal["id"]
+        if pid in vetoed and proposal["type"] == "peace":
+            war = ws.get_war_by_id(proposal["war_id"]) if ws else None
+            if war:
+                rejected_peace_wars.append(war)
+
     for proposal in proposals:
         pid = proposal["id"]
         if pid in vetoed:
@@ -500,6 +509,8 @@ def execute_war_declaration(state: GameState, war, consul_id: int, legions: int)
         _auto_recruit_and_assign_legions_for_war(state, war, consul_id)
 
 
+# src/api/senate_api.py
+
 def execute_passed_peace_treaty(state: GameState, war):
     """执行通过的停战草案"""
     ws = state.get_war_system()
@@ -513,6 +524,25 @@ def execute_passed_peace_treaty(state: GameState, war):
     ms = state.get_military_system()
     if ms:
         ms.recall_from_war(war.id)
+    # ===== 新增：召回指挥官 =====
+    if war.commander_id:
+        commander = state.get_member(war.commander_id)
+        if commander:
+            commander.is_absent = False
+            if commander.office == "proconsul":
+                commander.office = "ex-consul"
+            elif commander.office == "propraetor":
+                commander.office = "ex-praetor"
+            commander.update_influence()
+            state.log_event(
+                f"停战批准，指挥官 {commander.name} 返回罗马",
+                level=logging.INFO,
+                extra={"war_id": war.id, "commander_id": commander.id}
+            )
+            print(f"      🔄 停战批准，指挥官 {commander.get_formal_name()} 返回罗马")
+            # 清空战争指挥官字段，避免停战期间残留
+            war.commander_id = None
+    # ==========================
     if war.legion_numbers:
         ws.add_legions_to_disband(war.legion_numbers)
     end_turn = state.turn.turn_number + treaty["duration"]
@@ -548,35 +578,125 @@ def _auto_recruit_and_assign_legions_for_war(state: GameState, war, consul_id: i
         war.add_legion_number(num)
 
 
-def process_war_takeover(state: GameState):
-    """战争接管处理"""
+# src/api/senate_api.py
+
+# src/api/senate_api.py
+
+def process_war_takeover(state: GameState, decider: Optional[AutoWarTakeoverDecider] = None):
+    """战争接管处理：为无指挥官战争指派最高优先级指挥官，并在合适时替换已卸任的指挥官"""
     ws = state.get_war_system()
     if not ws:
         return
+
     active_wars = ws.get_active_wars()
     if not active_wars:
         return
-    if not state.turn.leader_ids:
+
+    if decider is None:
+        decider = AutoWarTakeoverDecider()
+
+    # 获取可用的指挥官候选人（在罗马、未出征、未死亡，且官职为 consul 或 praetor）
+    available_commanders = []
+    for fig in state.get_living_members():
+        if not fig.is_absent and not fig.is_dead and fig.office in ("consul", "praetor"):
+            available_commanders.append(fig)
+
+    state.log_event(
+        f"[DEBUG] process_war_takeover: available_commanders = {[f.id for f in available_commanders]}",
+        level=logging.DEBUG,
+        extra={"function": "process_war_takeover", "available_ids": [f.id for f in available_commanders]}
+    )
+
+    if not available_commanders:
+        for war in active_wars:
+            if war.commander_id:
+                old_cmd = state.get_member(war.commander_id)
+                if old_cmd:
+                    print(f"      ℹ️ 罗马无可用执政官或大法官，{war.name} 由 {old_cmd.name}（{old_cmd.office}）继续指挥。")
+                else:
+                    print(f"      ℹ️ 罗马无可用执政官或大法官，{war.name} 继续由原有指挥官指挥。")
         return
-    consul_id = state.turn.leader_ids[0]
-    consul = state.get_member(consul_id)
-    if not consul:
-        return
-    decider = AutoWarTakeoverDecider()
+
+    # 按优先级排序：consul > praetor
+    available_commanders.sort(key=lambda f: 0 if f.office == "consul" else 1)
+    candidate = available_commanders[0]
+
     for war in active_wars:
         if war.status != WarStatus.ACTIVE:
             continue
+
+        state.log_event(
+            f"[DEBUG] process_war_takeover 前: war={war.id}, commander={war.commander_id}",
+            level=logging.DEBUG,
+            extra={"function": "process_war_takeover", "war_id": war.id, "commander_before": war.commander_id}
+        )
+
+        # 情况1：战争无指挥官
         if war.commander_id is None:
-            if decider.decide_takeover(war, consul, None, state):
-                war.commander_id = consul.id
-                consul.is_absent = True
-                _auto_recruit_and_assign_legions_for_war(state, war, consul.id)
+            if decider.decide_takeover(war, candidate, None, state):
+                war.commander_id = candidate.id
+                candidate.is_absent = True
+                _auto_recruit_and_assign_legions_for_war(state, war, candidate.id)
+                state.log_event(
+                    f"{candidate.name} 接管战争 {war.name}",
+                    level=logging.INFO,
+                    extra={"war_id": war.id, "new_commander": candidate.id}
+                )
+                print(f"      ✅ {candidate.get_formal_name()} 接管 {war.name}")
+            else:
+                state.log_event(
+                    f"[DEBUG] 决策器拒绝接管战争 {war.id}（无指挥官）",
+                    level=logging.DEBUG,
+                    extra={"war_id": war.id, "candidate": candidate.id}
+                )
+        # 情况2：战争已有指挥官
         else:
             old_cmd = state.get_member(war.commander_id)
-            if old_cmd and old_cmd.office in ("proconsul", "ex-consul") and old_cmd.is_absent:
-                if decider.decide_takeover(war, consul, old_cmd, state):
-                    old_cmd.is_absent = False
-                    old_cmd.office = "ex-proconsul"
-                    war.commander_id = consul.id
-                    consul.is_absent = True
-                    _auto_recruit_and_assign_legions_for_war(state, war, consul.id)
+            if old_cmd and old_cmd.is_absent:
+                # 关键限制：只有旧指挥官是已卸任的总督（proconsul 或 propraetor）时才允许替换
+                if old_cmd.office in ("proconsul", "propraetor"):
+                    state.log_event(
+                        f"[DEBUG] process_war_takeover 接管分支: war={war.id}, old_commander={old_cmd.id}, office={old_cmd.office}, is_absent={old_cmd.is_absent}, candidate={candidate.id}",
+                        level=logging.DEBUG,
+                        extra={"function": "process_war_takeover", "war_id": war.id, "old_commander": old_cmd.id, "candidate": candidate.id}
+                    )
+                    if decider.decide_takeover(war, candidate, old_cmd, state):
+                        # 旧指挥官返回罗马
+                        old_cmd.is_absent = False
+                        if old_cmd.office == "proconsul":
+                            old_cmd.office = "ex-consul"
+                        elif old_cmd.office == "propraetor":
+                            old_cmd.office = "ex-praetor"
+                        old_cmd.update_influence()
+                        # 新指挥官出征
+                        war.commander_id = candidate.id
+                        candidate.is_absent = True
+                        _auto_recruit_and_assign_legions_for_war(state, war, candidate.id)
+                        # 控制台输出
+                        print(f"      ✅ {candidate.get_formal_name()} 接管 {war.name}，原指挥官 {old_cmd.get_formal_name()} 返回罗马")
+                        state.log_event(
+                            f"{candidate.name} 接管战争 {war.name}，原指挥官 {old_cmd.name} 返回罗马",
+                            level=logging.INFO,
+                            extra={"war_id": war.id, "new_commander": candidate.id, "old_commander": old_cmd.id}
+                        )
+                    else:
+                        print(
+                            f"      ✅ {candidate.get_formal_name()} 拒绝接管 {war.name}，原指挥官 {old_cmd.get_formal_name()} 继续指挥战争")
+                        state.log_event(
+                            f"[DEBUG] 决策器拒绝接管战争 {war.id}（已有指挥官 {old_cmd.id}）",
+                            level=logging.DEBUG,
+                            extra={"war_id": war.id, "old_commander": old_cmd.id, "candidate": candidate.id}
+                        )
+                else:
+                    # 旧指挥官仍为现任官职（consul/praetor等），不允许替换
+                    state.log_event(
+                        f"[DEBUG] 战争 {war.id} 已有指挥官 {old_cmd.id}（{old_cmd.office}），且仍在任，不接管",
+                        level=logging.DEBUG,
+                        extra={"war_id": war.id, "old_commander": old_cmd.id, "office": old_cmd.office}
+                    )
+            else:
+                state.log_event(
+                    f"[DEBUG] 战争 {war.id} 已有指挥官 {old_cmd.id if old_cmd else None}，但不符合接管条件",
+                    level=logging.DEBUG,
+                    extra={"war_id": war.id, "commander_id": old_cmd.id if old_cmd else None}
+                )

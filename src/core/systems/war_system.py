@@ -563,7 +563,7 @@ class WarSystem:
                     war.commander_id = None
                     # ----- 记录激活 -----
                     self.state.log_event(
-                        f"[DEBUG] escalate_threats: 战争 {war.id} 激活为活跃",
+                        f"[DEBUG] escalate_threats: 战争 {war.id} 激活为活跃，commander_id 已清空",
                         level=logging.DEBUG,
                         extra={
                             "function": "escalate_threats",
