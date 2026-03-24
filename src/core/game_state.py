@@ -1213,6 +1213,11 @@ class GameState:
 
         # 包税合同处理
         if contract.contract_type == ContractType.TAX_FARMING:
+            # ===== 新增：存储合同价和利润率 =====
+            contract._contract_price = winner["amount"]
+            # 利润率 = 加价比例 r (来自出价时存储的 tax_rate 键)
+            contract._profit_rate = winner.get("tax_rate", (winner["amount"] / contract.base_cost) - 1.0)
+
             # 先解除该行省所有活跃的包税合同（旧合同）
             active_tax = [c for c in self._contracts_dict.values()
                           if c.province_id == contract.province_id
@@ -1234,6 +1239,7 @@ class GameState:
             contract._tax_rate = winner["tax_rate"]
             province = self.get_province(contract.province_id)
             if province:
+                # 以下计算仍保留，但新逻辑中收入阶段将使用 _contract_price 和 _profit_rate
                 land_price = self.get_economic_rule("land_price_per_unit", 10)
                 private_income_rate = self.get_economic_rule("private_land_income_rate", 0.05)
                 base_tax_rate = self.get_economic_rule("province_tax_rate", 0.1)
@@ -1248,7 +1254,9 @@ class GameState:
             # 绑定骑士和行省
             figure = self.get_member(winner["bidder_id"])
             if figure:
+                print(f"[DEBUG] resolve_auction 绑定前，骑士 {figure.name} 财富: {figure.wealth}")
                 figure.add_contract(contract_id)
+                print(f"[DEBUG] resolve_auction 绑定后，骑士 {figure.name} 财富: {figure.wealth}")
                 contract.awarded_faction = figure.faction_id
 
             province = self.get_province(contract.province_id)

@@ -221,22 +221,43 @@ def resolve_forum(state: GameState) -> dict:
                 continue
 
             if contract.contract_type == ContractType.TAX_FARMING:
-                # 价高者得
                 max_amount = max(b[2] for b in bids)
                 top_bidders = [b for b in bids if b[2] == max_amount]
                 winner_figure, winner_faction, amount = random.choice(top_bidders)
+
+                # 计算利润率和合同价
+                profit_rate = (amount / contract.base_cost) - 1.0
+                contract._profit_rate = profit_rate
+                contract._contract_price = amount
+
+                # 计算实际税率并设置
+                base_tax_rate = state.get_economic_rule("province_tax_rate", 0.1)
+                actual_tax_rate = base_tax_rate * (1 + profit_rate)
+                contract._tax_rate = actual_tax_rate
+
+                # 关键：设置 _winning_bid，供收入阶段使用
+                contract._winning_bid = {
+                    "bidder_id": winner_figure,
+                    "amount": amount,
+                    "tax_rate": profit_rate
+                }
+
+                # 标记中标（不扣款）
                 contract.mark_winner(winner_figure, state.turn.turn_number, 0)
 
-                # 计算并设置税率
-                base_tax_rate = state.get_economic_rule("province_tax_rate", 0.1)  # 基础税率
-                r = (amount / contract.base_cost) - 1.0  # 加价比例
-                contract._tax_rate = base_tax_rate * (1 + r)  # 实际税率
+                # 绑定行省和骑士（略）
+                province = state.get_province(contract.province_id)
+                if province:
+                    province.bind_tax_contract(contract.id)
+                figure = state.get_member(winner_figure)
+                if figure:
+                    figure.add_contract(contract.id)
 
-                winner_person = state.get_member(winner_figure)
-                winner_name = winner_person.get_formal_name() if winner_person else f"ID:{winner_figure}"
+                # 获取派系名用于消息
                 winner_faction_name = state.get_faction(winner_faction).name if winner_faction else "未知"
                 results.append(
-                    f"✅ 包税合同 {contract.name} 中标者: {winner_name} ({winner_faction_name})，出价 {max_amount}，税率 {contract._tax_rate * 100:.1f}%")
+                    f"✅ 包税合同 {contract.name} 中标者: {figure.name} ({winner_faction_name})，出价 {amount}，税率 {actual_tax_rate * 100:.1f}% (利润率 {profit_rate * 100:.1f}%)"
+                )
 
             else:
                 # 工程合同：价低者得

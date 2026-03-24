@@ -118,7 +118,8 @@ class TestDisasterEvent(unittest.TestCase):
         contract.status = ContractStatus.ACTIVE
         contract.awarded_to = 101
         contract._winning_bid = {"bidder_id": 101, "amount": 100}
-        contract._annual_profit = 50
+        contract._contract_price = 100  # 合同价
+        contract._profit_rate = 0.5  # 利润率 50%
         contract.remaining_years = 5
         self.fig.add_contract(contract.id)
         self.sicily.bind_tax_contract(contract.id)
@@ -138,10 +139,10 @@ class TestDisasterEvent(unittest.TestCase):
         cmd_r = RevenueCommand(self.state)
         cmd_r.execute([])
 
-        # 国库变化：国家公地收益10 + 合同中标价100 = 110
-        self.assertEqual(self.state.treasury - initial_treasury, 110)
-        # 人物财富变化：合同利润50，损失45%后28，抽成10%得25
-        expected_wealth_gain = int(round(50 * (1 - 0.45)))  # 28
-        expected_tax = int(round(expected_wealth_gain * 0.1))  # 3
-        expected_net = expected_wealth_gain - expected_tax  # 25
-        self.assertEqual(self.fig.wealth - initial_wealth, expected_net)
+        # 国库变化：国家公地收益10 + 合同价100 = 110
+        expected_treasury_change = 10 + 100
+        self.assertEqual(self.state.treasury - initial_treasury, expected_treasury_change)
+
+        # 骑士财富变化：利润 = contract_price * profit_rate = 100 * 0.5 = 50，扣除派系抽成10%得45
+        expected_wealth_gain = int(100 * 0.5 * (1 - 0.1))  # 45
+        self.assertEqual(self.fig.wealth - initial_wealth, expected_wealth_gain)

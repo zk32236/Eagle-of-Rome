@@ -76,6 +76,7 @@ class RevenueCommand(Command):
         # =========================
 
         self.state.add_treasury(tax_income)
+        print(f"[DEBUG-国库] 国家公地收益后: {self.state.treasury}")
         print(f"💰 国家公地收益: \t+{tax_income} {terms.currency}")
         print(f"📊 国库现有资金: \t{self.state.treasury} {terms.currency}\n")
         self.state.log_event(...)
@@ -175,7 +176,9 @@ class RevenueCommand(Command):
         opex = int(opex_float)  # 向下取整
 
         if opex > 0:
+            print(f"[DEBUG-国库] 运营费扣除前: {self.state.treasury}")
             self.state.treasury -= opex
+            print(f"[DEBUG-国库] 运营费扣除后: {self.state.treasury}")
             print(f"      土地单价: {land_price} Talents/单位, 费率: {rate}")
             print(f"      总土地: {total_land}, 运营费 = {opex} Talents")
             print(f"      国库扣除后余额: {self.state.treasury}")
@@ -304,13 +307,19 @@ class RevenueCommand(Command):
     def _collect_contract_revenues(self, terms, faction_tax_collected: Dict[str, float], tax_rate: float):
         """处理合同收益，逐条记录，包含异常处理"""
         from src.core.entities.contract import ContractType, ContractStatus
-
         active_contracts = [c for c in self.state.contracts
                             if c.status == ContractStatus.ACTIVE]
+
+        active_tax_contracts = [c for c in self.state.contracts if
+                                c.status == ContractStatus.ACTIVE and c.contract_type == ContractType.TAX_FARMING]
+        print(
+            f"[DEBUG] 活跃包税合同: {[(c.id, c.contract_price, c.profit_rate, c.winning_bid['bidder_id'] if c.winning_bid else None) for c in active_tax_contracts]}")
 
         for contract in active_contracts:
             try:
                 if contract.contract_type == ContractType.TAX_FARMING:
+                    print(
+                        f"[DEBUG] 处理包税合同 {contract.id}, winning_bid={contract.winning_bid}, contract_price={contract.contract_price}, profit_rate={contract.profit_rate}")
                     winning_bid = contract.winning_bid
                     if not winning_bid:
                         continue
@@ -322,49 +331,50 @@ class RevenueCommand(Command):
                             province.unbind_tax_contract()
                         continue
 
-                    annual_profit = contract.annual_profit
+                    # 获取合同价和利润率
+                    contract_price = contract.contract_price
+                    profit_rate = contract.profit_rate
 
-                    # ===== 风调雨顺加成 =====
-                    if "bumper_harvest" in self.state._active_events:
-                        multiplier = self.state._active_events["bumper_harvest"]["multiplier"]
-                        annual_profit = int(round(annual_profit * multiplier))
-                        # 可在此处打印调试信息，但为了简洁，可以省略或只在日志中记录
+                    # 骑士毛利润
+                    gross_profit = int(contract_price * profit_rate)
+                    # 派系抽成
+                    tax_float = gross_profit * tax_rate
+                    tax_int = int(round(tax_float))
+                    net_profit = gross_profit - tax_int
 
-                    # ===== 天灾影响（如果合同关联行省受灾）=====
-                    if "disaster" in self.state._active_events:
-                        disaster_info = self.state._active_events["disaster"]
-                        if disaster_info["province_id"] == contract.province_id:
-                            loss_ratio = disaster_info["loss_ratio"]
-                            annual_profit = int(round(annual_profit * (1 - loss_ratio)))
-                            # 可在此打印提示，但为了简洁，只在日志中记录
+                    # 国库收入 = 合同价
+                    print(f"[DEBUG-国库] 包税合同结算前: {self.state.treasury}")
+                    self.state.add_treasury(contract_price)
+                    print(f"[DEBUG-国库] 包税合同结算后: {self.state.treasury}")
 
-                    # =========================
+                    # 骑士净收入
+                    figure.add_wealth(net_profit)
 
-                    profit_float = float(annual_profit)
-                    tax_float = profit_float * tax_rate
-                    net_profit_int = int(round(profit_float - tax_float))
+                    print(f"[DEBUG] 国库 +{contract_price}, 骑士 {figure.name} 净得 {net_profit}")
 
-                    self.state.add_treasury(winning_bid["amount"])
-                    figure.add_wealth(net_profit_int)
-                    contract.total_collected += annual_profit
+                    contract.total_collected += contract_price
 
+                    # 派系抽成累计
                     if figure.faction_id and figure.faction_id in faction_tax_collected:
                         faction_tax_collected[figure.faction_id] += tax_float
 
                     if contract.remaining_years > 0:
                         contract.remaining_years -= 1
                         if contract.remaining_years == 0:
-                            contract.set_extended(True)
+                            contract.mark_complete(self.state.turn.turn_number)
+                            province = self.state.get_province(contract.province_id)
+                            if province:
+                                province.unbind_tax_contract()
 
-                    # 日志：包税合同收益
+                    # 日志
                     self.state.log_event(
-                        f"包税合同收益: {figure.name} 净得 {net_profit_int}，国库 +{winning_bid['amount']}",
+                        f"包税合同收益: {figure.name} 净得 {net_profit}，国库 +{contract_price}",
                         extra={
                             "type": "tax_contract_revenue",
                             "contract_id": contract.id,
                             "figure_id": figure.id,
-                            "net_profit": net_profit_int,
-                            "treasury_gain": winning_bid['amount']
+                            "net_profit": net_profit,
+                            "treasury_gain": contract_price
                         }
                     )
 

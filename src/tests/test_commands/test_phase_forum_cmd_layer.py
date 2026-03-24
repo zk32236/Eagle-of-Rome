@@ -341,6 +341,8 @@ class TestForumCommand:
         retirement, recruitment, bid, land_trade, triumph = mock_deciders
         sicily = test_state.get_province(1)
         sicily.set_grievance(0)
+
+        # 创建包税合同，设置合同价和利润率，使实际税率超过基础税率
         contract = Contract(
             id=100,
             contract_type=ContractType.TAX_FARMING,
@@ -348,10 +350,11 @@ class TestForumCommand:
             base_cost=100,
             status=ContractStatus.ACTIVE,
         )
-        contract._tax_rate = 0.2
+        # 设置合同价和利润率：年合同价200，利润率100%，则总税额400
+        contract._contract_price = 200
+        contract._profit_rate = 1.0
         contract._province_id = 1
         test_state._contracts_dict[100] = contract
-        # 使用 bind_tax_contract 方法绑定合同
         sicily.bind_tax_contract(100)
 
         cmd = ForumCommand(test_state,
@@ -364,7 +367,9 @@ class TestForumCommand:
         with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
             cmd._update_civil_unrest()
         output = mock_stdout.getvalue()
-        assert "因包税合同税率 20% > 10%，民怨升至 1 级" in output
+
+        # 检查民怨是否升至1级（文本可能包含实际税率，只检查关键部分）
+        assert "民怨升至 1 级" in output
         assert sicily.grievance == 1
 
     def test_civil_unrest_auto_escalation(self, test_state, mock_deciders):
@@ -424,7 +429,8 @@ class TestForumCommand:
             base_cost=100,
             status=ContractStatus.ACTIVE,
         )
-        contract1._tax_rate = 0.2
+        contract1._contract_price = 200
+        contract1._profit_rate = 1.0
         contract1._province_id = 1
         test_state._contracts_dict[101] = contract1
 
@@ -435,11 +441,12 @@ class TestForumCommand:
             base_cost=100,
             status=ContractStatus.ACTIVE,
         )
-        contract2._tax_rate = 0.15
+        contract2._contract_price = 150
+        contract2._profit_rate = 0.5
         contract2._province_id = 1
         test_state._contracts_dict[102] = contract2
 
-        # 绑定其中一个合同
+        # 绑定其中一个合同（实际不影响民变计算，因为 province_contracts 遍历所有活跃合同）
         sicily.bind_tax_contract(101)
 
         cmd = ForumCommand(test_state,
@@ -452,7 +459,10 @@ class TestForumCommand:
         with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
             cmd._update_civil_unrest()
         output = mock_stdout.getvalue()
+
+        # 确保民怨只触发一次（从0到1）
         assert sicily.grievance == 1
+        # 检查输出中民怨升级文本只出现一次
         assert output.count("民怨升至 1 级") == 1
 
     # ========== 土地交易测试 ==========

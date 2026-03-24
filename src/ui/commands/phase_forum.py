@@ -134,6 +134,9 @@ class ForumCommand(Command):
                     if result:
                         knight, amount, tax_rate = result
                         self.state.add_forum_action("contract_bids", (contract.id, knight.id, faction.id, amount))
+                        # ===== 新增日志 =====
+                        print(
+                            f"[DEBUG] 派系 {faction.name} 对合同 {contract.id} 出价 {amount}，骑士 {knight.name} 当前财富: {knight.wealth}")
                 elif contract.contract_type == ContractType.PUBLIC_WORKS:
                     if getattr(contract, '_is_fleet_construction', False):
                         result = self.bid_decider.decide_works_bid(contract, knights, self.state)  # 或 decide_fleet_bid
@@ -474,6 +477,10 @@ class ForumCommand(Command):
             return
         base_tax_rate = self.state.get_economic_rule("province_tax_rate", 0.1)
         italy_unrest_trigger = self.state.config.get("economic_rules.italy_unrest_trigger_turns", 3)
+        # ===== 新增：获取土地价格和私地收入率 =====
+        land_price = self.state.get_economic_rule("land_price_per_unit", 10)
+        private_income_rate = self.state.get_economic_rule("private_land_income_rate", 0.05)
+        # =========================================
         provinces = self.state.get_all_provinces()
         if not provinces:
             return
@@ -490,7 +497,7 @@ class ForumCommand(Command):
         any_change = False
         print("\n   📊 行省民变状态：")
 
-        # 意大利本土
+        # 意大利本土处理（省略，保持原样）
         italy = self.state.get_province(0)
         if italy:
             old_grievance = italy.grievance
@@ -507,12 +514,12 @@ class ForumCommand(Command):
                     print(f"         意大利本土爆发平民起义！政府面临倒台，马上行动！")
                 any_change = True
 
-        # 行省
+        # 行省处理
         for province in provinces:
             if province.province_id == 0:
                 continue
 
-            # 起义检测（民怨达到3且未起义）
+            # 起义检测
             if province.grievance >= 3 and not province.event_flags.get("rebellion_active"):
                 war_system = self.state.get_war_system()
                 if war_system:
@@ -526,7 +533,7 @@ class ForumCommand(Command):
                     )
                     any_change = True
 
-            # 自动升级（1->2, 2->3）
+            # 自动升级
             if 0 < province.grievance < 3:
                 province.set_grievance(province.grievance + 1)
                 print(f"      ⚠️ 行省 {province.name} 民怨升级至 {province.grievance} 级")
@@ -534,29 +541,29 @@ class ForumCommand(Command):
                     print(f"         行省 {province.name} 爆发平民起义！")
                 any_change = True
 
-            # 合同税率触发
+            # 包税合同实际税率触发民变
             contracts = province_contracts.get(province.province_id, [])
             if contracts:
                 for contract in contracts:
-                    tax_rate = getattr(contract, 'tax_rate', 0.0)
-                    # ===== 新增防御性检查 =====
-                    if tax_rate is None:
-                        self.state.log_event(
-                            f"⚠️ 合同 {contract.id} 税率未设置，已跳过",
-                            level=logging.WARNING,
-                            extra={"contract_id": contract.id}
-                        )
+                    # 计算实际税率
+                    land_value = province.land_private * land_price
+                    expected_income = int(land_value * private_income_rate)
+                    if expected_income <= 0:
                         continue
-                    # =========================
-                    if tax_rate > base_tax_rate:
+                    total_collected = contract.contract_price * (1 + contract.profit_rate)
+                    actual_tax_rate = total_collected / expected_income
+                    if actual_tax_rate > base_tax_rate:
                         if province.grievance < 1:
                             province.set_grievance(1)
-                            print(f"      🔔 行省 {province.name} 因包税合同税率 {tax_rate * 100:.0f}% > {base_tax_rate * 100:.0f}%，民怨升至 1 级")
+                            print(
+                                f"      🔔 行省 {province.name} 因包税合同实际税率 {actual_tax_rate * 100:.1f}% > {base_tax_rate * 100:.1f}%，民怨升至 1 级")
                             any_change = True
                         else:
-                            print(f"      📌 行省 {province.name} 包税合同税率 {tax_rate * 100:.0f}%，当前民怨 {province.grievance} 级")
+                            print(
+                                f"      📌 行省 {province.name} 包税合同实际税率 {actual_tax_rate * 100:.1f}%，当前民怨 {province.grievance} 级")
                     else:
-                        print(f"      ✅ 行省 {province.name} 包税合同税率 {tax_rate * 100:.0f}% 在允许范围内，民怨 {province.grievance} 级")
+                        print(
+                            f"      ✅ 行省 {province.name} 包税合同实际税率 {actual_tax_rate * 100:.1f}% 在允许范围内，民怨 {province.grievance} 级")
             else:
                 if province.grievance > 0:
                     print(f"      ℹ️ 行省 {province.name} 当前民怨 {province.grievance} 级")
@@ -1332,7 +1339,19 @@ class ForumCommand(Command):
             faction = self.state.get_faction(player.faction_id)
             if faction:
                 try:
+                    # ===== 新增：市场环节开始前打印骑士财富 =====
+                    knights = [m for m in faction.get_members(self.state) if
+                               m.class_tier == ClassTier.EQUES and not m.is_dead]
+                    print("[DEBUG] 市场环节开始前派系骑士财富：")
+                    for k in knights:
+                        print(f"   {k.name}: {k.wealth}")
                     self._apply_market_decisions(player_id, faction)
+                    # ===== 新增：市场环节结束后打印骑士财富 =====
+                    knights = [m for m in faction.get_members(self.state) if
+                               m.class_tier == ClassTier.EQUES and not m.is_dead]
+                    print("[DEBUG] 市场环节结束后派系骑士财富：")
+                    for k in knights:
+                        print(f"   {k.name}: {k.wealth}")
                 except Exception as e:
                     logging.exception("市场环节自动决策异常")
             self._handle_next([])

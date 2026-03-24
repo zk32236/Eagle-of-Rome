@@ -9,11 +9,11 @@
     "max_legions": 8,
     "budget_always_pass": false,
     "war_always_pass": false,
-    "force_battle_result": "TRIUMPH",
+    "force_battle_result": "",
     "bypass_player_check": false,
     "auto_forum": true,
     "auto_population": true,
-    "auto_senate": false
+    "auto_senate": true
   },
   "logging": {
     "enabled": true,
@@ -156,6 +156,7 @@
     "private_land_income_rate": 0.1,
     "province_tax_rate": 0.1,
     "tax_auction_ratio": 0.8,
+    "tax_contract_profit_rate": 0.2,
     "tax_contract_duration": 5,
     "tax_bid_increment_min": 0.05,
     "tax_bid_increment_max": 0.20,
