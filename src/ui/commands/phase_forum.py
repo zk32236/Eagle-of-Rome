@@ -562,8 +562,11 @@ class ForumCommand(Command):
                             print(
                                 f"      📌 行省 {province.name} 包税合同实际税率 {actual_tax_rate * 100:.1f}%，当前民怨 {province.grievance} 级")
                     else:
-                        print(
-                            f"      ✅ 行省 {province.name} 包税合同实际税率 {actual_tax_rate * 100:.1f}% 在允许范围内，民怨 {province.grievance} 级")
+                        if province.grievance > 0:
+                            province.set_grievance(province.grievance - 1)
+                            print(
+                                f"      🍃 行省 {province.name} 因包税合同实际税率降低，民怨下降至 {province.grievance} 级")
+                            any_change = True
             else:
                 if province.grievance > 0:
                     print(f"      ℹ️ 行省 {province.name} 当前民怨 {province.grievance} 级")
