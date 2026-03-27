@@ -142,59 +142,79 @@ class NavalSystem:
         if not contract._is_fleet_construction:
             return
 
+        # 获取实际成本和原始预算
+        actual_cost = getattr(contract, '_actual_cost', 0)
+        original_budget = getattr(contract, '_original_budget', 0)
+        if actual_cost <= 0 or original_budget <= 0:
+            # 兼容旧数据或手动出价未设置，使用原逻辑不调整
+            self.state.log_event(
+                f"舰队合同 {contract.id} 缺少实际成本或原始预算，跳过战斗力调整",
+                level=logging.WARNING
+            )
+            cost_ratio = 1.0
+        else:
+            cost_ratio = actual_cost / original_budget
+
+        # 获取舰队配置
+        fleet_configs = self.state.config.get("economic_rules.fleet_types", {})
+        default_type = getattr(contract, "_fleet_type", "trireme")
+
         # 获取舰队组成建议
         composition = contract.recommended_fleet_composition
         if not composition:
-            # 兼容旧数据：按原逻辑建一艘
-            fleet_type = getattr(contract, "_fleet_type", "trireme")
-            build_time = getattr(contract, "_build_time", 1)
-            target_war_id = getattr(contract, "_target_war_id", None)
+            # 单舰队
+            fleet_type = default_type
+            config = fleet_configs.get(fleet_type, {})
+            base_strength = config.get("strength_base", 3)
+            actual_strength = base_strength * cost_ratio
+            actual_strength = max(1, min(actual_strength, base_strength * 2))
+            actual_strength = int(round(actual_strength))
 
             fleet = Fleet(
                 number=self._next_fleet_number,
                 fleet_type=fleet_type,
                 name=f"舰队 {self._next_fleet_number} ({fleet_type})"
             )
-            fleet.set_strength_from_config(
-                self.state.config.get("economic_rules.fleet_types", {}).get(fleet_type, {})
-            )
-            fleet._target_war_id = target_war_id
+            fleet._strength_base = actual_strength
+            fleet._target_war_id = getattr(contract, "_target_war_id", None)
             self._fleets[self._next_fleet_number] = fleet
             self._next_fleet_number += 1
 
+            build_time = getattr(contract, "_build_time", 1)
             fleet.start_building(
                 start_turn=self.state.turn.turn_number,
                 contract_id=contract.id,
                 build_time=build_time
             )
-
             contract.remaining_years = build_time
             contract.duration_years = build_time
             self._construction_contracts[contract.id] = fleet.number
 
             self.state.log_event(
-                f"舰队建造合同 {contract.id} 中标，开始建造 {fleet.name}，预计 {fleet.build_end_turn} 回合完工",
+                f"舰队建造合同 {contract.id} 中标，开始建造 {fleet.name}，实际强度 {actual_strength}，预计 {build_time} 回合完工",
                 extra={"fleet_number": fleet.number, "contract_id": contract.id}
             )
         else:
-            # 按建议组成建造多艘舰队
-            target_war_id = getattr(contract, "_target_war_id", None)
-            build_time = getattr(contract, "_build_time", 1)  # 所有舰艇建造时间相同
-            fleet_configs = self.state.config.get("economic_rules.fleet_types", {})
-
+            # 多舰队：按组成建造多艘，每艘根据类型单独计算强度
+            build_time = getattr(contract, "_build_time", 1)
             built_fleets = []
             for item in composition:
                 fleet_type = item["type"]
                 count = item["count"]
                 config = fleet_configs.get(fleet_type, {})
+                base_strength = config.get("strength_base", 3)
+                actual_strength = base_strength * cost_ratio
+                actual_strength = max(1, min(actual_strength, base_strength * 2))
+                actual_strength = int(round(actual_strength))
+
                 for i in range(count):
                     fleet = Fleet(
                         number=self._next_fleet_number,
                         fleet_type=fleet_type,
                         name=f"舰队 {self._next_fleet_number} ({fleet_type})"
                     )
-                    fleet.set_strength_from_config(config)
-                    fleet._target_war_id = target_war_id
+                    fleet._strength_base = actual_strength
+                    fleet._target_war_id = getattr(contract, "_target_war_id", None)
                     self._fleets[self._next_fleet_number] = fleet
                     self._next_fleet_number += 1
 
@@ -205,14 +225,12 @@ class NavalSystem:
                     )
                     built_fleets.append(fleet.number)
 
-            # 记录合同与舰队的关联（可存储所有舰队编号，这里简化）
-            self._construction_contracts[contract.id] = built_fleets[0]  # 只存第一个，但实际需要存储列表
-
+            self._construction_contracts[contract.id] = built_fleets[0] if built_fleets else None
             contract.remaining_years = build_time
             contract.duration_years = build_time
 
             self.state.log_event(
-                f"舰队建造合同 {contract.id} 中标，开始建造 {len(built_fleets)} 艘舰队，预计 {build_time} 回合完工",
+                f"舰队建造合同 {contract.id} 中标，开始建造 {len(built_fleets)} 艘舰队，实际强度比例 {cost_ratio:.2f}，预计 {build_time} 回合完工",
                 extra={"contract_id": contract.id, "fleet_count": len(built_fleets)}
             )
 
@@ -221,6 +239,10 @@ class NavalSystem:
         for fleet in self._fleets.values():
             if fleet.is_building and fleet.build_end_turn == current_turn:
                 fleet.complete_building()
+                self.state.log_event(
+                    f"舰队 {fleet.number} 建造完成，实际战力 {fleet._strength_base}",
+                    level=logging.DEBUG
+                )
                 # 基础完成日志
                 self.state.log_event(
                     f"[DEBUG] 舰队 {fleet.number} 建造完成",

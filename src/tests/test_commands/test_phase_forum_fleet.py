@@ -178,7 +178,7 @@ class TestForumFleet:
         fleet_contract._is_fleet_construction = True
         test_state._contracts_dict[100] = fleet_contract
 
-        test_state.add_forum_action("contract_bids", (100, 2, "f1", 70))
+        test_state.add_forum_action("contract_bids", (100, 2, "f1", 70, 0.2, 1, 0))
 
         # 替换为 MagicMock
         test_state._naval_system.on_contract_awarded = MagicMock()
@@ -211,7 +211,7 @@ class TestForumFleet:
         test_state._contracts_dict[101] = fleet_contract
 
         # 添加出价
-        test_state.add_forum_action("contract_bids", (101, 2, "f1", 70))
+        test_state.add_forum_action("contract_bids", (101, 2, "f1", 70, 0.2, 1, 0))
 
         # mock 海军系统的 on_contract_awarded 方法
         test_state._naval_system.on_contract_awarded = MagicMock()

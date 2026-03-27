@@ -9,9 +9,9 @@
     "max_legions": 8,
     "budget_always_pass": false,
     "war_always_pass": false,
-    "force_battle_result": "",
-    "bypass_player_check": false,
-    "auto_forum": true,
+    "force_battle_result": "TRIUMPH",
+    "bypass_player_check": true,
+    "auto_forum": false,
     "auto_population": true,
     "auto_senate": true
   },
@@ -33,7 +33,7 @@
       "sale_chance": 0.3,
       "land_percent_min": 0.0005,
       "land_percent_max": 0.0010,
-      "submit_chance": 0.7
+      "submit_chance": 1.0
     },
     "office_cooldowns": {
       "consul": 2,
@@ -99,7 +99,7 @@
       "Aemilius": 2,
       "Servilius": 2
     },
-    "tribune_veto_chance": 0.3
+    "tribune_veto_chance": 0.0
   },
   "forum_rules": {
     "new_figures_count": 3,
@@ -149,6 +149,7 @@
     "legion_recruit_cost": 4,
     "legion_maintenance_base": 8,
     "veteran_maintenance_bonus": 1,
+
     "land_price_per_unit": 10,
     "public_land_income_rate": 0.01,
     "national_public_land_tax_rate": 0.1,
@@ -160,14 +161,18 @@
     "tax_contract_duration": 5,
     "tax_bid_increment_min": 0.05,
     "tax_bid_increment_max": 0.20,
+
     "infrastructure_cost_rate": 0.001,
     "national_opex_rate": 0.0003,
     "national_opex_deficit_limit": 3,
+
     "project_budget_margin": 0.2,
     "project_theoretical_construction": 3,
     "project_theoretical_warranty": 10,
     "project_bid_discount_min": 0.05,
     "project_bid_discount_max": 0.20,
+    "default_bid_profit_rate": 0.2,
+
     "faction_initial_treasury": 10,
     "faction_tax_rate": 0.1,
     "faction_member_limit": 6,

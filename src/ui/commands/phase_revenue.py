@@ -419,14 +419,8 @@ class RevenueCommand(Command):
 
                         # 日志：工程合同收益
                         self.state.log_event(
-                            f"工程合同收益: {figure.name} 净得 {knight_net_gain}，国库 -{payment}",
-                            extra={
-                                "type": "works_contract_revenue",
-                                "contract_id": contract.id,
-                                "figure_id": figure.id,
-                                "net_profit": knight_net_gain,
-                                "treasury_cost": payment
-                            }
+                            f"工程合同 {contract.id} 收益: 支付 {payment}, 成本 {cost}, 利润 {profit_float}, 税收 {tax_int}, 骑士净得 {knight_net_gain}",
+                            level=logging.DEBUG
                         )
 
                         if contract.remaining_years <= 0:

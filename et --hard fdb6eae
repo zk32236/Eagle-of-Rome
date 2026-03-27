@@ -1,0 +1,177 @@
+* [33mfdb6eae[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mdebug-phase3-stderr-removal[m[33m)[m fix: 修复包税合同利润结算缺失并增加民怨联动
+* [33m769ac28[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7-fix-tax-contract-20260324[m[33m)[m fix: 修复包税合同利润结算缺失问题
+* [33m1a627d5[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.46-comprehensive-fix-20260323[m[33m)[m feat: 完善元老院阶段多项功能与修复
+* [33m626a6c2[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.45-auto-veto-fix-20260323[m[33m)[m fix: 完善手动模式保民官环节 AI 玩家自动否决
+* [33m2c81f5b[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.44-final-fix-20260323[m[33m)[m feat: 完善战争接管机制、舰队指派补漏、总督资格校验及起义指挥官指派
+* [33m3270706[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.43-fleet-fix-20260323[m[33m)[m fix: 完善战争接管机制及舰队指派补漏
+* [33m7229392[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.42-war-takeover-fix-20260323[m[33m)[m fix: 完善战争接管机制及停战流程
+* [33mc6d7e25[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.42-senate-final-fix-20260322[m[33m)[m fix: 元老院阶段全面修复及功能完善
+* [33m67ccd90[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.38-senate-manual-fix-20260322[m[33m)[m fix: 元老院阶段手动模式交互修复及逻辑完善
+* [33m5b5e20c[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.36-fix-peace-treaty-20260322[m[33m)[m fix: 手动模式下停战草案状态改为submitted，使其能被正确执行
+* [33m2bd7659[m[33m ([m[1;33mtag: [m[1;33mbackup/phase5-task4-final-20260322[m[33m)[m 子任务5.0：元老院数据流统一（投票/否决基于 _senate_pending）
+* [33m061d455[m feat(senate): 完成手动模式提案交互及接管战争功能
+* [33m72a0434[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.36-phase5-task4-final-20260321[m[33m)[m feat(senate): 完成手动模式提案交互及接管战争功能
+* [33m4a51f57[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.35-phase5-task4-final-20260321[m[33m)[m feat(senate): 完成手动模式提案交互及接管战争功能
+* [33m6c2d06e[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.35-phase5-task4-wip-20260321[m[33m)[m feat(senate): 手动提案交互及战争接管功能
+* [33m39717bc[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.34-phase5-task4-20260321[m[33m)[m feat(senate): 实现手动模式提案交互
+* [33m0dcf57e[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.33-phase5-task4-step1-20260321[m[33m)[m refactor(senate): API层优化 - 支持决策器注入与日志记录
+* [33mbe07944[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.32-phase5-task3-20260321[m[33m)[m feat(senate): 实现元老院阶段 API 层
+* [33m0990bc8[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.31-phase5-task2-20260321[m[33m)[m refactor(senate): 引入状态机基础框架，拆分步骤处理函数
+* [33mb8b67ce[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.30-phase5-task1-20260321[m[33m)[m test(senate): 新增元老院阶段单元测试，建立改造基线
+* [33m1de3f32[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.04-land-reform-20260321[m[33m)[m fix: 重构公地认购机制，解决技术债务 TD-2026-03-20-001
+* [33me52e9ce[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.03-test-fixes-20260321[m[33m)[m fix: 修复人口阶段回归测试失败
+* [33mbcb3754[m fix(phase4): 修复人口阶段手动模式显示、工程合同质保期及行省总土地同步问题
+* [33m02a6d11[m fix(phase4): 公共工程中标后设置 awarded_faction，解决派系显示为Unknown的问题
+* [33md1fe058[m fix(phase4): 手动模式人口阶段显示各派系影响力表格，与自动模式保持一致
+* [33m4b9f194[m fix(phase4): 统一人口阶段交互提示为stdout，解决显示错位问题
+* [33m9f97806[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.37-phase4-final-20260319[m[33m)[m fix(phase4): 完成人口阶段所有修复任务
+* [33m6b07663[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.36-phase4-final-20260319[m[33m)[m fix(phase4): 完成人口阶段所有修复任务
+* [33m6fd4a31[m fix(phase4): 修改自动投票决策器，本派系时选影响力最高者 - AutoVoteDecider 现在优先选择本派系影响力最高的候选人 - 更新单元测试，验证正确行为
+* [33m2b815d4[m fix(phase4): 自动模式下显示候选人列表和当前影响力
+* [33mce67ee6[m feat(phase4): 自动模式下添加候选人列表显示 - 在自动庆典环节打印标题、当前影响力和候选人名单 - 与设计文档 UI-04-1 界面保持一致
+* [33mc3149b7[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.35-phase4-final-20260318[m[33m)[m feat(phase4): 完成人口阶段所有修复任务
+* [33m03cd51c[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.34-phase4-candidate-tests-20260318[m[33m)[m test(phase4): 补充候选人计算与显示单元测试
+* [33ma97ced1[m fix(phase4): 移除公示环节重复的战场指挥官转换，确保执行顺序正确
+* [33m0c94d82[m fix(phase4): 在公告环节启动块中添加卸任所有现任官员
+* [33ma316be3[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.33-phase4-fix-duplicate-20260318[m[33m)[m fix(phase4): 移除公示环节重复的军团/舰队解散逻辑，仅保留公告环节执行一次
+* [33m5c446f5[m fix(phase4): 移除公示环节重复的广场清理逻辑，仅保留公告环节执行一次 - 删除 _do_resolution 中的清理代码 - 新增单元测试 test_curia_cleaned 验证清理功能 - 确保输出格式与基线一致
+* [33m0cd9c11[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.32-phase4-complete-20260317[m[33m)[m feat(phase4): 人口阶段多步骤交互框架完成
+* [33m269752e[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.30-phase4-prep-20260317[m[33m)[m feat(phase4): 人口阶段基础准备
+* [33m68ce481[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.29-fixes-20260317[m[33m)[m fix: 修复人口阶段凯旋仪式重复显示问题
+* [33m2232511[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.31-test-final-20260316[m[33m)[m test: 完成广场阶段测试重构及全回归测试通过
+* [33mc3e324a[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.29-tax-rate-fix-20260316[m[33m)[m fix: 修复包税合同税率未设置导致民怨更新异常
+* [33m257e531[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.28-ai-refactor-market-20260316[m[33m)[m refactor: 将 AI 市场决策封装至 AutoPlayerProcessor
+* [33m67e1253[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.27-ai-refactor-retirement-20260316[m[33m)[m refactor: 将 AI 裁员决策封装至 AutoPlayerProcessor
+* [33m34772f4[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.26-log-standardization-20260316[m[33m)[m refactor: 日志标准化 - 替换调试打印为 logging
+* [33med94362[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.25-ai-forum-fix-20260316[m[33m)[m fix: 解决正常模式下AI玩家自动决策未生效的问题
+* [33mc1dc67c[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.27-phase3-fixes-20260315[m[33m)[m fix: 修复凯旋投票、土地法案、舰队合同生成与建造流程问题
+* [33m1852c86[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.26-phase3-fixes-20260315[m[33m)[m fix: 修复凯旋投票与土地法案问题，并优化代码封装
+* [33m1d51997[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.03-fixes-20260315[m[33m)[m fix(forum): 修复凯旋投票与土地法案执行问题
+* [33ma299372[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.26-phase3-with-known-issues-20260315[m[33m)[m feat: 广场阶段完整功能实现，支持三种运行模式
+* [33m9ef82c2[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.25-phase3-final-20260315[m[33m)[m fix: 广场阶段完整功能实现及异常处理增强
+* [33m6e728d9[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.24-phase3-complete-20260315[m[33m)[m feat: 广场阶段完整功能实现，支持三种运行模式
+* [33mbff46db[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.22-permission-bypass-20260315[m[33m)[m fix: 添加测试权限绕过开关及API权限检查修改
+* [33m4cf109a[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.21-phase3-final-20260314[m[33m)[m fix: 修复广场阶段交互流程及实时显示问题
+* [33m525e880[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.20-phase3-stderr-backup-20260314[m[33m, [m[1;31morigin/debug-phase3-stderr-removal[m[33m, [m[1;32mfeature/mvp-0.7-phase1[m[33m)[m backup: 广场阶段当前工作状态（包含 file=sys.stderr 输出）
+* [33mbb583b2[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.18-ui-phase2-20260314[m[33m)[m feat(core): 完成阶段2 - 玩家轮流与权限控制
+* [33mad2c57e[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.17-ui-phase1-20260313[m[33m)[m feat(ui): 完成阶段1 - 新UI基础框架
+* [33m2e15ab4[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.16-api-phase0-20260313[m[33m, [m[1;31morigin/feature/mvp-0.7[m[33m, [m[1;32mfeature/mvp-0.7[m[33m)[m feat(api): 完成阶段0 - API层建立与查询命令迁移
+* [33ma321049[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.15-debug-20260312[m[33m)[m chore: 保存调试状态，包含军团图标修复、停战逻辑调整等
+* [33m6876ab7[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.15-death-event-debug-20260311[m[33m, [m[1;33mtag: [m[1;33mmvp-0.7.15-death-event-debug-[m[33m)[m chore: 临时提交，保存调试状态
+* [33ma77a672[m feat(debug): 为战争系统添加调试日志
+* [33m27c908e[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.13-debug-logs-20260312[m[33m)[m feat(debug): 为战争系统添加调试日志
+* [33m05fb714[m feat: 实现无妄天灾事件
+* [33m62ccce3[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.13-disaster-20260311[m[33m)[m feat: 实现无妄天灾事件
+* [33m668f4c0[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.12-mighty-man-20260311[m[33m)[m feat: 实现天降猛男事件
+* [33m1346011[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.11-peace-20260311[m[33m)[m feat: 实现国泰民安事件
+* [33m47af149[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.10-bumper-harvest-20260311[m[33m)[m feat: 实现风调雨顺事件
+* [33m92a8601[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.09-rebellion-complete-20260310[m[33m, [m[1;33mtag: [m[1;33mmvp-0.7.09-all-subtasks-20260310[m[33m)[m feat: 实现行省起义完整机制
+* [33mfe26142[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.08-rebellion-base-20260310[m[33m)[m feat: 实现行省起义基础机制
+* [33ma843208[m feat: 实现技术解锁机制并修复行省总督类型
+* [33m48ef3b9[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.05-tech-unlock-20260310[m[33m)[m feat: 实现技术解锁机制（皮洛士战争后解锁舰队）
+* [33mfc079cb[m feat: 海军与海战功能完整实现（子任务2）
+* [33mbc3ddd9[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.04-war-subtask2-20260309[m[33m)[m feat: 海军与海战功能实现（子任务2）
+* [33mf776d78[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.04-war-subtask1-20260308[m[33m)[m feat: 战争模块基础数据与配置准备（子任务1）
+* [33m514e118[m feat:经济数据校准
+* [33m07631e2[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.3-national-opex-20260306[m[33m)[m feat: 实现国家运营费功能（MVP0.7-3）
+* [33m82fe7af[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7-2-20260306-fixes[m[33m)[m fix: 战争胜利后指挥官返回逻辑完善，元老院工程合同增加国库检查
+* [33md118d18[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7-2-20260306[m[33m)[m feat: 实现行省扩张机制及多项修复
+* [33m755a0f0[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.02-fixes-20260305[m[33m, [m[1;33mtag: [m[1;33mmvp-0.7-2-2026/03/05[m[33m)[m feat: 实现行省扩张机制（战争胜利解锁行省）
+* [33m974e18f[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.02-fixes-20260304[m[33m)[m fix: 解决停战议和遗留问题及军团相关显示/配置问题
+* [33md711ac6[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.01-complete-20260304[m[33m)[m feat: 完成停战议和机制所有阶段
+* [33m3b9d8c3[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.01-phase7-20260304[m[33m)[m feat: 停战议和机制阶段7 - 战斗阶段指挥官返回
+* [33mabb6807[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.01-phase6-20260304[m[33m)[m feat: 停战议和机制阶段6 - 税收阶段赔款结算
+* [33m28ad5c8[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.01-phase5-fix-20260304[m[33m)[m fix: 修正停战草案保民官否决调用错误
+* [33m899d26a[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.01-phase5-20260303[m[33m)[m feat: 停战议和机制阶段5 - 元老院审批流程
+* [33m27f1270[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.01-phase4-20260303[m[33m)[m feat: 停战议和机制阶段4 - 人口阶段官职转换及论坛提示
+* [33m8ac872c[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.01-phase3-20260303[m[33m)[m feat: 停战议和机制阶段3 - 战斗阶段集成草案生成
+* [33m0499bff[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7-phase2-20260303[m[33m)[m feat: 停战议和机制阶段2 - 草案生成决策器
+* [33m8f941df[m[33m ([m[1;33mtag: [m[1;33mmvp-0.7.01-phase1-2026/03/03[m[33m, [m[1;31morigin/feature/mvp-0.5[m[33m, [m[1;32mfeature/mvp-0.5[m[33m)[m feat: 停战议和机制阶段1 - 实体与枚举扩展
+* [33mc66c203[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/03[m[33m)[m feat: 实现行省总督任命全流程
+* [33m85e6cc1[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/02-hotfix1[m[33m)[m fix: 修复宣战后重复征召军团问题（设置指挥官）；修正军团数量为8；为抛弃人物添加概率配置
+* [33m52431ca[m feat: 完成日志增强阶段三和阶段四，新增保民官否决权功能
+* [33mfc4ceb8[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/02-stage4[m[33m)[m feat: 完成异常与错误日志增强（阶段四）
+* [33mcbe1953[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/02-stage3-logfix[m[33m)[m feat: 改进日志文件生成，添加时间戳后缀，并在CLI显示启动时间
+* [33mdf8ea86[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/02-stage3-fix[m[33m)[m fix: 修复贵族买地法案国库更新问题，确保售地收入计入国库
+* [33m2265b90[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/02-stage3[m[33m)[m feat: 完成日志增强阶段三（DEBUG 日志与开关）
+* [33m54ed7c8[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/02[m[33m)[m feat: 完成日志增强阶段一和阶段二
+* [33m76fea86[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/02-logging[m[33m)[m feat: 增加持久化日志文件功能，便于BUG定位
+* [33m51dc835[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/01-combat-resolution-print[m[33m)[m refactor: 优化战斗阶段和决议阶段打印格式
+* [33ma8d4d46[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/01-population-print[m[33m)[m refactor: 优化人口阶段打印布局，精简信息
+* [33m909ab8b[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/01-forum-test-fix[m[33m)[m test: 更新广场阶段测试以匹配新打印布局
+* [33m58e53a2[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/01-test-fixes[m[33m)[m fix: 修复税收阶段测试，更新预期值以匹配实际计算逻辑
+* [33ma2b5804[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/01-print-align[m[33m)[m fix: 优化税收阶段表格对齐，增加列宽并统一使用固定宽度
+* [33m78c446c[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/01-startup-cleanup3[m[33m)[m refactor: 进一步精简启动输出，移除所有冗余打印 >> >> - 删除 main.py 中的横幅、路径、命令列表和自动加载提示 >> - 保留加载场景的精简输出和命令提示符
+* [33m7803cb2[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/01-startup-cleanup2[m[33m)[m refactor: 进一步精简启动输出，移除所有冗余打印
+* [33md3fa9c2[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/01-land-trade[m[33m)[m feat: 实现私人土地流转功能，包括交易后更新影响力和派系总土地、自动土地交易决策器
+* [33m21bbef7[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/01-land-fix[m[33m)[m fix: 平民分地法案执行时，将土地从国家公地转入意大利私地
+* [33m2ba071e[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/01-victory-conditions[m[33m)[m feat: 完善决议阶段胜利/失败条件检查
+* [33ma35ac15[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/03/01[m[33m)[m fix: 将广场人物清理从强制推进条件中移出，确保每次next都执行
+* [33m471becb[m[33m ([m[1;33mtag: [m[1;33mstep-7[m[33m)[m feat: 实现临时影响力衰减（Step 7）
+* [33m96bf305[m[33m ([m[1;33mtag: [m[1;33mstep-6[m[33m)[m feat: 完成战争接管与自动征召机制（Step 6）
+* [33mbbccd33[m[33m ([m[1;33mtag: [m[1;33mstep-6-war-takeover-temp[m[33m, [m[1;33mtag: [m[1;33mmvp-0.5-2026-02-28-step6-temp[m[33m)[m feat: 实现战争接管与自动征召（Step 6）
+* [33mc2ab3f3[m[33m ([m[1;33mtag: [m[1;33mstep-5-disband[m[33m)[m fix: 修正军团解散逻辑及测试断言（Step 5）
+* [33m5ce009c[m[33m ([m[1;33mtag: [m[1;33mstep-4-triumph[m[33m, [m[1;33mtag: [m[1;33mmvp-0.5-2026-02-28-step4[m[33m)[m feat: 实现凯旋审批流程（Step 4）
+* [33m32ac505[m[33m ([m[1;33mtag: [m[1;33mstep-3-combat-integration[m[33m)[m feat: 在战斗阶段调用 war_system.resolve_war 进行战后结算（Step 3）
+* [33me5f6f6d[m[33m ([m[1;33mtag: [m[1;33mstep-2-war-rewards[m[33m, [m[1;33mtag: [m[1;33mmvp-0.5-2026-02-28-step2[m[33m)[m feat: 实现战争奖励分配逻辑（Step 2）
+* [33mc934ef0[m[33m ([m[1;33mtag: [m[1;33mstep-1-legion-recovery[m[33m)[m Step 1: 实现军团恢复机制 (DESTROYED状态、恢复计时器、单元测试)
+* [33mb55f035[m fix: 修复元老院阶段执行逻辑，确保预算处理不被跳过；修正配置读取，使执政官宣战概率可配置
+* [33m0d2fcba[m fix: 修正包税合同预算表决过滤逻辑，允许延期合同时新合同进入预算；统一竞标输出格式；添加威胁配置开关
+* [33ma8ea33b[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026-02-27[m[33m)[m feat: 完善合同预算与竞标流程，统一竞标输出格式，添加威胁配置开关
+* [33m57e80eb[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026-02-26-tax-cleanup[m[33m)[m feat: 包税权合同中标后仅清理同省过期包税合同，并添加年份后缀
+* [33m8b816b8[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026-02-26-population[m[33m)[m feat: 完成人口阶段核心功能开发
+* [33m0da8bd5[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026-02-26-tribune[m[33m)[m feat: 新增平民保民官选举
+* [33m4b2cffb[m fix: 允许曾担任执政官的人竞选监察官，豁免历史高阶限制
+* [33m1ed56f0[m fix: 允许曾担任执政官的人竞选监察官，豁免历史高阶限制
+* [33m16e6298[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026-02-26-election[m[33m)[m feat: 将公职选举从元老院阶段迁移至人口阶段，并增加高阶官职不能竞选低阶的限制
+* [33m9fcf315[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026-02-26-final[m[33m)[m test: 修正意大利民怨触发测试的期望值以匹配实际逻辑
+* [33mbb21f7b[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/02/26-italy-unrest[m[33m)[m feat: 实现意大利本土民变触发与升级机制
+* [33m3593016[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/02/26-province-unrest[m[33m)[m feat: 实现行省民变触发与升级机制，新增province命令查看行省状态
+* [33m1bf227c[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/02/26-war[m[33m)[m feat: 实现战争威胁机制（触发、升级、爆发）并优化广场阶段提示
+* [33m28df8b9[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/02/26-recruitment[m[33m)[m feat: 实现广场阶段派系成员招募机制
+* [33m600044c[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/02/26-fix[m[33m)[m fix: 修复淘汰人物测试中的只读属性问题，实现事件卡权重抽取，统一死亡资产回收
+* [33m1b6aba6[m[33m ([m[1;33mtag: [m[1;33mmvp-0.5-2026/02/26[m[33m)[m fix: 将广场人物清理从强制推进条件中移出，确保每次next都执行
+* [33m917fb09[m replace figure_type with classtier
+* [33mc75f490[m replace all power with influence
+* [33m52e3363[m[33m ([m[1;33mtag: [m[1;33mconfig-fix-2026-02-26[m[33m)[m fix: 使家族声望、官职等级等配置可从 game_config.json 加载
+* [33mbf15abb[m feat: 官员履历显示纪年
+* [33m27dd58f[m feat: 显示人物家族声望
+* [33ma53ba4c[m feat: 重构人物属性系统，实现派系金库功能
+* [33m324afb2[m feat: 重构人物属性系统，引入影响力、官职等级和家族声望
+* [33mdbfc83c[m feat: 实现派系金库功能
+* [33m000b74b[m[33m ([m[1;33mtag: [m[1;33mpublic-works-v1[m[33m)[m feat: 完成公共工程自动竞标与结算功能
+* [33m8b2811f[m feat: 新增状态查询命令 status_figure (sf) 显示人物详细信息
+* [33m725f8f9[m[33m ([m[1;33mtag: [m[1;33mprofit-calculation-fix[m[33m)[m fix: 修复 mortality 阶段缺失进度条，完善合同利润计算
+* [33mea18d1d[m[33m ([m[1;33mtag: [m[1;33mauction-flow-v1[m[33m)[m feat: 完成自动竞标流程及合同显示优化
+* [33m0d9ef19[m fix: 国家公地初始值从全局配置读取，删除调试打印
+* [33mdf6f3f7[m[33m ([m[1;33mtag: [m[1;33mgameplay-refinement-v1[m[33m)[m feat: 完善土地系统与游戏流程控制
+* [33m330c5c3[m[33m ([m[1;33mtag: [m[1;33mphase3-complete[m[33m)[m feat: 阶段3 - 行省公地初始化与包税权动态生成
+* [33md9a2924[m[33m ([m[1;33mtag: [m[1;33mphase2-complete[m[33m)[m feat: 阶段2 - 国家公地收益替代基础税收
+* [33m44ee057[m feat: 完成阶段4和阶段1 - 元老初始私地与死亡回收
+* [33mc290cbb[m[33m ([m[1;33mtag: [m[1;33mphase4-1-complete[m[33m, [m[1;33mtag: [m[1;33mmortality-phase-v1[m[33m, [m[1;33mtag: [m[1;33mload-optimization-v1[m[33m)[m feat: 优化游戏加载环节
+* [33mb1d2043[m[33m ([m[1;33mtag: [m[1;33mm1-baseline-fixed[m[33m)[m fix: 为 Contract 新增字段添加默认值，修改合同生成逻辑
+* [33mdeba41e[m[33m ([m[1;33mtag: [m[1;33mv0.5-m2[m[33m, [m[1;33mtag: [m[1;33mmvp0,5-m1-complete[m[33m, [m[1;33mtag: [m[1;33mm1-complete-v2[m[33m, [m[1;31morigin/feature/refactor-0.4.5[m[33m, [m[1;32mfeature/refactor-0.4.5[m[33m, [m[1;32mbackup/m2-attempt[m[33m, [m[1;32mbackup/current-state[m[33m)[m feat: MVP0.5-M1 completed
+* [33meace7e6[m release: MVP 0.4.6 baseline after full command migration
+* [33maa9531a[m[33m ([m[1;33mtag: [m[1;33mv0.4.6[m[33m)[m release: MVP 0.4.6 baseline after full command migration
+* [33mb01213e[m chore: remove obsolete ui folder after migration
+* [33m12e4257[m[33m ([m[1;33mtag: [m[1;33mv0.4.5-016[m[33m)[m feat: 迁移土地交易组功能命令至新框架（指令16）
+* [33mc303054[m[33m ([m[1;33mtag: [m[1;33mv0.4.5-015[m[33m)[m feat: 迁移合同组功能命令至新框架（指令15）
+* [33mc9cf50c[m[33m ([m[1;33mtag: [m[1;33mv0.4.5-014[m[33m)[m feat: 迁移军事组功能命令至新框架（指令14）
+* [33m7377c2c[m[33m ([m[1;33mtag: [m[1;33mv0.4.5-013[m[33m)[m feat: 迁移 Population阶段功能组命令至新框架（指令13）
+* [33mbabc11f[m[33m ([m[1;33mtag: [m[1;33mv0.4.5-011[m[33m)[m feat: 迁移回合控制组功能命令至新框架（指令11）
+* [33ma0be4fb[m[33m ([m[1;33mtag: [m[1;33mv0.4.5-010[m[33m)[m feat: 迁移系统配置组功能命令至新框架（指令10）
+* [33mb4357a8[m[33m ([m[1;33mtag: [m[1;33mv0.4.5-009A[m[33m)[m feat: 迁移 Resolution 阶段命令至新框架（指令9）
+* [33m365b88c[m[33m ([m[1;33mtag: [m[1;33mv0.4.5-009[m[33m)[m feat: 迁移 Resolution 阶段命令至新框架（指令9）
+* [33mafd11c1[m chore(cleanup): remove old combat_phase.py after migration
+* [33m9a5880e[m chore(cleanup): remove old senate_phase.py after migration
+* [33m0d8ca9f[m[33m ([m[1;33mtag: [m[1;33mv0.4.5-007[m[33m)[m feat: 迁移 Senate 阶段命令至新框架（指令7）
+* [33m94ce7ab[m chore(cleanup): 迁移 Senate 阶段命令至新框架（指令7）
+* [33mb92ddd9[m[33m ([m[1;33mtag: [m[1;33mv0.4.5-005[m[33m)[m feat: 迁移 Forum 阶段命令至新框架（指令5）
+* [33m7b8b339[m[33m ([m[1;33mtag: [m[1;33mv0.4.5-004[m[33m)[m feat: 迁移 Revenue 阶段命令至新框架（指令4）
+* [33m246c655[m chore(cleanup): remove old revenue_phase.py after migration
+* [33m50c3ce2[m[33m ([m[1;33mtag: [m[1;33mv0.4.5-003[m[33m)[m chore(cleanup): remove old mortality_phase.py after migration
+* [33m5fe98bc[m chore(cleanup): remove old mortality_phase.py after migration
+* [33m5d1c5b4[m[33m ([m[1;33mtag: [m[1;33mv0.4.5-002[m[33m)[m feat: 完成指令2（实现 Config 配置管理完整可运行代码）
+* [33m2983763[m[33m ([m[1;33mtag: [m[1;33mv0.4.5-001[m[33m)[m feat: 完成指令1-1到1-3的任务
+* [33mbb02e2a[m feat: 创建命令框架基础结构 - DS001 指令1-1 - 添加 commands 包及基础类 - 添加命令注册器 - 添加示例命令（help, exit） - 添加测试框架结构
+* [33mdaae9d8[m[33m ([m[1;31morigin/main[m[33m, [m[1;32mmain[m[33m)[m feat: MVP 0.4.5 完整基线版本

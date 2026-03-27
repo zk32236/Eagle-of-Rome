@@ -137,18 +137,21 @@ class ForumCommand(Command):
                         # ===== 新增日志 =====
                         print(
                             f"[DEBUG] 派系 {faction.name} 对合同 {contract.id} 出价 {amount}，骑士 {knight.name} 当前财富: {knight.wealth}")
+
                 elif contract.contract_type == ContractType.PUBLIC_WORKS:
                     if getattr(contract, '_is_fleet_construction', False):
-                        result = self.bid_decider.decide_works_bid(contract, knights, self.state)  # 或 decide_fleet_bid
+                        result = self.bid_decider.decide_fleet_bid(contract, knights, self.state)
                         if result:
-                            knight, amount, r, construction, warranty = result  # 根据返回结构调整
-                            self.state.add_forum_action("contract_bids", (contract.id, knight.id, faction.id, amount))
+                            knight, amount, r = result
+                            # 舰队合同：工期1，质保0
+                            self.state.add_forum_action("contract_bids",
+                                                        (contract.id, knight.id, faction.id, amount, r, 1, 0))
                     else:
                         result = self.bid_decider.decide_works_bid(contract, knights, self.state)
                         if result:
                             knight, amount, r, construction, warranty = result
-                            # 假设 knight 是 Figure 对象，有 id
-                            self.state.add_forum_action("contract_bids", (contract.id, knight.id, faction.id, amount))
+                            self.state.add_forum_action("contract_bids", (
+                            contract.id, knight.id, faction.id, amount, r, construction, warranty))
         except Exception as e:
             logging.exception("竞标决策异常")
 
@@ -705,6 +708,12 @@ class ForumCommand(Command):
             for c in contracts:
                 type_emoji = "📊" if c.contract_type == ContractType.TAX_FARMING else "🏗️"
                 print(f"      🔔 标的 {c.id} {type_emoji} {c.name} 预算 {c.base_cost}")
+                # 添加调试日志
+                self.state.log_event(
+                    f"广场阶段显示合同 {c.id} 预算 {c.base_cost}",
+                    level=logging.DEBUG,
+                    extra={"contract_id": c.id, "budget": c.base_cost}
+                )
         else:
             print("   📭 没有待竞标的预算合同")
 
@@ -869,10 +878,9 @@ class ForumCommand(Command):
         return result["success"]
 
     def _handle_bid(self, args: List[str]) -> bool:
-        # 参数个数检查
-        if len(args) != 3:
-            print("❌ 用法: bid <合同ID> <骑士ID> <金额>", file=sys.stderr)
-            sys.stderr.flush()
+        # 参数个数检查：3或4
+        if len(args) not in (3, 4):
+            print("❌ 用法: bid <合同ID> <骑士ID> <金额> [利润率(0-1)]", file=sys.stderr)
             return False
         try:
             contract_id = int(args[0])
@@ -880,25 +888,38 @@ class ForumCommand(Command):
             amount = int(args[2])
         except ValueError:
             print("❌ 合同ID、骑士ID、金额必须为数字", file=sys.stderr)
-            sys.stderr.flush()
             return False
+
+        # 利润率处理
+        profit_rate = None
+        if len(args) == 4:
+            try:
+                profit_rate = float(args[3])
+            except ValueError:
+                print("❌ 利润率必须为数字", file=sys.stderr)
+                return False
+            if profit_rate <= 0 or profit_rate >= 1:
+                print("❌ 利润率必须在0到1之间", file=sys.stderr)
+                return False
+        else:
+            # 从配置获取默认利润率
+            profit_rate = self.state.get_economic_rule("default_bid_profit_rate", 0.2)
+            if profit_rate <= 0 or profit_rate >= 1:
+                profit_rate = 0.2
 
         # 检查合同是否存在且可竞标
         contract = self.state.get_contract(contract_id)
         if not contract:
             print(f"❌ 合同 ID {contract_id} 不存在", file=sys.stderr)
-            sys.stderr.flush()
             return False
         if contract.status != ContractStatus.BUDGETED:
             print(f"❌ 合同 {contract.name} 不可竞标", file=sys.stderr)
-            sys.stderr.flush()
             return False
 
         # 获取当前玩家
         player_id = self._get_current_player_id()
         if not player_id:
             print("❌ 无法获取当前玩家", file=sys.stderr)
-            sys.stderr.flush()
             return False
         player = self.state.get_player(player_id)
         if not player:
@@ -911,27 +932,22 @@ class ForumCommand(Command):
         figure = self.state.get_member(figure_id)
         if not figure or figure.is_dead:
             print(f"❌ 骑士 ID {figure_id} 不存在或已死亡", file=sys.stderr)
-            sys.stderr.flush()
             return False
         if figure.faction_id != faction.id:
             print(f"❌ 骑士 {figure.get_formal_name()} 不属于您的派系", file=sys.stderr)
-            sys.stderr.flush()
             return False
         if figure.class_tier.value != "eques":
             print(f"❌ 人物 {figure.get_formal_name()} 不是骑士，无法参与竞标", file=sys.stderr)
-            sys.stderr.flush()
             return False
 
-        # 检查金额合法性（正数）
+        # 金额合法性校验
         if amount <= 0:
             print("❌ 金额必须为正整数", file=sys.stderr)
-            sys.stderr.flush()
             return False
 
-        result = forum_api.place_bid(self.state, player_id, figure_id, contract_id, amount)
+        result = forum_api.place_bid(self.state, player_id, figure_id, contract_id, amount, profit_rate)
         print(result["message"])
         sys.stdout.flush()
-        sys.stderr.flush()
         return result["success"]
 
     def _handle_buy(self, args: List[str]) -> bool:

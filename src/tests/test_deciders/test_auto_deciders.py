@@ -169,10 +169,11 @@ class TestAutoBidDecider:
         contract = MagicMock(spec=Contract)
         contract.id = 2
         contract.base_cost = 200
+        contract._original_budget = 200  # 添加这一行
         knights = [MagicMock(spec=Figure) for _ in range(3)]
         for i, k in enumerate(knights):
             k.id = 10 + i
-            k.name = f"Knight{k.id}"          # 添加 name
+            k.name = f"Knight{k.id}"
 
         decider = AutoBidDecider()
         with patch('random.choice', return_value=knights[0]):

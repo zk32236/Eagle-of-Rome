@@ -634,6 +634,15 @@ class SenateCommand(Command):
             from src.api import senate_api
             result = senate_api.resolve_senate(self.state, vote_decider=self.vote_decider)
             if result["success"]:
+                # 强制刷新合同对象（通过重新获取）
+                for proposal in self.state.get_senate_proposals():  # 或其他方式
+                    if proposal["type"] == "budget":
+                        contract = self.state.get_contract(proposal["contract_id"])
+                        if contract:
+                            self.state.log_event(
+                                f"元老院后合同 {contract.id} base_cost = {contract.base_cost}",
+                                level=logging.DEBUG
+                            )
                 passed_proposal_ids = result["data"].get("passed_proposals", [])
                 all_proposals = self.state.get_senate_proposals()
                 passed_proposals = [p for p in all_proposals if p["id"] in passed_proposal_ids]
@@ -696,6 +705,19 @@ class SenateCommand(Command):
                     elif ptype == "budget":
                         contract = self.state.get_contract(proposal["contract_id"])
                         if contract:
+                            modified_budget = proposal.get("modified_budget")
+                            if modified_budget and modified_budget != contract.base_cost:
+                                # 保存原始预算（用于战斗力计算）
+                                contract._original_budget = contract.base_cost
+                                contract.base_cost = modified_budget
+                                self.state.log_event(
+                                    f"预算提案通过: 合同 {contract.name} 预算从 {contract._original_budget} 更新为 {modified_budget}",
+                                    level=logging.INFO,
+                                    extra={"contract_id": contract.id, "old_budget": contract._original_budget,
+                                           "new_budget": modified_budget}
+                                )
+                                print(
+                                    f"    ✅ {contract.name} 预算从 {contract._original_budget} 调整为 {modified_budget}")
                             contract.status = ContractStatus.BUDGETED
                             print(f"    ✅ {contract.name} 预算通过，状态变为 BUDGETED")
                     elif ptype == "land":
@@ -1430,17 +1452,22 @@ class SenateCommand(Command):
         if pending_contracts:
             proposals = self.budget_decider.decide_proposals(pending_contracts, self.state)
             for contract in proposals:
+                kwargs = {"contract_id": contract.id}
+                # 仅对公共工程合同（包括舰队）进行随机预算加成
+                if contract.contract_type == ContractType.PUBLIC_WORKS:
+                    margin_range = self.state.config.get("economic_rules.public_work_budget_margin_range", [0.05, 0.20])
+                    r = random.uniform(margin_range[0], margin_range[1])
+                    modified_budget = int(contract.base_cost * (1 + r))
+                    kwargs["modified_budget"] = modified_budget
+                    self.state.log_event(
+                        f"自动预算提案加成: 合同 {contract.name} 原始预算 {contract.base_cost} 加成 {r * 100:.1f}% → {modified_budget}",
+                        level=logging.DEBUG
+                    )
                 result = senate_api.propose(
                     self.state, consul_player_id, "budget",
                     bypass_turn_check=True,
-                    contract_id=contract.id
+                    **kwargs
                 )
-                if result["success"]:
-                    desc = self._generate_proposal_description("budget", {"contract_id": contract.id})
-                    proposal_descriptions.append(desc)
-                else:
-                    print(f"⚠️ 提案失败: {result['message']}", file=sys.stderr)
-                    self.state.log_event(f"AI自动预算提案失败: {result['message']}", level=logging.WARNING)
 
         # 5. 土地法案
         for faction in self.state.factions.values():

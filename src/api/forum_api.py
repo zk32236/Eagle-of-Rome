@@ -83,14 +83,17 @@ def recruit_figure(state: GameState, player_id: str, figure_id: int, amount: int
     return api_response(True, message, data={"figure_id": figure_id, "amount": amount})
 
 
-def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int, amount: int) -> dict:
-    # 参数增加 figure_id，需在命令层获取当前操作的骑士ID
+def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int, amount: int, profit_rate: float = None) -> dict:
+    # 权限校验
     if not state.config.get("testing.bypass_player_check", False):
         if not state.is_current_player(player_id):
             return api_response(False, i18n.get("error_not_your_turn"))
+
     player = state.get_player(player_id)
     if not player:
         return api_response(False, i18n.get("error_no_current_player"))
+
+    # 合同校验
     contract = state.get_contract(contract_id)
     if not contract:
         return api_response(False, i18n.get("contract_not_found", id=contract_id))
@@ -98,10 +101,58 @@ def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int
         return api_response(False, i18n.get("error_contract_not_auctionable"))
     if amount <= 0:
         return api_response(False, i18n.get("error_invalid_amount"))
-    # 存储 (contract_id, figure_id, player.faction_id, amount)
-    state.add_forum_action("contract_bids", (contract_id, figure_id, player.faction_id, amount))
+
+    # 利润率处理
+    if profit_rate is None:
+        profit_rate = state.get_economic_rule("default_bid_profit_rate", 0.2)
+    if profit_rate <= 0 or profit_rate >= 1:
+        return api_response(False, i18n.get("error_invalid_profit_rate"))
+
+    # 根据合同类型处理
+    if contract.contract_type == ContractType.TAX_FARMING:
+        if amount < contract.base_cost:
+            return api_response(False, i18n.get("error_bid_too_low", min=contract.base_cost))
+        # 包税合同不需要工期/质保期，但为了存储统一，设为0
+        actual_construction = 0
+        actual_warranty = 0
+
+    elif contract.contract_type == ContractType.PUBLIC_WORKS:
+        is_fleet = getattr(contract, '_is_fleet_construction', False)
+        if amount > contract.base_cost:
+            return api_response(False, i18n.get("error_bid_too_high", max=contract.base_cost))
+        if not is_fleet:
+            # 获取原始基准成本
+            original_budget = getattr(contract, '_original_budget', contract.base_cost)
+            actual_cost = int(amount * (1 - profit_rate))
+            cost_ratio = actual_cost / original_budget if original_budget > 0 else 1.0
+
+            theoretical_construction = state.get_economic_rule("project_theoretical_construction", 3)
+            theoretical_warranty = state.get_economic_rule("project_theoretical_warranty", 10)
+
+            if actual_cost > 0:
+                actual_construction = int(theoretical_construction * original_budget / actual_cost)
+            else:
+                actual_construction = theoretical_construction
+            actual_construction = max(1, actual_construction)
+
+            actual_warranty = int(theoretical_warranty * cost_ratio)
+            actual_warranty = max(0, actual_warranty)
+        else:
+            # 舰队合同
+            actual_construction = 1
+            actual_warranty = 0
+
+    else:
+        return api_response(False, "未知的合同类型")
+
+    # 存储出价（7元组：合同ID，骑士ID，派系ID，金额，利润率，工期，质保期）
+    state.add_forum_action(
+        "contract_bids",
+        (contract_id, figure_id, player.faction_id, amount, profit_rate, actual_construction, actual_warranty)
+    )
+
     message = i18n.get("info_bid_recorded", contract_name=contract.name, amount=amount)
-    return api_response(True, message, data={"contract_id": contract_id, "amount": amount})
+    return api_response(True, message, data={"contract_id": contract_id, "amount": amount, "profit_rate": profit_rate})
 
 
 def buy_land(state: GameState, player_id: str, figure_id: int, amount: int) -> dict:
@@ -211,8 +262,23 @@ def resolve_forum(state: GameState) -> dict:
     # 2. 合同竞标结算
     if pending["contract_bids"]:
         bids_by_contract = {}
-        for contract_id, figure_id, faction_id, amount in pending["contract_bids"]:
-            bids_by_contract.setdefault(contract_id, []).append((figure_id, faction_id, amount))
+        for bid in pending["contract_bids"]:
+            if len(bid) == 4:
+                contract_id, figure_id, faction_id, amount = bid
+                profit_rate = None
+                construction_years = 0
+                warranty_years = 0
+            elif len(bid) == 5:
+                contract_id, figure_id, faction_id, amount, profit_rate = bid
+                construction_years = 0
+                warranty_years = 0
+            elif len(bid) == 7:
+                contract_id, figure_id, faction_id, amount, profit_rate, construction_years, warranty_years = bid
+            else:
+                continue
+            bids_by_contract.setdefault(contract_id, []).append(
+                (figure_id, faction_id, amount, profit_rate, construction_years, warranty_years)
+            )
 
         for contract_id, bids in bids_by_contract.items():
             contract = state.get_contract(contract_id)
@@ -220,32 +286,30 @@ def resolve_forum(state: GameState) -> dict:
                 results.append(f"⚠️ 合同 {contract_id} 不存在")
                 continue
 
+            # 包税合同：价高者得
             if contract.contract_type == ContractType.TAX_FARMING:
-                max_amount = max(b[2] for b in bids)
+                max_amount = max(b[2] for b in bids)  # amount 在索引2
                 top_bidders = [b for b in bids if b[2] == max_amount]
-                winner_figure, winner_faction, amount = random.choice(top_bidders)
+                winner = random.choice(top_bidders)
+                winner_figure, winner_faction, amount, profit_rate, _, _ = winner  # 忽略 construction, warranty
 
-                # 计算利润率和合同价
-                profit_rate = (amount / contract.base_cost) - 1.0
+                if profit_rate is None:
+                    profit_rate = state.get_economic_rule("default_bid_profit_rate", 0.2)
+
                 contract._profit_rate = profit_rate
                 contract._contract_price = amount
-
-                # 计算实际税率并设置
-                base_tax_rate = state.get_economic_rule("province_tax_rate", 0.1)
-                actual_tax_rate = base_tax_rate * (1 + profit_rate)
-                contract._tax_rate = actual_tax_rate
-
-                # 关键：设置 _winning_bid，供收入阶段使用
                 contract._winning_bid = {
                     "bidder_id": winner_figure,
                     "amount": amount,
                     "tax_rate": profit_rate
                 }
 
-                # 标记中标（不扣款）
+                base_tax_rate = state.get_economic_rule("province_tax_rate", 0.1)
+                actual_tax_rate = base_tax_rate * (1 + profit_rate)
+                contract._tax_rate = actual_tax_rate
+
                 contract.mark_winner(winner_figure, state.turn.turn_number, 0)
 
-                # 绑定行省和骑士（略）
                 province = state.get_province(contract.province_id)
                 if province:
                     province.bind_tax_contract(contract.id)
@@ -253,36 +317,74 @@ def resolve_forum(state: GameState) -> dict:
                 if figure:
                     figure.add_contract(contract.id)
 
-                # 获取派系名用于消息
                 winner_faction_name = state.get_faction(winner_faction).name if winner_faction else "未知"
                 results.append(
                     f"✅ 包税合同 {contract.name} 中标者: {figure.name} ({winner_faction_name})，出价 {amount}，税率 {actual_tax_rate * 100:.1f}% (利润率 {profit_rate * 100:.1f}%)"
                 )
 
+            # 工程合同：价低者得
             else:
-                # 工程合同：价低者得
                 min_amount = min(b[2] for b in bids)
                 top_bidders = [b for b in bids if b[2] == min_amount]
-                winner_figure, winner_faction, amount = random.choice(top_bidders)
+                winner = random.choice(top_bidders)
+                winner_figure, winner_faction, amount, profit_rate, construction_years, warranty_years = winner
+
                 contract.mark_winner(winner_figure, state.turn.turn_number, 0)
-                contract.awarded_faction = winner_faction  # 新增：设置中标派系
-                # ===== 新增：设置施工期和质保期 =====
-                default_construction = state.get_economic_rule("project_theoretical_construction", 3)
-                default_warranty = state.get_economic_rule("project_theoretical_warranty", 10)
-                contract.remaining_years = default_construction
-                contract._construction_years = default_construction
-                contract._warranty_years = default_warranty
-                contract._warranty_remaining = default_warranty
-                # ====================================
-                # 如果是舰队建造合同，通知海军系统
-                if getattr(contract, '_is_fleet_construction', False) and state.naval_system:
+                contract.awarded_faction = winner_faction
+
+                # 计算财务参数
+                r = profit_rate
+                original_budget = getattr(contract, '_original_budget', contract.base_cost)  # 原始基准成本
+                actual_cost = int(amount * (1 - r))
+                cost_ratio = actual_cost / original_budget if original_budget > 0 else 1.0
+
+                # 新增日志
+                state.log_event(
+                    f"工程合同中标: {contract.name}, 中标金额={amount}, 利润率={r:.4f}, 实际成本={actual_cost}, 原始预算={original_budget}, 成本比例={cost_ratio:.4f}",
+                    level=logging.INFO,
+                    extra={
+                        "contract_id": contract.id,
+                        "actual_cost": actual_cost,
+                        "original_budget": original_budget,
+                        "cost_ratio": cost_ratio
+                    }
+                )
+
+                # 施工周期仍基于折扣率（与之前一致）
+                construction_years = construction_years  # 已从出价中获取
+                # 质保期重新计算（确保与成本比例一致）
+                warranty_years = int(state.get_economic_rule("project_theoretical_warranty", 10) * cost_ratio)
+                warranty_years = max(0, warranty_years)
+
+                annual_income = amount // construction_years
+                annual_cost = actual_cost // construction_years
+
+                # 存储到合同
+                contract._annual_income = annual_income
+                contract._annual_cost = annual_cost
+                contract.remaining_years = construction_years
+                contract._construction_years = construction_years
+                contract._warranty_years = warranty_years
+                contract._warranty_remaining = warranty_years
+                contract.base_cost = amount
+
+                # 如果是舰队合同，通知海军系统
+                if getattr(contract, '_is_fleet_construction', False):
+                    contract._actual_cost = actual_cost
+                    contract._original_budget = original_budget
                     state.naval_system.on_contract_awarded(contract, winner_figure)
 
-                winner_person = state.get_member(winner_figure)
-                winner_name = winner_person.get_formal_name() if winner_person else f"ID:{winner_figure}"
+                figure = state.get_member(winner_figure)
                 winner_faction_name = state.get_faction(winner_faction).name if winner_faction else "未知"
                 results.append(
-                    f"✅ 工程合同 {contract.name} 中标者: {winner_name} ({winner_faction_name})，出价 {min_amount}")
+                    f"✅ 工程合同 {contract.name} 中标者: {figure.name} ({winner_faction_name})，出价 {amount}"
+                )
+                if hasattr(contract, '_actual_cost'):
+                    state.log_event(
+                        f"舰队合同中标: {contract.name}, 实际成本={contract._actual_cost}, 原始预算={contract._original_budget}",
+                        level=logging.INFO,
+                        extra={"contract_id": contract.id, "actual_cost": contract._actual_cost}
+                    )
 
     # 3. 公地认购结算（按人物影响力分配）
     if pending["land_purchases"]:

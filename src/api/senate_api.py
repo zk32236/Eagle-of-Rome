@@ -452,12 +452,14 @@ def resolve_senate(state: GameState, vote_decider: Optional[SenateVoteDecider] =
                     legions = proposal["legions"]
                     execute_war_declaration(state, war, consul_id, legions)
                     execution_messages.append(f"宣战通过: {war.name} (军团 {legions})")
+
             elif ptype == "peace":
                 ws = state.get_war_system()
                 if ws:
                     war = ws.get_war_by_id(proposal["war_id"])
                     execute_passed_peace_treaty(state, war)
                     execution_messages.append(f"停战草案通过: {war.name}")
+
             elif ptype == "governor":
                 province = state.get_province(proposal["province_id"])
                 if province:
@@ -467,11 +469,24 @@ def resolve_senate(state: GameState, vote_decider: Optional[SenateVoteDecider] =
                     if new_governor:
                         new_governor.is_absent = True
                     execution_messages.append(f"任命 {proposal['candidate_id']} 为 {province.name} 候任总督")
+
             elif ptype == "budget":
                 contract = state.get_contract(proposal["contract_id"])
                 if contract:
+                    modified_budget = proposal.get("modified_budget")
+                    if modified_budget and modified_budget != contract.base_cost:
+                        # 保存原始预算（用于战斗力计算）
+                        contract._original_budget = contract.base_cost
+                        contract.base_cost = modified_budget
+                        state.log_event(
+                            f"预算提案通过: 合同 {contract.name} 预算从 {contract._original_budget} 更新为 {modified_budget}",
+                            level=logging.INFO,
+                            extra={"contract_id": contract.id, "old_budget": contract._original_budget,
+                                   "new_budget": modified_budget}
+                        )
                     contract.status = ContractStatus.BUDGETED
                     execution_messages.append(f"合同 {contract.name} 预算通过")
+
             elif ptype == "land":
                 act_type = proposal["act_type"]
                 percent = proposal["percent"]
