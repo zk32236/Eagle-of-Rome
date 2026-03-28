@@ -162,5 +162,9 @@
     "error_invalid_profit_rate": "利润率必须在0到1之间",
     "error_bid_mismatch": "{type}合同出价必须等于 {base} * (1{sign}{rate}) = {expected}，当前出价 {actual}",
     "info_bid_recorded": "已记录出价：合同 {contract_name}，金额 {amount}",
-    "error_figure_not_candidate": "该人物不是此公职的合法候选人"
+    "error_figure_not_candidate": "该人物不是此公职的合法候选人",
+    "error_faction_full": "派系成员已满，无法招募新成员。",
+    "error_not_knight": "只有骑士才能参与合同竞标。",
+    "error_not_triumph_war": "当前战争不具备凯旋条件。",
+    "error_unknown_contract_type": "未知的合同类型。"
 }

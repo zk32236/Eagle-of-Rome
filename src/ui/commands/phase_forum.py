@@ -117,7 +117,7 @@ class ForumCommand(Command):
             vacancies = faction.get_vacancies(self.state, self.state.get_economic_rule("faction_member_limit", 6))
             bids = self.recruitment_decider.decide_bids(faction, available_figures, vacancies, self.state)
             for fig_id, amount in bids.items():
-                self.state.add_forum_action("recruitment_bids", (faction.id, fig_id, amount))
+                forum_api.recruit_figure(self.state, player_id, fig_id, amount)
         except Exception as e:
             logging.exception("招募决策异常")
 
@@ -133,25 +133,18 @@ class ForumCommand(Command):
                     result = self.bid_decider.decide_tax_bid(contract, knights, self.state)
                     if result:
                         knight, amount, tax_rate = result
-                        self.state.add_forum_action("contract_bids", (contract.id, knight.id, faction.id, amount))
-                        # ===== 新增日志 =====
-                        print(
-                            f"[DEBUG] 派系 {faction.name} 对合同 {contract.id} 出价 {amount}，骑士 {knight.name} 当前财富: {knight.wealth}")
-
+                        forum_api.place_bid(self.state, player_id, knight.id, contract.id, amount, tax_rate)
                 elif contract.contract_type == ContractType.PUBLIC_WORKS:
                     if getattr(contract, '_is_fleet_construction', False):
                         result = self.bid_decider.decide_fleet_bid(contract, knights, self.state)
                         if result:
                             knight, amount, r = result
-                            # 舰队合同：工期1，质保0
-                            self.state.add_forum_action("contract_bids",
-                                                        (contract.id, knight.id, faction.id, amount, r, 1, 0))
+                            forum_api.place_bid(self.state, player_id, knight.id, contract.id, amount, r)
                     else:
                         result = self.bid_decider.decide_works_bid(contract, knights, self.state)
                         if result:
                             knight, amount, r, construction, warranty = result
-                            self.state.add_forum_action("contract_bids", (
-                            contract.id, knight.id, faction.id, amount, r, construction, warranty))
+                            forum_api.place_bid(self.state, player_id, knight.id, contract.id, amount, r)
         except Exception as e:
             logging.exception("竞标决策异常")
 
@@ -166,7 +159,7 @@ class ForumCommand(Command):
                         if not commander or commander.is_dead:
                             continue
                         vote = self.triumph_decider.decide_triumph(war, commander, self.state)
-                        self.state.add_forum_action("triumph_votes", (war.id, faction.id, vote))
+                        forum_api.vote_triumph(self.state, player_id, war.id, vote)
         except Exception as e:
             logging.exception("凯旋投票异常")
 
