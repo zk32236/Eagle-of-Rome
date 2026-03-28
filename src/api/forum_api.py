@@ -194,10 +194,6 @@ def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int
     return api_response(True, message, data={"contract_id": contract_id, "amount": amount, "profit_rate": profit_rate})
 
 def buy_land(state: GameState, player_id: str, figure_id: int, amount: int) -> dict:
-    """
-    认购公地：记录认购请求（人物ID + 数量）。
-    校验：金额>0，人物存在且存活，属于当前玩家派系。
-    """
     ok, resp = _check_player_permission(state, player_id)
     if not ok:
         return resp
@@ -213,6 +209,18 @@ def buy_land(state: GameState, player_id: str, figure_id: int, amount: int) -> d
     if figure.faction_id != player.faction_id:
         return api_response(False, i18n.get("error_figure_not_in_your_faction"))
 
+    # 新增：检查待售公地配额
+    quota = state.pending_land_sale_quota
+    if quota <= 0:
+        return api_response(False, i18n.get("error_no_land_sale_quota"))
+
+    # 新增：检查财富是否足够
+    land_price = state.get_economic_rule("land_price_per_unit", 10)
+    total_cost = amount * land_price
+    if figure.wealth < total_cost:
+        return api_response(False, i18n.get("error_insufficient_wealth"))
+
+    # 记录操作，最终结算时会扣除财富和配额
     state.add_forum_action("land_purchases", (figure_id, amount))
 
     message = i18n.get("info_land_purchase_recorded", amount=amount)
@@ -250,10 +258,6 @@ def vote_triumph(state: GameState, player_id: str, war_id: str, vote: bool) -> d
 
 def transact_land(state: GameState, player_id: str, seller_id: int, buyer_id: int,
                   land: int, price: int) -> dict:
-    """
-    土地交易：记录交易请求。
-    校验：买卖双方存在且存活，土地数量和价格为正整数。
-    """
     ok, resp = _check_player_permission(state, player_id)
     if not ok:
         return resp
@@ -266,6 +270,10 @@ def transact_land(state: GameState, player_id: str, seller_id: int, buyer_id: in
         return api_response(False, i18n.get("error_figure_dead"))
     if land <= 0 or price <= 0:
         return api_response(False, i18n.get("error_invalid_amount"))
+
+    # 新增：检查卖家土地是否足够
+    if seller._land_private < land:
+        return api_response(False, i18n.get("error_insufficient_land"))
 
     state.add_forum_action("land_trades", (seller_id, buyer_id, land, price))
 

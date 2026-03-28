@@ -166,5 +166,8 @@
     "error_faction_full": "派系成员已满，无法招募新成员。",
     "error_not_knight": "只有骑士才能参与合同竞标。",
     "error_not_triumph_war": "当前战争不具备凯旋条件。",
-    "error_unknown_contract_type": "未知的合同类型。"
+    "error_unknown_contract_type": "未知的合同类型。",
+    "error_no_land_sale_quota": "本回合无待售公地配额",
+    "error_insufficient_wealth": "财富不足，无法购买",
+    "error_insufficient_land": "土地不足，无法交易"
 }
