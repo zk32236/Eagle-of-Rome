@@ -192,25 +192,22 @@ class PopulationCommand(Command):
             return
 
         if self._auto_mode:
-            # 自动模式：打印 UI、执行自动庆典和投票，但不输出影响力表格
+            # 自动模式：打印 UI、执行自动庆典和投票
             print("\n" + "=" * 58)
             print("   🏛️  ELECTIONS Campaign")
             print("=" * 58)
 
-            # 显示当前影响力
             print("\n   📊 各派系影响力：\t\t当前")
             for faction in self.state.factions.values():
                 val = pre_influences.get(faction.id, 0)
                 print(f"      {faction.name}:\t\t{val}")
 
-            # 打印候选人列表
             result = population_api.get_candidates(self.state)
             if result["success"] and result["message"]:
                 print(result["message"])
             else:
                 print("\n   📋 当前无候选人")
 
-            # 执行自动庆典和投票
             for player in self.state.get_all_players():
                 faction = self.state.get_faction(player.faction_id)
                 if faction:
@@ -220,13 +217,9 @@ class PopulationCommand(Command):
                 if faction:
                     self.auto_processor.process_vote(player.player_id, faction, bypass_permission=True)
 
-            # 统计总花费（仅用于内部，不打印表格）
-            total_spent = sum(amount for _, _, amount in self.state._population_pending.get("campaigns", []))
-            # 不打印影响力表格，直接进入下一步
             self._step += 1
             return
 
-        # 手动模式
         bypass = self.state.config.get("testing.bypass_player_check", False)
         if bypass or player.player_type == PlayerType.HUMAN:
             # 手动模式：先显示“ELECTIONS Campaign”标题和当前影响力
@@ -238,7 +231,6 @@ class PopulationCommand(Command):
                 val = pre_influences.get(faction.id, 0)
                 print(f"      {faction.name}:\t\t{val}")
 
-            # 打印候选人列表和操作界面
             self._print_ui_04_1(player_id, player.faction_id)
 
             while True:
@@ -256,13 +248,30 @@ class PopulationCommand(Command):
                         print(i18n.get("info_next_player", player=next_id), flush=True)
                         break
                     else:
-                        # 所有玩家已完成，不打印影响力表格，直接进入下一步
+                        # 所有玩家已完成，不再打印表格
                         self._step += 1
                         return
                 elif cmd == "campaign":
-                    self._handle_campaign(args)
+                    if args and args[0].lower() == "all":
+                        ratio = 1.0
+                        if len(args) >= 2:
+                            try:
+                                ratio = float(args[1])
+                                if ratio < 0 or ratio > 1:
+                                    print("❌ 比例必须在0到1之间", flush=True)
+                                    return
+                            except ValueError:
+                                print("❌ 比例必须为数字", flush=True)
+                                return
+                        self._campaign_all(player_id, player.faction_id, ratio)
+                    else:
+                        self._handle_campaign(args)
                 elif cmd == "vote":
-                    self._handle_vote(args)
+                    # 处理 vote all 和普通 vote
+                    if args and args[0].lower() == "all":
+                        self._vote_all(player_id, player.faction_id)
+                    else:
+                        self._handle_vote(args)
                 elif cmd == "investigate":
                     self._handle_investigate(args)
                 else:
@@ -274,19 +283,108 @@ class PopulationCommand(Command):
             self.auto_processor.process_vote(player.player_id, faction, bypass_permission=True)
             self._next_player()
             if self._current_player_index >= len(self._players):
-                # 所有玩家已完成，不打印表格
                 self._step += 1
 
-    def _auto_mode_festival_and_vote(self):
-        """全自动模式：为所有玩家依次执行庆典和投票（绕过权限）"""
-        for player in self.state.get_all_players():
-            faction = self.state.get_faction(player.faction_id)
-            if faction:
-                self.auto_processor.process_festival(player.player_id, faction, bypass_permission=True)
-        for player in self.state.get_all_players():
-            faction = self.state.get_faction(player.faction_id)
-            if faction:
-                self.auto_processor.process_vote(player.player_id, faction, bypass_permission=True)
+    def _campaign_all(self, player_id: str, faction_id: str, ratio: float = 1.0):
+        """
+        为当前派系的所有候选人举办庆典，花费私库资金的指定比例（向下取整）。
+        ratio: 0-1 之间的浮点数，表示使用私库资金的比例，默认1.0。
+        """
+        # 获取候选人列表
+        cand_result = population_api.get_candidates(self.state)
+        if not cand_result["success"]:
+            print("❌ 无法获取候选人列表", flush=True)
+            return
+
+        # 收集本派系所有候选人
+        candidates_by_office = cand_result["data"]
+        own_candidates = set()
+        for office, candidates in candidates_by_office.items():
+            for c in candidates:
+                if c.get("faction_id") == faction_id:
+                    own_candidates.add(c["id"])
+
+        if not own_candidates:
+            print("   📭 当前无本派系候选人", flush=True)
+            return
+
+        success_count = 0
+        total_spent = 0
+        for fig_id in own_candidates:
+            fig = self.state.get_member(fig_id)
+            if not fig or fig.is_dead:
+                continue
+            amount = int(fig.wealth * ratio)
+            if amount <= 0:
+                print(f"   ⚠️ {fig.get_formal_name()} 财富不足或比例为0，跳过", flush=True)
+                continue
+            result = population_api.campaign(self.state, player_id, fig_id, amount)
+            if result["success"]:
+                success_count += 1
+                total_spent += amount
+                print(f"   ✅ {fig.get_formal_name()}: 花费 {amount} 举办庆典", flush=True)
+            else:
+                print(f"   ❌ {fig.get_formal_name()}: {result['message']}", flush=True)
+
+        if success_count == 0:
+            print("   📭 未成功为任何候选人举办庆典", flush=True)
+        else:
+            print(f"   🎉 共为 {success_count} 位候选人举办庆典，总花费 {total_spent}", flush=True)
+
+    def _vote_all(self, player_id: str, faction_id: str):
+        """
+        为当前派系的所有公职投票给本派系的候选人。
+        每个公职选择影响力最高的本派系候选人（如果有），调用 vote API。
+        """
+        # 获取当前派系
+        faction = self.state.get_faction(faction_id)
+        if not faction:
+            print("❌ 派系不存在", flush=True)
+            return
+
+        # 获取所有候选人
+        cand_result = population_api.get_candidates(self.state)
+        if not cand_result["success"]:
+            print("❌ 无法获取候选人列表", flush=True)
+            return
+
+        candidates_by_office = cand_result["data"]
+        # 公职顺序（与 get_candidates 一致）
+        office_order = ["consul", "censor", "praetor", "quaestor", "tribune"]
+
+        success_count = 0
+        for office in office_order:
+            candidates = candidates_by_office.get(office, [])
+            # 筛选出本派系的候选人
+            own_candidates = [c for c in candidates if c.get("faction_id") == faction_id]
+            if not own_candidates:
+                print(f"   ⚠️ 公职 {office.upper()} 无本派系候选人，跳过", flush=True)
+                continue
+
+            # 按影响力排序，选择最高者
+            # 注意：候选人数据中没有影响力字段，需要获取人物对象
+            best = None
+            best_influence = -1
+            for c in own_candidates:
+                fig = self.state.get_member(c["id"])
+                if fig and fig.influence > best_influence:
+                    best = fig
+                    best_influence = fig.influence
+            if best:
+                result = population_api.vote(self.state, player_id, office, best.id)
+                if result["success"]:
+                    success_count += 1
+                    print(f"   ✅ {office.upper()}: 投票给 {best.get_formal_name()}", flush=True)
+                else:
+                    print(f"   ❌ {office.upper()}: 投票失败 - {result['message']}", flush=True)
+            else:
+                print(f"   ⚠️ 公职 {office.upper()} 无法确定最佳候选人", flush=True)
+
+        if success_count == 0:
+            print("   📭 未成功为任何公职投票", flush=True)
+        else:
+            print(f"   🗳️ 共为 {success_count} 个公职完成投票", flush=True)
+
 
     def _print_ui_04_1(self, player_id: str, faction_id: str):
         """打印合并环节UI（庆典+投票）"""
@@ -310,8 +408,8 @@ class PopulationCommand(Command):
 
         print(f"\n🔧 本阶段可操作(PLAYER {player_id} {faction_name})：")
         print("   1. investigate → 查看人物私库余额")
-        print("   2. campaign <人物ID> <金额> → 举办庆典")
-        print("   3. vote <公职> <人物ID> → 投票")
+        print("   2. campaign <人物ID> <金额> 或 campaign all [比例] → 举办庆典")
+        print("   3. vote <公职> <人物ID> 或 vote all → 投票")
         print("   4. next/n → 下一个玩家")
         sys.stdout.flush()
 
