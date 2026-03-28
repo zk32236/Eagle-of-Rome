@@ -486,6 +486,9 @@ class TestForumCommand:
         fig_ai.wealth = 200
         fig_ai.influence = 100
 
+        # 设置当前玩家为 p2（AI 玩家）
+        test_state._current_player_id = "p2"
+
         cmd = ForumCommand(test_state,
                            retirement_decider=retirement,
                            recruitment_decider=recruitment,
@@ -514,6 +517,8 @@ class TestForumCommand:
         buyer = test_state.get_member(4)
         buyer._land_private = 2
         buyer.wealth = 100
+        # 设置财务官，使 _has_quaestor 返回 True
+        seller.office = "quaestor"
         retirement.decide_whom_to_retire.return_value = None
         recruitment.decide_bids.return_value = {}
         bid.decide_tax_bid.return_value = None
@@ -528,7 +533,8 @@ class TestForumCommand:
                            land_trade_decider=land_trade,
                            triumph_decider=triumph)
 
-        with patch.object(cmd, '_has_quaestor', return_value=True):
+        # 模拟财务官玩家列表（可选，因为真实逻辑也会返回 ["p1"]）
+        with patch.object(cmd, '_get_quaestor_players', return_value=["p1"]):
             with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
                 result = cmd.execute([])
         assert result is True
@@ -545,7 +551,9 @@ class TestForumCommand:
         seller._land_private = 5
         seller.wealth = 100
         buyer = test_state.get_member(4)
-        buyer.wealth = 10
+        buyer.wealth = 10  # 财富不足
+        # 设置财务官
+        seller.office = "quaestor"
         retirement.decide_whom_to_retire.return_value = None
         recruitment.decide_bids.return_value = {}
         bid.decide_tax_bid.return_value = None
@@ -560,7 +568,7 @@ class TestForumCommand:
                            land_trade_decider=land_trade,
                            triumph_decider=triumph)
 
-        with patch.object(cmd, '_has_quaestor', return_value=True):
+        with patch.object(cmd, '_get_quaestor_players', return_value=["p1"]):
             with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
                 result = cmd.execute([])
         assert result is True

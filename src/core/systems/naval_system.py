@@ -240,22 +240,36 @@ class NavalSystem:
         返回已完成的舰队编号列表。
         """
         completed = []
-        for fleet in self._fleets.values():
+        for fleet in list(self._fleets.values()):  # 使用 list 避免遍历时修改字典
             if fleet.is_building and fleet.build_end_turn == current_turn:
-                fleet.complete_building()
+                # 先保存合同 ID，因为 complete_building 会将其清空
+                contract_id = getattr(fleet, '_contract_id', None)
+
+                # 记录建造完成前的状态
                 self.state.log_event(
-                    f"舰队 {fleet.number} 建造完成，实际战力 {fleet._strength_base}",
-                    level=logging.DEBUG
-                )
-                # 基础完成日志
-                self.state.log_event(
-                    f"[DEBUG] 舰队 {fleet.number} 建造完成",
+                    f"[DEBUG] 舰队 {fleet.number} 建造完成前: 状态={fleet.status.value}, 战力={fleet._strength_base}, 目标战争={fleet._target_war_id}",
                     level=logging.DEBUG,
-                    extra={"fleet": fleet.number, "event": "construction_complete"}
+                    extra={"fleet": fleet.number, "pre_status": fleet.status.value, "strength": fleet._strength_base}
                 )
 
-                # 查找关联的舰队合同，并标记完成
-                contract_id = getattr(fleet, '_contract_id', None)
+                # 完成建造（会清除 _contract_id）
+                fleet.complete_building()
+
+                self.state.log_event(
+                    f"舰队 {fleet.number} 建造完成，实际战力 {fleet._strength_base}",
+                    level=logging.INFO
+                )
+
+                # 防御性检查：确保舰队在 _fleets 中
+                if fleet.number not in self._fleets:
+                    self.state.log_event(
+                        f"警告: 舰队 {fleet.number} 不在 _fleets 中，重新添加",
+                        level=logging.WARNING,
+                        extra={"fleet": fleet.number}
+                    )
+                    self._fleets[fleet.number] = fleet
+
+                # 查找关联的舰队合同，并标记完成（必须在 complete_building 之后，但使用之前保存的 contract_id）
                 if contract_id:
                     contract = self.state.get_contract(contract_id)
                     if contract and getattr(contract, '_is_fleet_construction', False):
@@ -266,77 +280,68 @@ class NavalSystem:
                                 level=logging.INFO,
                                 extra={"contract_id": contract.id}
                             )
+                        else:
+                            self.state.log_event(
+                                f"舰队合同 {contract_id} 已标记为完成，跳过",
+                                level=logging.DEBUG
+                            )
+                    else:
+                        self.state.log_event(
+                            f"未找到关联的舰队合同: contract_id={contract_id}",
+                            level=logging.WARNING
+                        )
 
-                # 处理战争指派
+                # 处理战争指派（仅当舰队有目标战争时）
                 if fleet._target_war_id:
                     war_system = self.state.get_war_system()
                     if war_system:
                         war = war_system.get_war_by_id(fleet._target_war_id)
-                        # 记录目标战争信息
-                        self.state.log_event(
-                            f"[DEBUG] 舰队 {fleet.number} 目标战争: {fleet._target_war_id}, 战争存在={war is not None}",
-                            level=logging.DEBUG,
-                            extra={
-                                "fleet": fleet.number,
-                                "target_war_id": fleet._target_war_id,
-                                "war_exists": war is not None
-                            }
-                        )
-                        if war:
-                            # 记录战争状态和 naval_required
-                            self.state.log_event(
-                                f"[DEBUG] 舰队 {fleet.number} 目标战争 {war.id} 状态={war.status.value}, naval_required={war.naval_required}",
-                                level=logging.DEBUG,
-                                extra={
-                                    "fleet": fleet.number,
-                                    "war_id": war.id,
-                                    "war_status": war.status.value,
-                                    "naval_required": war.naval_required
-                                }
+                        if war and war.status.value == "active" and war.naval_required:
+                            # 尝试指派，但不影响舰队可用性
+                            success = self.assign_fleet_to_war(
+                                fleet.number,
+                                fleet._target_war_id,
+                                "naval",
+                                commander_id=None
                             )
-                            if war.status.value == "active" and war.naval_required:
-                                success = self.assign_fleet_to_war(
-                                    fleet.number,
-                                    fleet._target_war_id,
-                                    "naval",
-                                    commander_id=None
-                                )
+                            if success:
                                 self.state.log_event(
-                                    f"[DEBUG] 舰队 {fleet.number} 自动指派结果: {success}",
-                                    level=logging.DEBUG,
-                                    extra={
-                                        "fleet": fleet.number,
-                                        "war_id": war.id,
-                                        "assign_success": success
-                                    }
+                                    f"舰队 {fleet.number} 已自动指派给战争 {war.name}",
+                                    level=logging.INFO
                                 )
                             else:
-                                # 记录不指派的原因
-                                reason = []
-                                if war.status.value != "active":
-                                    reason.append("war_not_active")
-                                if not war.naval_required:
-                                    reason.append("naval_not_required")
+                                # 指派失败，舰队仍保持可用状态
                                 self.state.log_event(
-                                    f"[DEBUG] 舰队 {fleet.number} 未指派: 原因 {reason}",
-                                    level=logging.DEBUG,
-                                    extra={
-                                        "fleet": fleet.number,
-                                        "war_id": war.id,
-                                        "assign_skipped_reason": reason
-                                    }
+                                    f"舰队 {fleet.number} 自动指派失败，舰队保持可用状态",
+                                    level=logging.WARNING,
+                                    extra={"fleet": fleet.number, "war_id": war.id, "reason": "assign_failed"}
                                 )
                         else:
+                            # 战争不存在或不需要海战，舰队保持可用状态
                             self.state.log_event(
-                                f"[DEBUG] 舰队 {fleet.number} 目标战争 {fleet._target_war_id} 不存在，未指派",
-                                level=logging.DEBUG,
-                                extra={
-                                    "fleet": fleet.number,
-                                    "target_war_id": fleet._target_war_id,
-                                    "reason": "war_not_found"
-                                }
+                                f"舰队 {fleet.number} 目标战争 {fleet._target_war_id} 未激活或无海战需求，舰队保持可用状态",
+                                level=logging.INFO,
+                                extra={"fleet": fleet.number, "target_war_id": fleet._target_war_id}
                             )
+                    else:
+                        self.state.log_event(
+                            f"战争系统不可用，舰队 {fleet.number} 保持可用状态",
+                            level=logging.WARNING
+                        )
+                else:
+                    self.state.log_event(
+                        f"舰队 {fleet.number} 没有目标战争，保持可用状态",
+                        level=logging.DEBUG
+                    )
+
+                # 最终确认舰队状态
+                self.state.log_event(
+                    f"[DEBUG] 舰队 {fleet.number} 完成处理后: 状态={fleet.status.value}",
+                    level=logging.DEBUG,
+                    extra={"fleet": fleet.number, "final_status": fleet.status.value}
+                )
                 completed.append(fleet.number)
+
         return completed
 
     # ---------- 舰队指派 ----------
@@ -605,28 +610,32 @@ class NavalSystem:
 
     def apply_maintenance(self) -> Tuple[bool, str]:
         """扣除维护费，国库不足时尝试解散"""
-        total = self.calculate_maintenance()
-        if total == 0:
-            return True, "无需支付舰队维护费"
-
-        if self.state.treasury < total:
-            # 国库不足，解散部分可用舰队
-            available = self.get_available_fleets()
-            to_disband = []
-            for fleet in available:
-                if self.state.treasury + fleet.get_maintenance_cost(self.state) >= total:
-                    break
-                to_disband.append(fleet)
-            for fleet in to_disband:
-                fleet.mark_destroyed(self.state.turn.turn_number)
-                self.state.log_event(f"因国库不足，舰队 {fleet.name} 解散")
-            # 重新计算维护费
+        try:
             total = self.calculate_maintenance()
-            if self.state.treasury < total:
-                return False, f"国库仍不足以支付舰队维护费，需要 {total}"
+            if total == 0:
+                return True, "无需支付舰队维护费"
 
-        self.state.treasury -= total
-        return True, f"支付舰队维护费 {total}"
+            if self.state.treasury < total:
+                # 国库不足，解散部分可用舰队
+                available = self.get_available_fleets()
+                to_disband = []
+                for fleet in available:
+                    if self.state.treasury + fleet.get_maintenance_cost(self.state) >= total:
+                        break
+                    to_disband.append(fleet)
+                for fleet in to_disband:
+                    fleet.mark_destroyed(self.state.turn.turn_number)
+                    self.state.log_event(f"因国库不足，舰队 {fleet.name} 解散")
+                # 重新计算维护费
+                total = self.calculate_maintenance()
+                if self.state.treasury < total:
+                    return False, f"国库仍不足以支付舰队维护费，需要 {total}"
+
+            self.state.treasury -= total
+            return True, f"支付舰队维护费 {total}"
+        except Exception as e:
+            print(f"      ⚓ 舰队维护费计算异常: {e}")
+            return False, "维护费计算失败"
 
     # ---------- 序列化 ----------
     def to_dict(self) -> dict:

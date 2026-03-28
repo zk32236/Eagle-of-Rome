@@ -34,6 +34,8 @@ class RevenueCommand(Command):
             print("⚠️ 税收阶段在本回合已执行过")
             return False
 
+        print(f"[DEBUG] Revenue phase: naval_system = {self.state.naval_system}")
+
         terms = TerminologyService.get()
         print(f"\n--- {terms.phase_revenue} Phase (Year {abs(self.state.turn.year)} BC) ---")
 
@@ -101,9 +103,12 @@ class RevenueCommand(Command):
             success, msg = ms.apply_maintenance(verbose=False)
 
         # 4.2 海军维护费（只执行一次）
+        print(f"[DEBUG] naval_system exists: {self.state.naval_system is not None}, object: {self.state.naval_system}")
         if self.state.naval_system:
             success, msg = self.state.naval_system.apply_maintenance()
-            print(f"      ⚓ {msg}")  # 显示舰队维护费信息
+            print(f"      ⚓ {msg}")
+        else:
+            print("      ⚓ 警告：naval_system 为 None，跳过舰队维护费")
 
         # 5. 国家运营费扣除
         self._deduct_national_opex()

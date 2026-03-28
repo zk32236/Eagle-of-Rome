@@ -2,7 +2,7 @@
 import logging
 import random
 from typing import Optional
-
+from src.api import forum_api
 from src.core.game_state import GameState
 from src.core.entities.entities import Faction
 from src.core.entities.figure import Figure, ClassTier
@@ -14,6 +14,7 @@ from src.core.deciders.bid_decider import BidDecider
 from src.core.deciders.triumph_decider import TriumphDecider
 from src.core.deciders.festival_decider import FestivalDecider
 from src.core.deciders.vote_decider import VoteDecider
+
 
 
 class AutoPlayerProcessor:
@@ -150,39 +151,26 @@ class AutoPlayerProcessor:
             logging.exception(f"投票环节 AI 决策异常: {e}")
 
     def process_retirement(self, player_id: str, faction: Faction) -> bool:
-        """执行裁员决策。返回 True 表示执行了淘汰，否则 False。"""
         try:
             fig_id = self.retirement_decider.decide_whom_to_retire(faction)
             if fig_id is None:
                 return False
 
-            figure = self.state.get_member(fig_id)
-            if not figure or figure.faction_id != faction.id:
+            # 使用 forum_api.retire_figure 处理淘汰
+            result = forum_api.retire_figure(self.state, player_id, fig_id)
+            if result["success"]:
+                # 如果成功，API 内部已记录操作，这里只需输出提示
+                figure = self.state.get_member(fig_id)
+                if figure:
+                    print(f"   🤖 AI {faction.name} 淘汰了 {figure.get_formal_name()}", flush=True)
+                return True
+            else:
                 self.state.log_event(
-                    f"[WARNING] 裁员决策返回的人物 {fig_id} 不属于派系 {faction.id}，已忽略",
+                    f"AI 淘汰失败: {result['message']}",
                     level=logging.WARNING,
-                    extra={"function": "process_retirement", "player_id": player_id}
+                    extra={"player_id": player_id, "figure_id": fig_id}
                 )
                 return False
-
-            # 从派系移除
-            faction.remove_member(fig_id)
-            # 加入广场
-            self.state.curia.add_figure(figure)
-            figure.faction_id = None
-            figure.is_faction_leader = False
-            # 记录操作（用于公示）
-            self.state.add_forum_action("retirements", fig_id)
-            # 记录日志
-            self.state.log_event(
-                f"人物被淘汰: {figure.get_formal_name()}",
-                level=logging.INFO,
-                extra={"figure_id": figure.id}
-            )
-            # 用户可见提示
-            print(f"   🤖 AI {faction.name} 淘汰了 {figure.get_formal_name()}", flush=True)
-            return True
-
         except Exception as e:
             logging.exception(f"裁员环节 AI 决策异常: {e}")
             return False
@@ -200,7 +188,7 @@ class AutoPlayerProcessor:
                 faction, available_figures, vacancies, self.state
             )
             for fig_id, amount in bids.items():
-                self.state.add_forum_action("recruitment_bids", (faction.id, fig_id, amount))
+                forum_api.recruit_figure(self.state, player_id, fig_id, amount)
 
             # 2. 合同竞标
             budgeted_contracts = [
@@ -218,28 +206,21 @@ class AutoPlayerProcessor:
                 if contract.contract_type == ContractType.TAX_FARMING:
                     result = self.bid_decider.decide_tax_bid(contract, knights, self.state)
                     if result:
-                        knight, amount, tax_rate = result
-                        self.state.add_forum_action(
-                            "contract_bids",
-                            (contract.id, knight.id, faction.id, amount)
-                        )
+                        knight, amount, profit_rate = result
+                        forum_api.place_bid(self.state, player_id, knight.id, contract.id, amount, profit_rate)
+
                 elif contract.contract_type == ContractType.PUBLIC_WORKS:
                     if getattr(contract, '_is_fleet_construction', False):
                         result = self.bid_decider.decide_fleet_bid(contract, knights, self.state)
                         if result:
-                            knight, amount, r = result
-                            self.state.add_forum_action(
-                                "contract_bids",
-                                (contract.id, knight.id, faction.id, amount)
-                            )
+                            knight, amount, profit_rate = result
+                            forum_api.place_bid(self.state, player_id, knight.id, contract.id, amount, profit_rate)
                     else:
                         result = self.bid_decider.decide_works_bid(contract, knights, self.state)
                         if result:
-                            knight, amount, r, construction, warranty = result
-                            self.state.add_forum_action(
-                                "contract_bids",
-                                (contract.id, knight.id, faction.id, amount)
-                            )
+                            knight, amount, profit_rate, construction, warranty = result
+                            # place_bid 会重新计算工期/质保期，但为了保持一致性，还是传入利润率
+                            forum_api.place_bid(self.state, player_id, knight.id, contract.id, amount, profit_rate)
 
             # 3. 凯旋投票
             war_system = self.state.get_war_system()
@@ -252,10 +233,7 @@ class AutoPlayerProcessor:
                         if not commander or commander.is_dead:
                             continue
                         vote = self.triumph_decider.decide_triumph(war, commander, self.state)
-                        self.state.add_forum_action(
-                            "triumph_votes",
-                            (war.id, faction.id, vote)
-                        )
+                        forum_api.vote_triumph(self.state, player_id, war.id, vote)
 
             # 4. 公地认购（仅当有待售配额时）
             if self.state.pending_land_sale_quota > 0:
@@ -274,7 +252,7 @@ class AutoPlayerProcessor:
                             quota = self.state.pending_land_sale_quota
                             # 认购数量可随机 1 到 min(配额, max_by_wealth)
                             amount = random.randint(1, min(quota, max_by_wealth))
-                            self.state.add_forum_action("land_purchases", (best.id, amount))
+                            forum_api.buy_land(self.state, player_id, best.id, amount)
                             self.state.log_event(
                                 f"AI {faction.name} 为人物 {best.get_formal_name()} 认购 {amount} C 公地",
                                 level=logging.DEBUG

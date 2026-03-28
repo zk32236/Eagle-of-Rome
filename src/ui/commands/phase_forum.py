@@ -1436,7 +1436,8 @@ class ForumCommand(Command):
                             service = LandTradingService(self.state)
                             unit_price = service.calculate_land_price(seller, buyer)
                             total_price = amount * unit_price
-                            self.state.add_forum_action("land_trades", (seller_id, buyer_id, amount, total_price))
+                            # 使用 API 记录交易
+                            forum_api.transact_land(self.state, player_id, seller_id, buyer_id, amount, total_price)
                 except Exception as e:
                     logging.exception("交易市场环节自动决策异常")
             try:
