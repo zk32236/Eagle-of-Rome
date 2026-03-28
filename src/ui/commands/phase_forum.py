@@ -796,55 +796,46 @@ class ForumCommand(Command):
 
     def _handle_retire(self, args: List[str]) -> bool:
         if len(args) != 1:
-            print("❌ 用法: retire <人物ID>", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 用法: retire <人物ID>", flush=True)
             return False
         try:
             fig_id = int(args[0])
         except ValueError:
-            print("❌ 人物ID必须为数字", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 人物ID必须为数字", flush=True)
             return False
 
         player_id = self._get_current_player_id()
         if not player_id:
-            print("❌ 无法获取当前玩家", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 无法获取当前玩家", flush=True)
             return False
         result = forum_api.retire_figure(self.state, player_id, fig_id)
         print(result["message"])
         sys.stdout.flush()
-        sys.stderr.flush()
         return result["success"]
 
     def _handle_recruit(self, args: List[str]) -> bool:
         if len(args) != 2:
-            print("❌ 用法: recruit <人物ID> <金额>", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 用法: recruit <人物ID> <金额>", flush=True)
             return False
         try:
             fig_id = int(args[0])
             amount = int(args[1])
         except ValueError:
-            print("❌ 人物ID和金额必须为数字", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 人物ID和金额必须为数字", flush=True)
             return False
 
         if amount <= 0:
-            print("❌ 金额必须为正整数", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 金额必须为正整数", flush=True)
             return False
 
         fig = next((f for f in self.state.curia.get_all_available() if f.id == fig_id), None)
         if not fig:
-            print(f"❌ 人物 ID {fig_id} 不在广场中", file=sys.stderr)
-            sys.stderr.flush()
+            print(f"❌ 人物 ID {fig_id} 不在广场中", flush=True)
             return False
 
         player_id = self._get_current_player_id()
         if not player_id:
-            print("❌ 无法获取当前玩家", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 无法获取当前玩家", flush=True)
             return False
 
         player = self.state.get_player(player_id)
@@ -867,27 +858,25 @@ class ForumCommand(Command):
         current_members = len(faction.get_members(self.state))
         vacancies = max_members - current_members
         if vacancies <= 0:
-            print(f"❌ {faction.name} 派系成员已满，无法招募", file=sys.stderr)
-            sys.stderr.flush()
+            print(f"❌ {faction.name} 派系成员已满，无法招募", flush=True)
             return False
 
         result = forum_api.recruit_figure(self.state, player_id, fig_id, amount)
         print(result["message"])
         sys.stdout.flush()
-        sys.stderr.flush()
         return result["success"]
 
     def _handle_bid(self, args: List[str]) -> bool:
         # 参数个数检查：3或4
         if len(args) not in (3, 4):
-            print("❌ 用法: bid <合同ID> <骑士ID> <金额> [利润率(0-1)]", file=sys.stderr)
+            print("❌ 用法: bid <合同ID> <骑士ID> <金额> [利润率(0-1)]", flush=True)
             return False
         try:
             contract_id = int(args[0])
             figure_id = int(args[1])
             amount = int(args[2])
         except ValueError:
-            print("❌ 合同ID、骑士ID、金额必须为数字", file=sys.stderr)
+            print("❌ 合同ID、骑士ID、金额必须为数字", flush=True)
             return False
 
         # 利润率处理
@@ -896,10 +885,10 @@ class ForumCommand(Command):
             try:
                 profit_rate = float(args[3])
             except ValueError:
-                print("❌ 利润率必须为数字", file=sys.stderr)
+                print("❌ 利润率必须为数字", flush=True)
                 return False
             if profit_rate <= 0 or profit_rate >= 1:
-                print("❌ 利润率必须在0到1之间", file=sys.stderr)
+                print("❌ 利润率必须在0到1之间", flush=True)
                 return False
         else:
             # 从配置获取默认利润率
@@ -910,16 +899,16 @@ class ForumCommand(Command):
         # 检查合同是否存在且可竞标
         contract = self.state.get_contract(contract_id)
         if not contract:
-            print(f"❌ 合同 ID {contract_id} 不存在", file=sys.stderr)
+            print(f"❌ 合同 ID {contract_id} 不存在", flush=True)
             return False
         if contract.status != ContractStatus.BUDGETED:
-            print(f"❌ 合同 {contract.name} 不可竞标", file=sys.stderr)
+            print(f"❌ 合同 {contract.name} 不可竞标", flush=True)
             return False
 
         # 获取当前玩家
         player_id = self._get_current_player_id()
         if not player_id:
-            print("❌ 无法获取当前玩家", file=sys.stderr)
+            print("❌ 无法获取当前玩家", flush=True)
             return False
         player = self.state.get_player(player_id)
         if not player:
@@ -931,18 +920,18 @@ class ForumCommand(Command):
         # 检查骑士是否属于该派系且存活
         figure = self.state.get_member(figure_id)
         if not figure or figure.is_dead:
-            print(f"❌ 骑士 ID {figure_id} 不存在或已死亡", file=sys.stderr)
+            print(f"❌ 骑士 ID {figure_id} 不存在或已死亡", flush=True)
             return False
         if figure.faction_id != faction.id:
-            print(f"❌ 骑士 {figure.get_formal_name()} 不属于您的派系", file=sys.stderr)
+            print(f"❌ 骑士 {figure.get_formal_name()} 不属于您的派系", flush=True)
             return False
         if figure.class_tier.value != "eques":
-            print(f"❌ 人物 {figure.get_formal_name()} 不是骑士，无法参与竞标", file=sys.stderr)
+            print(f"❌ 人物 {figure.get_formal_name()} 不是骑士，无法参与竞标", flush=True)
             return False
 
         # 金额合法性校验
         if amount <= 0:
-            print("❌ 金额必须为正整数", file=sys.stderr)
+            print("❌ 金额必须为正整数", flush=True)
             return False
 
         result = forum_api.place_bid(self.state, player_id, figure_id, contract_id, amount, profit_rate)
@@ -952,66 +941,55 @@ class ForumCommand(Command):
 
     def _handle_buy(self, args: List[str]) -> bool:
         if len(args) != 2:
-            print("❌ 用法: buy <人物ID> <数量>", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 用法: buy <人物ID> <数量>", flush=True)
             return False
         try:
             figure_id = int(args[0])
             amount = int(args[1])
         except ValueError:
-            print("❌ 人物ID和数量必须为数字", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 人物ID和数量必须为数字", flush=True)
             return False
 
         if amount <= 0:
-            print("❌ 数量必须为正整数", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 数量必须为正整数", flush=True)
             return False
 
         figure = self.state.get_member(figure_id)
         if not figure or figure.is_dead:
-            print(f"❌ 人物 ID {figure_id} 不存在或已死亡", file=sys.stderr)
-            sys.stderr.flush()
+            print(f"❌ 人物 ID {figure_id} 不存在或已死亡", flush=True)
             return False
 
         player_id = self._get_current_player_id()
         if not player_id:
-            print("❌ 无法获取当前玩家", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 无法获取当前玩家", flush=True)
             return False
         player = self.state.get_player(player_id)
         if not player:
             return False
         if figure.faction_id != player.faction_id:
-            print(f"❌ 人物 {figure.get_formal_name()} 不属于您的派系", file=sys.stderr)
-            sys.stderr.flush()
+            print(f"❌ 人物 {figure.get_formal_name()} 不属于您的派系", flush=True)
             return False
 
         result = forum_api.buy_land(self.state, player_id, figure_id, amount)
         print(result["message"])
         sys.stdout.flush()
-        sys.stderr.flush()
         return result["success"]
 
     def _handle_vote(self, args: List[str]) -> bool:
         if len(args) != 1:
-            print("❌ 用法: vote yes/no", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 用法: vote yes/no", flush=True)
             return False
         vote_str = args[0].lower()
         if vote_str not in ("yes", "no"):
-            print("❌ 投票值必须是 'yes' 或 'no'", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 投票值必须是 'yes' 或 'no'", flush=True)
             return False
         if not self._get_war_triumph():
-            print("   📭 没有凯旋仪式需要授予", file=sys.stderr)
-            sys.stderr.flush()
+            print("   📭 没有凯旋仪式需要授予", flush=True)
             return False
         vote = (vote_str == "yes")
         player_id = self._get_current_player_id()
         if not player_id:
-            print("❌ 无法获取当前玩家", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 无法获取当前玩家", flush=True)
             return False
 
         triumph = self._get_war_triumph()
@@ -1020,7 +998,6 @@ class ForumCommand(Command):
             result = forum_api.vote_triumph(self.state, player_id, war_id, vote)
             print(result["message"])
             sys.stdout.flush()
-            sys.stderr.flush()
             return result["success"]
         else:
             return False
@@ -1032,18 +1009,15 @@ class ForumCommand(Command):
 
         print(result["message"])
         sys.stdout.flush()
-        sys.stderr.flush()
         return result["success"]
 
     def _handle_transact(self, args: List[str]) -> bool:
         enable_private_trade = self.state.config.get("forum_rules.enable_private_land_trade", False)
         if not enable_private_trade:
-            print("⚠️ 私地交易功能暂未开放", file=sys.stderr)
-            sys.stderr.flush()
+            print("⚠️ 私地交易功能暂未开放", flush=True)
             return False
         if len(args) != 4:
-            print("❌ 用法: transact <卖家ID> <买家ID> <土地数量> <价格>", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 用法: transact <卖家ID> <买家ID> <土地数量> <价格>", flush=True)
             return False
         try:
             seller = int(args[0])
@@ -1051,31 +1025,26 @@ class ForumCommand(Command):
             land = int(args[2])
             price = int(args[3])
         except ValueError:
-            print("❌ 所有参数必须为数字", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 所有参数必须为数字", flush=True)
             return False
         if land <= 0 or price <= 0:
-            print("❌ 土地数量和价格必须为正整数", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 土地数量和价格必须为正整数", flush=True)
             return False
 
         player_id = self._get_current_player_id()
         if not player_id:
-            print("❌ 无法获取当前玩家", file=sys.stderr)
-            sys.stderr.flush()
+            print("❌ 无法获取当前玩家", flush=True)
             return False
         result = forum_api.transact_land(self.state, player_id, seller, buyer, land, price)
         print(result["message"])
         sys.stdout.flush()
-        sys.stderr.flush()
         return result["success"]
 
     def _handle_investigate(self, args: List[str]) -> bool:
         if len(args) == 0:
             player_id = self._get_current_player_id()
             if not player_id:
-                print(i18n.get("error_no_current_player"), file=sys.stderr)
-                sys.stderr.flush()
+                print(i18n.get("error_no_current_player"), flush=True)
                 return False
             player = self.state.get_player(player_id)
             if not player:
@@ -1086,8 +1055,7 @@ class ForumCommand(Command):
 
             result = figure_api.get_figure_info(self.state)
             if not result["success"]:
-                print(result["message"], file=sys.stderr)
-                sys.stderr.flush()
+                print(result["message"], flush=True)
                 return False
             all_figures = result["data"]
 
@@ -1106,7 +1074,7 @@ class ForumCommand(Command):
                         f"{status}{tier_emoji} ID:{m['id']:<3} {m['name']:<25} 派系:{m['faction_id']:<12} 影响力:{m['influence']} 财富:{m['wealth']} 人气:{m['popularity']} 私地:{m['land_private']} 老兵:{m['veterans']} 官职:{office_display}")
                 sys.stdout.flush()
             else:
-                print(i18n.get("no_members_in_faction", faction=faction.name), file=sys.stderr)
+                print(i18n.get("no_members_in_faction", faction=faction.name), flush=True)
 
             if self._step == 2:
                 curia_figures = self.state.curia.get_all_available()
@@ -1122,32 +1090,27 @@ class ForumCommand(Command):
                 else:
                     print("\n   📭 广场无人物")
 
-            sys.stderr.flush()
             return True
 
         elif len(args) == 1:
             try:
                 fig_id = int(args[0])
             except ValueError:
-                print(i18n.get("error_invalid_id"), file=sys.stderr)
-                sys.stderr.flush()
+                print(i18n.get("error_invalid_id"), flush=True)
                 return False
             result = figure_api.get_figure_info(self.state, fig_id)
             print(result["message"])
             sys.stdout.flush()
-            sys.stderr.flush()
             return result["success"]
 
         else:
-            print(i18n.get("error_usage_investigate"), file=sys.stderr)
-            sys.stderr.flush()
+            print(i18n.get("error_usage_investigate"), flush=True)
             return False
 
     def _handle_balance(self, args: List[str]) -> bool:
         player_id = self._get_current_player_id()
         if not player_id:
-            print(i18n.get("error_no_current_player"), file=sys.stderr)
-            sys.stderr.flush()
+            print(i18n.get("error_no_current_player"), flush=True)
             return False
         player = self.state.get_player(player_id)
         if not player:
@@ -1157,7 +1120,6 @@ class ForumCommand(Command):
             return False
         print(i18n.get("info_balance", faction=faction.name, treasury=faction.treasury))
         sys.stdout.flush()
-        sys.stderr.flush()
         return True
 
     def _handle_next(self, args: List[str]) -> bool:
@@ -1210,7 +1172,6 @@ class ForumCommand(Command):
         self._print_ui_03_3()
         print(result["message"])
         sys.stdout.flush()
-        sys.stderr.flush()
 
     def _execute_pending_land_acts(self):
         acts = self.state.get_pending_land_acts()
@@ -1227,7 +1188,7 @@ class ForumCommand(Command):
                     # 仅打印提示，避免遗漏
                     print(f"      🏛️ 贵族买地法案已批准，配额 {act.get('amount', 0)} C 待认购")
             except Exception as e:
-                print(f"      ⚠️ 执行土地法案异常（已跳过）: {e}", file=sys.stderr)
+                print(f"      ⚠️ 执行土地法案异常（已跳过）: {e}", flush=True)
                 logging.exception(f"执行土地法案异常: act={act}")
                 continue
         self.state.clear_pending_land_acts()
@@ -1277,8 +1238,7 @@ class ForumCommand(Command):
                 self._handle_next([])
                 break
             else:
-                print(i18n.get("error_unknown_command"), file=sys.stderr)
-                sys.stderr.flush()
+                print(i18n.get("error_unknown_command"), flush=True)
 
     def _handle_step_1(self):
         """处理裁员环节"""
@@ -1325,8 +1285,7 @@ class ForumCommand(Command):
                     if not self._handle_retire(args):
                         continue  # 继续输入
                 else:
-                    print(i18n.get("error_unknown_command"), file=sys.stderr)
-                    sys.stderr.flush()
+                    print(i18n.get("error_unknown_command"), flush=True)
         else:  # _handle_step_1 AI 分支（正常模式下的AI玩家）
             faction = self.state.get_faction(player.faction_id) if player else None
             self.state.log_event(
@@ -1411,8 +1370,7 @@ class ForumCommand(Command):
                     if self._handle_balance(args):
                         continue
                 else:
-                    print(i18n.get("error_unknown_command"), file=sys.stderr)
-                    sys.stderr.flush()
+                    print(i18n.get("error_unknown_command"), flush=True)
         else:  # AI 分支
             faction = self.state.get_faction(player.faction_id) if player else None
             self.state.log_event(
@@ -1532,7 +1490,7 @@ class ForumCommand(Command):
                                 faction.update_total_land(members)
                         except Exception as e:
                             logging.exception(f"交易市场结算异常: {e}")
-                            print(f"⚠️ 交易市场结算出错（已跳过）", file=sys.stderr)
+                            print(f"⚠️ 交易市场结算出错（已跳过）", flush=True)
                         self._handle_next([])
                         return
                 else:
@@ -1566,8 +1524,8 @@ class ForumCommand(Command):
                                 members = faction.get_members(self.state)
                                 faction.update_total_land(members)
                         except Exception as e:
-                            print(f"!!! 交易市场结算异常: {e}", file=sys.stderr)
-                            traceback.print_exc(file=sys.stderr)
+                            print(f"!!! 交易市场结算异常: {e}", flush=True)
+                            traceback.print_exc(file=sys.stdout)
                         self._handle_next([])
                         return
                 elif cmd == "transact":
@@ -1585,11 +1543,9 @@ class ForumCommand(Command):
 
     def _execute_normal(self) -> bool:
         """正常/全人工测试/自动模式：使用状态机，根据配置自动跳过输入"""
-        sys.stderr.flush()
         try:
             if self.state.is_phase_executed("forum"):
-                print(i18n.get("error_phase_already_executed", phase="forum"), file=sys.stderr)
-                sys.stderr.flush()
+                print(i18n.get("error_phase_already_executed", phase="forum"), flush=True)
                 return False
 
             self._step = 0
@@ -1607,7 +1563,6 @@ class ForumCommand(Command):
             self._generate_contracts()
 
             while self._step < 5:
-                sys.stderr.flush()
                 if self._step == 0:
                     self._handle_step_0()
                 elif self._step == 1:
@@ -1638,20 +1593,15 @@ class ForumCommand(Command):
 
     def _next_player(self) -> Optional[str]:
         if not self._players:
-            sys.stderr.flush()
             return None
         self._current_player_index += 1
         if self._current_player_index >= len(self._players):
-            sys.stderr.flush()
             return None
         next_id = self._players[self._current_player_index]
-        sys.stderr.flush()
         return next_id
 
     def _get_current_player_id(self) -> Optional[str]:
         if 0 <= self._current_player_index < len(self._players):
             pid = self._players[self._current_player_index]
-            sys.stderr.flush()
             return pid
-        sys.stderr.flush()
         return None

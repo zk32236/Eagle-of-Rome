@@ -167,7 +167,7 @@ class TestForumCommand:
         result = cmd.execute([])
         captured = capsys.readouterr()
         assert result is False
-        assert "已执行过" in captured.err
+        assert "已执行过" in captured.out
 
     def test_execute_success(self, test_state, mock_deciders):
         """成功执行广场阶段（全自动模式）"""

@@ -235,6 +235,10 @@ class NavalSystem:
             )
 
     def process_fleet_construction(self, current_turn: int) -> List[int]:
+        """
+        检查所有建造中的舰队，完成已到期的舰队，并关联舰队合同标记为完成。
+        返回已完成的舰队编号列表。
+        """
         completed = []
         for fleet in self._fleets.values():
             if fleet.is_building and fleet.build_end_turn == current_turn:
@@ -249,6 +253,21 @@ class NavalSystem:
                     level=logging.DEBUG,
                     extra={"fleet": fleet.number, "event": "construction_complete"}
                 )
+
+                # 查找关联的舰队合同，并标记完成
+                contract_id = getattr(fleet, '_contract_id', None)
+                if contract_id:
+                    contract = self.state.get_contract(contract_id)
+                    if contract and getattr(contract, '_is_fleet_construction', False):
+                        if contract.status != ContractStatus.COMPLETED:
+                            contract.mark_complete(self.state.turn.turn_number)
+                            self.state.log_event(
+                                f"舰队合同竣工: {contract.name}",
+                                level=logging.INFO,
+                                extra={"contract_id": contract.id}
+                            )
+
+                # 处理战争指派
                 if fleet._target_war_id:
                     war_system = self.state.get_war_system()
                     if war_system:

@@ -424,14 +424,20 @@ class RevenueCommand(Command):
                         )
 
                         if contract.remaining_years <= 0:
-                            contract.mark_complete(self.state.turn.turn_number)
-                            province = self.state.get_province(contract.province_id)
-                            if province:
-                                province.unbind_project_contract()
-                            self.state.log_event(
-                                f"工程合同竣工: {contract.name}",
-                                extra={"type": "works_contract_complete", "contract_id": contract.id}
-                            )
+                            # 如果是舰队合同，不立即标记完成，等待舰队建成
+                            if getattr(contract, '_is_fleet_construction', False):
+                                # 仅记录已支付完成（可选，用于标记）
+                                contract._paid = True
+                                # 剩余年限已为0，下次收入阶段不会再次支付
+                            else:
+                                contract.mark_complete(self.state.turn.turn_number)
+                                province = self.state.get_province(contract.province_id)
+                                if province:
+                                    province.unbind_project_contract()
+                                self.state.log_event(
+                                    f"工程合同竣工: {contract.name}",
+                                    extra={"type": "works_contract_complete", "contract_id": contract.id}
+                                )
             except Exception as e:
                 self.state.log_exception(
                     e,
