@@ -89,6 +89,7 @@ class SenateCommand(Command):
         self._passed_land_acts = []
         self._peace_proposals = []
 
+
         # 状态机主循环
         while self._step <= 5:
             if self._step == 0:

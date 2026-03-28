@@ -266,7 +266,7 @@ class TestPopulationCommandManual:
 
         # 输入序列：step0 next, step1 campaign + vote + next, step2 next, step3 next
         # 注意：有两个人类玩家，p1 执行后输入 next 切换到 p2，p2 需要再输入 next 完成
-        inputs = iter(["next", "campaign 1 10", "vote consul 1", "next", "next", "next"])
+        inputs = iter(["next", "", "campaign 1 10", "vote consul 1", "next", "", "next", "", "next", ""])
         monkeypatch.setattr('builtins.input', lambda *args: next(inputs))
         state_normal_mode.mark_phase_executed("forum")
 

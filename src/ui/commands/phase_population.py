@@ -75,6 +75,13 @@ class PopulationCommand(Command):
         self._resolution_done = False
         self._startup_done = False
 
+        # 将游戏状态中的当前玩家设置为人口阶段的第一个玩家
+        if self._players:
+            self.state.set_current_player(self._players[0])
+
+        # 显示当前玩家信息（清屏+信息）
+        self._show_current_player_overview()
+
         while self._step < 4:  # 原5改为4
             if self._step == 0:
                 self._handle_step_0()
@@ -243,12 +250,9 @@ class PopulationCommand(Command):
                 args = parts[1:]
 
                 if cmd in ("next", "n"):
-                    next_id = self._next_player()
-                    if next_id:
-                        print(i18n.get("info_next_player", player=next_id), flush=True)
+                    if self._switch_to_next_player():
                         break
                     else:
-                        # 所有玩家已完成，不再打印表格
                         self._step += 1
                         return
                 elif cmd == "campaign":
