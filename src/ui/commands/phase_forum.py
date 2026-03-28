@@ -1117,19 +1117,19 @@ class ForumCommand(Command):
         return True
 
     def _handle_next(self, args: List[str]) -> bool:
+
         if self._step == 0:
             self._step = 1
             self._players = self._get_step_players()
             self._current_player_index = 0
             print("\n--- 进入裁员环节 ---", flush=True)
         elif self._step in (1, 2, 3):
-            next_player_id = self._next_player()
-            if next_player_id:
-                player = self.state.get_player(next_player_id)
-                faction = self.state.get_faction(player.faction_id) if player else None
-                print(i18n.get("info_next_player", player=next_player_id, faction=faction.name if faction else "无"),
-                      flush=True)
+
+            if self._switch_to_next_player():
+                # 切换成功，留在当前步骤，等待新玩家输入
+                return True
             else:
+                # 所有玩家已完成，进入下一环节
                 # 检查是否启用私地交易环节
                 enable_private_trade = self.state.config.get("forum_rules.enable_private_land_trade", False)
                 if self._step == 3 and not enable_private_trade:
@@ -1151,10 +1151,13 @@ class ForumCommand(Command):
                     elif self._step == 5:
                         print("\n--- 广场阶段完成 ---", flush=True)
         elif self._step == 4:
-            self._step = 5
-            self._players = []
-            self._current_player_index = 0
-            print("\n--- 广场阶段完成 ---", flush=True)
+            if self._switch_to_next_player():
+                return True
+            else:
+                self._step = 5
+                self._players = []
+                self._current_player_index = 0
+                print("\n--- 广场阶段完成 ---", flush=True)
         return True
 
     def _do_resolution(self):
@@ -1437,8 +1440,8 @@ class ForumCommand(Command):
                             service = LandTradingService(self.state)
                             unit_price = service.calculate_land_price(seller, buyer)
                             total_price = amount * unit_price
-                            # 使用 API 记录交易
-                            forum_api.transact_land(self.state, player_id, seller_id, buyer_id, amount, total_price)
+                            # 直接记录交易，不经过 API 权限检查
+                            self.state.add_forum_action("land_trades", (seller_id, buyer_id, amount, total_price))
                 except Exception as e:
                     logging.exception("交易市场环节自动决策异常")
             try:
@@ -1450,7 +1453,7 @@ class ForumCommand(Command):
                     faction.update_total_land(members)
             except Exception as e:
                 logging.exception("交易市场结算异常")
-            self._handle_next([])
+            self._step = 5
             return
 
         # 手动模式
@@ -1463,19 +1466,9 @@ class ForumCommand(Command):
                 parts = cmd_input.split()
                 cmd = parts[0].lower()
                 if cmd in ("next", "n"):
-                    # 检查是否还有下一个玩家
-                    next_player_id = self._next_player()
-                    if next_player_id:
-                        # 有下一个玩家，切换
-                        player = self.state.get_player(next_player_id)
-                        faction = self.state.get_faction(player.faction_id) if player else None
-                        print(i18n.get("info_next_player", player=next_player_id,
-                                       faction=faction.name if faction else "无"),
-                              flush=True)
-                        # 继续循环处理新玩家
+                    if self._switch_to_next_player():
                         continue
                     else:
-                        # 无下一个玩家，环节结束，执行土地交易并退出
                         try:
                             land_result = forum_api.resolve_land_trades(self.state)
                             if land_result["message"]:
@@ -1486,7 +1479,7 @@ class ForumCommand(Command):
                         except Exception as e:
                             logging.exception(f"交易市场结算异常: {e}")
                             print(f"⚠️ 交易市场结算出错（已跳过）", flush=True)
-                        self._handle_next([])
+                        self._step = 5
                         return
                 else:
                     print(i18n.get("error_unknown_command"), flush=True)
@@ -1501,14 +1494,7 @@ class ForumCommand(Command):
                 cmd = parts[0].lower()
                 args = parts[1:]
                 if cmd in ("next", "n"):
-                    next_player_id = self._next_player()
-                    if next_player_id:
-                        player = self.state.get_player(next_player_id)
-                        faction = self.state.get_faction(player.faction_id) if player else None
-                        print(i18n.get("info_next_player", player=next_player_id,
-                                       faction=faction.name if faction else "无"),
-                              flush=True)
-                        # 继续循环处理新玩家
+                    if self._switch_to_next_player():
                         continue
                     else:
                         try:
@@ -1521,7 +1507,7 @@ class ForumCommand(Command):
                         except Exception as e:
                             print(f"!!! 交易市场结算异常: {e}", flush=True)
                             traceback.print_exc(file=sys.stdout)
-                        self._handle_next([])
+                        self._step = 5
                         return
                 elif cmd == "transact":
                     self._handle_transact(args)
@@ -1547,8 +1533,12 @@ class ForumCommand(Command):
             self._players = self._get_step_players()
             self._current_player_index = 0
 
+            # 显示当前玩家信息（清屏+信息）
+            self._show_current_player_overview()
+
             # 先更新战争系统
             self._update_war_system_silent()
+
             # 处理舰队建造完成
             if self.state.naval_system:
                 completed = self.state.naval_system.process_fleet_construction(self.state.turn.turn_number)
