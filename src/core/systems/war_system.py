@@ -521,18 +521,22 @@ class WarSystem:
 
     # ========== 数据加载 ==========
 
-    def check_triggers(self, current_year: int):
-        """检查是否有战争到达触发年份，将其从 INACTIVE 转为 THREAT"""
+    def check_triggers(self, current_year: int, verbose: bool = True) -> List[str]:
+        events = []
         if not self.state.config.get("enable_threats", True):
-            return
+            return events
         for war in self._war_deck[:]:
             if war.status == WarStatus.INACTIVE and current_year >= war.start_year:
                 war.status = WarStatus.THREAT
-                war.threat_level = 1  # 现在可以通过 setter 赋值
-                war._triggered_this_turn = True  # 标记为刚触发
+                war.threat_level = 1
+                war._triggered_this_turn = True
                 self._threats.append(war)
                 self._war_deck.remove(war)
-                print(f"   ⚠️ 外交冲突：{war.name} 开始威胁罗马")
+                msg = f"⚠️ 外交冲突：{war.name} 开始威胁罗马"
+                events.append(msg)
+                if verbose:
+                    print(msg)
+        return events
 
     def escalate_threats(self):
         events = []

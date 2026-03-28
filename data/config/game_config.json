@@ -11,9 +11,9 @@
     "war_always_pass": false,
     "force_battle_result": "",
     "bypass_player_check": false,
-    "auto_forum": true,
-    "auto_population": true,
-    "auto_senate": true
+    "auto_forum": false,
+    "auto_population": false,
+    "auto_senate": false
   },
   "logging": {
     "enabled": true,

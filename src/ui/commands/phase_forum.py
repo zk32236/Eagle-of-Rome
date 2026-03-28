@@ -95,14 +95,15 @@ class ForumCommand(Command):
     # ==================== 辅助函数 ====================
 
     def _update_war_system_silent(self):
-        """静默更新战争系统（触发、升级），返回升级事件列表"""
         ws = self.state.get_war_system()
         if not ws:
             return []
-        ws.check_triggers(self.state.turn.year)
-        events = ws.escalate_threats()
-        self._war_events = events
-        return events
+        # 获取触发事件（新威胁），不打印
+        trigger_events = ws.check_triggers(self.state.turn.year, verbose=False)
+        # 获取升级事件
+        escalate_events = ws.escalate_threats()
+        self._war_events = trigger_events + escalate_events
+        return self._war_events
 
     def _apply_market_decisions(self, player_id: str, faction):
         """为指定派系应用市场环节的 AI 决策（招募、竞标、凯旋投票）"""
@@ -1313,14 +1314,14 @@ class ForumCommand(Command):
                     # ===== 新增：市场环节开始前打印骑士财富 =====
                     knights = [m for m in faction.get_members(self.state) if
                                m.class_tier == ClassTier.EQUES and not m.is_dead]
-                    print("[DEBUG] 市场环节开始前派系骑士财富：")
+
                     for k in knights:
                         print(f"   {k.name}: {k.wealth}")
                     self._apply_market_decisions(player_id, faction)
                     # ===== 新增：市场环节结束后打印骑士财富 =====
                     knights = [m for m in faction.get_members(self.state) if
                                m.class_tier == ClassTier.EQUES and not m.is_dead]
-                    print("[DEBUG] 市场环节结束后派系骑士财富：")
+
                     for k in knights:
                         print(f"   {k.name}: {k.wealth}")
                 except Exception as e:

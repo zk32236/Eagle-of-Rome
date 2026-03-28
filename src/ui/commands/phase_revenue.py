@@ -34,7 +34,7 @@ class RevenueCommand(Command):
             print("⚠️ 税收阶段在本回合已执行过")
             return False
 
-        print(f"[DEBUG] Revenue phase: naval_system = {self.state.naval_system}")
+
 
         terms = TerminologyService.get()
         print(f"\n--- {terms.phase_revenue} Phase (Year {abs(self.state.turn.year)} BC) ---")
@@ -78,7 +78,6 @@ class RevenueCommand(Command):
         # =========================
 
         self.state.add_treasury(tax_income)
-        print(f"[DEBUG-国库] 国家公地收益后: {self.state.treasury}")
         print(f"💰 国家公地收益: \t+{tax_income} {terms.currency}")
         print(f"📊 国库现有资金: \t{self.state.treasury} {terms.currency}\n")
         self.state.log_event(...)
@@ -103,7 +102,7 @@ class RevenueCommand(Command):
             success, msg = ms.apply_maintenance(verbose=False)
 
         # 4.2 海军维护费（只执行一次）
-        print(f"[DEBUG] naval_system exists: {self.state.naval_system is not None}, object: {self.state.naval_system}")
+
         if self.state.naval_system:
             success, msg = self.state.naval_system.apply_maintenance()
             print(f"      ⚓ {msg}")
@@ -181,9 +180,9 @@ class RevenueCommand(Command):
         opex = int(opex_float)  # 向下取整
 
         if opex > 0:
-            print(f"[DEBUG-国库] 运营费扣除前: {self.state.treasury}")
+
             self.state.treasury -= opex
-            print(f"[DEBUG-国库] 运营费扣除后: {self.state.treasury}")
+
             print(f"      土地单价: {land_price} Talents/单位, 费率: {rate}")
             print(f"      总土地: {total_land}, 运营费 = {opex} Talents")
             print(f"      国库扣除后余额: {self.state.treasury}")
@@ -315,16 +314,9 @@ class RevenueCommand(Command):
         active_contracts = [c for c in self.state.contracts
                             if c.status == ContractStatus.ACTIVE]
 
-        active_tax_contracts = [c for c in self.state.contracts if
-                                c.status == ContractStatus.ACTIVE and c.contract_type == ContractType.TAX_FARMING]
-        print(
-            f"[DEBUG] 活跃包税合同: {[(c.id, c.contract_price, c.profit_rate, c.winning_bid['bidder_id'] if c.winning_bid else None) for c in active_tax_contracts]}")
-
         for contract in active_contracts:
             try:
                 if contract.contract_type == ContractType.TAX_FARMING:
-                    print(
-                        f"[DEBUG] 处理包税合同 {contract.id}, winning_bid={contract.winning_bid}, contract_price={contract.contract_price}, profit_rate={contract.profit_rate}")
                     winning_bid = contract.winning_bid
                     if not winning_bid:
                         continue
@@ -348,14 +340,11 @@ class RevenueCommand(Command):
                     net_profit = gross_profit - tax_int
 
                     # 国库收入 = 合同价
-                    print(f"[DEBUG-国库] 包税合同结算前: {self.state.treasury}")
                     self.state.add_treasury(contract_price)
-                    print(f"[DEBUG-国库] 包税合同结算后: {self.state.treasury}")
+
 
                     # 骑士净收入
                     figure.add_wealth(net_profit)
-
-                    print(f"[DEBUG] 国库 +{contract_price}, 骑士 {figure.name} 净得 {net_profit}")
 
                     contract.total_collected += contract_price
 

@@ -54,6 +54,7 @@ class PopulationCommand(Command):
         self.auto_processor.vote_decider = AutoVoteDecider()
         self.fleet_disband_decider = AutoFleetDisbandDecider()
         self._startup_done = False
+        self._pre_election_influences = {}  # 存储选举前各派系影响力
 
     # ---------- 核心执行 ----------
     def execute(self, args: List[str]) -> bool:
@@ -178,6 +179,7 @@ class PopulationCommand(Command):
         """合并环节：玩家可进行庆典和投票"""
         # 记录进入环节前的各派系影响力（用于后续对比）
         pre_influences = self._get_faction_influences()
+        self._pre_election_influences = pre_influences
 
         # 重置玩家列表，确保从第一个玩家开始
         player_id = self._get_current_player_id()
@@ -190,13 +192,12 @@ class PopulationCommand(Command):
             return
 
         if self._auto_mode:
-            # 自动模式：打印 UI、执行自动庆典和投票，并输出影响力变化表格
+            # 自动模式：打印 UI、执行自动庆典和投票，但不输出影响力表格
             print("\n" + "=" * 58)
             print("   🏛️  ELECTIONS Campaign")
             print("=" * 58)
 
-            # 获取庆典前影响力（其实已经记录，但这里保留原代码逻辑）
-            pre_influences = self._get_faction_influences()
+            # 显示当前影响力
             print("\n   📊 各派系影响力：\t\t当前")
             for faction in self.state.factions.values():
                 val = pre_influences.get(faction.id, 0)
@@ -219,22 +220,13 @@ class PopulationCommand(Command):
                 if faction:
                     self.auto_processor.process_vote(player.player_id, faction, bypass_permission=True)
 
-            # 统计总花费
-            total_spent = 0
-            campaigns = self.state._population_pending.get("campaigns", [])
-            for _, _, amount in campaigns:
-                total_spent += amount
-            total_boost = total_spent
-
-            # 获取庆典后影响力
-            post_influences = self._get_faction_influences()
-
-            # 打印影响力变化表格
-            self._print_influence_table(pre_influences, post_influences, total_spent, total_boost)
-
+            # 统计总花费（仅用于内部，不打印表格）
+            total_spent = sum(amount for _, _, amount in self.state._population_pending.get("campaigns", []))
+            # 不打印影响力表格，直接进入下一步
             self._step += 1
             return
 
+        # 手动模式
         bypass = self.state.config.get("testing.bypass_player_check", False)
         if bypass or player.player_type == PlayerType.HUMAN:
             # 手动模式：先显示“ELECTIONS Campaign”标题和当前影响力
@@ -264,11 +256,7 @@ class PopulationCommand(Command):
                         print(i18n.get("info_next_player", player=next_id), flush=True)
                         break
                     else:
-                        # 所有玩家已完成，计算影响力变化并打印表格
-                        post_influences = self._get_faction_influences()
-                        total_spent = sum(
-                            amount for _, _, amount in self.state._population_pending.get("campaigns", []))
-                        self._print_influence_table(pre_influences, post_influences, total_spent, total_spent)
+                        # 所有玩家已完成，不打印影响力表格，直接进入下一步
                         self._step += 1
                         return
                 elif cmd == "campaign":
@@ -286,10 +274,7 @@ class PopulationCommand(Command):
             self.auto_processor.process_vote(player.player_id, faction, bypass_permission=True)
             self._next_player()
             if self._current_player_index >= len(self._players):
-                # 所有玩家已完成，打印影响力变化表格
-                post_influences = self._get_faction_influences()
-                total_spent = sum(amount for _, _, amount in self.state._population_pending.get("campaigns", []))
-                self._print_influence_table(pre_influences, post_influences, total_spent, total_spent)
+                # 所有玩家已完成，不打印表格
                 self._step += 1
 
     def _auto_mode_festival_and_vote(self):
@@ -367,12 +352,14 @@ class PopulationCommand(Command):
     def _handle_step_2(self):
         """公示环节：统计选举结果，执行凯旋、军团解散等"""
         if not self._resolution_done:
+            # 打印 UI_04-2 标题（手动模式）
+            if not self._auto_mode:
+                self._print_ui_04_2()
             self._do_resolution()
             self._resolution_done = True
         if self._auto_mode:
             self._step += 1
             return
-        # 公示环节不需要重置玩家列表，因为只有一个全局步骤
         while True:
             print("\n🔧 本阶段可操作(ANYONE):", flush=True)
             print("   1. next/n → 进入元老院阶段", flush=True)
@@ -388,6 +375,13 @@ class PopulationCommand(Command):
             else:
                 print(i18n.get("error_unknown_command"), file=sys.stderr, flush=True)
 
+    def _print_ui_04_2(self):
+        """打印选举结果公示 UI 标题"""
+        print("\n############################################################")
+        print(f" UI_04-2 回合 {self.state.turn.turn_number} ({abs(self.state.turn.year)} BC) - 人口阶段 [4/7]")
+        print("############################################################")
+        print()  # 空行分隔
+
     def _do_resolution(self):
         """执行公示结算：选举统计、凯旋、军团解散等"""
         # 1. 执行选举统计
@@ -395,9 +389,16 @@ class PopulationCommand(Command):
         if result["message"]:
             print(result["message"])
 
-        # 6. 清除临时数据
+        # 2. 手动模式下打印选举后影响力表格（选举前 → 选举后）
+        if not self._auto_mode and self._pre_election_influences:
+            post_influences = self._get_faction_influences()
+            total_spent = sum(amount for _, _, amount in self.state._population_pending.get("campaigns", []))
+            self._print_influence_table(self._pre_election_influences, post_influences, total_spent, total_spent)
+
+        # 3. 清除临时数据
         self.state._population_pending["campaigns"] = []
         self.state._population_pending["votes"] = []
+        self._pre_election_influences = {}
 
     def _process_legion_disbandment_and_triumphs(self):
         """处理军团解散和凯旋式（仅执行一次）"""

@@ -1254,9 +1254,7 @@ class GameState:
             # 绑定骑士和行省
             figure = self.get_member(winner["bidder_id"])
             if figure:
-                print(f"[DEBUG] resolve_auction 绑定前，骑士 {figure.name} 财富: {figure.wealth}")
                 figure.add_contract(contract_id)
-                print(f"[DEBUG] resolve_auction 绑定后，骑士 {figure.name} 财富: {figure.wealth}")
                 contract.awarded_faction = figure.faction_id
 
             province = self.get_province(contract.province_id)

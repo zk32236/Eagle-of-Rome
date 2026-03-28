@@ -101,6 +101,7 @@ class DebugCLI:
                 return phase
         return None
 
+    # src/ui/debug_cli.py
     def _execute_phase_with_ui(self, phase_name: str) -> bool:
         player = self.state.get_current_player()
         if not player:
@@ -110,25 +111,27 @@ class DebugCLI:
         phase_display = PHASE_DISPLAY_NAMES.get(phase_name, phase_name)
         executed_before = len(self.state.executed_phases)
         total = len(PHASE_SEQUENCE)
-        print("\n" + "#" * 60)
-        print(f" 回合 {self.state.turn.turn_number} ({year_display}) - {phase_display} [{executed_before + 1}/{total}]")
-        print("#" * 60 + "\n")
 
-        preview_key = f"phase_{phase_name}_preview"
-        preview = i18n.get(preview_key, default="")
-        if preview and preview != preview_key:
-            print(preview)
-            print()  # 空行分隔预览和阶段输出
+        # 广场阶段不打印标题和预览（避免与 UI_03-0 重复）
+        if not (phase_name == "forum"):
+            print("\n" + "#" * 60)
+            print(
+                f" 回合 {self.state.turn.turn_number} ({year_display}) - {phase_display} [{executed_before + 1}/{total}]")
+            print("#" * 60 + "\n")
+
+            preview_key = f"phase_{phase_name}_preview"
+            preview = i18n.get(preview_key, default="")
+            if preview and preview != preview_key:
+                print(preview)
+                print()
 
         sys.stdout.flush()
         result = game_api.execute_phase(self.state, phase_name, player.player_id)
 
-        # 阶段执行失败时打印错误信息（可能已实时输出，但保留作为兜底）
         if not result["success"]:
             print(i18n.get("error_phase_exec_failed", msg=result["message"]))
             return False
 
-        # 进度条仍由 CLI 负责
         executed_after = len(self.state.executed_phases)
         filled = "▓" * executed_after
         empty = "░" * (total - executed_after)
