@@ -632,7 +632,6 @@ class TestContractFixes:
 
         # 验证资金转移
         actual_cost = int(amount * (1 - profit_rate))  # 80 * 0.8 = 64
-        # 骑士净收入 = 收入(amount) - 成本(actual_cost) - 抽成(profit的10%)
         profit = amount - actual_cost  # 16
         tax = int(round(profit * 0.1))  # 1.6 → 2
         knight_net = profit - tax  # 14
@@ -643,6 +642,6 @@ class TestContractFixes:
         expected_treasury = treasury_before - amount
         assert state.treasury == expected_treasury
 
-        # 合同状态变为 COMPLETED
+        # 合同状态：收入阶段仅支付，不标记完成，保持 ACTIVE（舰队建造完成时才变为 COMPLETED）
         contract = state.get_contract(contract.id)
-        assert contract.status == ContractStatus.COMPLETED
+        assert contract.status == ContractStatus.ACTIVE  # 修改：原为 COMPLETED

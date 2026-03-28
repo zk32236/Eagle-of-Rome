@@ -1,27 +1,48 @@
 # src/api/forum_api.py
 import logging
 import random
+from typing import Any, List, Optional, Tuple
+
 from src.core.game_state import GameState
-from src.api import api_response
 from src.core.i18n import i18n
 from src.core.entities.contract import ContractType, ContractStatus
-from src.core.entities.war import WarStatus  # 新增
+from src.core.entities.war import WarStatus
 from src.core.service.land_trading_service import LandTradingService
+from src.core.entities.figure import ClassTier
+
+
+def api_response(success: bool, message: str = "", data: Any = None, errors: List[str] = None) -> dict:
+    """统一 API 返回格式"""
+    return {
+        "success": success,
+        "message": message,
+        "data": data or {},
+        "errors": errors or []
+    }
+
+
+def _check_player_permission(state: GameState, player_id: str) -> Tuple[bool, dict]:
+    """检查当前玩家权限，返回 (是否通过, 错误响应)"""
+    if not state.config.get("testing.bypass_player_check", False):
+        if not state.is_current_player(player_id):
+            return False, api_response(False, i18n.get("error_not_your_turn"))
+    player = state.get_player(player_id)
+    if not player:
+        return False, api_response(False, i18n.get("error_no_current_player"))
+    return True, api_response(True)
 
 
 def retire_figure(state: GameState, player_id: str, figure_id: int) -> dict:
     """
     淘汰人物：从派系中移除，加入广场。
     权限：当前玩家，且人物属于该玩家派系。
+    校验：人物不能是派系领袖、不能有活跃合同。
     """
-    if not state.config.get("testing.bypass_player_check", False):
-        if not state.is_current_player(player_id):
-            return api_response(False, i18n.get("error_not_your_turn"))
+    ok, resp = _check_player_permission(state, player_id)
+    if not ok:
+        return resp
 
     player = state.get_player(player_id)
-    if not player:
-        return api_response(False, i18n.get("error_no_current_player"))
-
     figure = state.get_member(figure_id)
     if not figure or figure.is_dead:
         return api_response(False, i18n.get("figure_not_found", id=figure_id))
@@ -29,25 +50,20 @@ def retire_figure(state: GameState, player_id: str, figure_id: int) -> dict:
     if figure.faction_id != player.faction_id:
         return api_response(False, i18n.get("error_figure_not_in_your_faction"))
 
-    # 不能淘汰派系领袖
     if figure.is_faction_leader:
         return api_response(False, i18n.get("error_cannot_retire_leader"))
 
-    # 不能淘汰有活跃合同的人物
     if figure.has_active_contract:
         return api_response(False, i18n.get("error_figure_has_active_contract"))
 
-    # 从派系中移除
     faction = state.get_faction(figure.faction_id)
     if faction:
         faction.remove_member(figure.id)
 
-    # 将人物加入广场
     state.curia.add_figure(figure)
-    figure.faction_id = None  # 清除派系归属
+    figure.faction_id = None
     figure.is_faction_leader = False
 
-    # 记录淘汰操作（用于公示，但已立即生效）
     state.add_forum_action("retirements", figure_id)
 
     message = i18n.get("info_figure_retired", name=figure.get_formal_name())
@@ -59,39 +75,44 @@ def retire_figure(state: GameState, player_id: str, figure_id: int) -> dict:
 def recruit_figure(state: GameState, player_id: str, figure_id: int, amount: int) -> dict:
     """
     招募出价：记录出价，等待公示结算。
+    校验：金额>0，人物在广场中，派系有空位。
     """
-    if not state.config.get("testing.bypass_player_check", False):
-        if not state.is_current_player(player_id):
-            return api_response(False, i18n.get("error_not_your_turn"))
-
-    player = state.get_player(player_id)
-    if not player:
-        return api_response(False, i18n.get("error_no_current_player"))
-
-    # 检查人物是否在 Curia 中
-    figure = next((f for f in state.curia.get_all_available() if f.id == figure_id), None)
-    if not figure:
-        return api_response(False, i18n.get("error_figure_not_in_curia"))
+    ok, resp = _check_player_permission(state, player_id)
+    if not ok:
+        return resp
 
     if amount <= 0:
         return api_response(False, i18n.get("error_invalid_amount"))
 
-    # 记录出价
+    figure = next((f for f in state.curia.get_all_available() if f.id == figure_id), None)
+    if not figure:
+        return api_response(False, i18n.get("error_figure_not_in_curia"))
+
+    player = state.get_player(player_id)
+    faction = state.get_faction(player.faction_id)
+    if not faction:
+        return api_response(False, i18n.get("error_faction_not_found"))
+
+    vacancies = faction.get_vacancies(state, state.get_economic_rule("faction_member_limit", 6))
+    if vacancies <= 0:
+        return api_response(False, i18n.get("error_faction_full"))
+
     state.add_forum_action("recruitment_bids", (player.faction_id, figure_id, amount))
 
     message = i18n.get("info_recruit_bid_recorded", name=figure.get_formal_name(), amount=amount)
     return api_response(True, message, data={"figure_id": figure_id, "amount": amount})
 
 
-def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int, amount: int, profit_rate: float = None) -> dict:
-    # 权限校验
-    if not state.config.get("testing.bypass_player_check", False):
-        if not state.is_current_player(player_id):
-            return api_response(False, i18n.get("error_not_your_turn"))
-
-    player = state.get_player(player_id)
-    if not player:
-        return api_response(False, i18n.get("error_no_current_player"))
+def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int,
+              amount: int, profit_rate: float = None) -> dict:
+    """
+    竞标出价：记录出价，等待公示结算。
+    校验：合同状态 BUDGETED，金额>0，利润率在(0,1)，骑士身份正确。
+    金额范围：包税合同金额 ≥ base_cost，工程合同金额 ≤ base_cost。
+    """
+    ok, resp = _check_player_permission(state, player_id)
+    if not ok:
+        return resp
 
     # 合同校验
     contract = state.get_contract(contract_id)
@@ -108,76 +129,90 @@ def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int
     if profit_rate <= 0 or profit_rate >= 1:
         return api_response(False, i18n.get("error_invalid_profit_rate"))
 
-    # 根据合同类型处理
+    # 骑士校验
+    player = state.get_player(player_id)
+    faction = state.get_faction(player.faction_id)
+    if not faction:
+        return api_response(False, i18n.get("error_faction_not_found"))
+
+    figure = state.get_member(figure_id)
+    if not figure or figure.is_dead:
+        return api_response(False, i18n.get("figure_not_found", id=figure_id))
+    if figure.faction_id != faction.id:
+        return api_response(False, i18n.get("error_figure_not_in_your_faction"))
+    if figure.class_tier != ClassTier.EQUES:
+        return api_response(False, i18n.get("error_not_knight"))
+
+    # 金额范围校验（不再强制等式）
     if contract.contract_type == ContractType.TAX_FARMING:
         if amount < contract.base_cost:
             return api_response(False, i18n.get("error_bid_too_low", min=contract.base_cost))
-        # 包税合同不需要工期/质保期，但为了存储统一，设为0
-        actual_construction = 0
-        actual_warranty = 0
-
     elif contract.contract_type == ContractType.PUBLIC_WORKS:
-        is_fleet = getattr(contract, '_is_fleet_construction', False)
         if amount > contract.base_cost:
             return api_response(False, i18n.get("error_bid_too_high", max=contract.base_cost))
-        if not is_fleet:
-            # 获取原始基准成本
+    else:
+        return api_response(False, "未知的合同类型")
+
+    # 计算工期和质保期
+    actual_construction = 0
+    actual_warranty = 0
+
+    if contract.contract_type == ContractType.TAX_FARMING:
+        # 包税合同：无工期/质保期
+        pass
+    elif contract.contract_type == ContractType.PUBLIC_WORKS:
+        is_fleet = getattr(contract, '_is_fleet_construction', False)
+        if is_fleet:
+            actual_construction = 1
+            actual_warranty = 0
+        else:
             original_budget = getattr(contract, '_original_budget', contract.base_cost)
+            # 实际成本 = 金额 * (1 - 利润率)
             actual_cost = int(amount * (1 - profit_rate))
+            if actual_cost <= 0:
+                actual_cost = 1  # 避免除零
             cost_ratio = actual_cost / original_budget if original_budget > 0 else 1.0
 
             theoretical_construction = state.get_economic_rule("project_theoretical_construction", 3)
             theoretical_warranty = state.get_economic_rule("project_theoretical_warranty", 10)
 
-            if actual_cost > 0:
-                actual_construction = int(theoretical_construction * original_budget / actual_cost)
-            else:
-                actual_construction = theoretical_construction
+            # 施工周期 = 理论周期 * (原始预算 / 实际成本)
+            actual_construction = int(theoretical_construction * original_budget / actual_cost)
             actual_construction = max(1, actual_construction)
 
+            # 质保期 = 理论质保期 * 成本比例
             actual_warranty = int(theoretical_warranty * cost_ratio)
             actual_warranty = max(0, actual_warranty)
-        else:
-            # 舰队合同
-            actual_construction = 1
-            actual_warranty = 0
 
-    else:
-        return api_response(False, "未知的合同类型")
-
-    # 存储出价（7元组：合同ID，骑士ID，派系ID，金额，利润率，工期，质保期）
+    # 存储出价（7元组）
     state.add_forum_action(
         "contract_bids",
-        (contract_id, figure_id, player.faction_id, amount, profit_rate, actual_construction, actual_warranty)
+        (contract_id, figure_id, faction.id, amount, profit_rate, actual_construction, actual_warranty)
     )
 
     message = i18n.get("info_bid_recorded", contract_name=contract.name, amount=amount)
     return api_response(True, message, data={"contract_id": contract_id, "amount": amount, "profit_rate": profit_rate})
 
-
 def buy_land(state: GameState, player_id: str, figure_id: int, amount: int) -> dict:
     """
     认购公地：记录认购请求（人物ID + 数量）。
+    校验：金额>0，人物存在且存活，属于当前玩家派系。
     """
-    if not state.config.get("testing.bypass_player_check", False):
-        if not state.is_current_player(player_id):
-            return api_response(False, i18n.get("error_not_your_turn"))
+    ok, resp = _check_player_permission(state, player_id)
+    if not ok:
+        return resp
 
-    player = state.get_player(player_id)
-    if not player:
-        return api_response(False, i18n.get("error_no_current_player"))
+    if amount <= 0:
+        return api_response(False, i18n.get("error_invalid_amount"))
 
     figure = state.get_member(figure_id)
     if not figure or figure.is_dead:
         return api_response(False, i18n.get("figure_not_found", id=figure_id))
 
+    player = state.get_player(player_id)
     if figure.faction_id != player.faction_id:
         return api_response(False, i18n.get("error_figure_not_in_your_faction"))
 
-    if amount <= 0:
-        return api_response(False, i18n.get("error_invalid_amount"))
-
-    # 记录请求（人物ID，数量）
     state.add_forum_action("land_purchases", (figure_id, amount))
 
     message = i18n.get("info_land_purchase_recorded", amount=amount)
@@ -185,34 +220,50 @@ def buy_land(state: GameState, player_id: str, figure_id: int, amount: int) -> d
 
 
 def vote_triumph(state: GameState, player_id: str, war_id: str, vote: bool) -> dict:
-    if not state.config.get("testing.bypass_player_check", False):
-        if not state.is_current_player(player_id):
-            return api_response(False, i18n.get("error_not_your_turn"))
+    """
+    凯旋投票：记录投票，等待公示结算。
+    校验：战争存在且待凯旋。
+    """
+    ok, resp = _check_player_permission(state, player_id)
+    if not ok:
+        return resp
+
+    war_system = state.get_war_system()
+    if not war_system:
+        return api_response(False, "战争系统不可用")
+
+    war = war_system.get_war_by_id(war_id)
+    if not war:
+        return api_response(False, i18n.get("war_not_found", id=war_id))
+    if war.status != WarStatus.RESOLVED or war.soldier_share <= 0 or war.triumph_commander_id is None:
+        return api_response(False, i18n.get("error_not_triumph_war"))
+
     player = state.get_player(player_id)
     if not player:
         return api_response(False, i18n.get("error_no_current_player"))
+
     state.add_forum_action("triumph_votes", (war_id, player.faction_id, vote))
+
     message = i18n.get("info_vote_recorded", vote="支持" if vote else "反对")
     return api_response(True, message, data={"vote": vote})
 
 
-def transact_land(state: GameState, player_id: str, seller_id: int, buyer_id: int, land: int, price: int) -> dict:
+def transact_land(state: GameState, player_id: str, seller_id: int, buyer_id: int,
+                  land: int, price: int) -> dict:
     """
-    土地交易：记录交易。
+    土地交易：记录交易请求。
+    校验：买卖双方存在且存活，土地数量和价格为正整数。
     """
-    if not state.config.get("testing.bypass_player_check", False):
-        if not state.is_current_player(player_id):
-            return api_response(False, i18n.get("error_not_your_turn"))
+    ok, resp = _check_player_permission(state, player_id)
+    if not ok:
+        return resp
 
-    # 检查买卖双方人物是否存在
     seller = state.get_member(seller_id)
     buyer = state.get_member(buyer_id)
     if not seller or not buyer:
         return api_response(False, i18n.get("figure_not_found"))
-
     if seller.is_dead or buyer.is_dead:
         return api_response(False, i18n.get("error_figure_dead"))
-
     if land <= 0 or price <= 0:
         return api_response(False, i18n.get("error_invalid_amount"))
 
@@ -225,33 +276,29 @@ def transact_land(state: GameState, player_id: str, seller_id: int, buyer_id: in
 def resolve_forum(state: GameState) -> dict:
     """
     公示结算：根据收集的操作执行实际游戏逻辑，返回汇总结果。
+    此函数已在原有基础上添加统一返回格式。
     """
     pending = state.get_forum_pending()
     results = []
 
     # 1. 招募结算
     if pending["recruitment_bids"]:
-        # 按 figure_id 分组
         bids_by_figure = {}
         for faction_id, fig_id, amount in pending["recruitment_bids"]:
             bids_by_figure.setdefault(fig_id, []).append((faction_id, amount))
 
         for fig_id, bids in bids_by_figure.items():
-            # 找出价最高者（若平局，随机选择）
             max_amount = max(b[1] for b in bids)
             top_bidders = [b[0] for b in bids if b[1] == max_amount]
             winner_faction_id = random.choice(top_bidders) if len(top_bidders) > 1 else top_bidders[0]
 
-            # 从 Curia 中移除人物
             figure = next((f for f in state.curia.get_all_available() if f.id == fig_id), None)
             if figure:
                 state.curia.remove_figure(fig_id)
                 figure.faction_id = winner_faction_id
-                # 加入派系成员列表
                 faction = state.get_faction(winner_faction_id)
                 if faction:
                     faction.member_ids.append(fig_id)
-                # 扣款
                 faction.treasury -= max_amount
                 results.append(f"✅ {figure.get_formal_name()} 加入 {faction.name}，成交价 {max_amount}")
                 state.log_event(f"招募成功: {figure.name} 加入 {faction.name}，价格 {max_amount}",
@@ -286,12 +333,12 @@ def resolve_forum(state: GameState) -> dict:
                 results.append(f"⚠️ 合同 {contract_id} 不存在")
                 continue
 
-            # 包税合同：价高者得
             if contract.contract_type == ContractType.TAX_FARMING:
-                max_amount = max(b[2] for b in bids)  # amount 在索引2
+                # 包税：价高者得
+                max_amount = max(b[2] for b in bids)
                 top_bidders = [b for b in bids if b[2] == max_amount]
                 winner = random.choice(top_bidders)
-                winner_figure, winner_faction, amount, profit_rate, _, _ = winner  # 忽略 construction, warranty
+                winner_figure, winner_faction, amount, profit_rate, _, _ = winner
 
                 if profit_rate is None:
                     profit_rate = state.get_economic_rule("default_bid_profit_rate", 0.2)
@@ -322,8 +369,8 @@ def resolve_forum(state: GameState) -> dict:
                     f"✅ 包税合同 {contract.name} 中标者: {figure.name} ({winner_faction_name})，出价 {amount}，税率 {actual_tax_rate * 100:.1f}% (利润率 {profit_rate * 100:.1f}%)"
                 )
 
-            # 工程合同：价低者得
             else:
+                # 工程：价低者得
                 min_amount = min(b[2] for b in bids)
                 top_bidders = [b for b in bids if b[2] == min_amount]
                 winner = random.choice(top_bidders)
@@ -332,13 +379,11 @@ def resolve_forum(state: GameState) -> dict:
                 contract.mark_winner(winner_figure, state.turn.turn_number, 0)
                 contract.awarded_faction = winner_faction
 
-                # 计算财务参数
                 r = profit_rate
-                original_budget = getattr(contract, '_original_budget', contract.base_cost)  # 原始基准成本
+                original_budget = getattr(contract, '_original_budget', contract.base_cost)
                 actual_cost = int(amount * (1 - r))
                 cost_ratio = actual_cost / original_budget if original_budget > 0 else 1.0
 
-                # 新增日志
                 state.log_event(
                     f"工程合同中标: {contract.name}, 中标金额={amount}, 利润率={r:.4f}, 实际成本={actual_cost}, 原始预算={original_budget}, 成本比例={cost_ratio:.4f}",
                     level=logging.INFO,
@@ -350,16 +395,13 @@ def resolve_forum(state: GameState) -> dict:
                     }
                 )
 
-                # 施工周期仍基于折扣率（与之前一致）
-                construction_years = construction_years  # 已从出价中获取
-                # 质保期重新计算（确保与成本比例一致）
+                # 工期使用出价时计算的，质保期重新计算确保一致
                 warranty_years = int(state.get_economic_rule("project_theoretical_warranty", 10) * cost_ratio)
                 warranty_years = max(0, warranty_years)
 
-                annual_income = amount // construction_years
-                annual_cost = actual_cost // construction_years
+                annual_income = amount // construction_years if construction_years else amount
+                annual_cost = actual_cost // construction_years if construction_years else actual_cost
 
-                # 存储到合同
                 contract._annual_income = annual_income
                 contract._annual_cost = annual_cost
                 contract.remaining_years = construction_years
@@ -368,7 +410,6 @@ def resolve_forum(state: GameState) -> dict:
                 contract._warranty_remaining = warranty_years
                 contract.base_cost = amount
 
-                # 如果是舰队合同，通知海军系统
                 if getattr(contract, '_is_fleet_construction', False):
                     contract._actual_cost = actual_cost
                     contract._original_budget = original_budget
@@ -379,22 +420,14 @@ def resolve_forum(state: GameState) -> dict:
                 results.append(
                     f"✅ 工程合同 {contract.name} 中标者: {figure.name} ({winner_faction_name})，出价 {amount}"
                 )
-                if hasattr(contract, '_actual_cost'):
-                    state.log_event(
-                        f"舰队合同中标: {contract.name}, 实际成本={contract._actual_cost}, 原始预算={contract._original_budget}",
-                        level=logging.INFO,
-                        extra={"contract_id": contract.id, "actual_cost": contract._actual_cost}
-                    )
 
-    # 3. 公地认购结算（按人物影响力分配）
+    # 3. 公地认购结算
     if pending["land_purchases"]:
         quota = state.pending_land_sale_quota
         if quota <= 0:
             results.append("📭 本回合无可售公地配额")
         else:
-            # 获取所有认购请求，转换为 (figure_id, amount) 列表
-            purchases = pending["land_purchases"]  # 格式 [(figure_id, amount), ...]
-            # 按人物影响力降序排序
+            purchases = pending["land_purchases"]
             purchases_with_influence = []
             for fig_id, amount in purchases:
                 figure = state.get_member(fig_id)
@@ -409,7 +442,6 @@ def resolve_forum(state: GameState) -> dict:
             for figure, amount, _ in purchases_with_influence:
                 if remaining_quota <= 0:
                     break
-                # 检查人物财富是否足够
                 max_buy_by_wealth = figure.wealth // land_price
                 if max_buy_by_wealth <= 0:
                     results.append(f"⚠️ {figure.get_formal_name()} 资金不足，无法认购")
@@ -419,12 +451,11 @@ def resolve_forum(state: GameState) -> dict:
                 if actual_buy <= 0:
                     continue
 
-                # 执行认购：扣款，增加私地，减少国家公地，更新影响力
                 cost = actual_buy * land_price
                 figure.wealth -= cost
                 figure._land_private += actual_buy
                 figure.update_influence()
-                state.add_treasury(cost)  # 国库增收
+                state.add_treasury(cost)
                 state.add_national_public_land(-actual_buy)
 
                 remaining_quota -= actual_buy
@@ -432,7 +463,6 @@ def resolve_forum(state: GameState) -> dict:
 
             if remaining_quota > 0:
                 results.append(f"📭 剩余未售公地配额 {remaining_quota} C 作废")
-            # 清除配额
             state.clear_pending_land_sale_quota()
 
     # 4. 凯旋投票结算
@@ -443,13 +473,11 @@ def resolve_forum(state: GameState) -> dict:
             votes_by_war.setdefault(war_id, []).append((faction_id, vote))
 
     if war_system:
-    # 遍历所有待凯旋战争
         for war in war_system._war_discard:
-            # 修正：使用 triumph_commander_id，且必须不为 None
             if war.soldier_share <= 0 or war.status != WarStatus.RESOLVED or war.triumph_commander_id is None:
                 continue
 
-            commander = state.get_member(war.triumph_commander_id)  # 使用 triumph_commander_id
+            commander = state.get_member(war.triumph_commander_id)
             if not commander or commander.is_dead:
                 war.set_soldier_share(0)
                 results.append(f"⚠️ 战争 {war.name} 指挥官已死，凯旋失效")
@@ -457,12 +485,10 @@ def resolve_forum(state: GameState) -> dict:
 
             votes = votes_by_war.get(war.id, [])
             if not votes:
-                # 没有投票，但指挥官存活，视为无有效投票
                 war.set_soldier_share(0)
                 results.append(f"⚠️ 战争 {war.name} 无有效投票")
                 continue
 
-            # 有投票，统计支持率
             votes_for = 0
             votes_against = 0
             total_influence = 0
@@ -491,15 +517,11 @@ def resolve_forum(state: GameState) -> dict:
 
             war.set_soldier_share(0)
 
-    else:
-        # 记录日志（可选）
-        state.log_event("resolve_forum: 无战争系统，跳过凯旋结算", level=logging.WARNING)
-
-    # 清除临时数据
     state.clear_forum_pending()
 
     message = "\n".join(results) if results else i18n.get("info_no_forum_actions")
     return api_response(True, message, data={"results": results})
+
 
 def resolve_land_trades(state: GameState) -> dict:
     """
@@ -509,7 +531,6 @@ def resolve_land_trades(state: GameState) -> dict:
     results = []
 
     if pending["land_trades"]:
-
         service = LandTradingService(state)
         for seller_id, buyer_id, land, price in pending["land_trades"]:
             if land > 0:
@@ -522,7 +543,6 @@ def resolve_land_trades(state: GameState) -> dict:
             else:
                 results.append(f"⚠️ 土地数量无效")
 
-    # 清除已处理的土地交易记录
     state._forum_pending["land_trades"] = []
 
     message = "\n".join(results) if results else ""

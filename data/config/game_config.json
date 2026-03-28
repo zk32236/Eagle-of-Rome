@@ -9,7 +9,7 @@
     "max_legions": 8,
     "budget_always_pass": false,
     "war_always_pass": false,
-    "force_battle_result": "TRIUMPH",
+    "force_battle_result": "",
     "bypass_player_check": false,
     "auto_forum": true,
     "auto_population": true,
@@ -33,7 +33,7 @@
       "sale_chance": 0.3,
       "land_percent_min": 0.0005,
       "land_percent_max": 0.0010,
-      "submit_chance": 1.0
+      "submit_chance": 0.7
     },
     "office_cooldowns": {
       "consul": 2,
@@ -99,7 +99,7 @@
       "Aemilius": 2,
       "Servilius": 2
     },
-    "tribune_veto_chance": 0.0
+    "tribune_veto_chance": 0.3
   },
   "forum_rules": {
     "new_figures_count": 3,

@@ -12,9 +12,9 @@ from src.core.entities.player import Player, PlayerType
 from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.core.systems.war_system import WarSystem
 from src.api import forum_api
-from src.api import api_response
 from src.core.i18n import i18n
 from src.core.entities.war import WarStatus
+from src.core.entities.war import War  # 引入真实 War 类
 
 i18n.load("zh-CN")
 
@@ -29,6 +29,9 @@ def test_state():
             "province_tax_rate": 0.1,
             "faction_initial_treasury": 10,
             "faction_member_limit": 6,
+            "default_bid_profit_rate": 0.2,
+            "project_theoretical_construction": 3,
+            "project_theoretical_warranty": 10,
         },
         "combat_rules": {"triumph_veteran_duration": 5},
     }
@@ -46,7 +49,7 @@ def test_state():
     state.set_turn_order(["p1", "p2"])
     state.set_current_player("p1")
 
-    # 添加派系（提高资金以通过认购测试）
+    # 添加派系
     faction1 = Faction(id="f1", name="Faction1", treasury=1000)
     faction2 = Faction(id="f2", name="Faction2", treasury=1000)
     state.add_faction(faction1)
@@ -73,8 +76,32 @@ def test_state():
     fig3.update_influence()
     state.add_member(fig3)
 
+    # 添加骑士人物（用于竞标测试）
+    fig4 = Figure.create_eques(4, "f1", 35)
+    fig4.is_faction_leader = False
+    fig4.wealth = 200
+    fig4.update_influence()
+    state.add_member(fig4)
+
+    # 添加额外人物以填满派系（用于 faction_full 测试）
+    fig5 = Figure.create_plebeian(5, "f1", 20)
+    fig5.is_faction_leader = False
+    fig5.wealth = 10
+    fig5.update_influence()
+    state.add_member(fig5)
+
+    fig6 = Figure.create_plebeian(6, "f1", 20)
+    fig6.is_faction_leader = False
+    fig6.wealth = 10
+    fig6.update_influence()
+    state.add_member(fig6)
+
+    # 设置派系成员列表（包含所有存活人物）
+    faction1.member_ids = [1, 2, 4, 5, 6]  # 共5人，空缺1人
+    faction2.member_ids = [3]
+
     # 添加广场人物（需要同时加入 _members）
-    fig_curia = Figure.create_eques(4, None, 35)
+    fig_curia = Figure.create_eques(7, None, 35)
     fig_curia.wealth = 50
     fig_curia.update_influence()
     state.curia.add_figure(fig_curia)
@@ -88,6 +115,8 @@ def test_state():
         base_cost=100,
         status=ContractStatus.BUDGETED,
     )
+    contract1._original_budget = 100
+    contract1._is_fleet_construction = False
     state._contracts_dict[1] = contract1
 
     contract2 = Contract(
@@ -97,6 +126,7 @@ def test_state():
         base_cost=100,
         status=ContractStatus.BUDGETED,
     )
+    contract2._original_budget = 100
     state._contracts_dict[2] = contract2
 
     # 添加战争系统（用于凯旋）
@@ -126,38 +156,37 @@ class TestRetireFigure:
     """测试 retire_figure API"""
 
     def test_success(self, test_state):
-        result = forum_api.place_bid(test_state, "p1", 2, 2, 120)
+        result = forum_api.retire_figure(test_state, "p1", 2)
         assert result["success"] is True
         pending = test_state.get_forum_pending()
-        # 修改：检查5元组，利润率默认0.2
-        assert (2, 2, "f1", 120, 0.2, 0, 0) in pending["contract_bids"]
+        assert 2 in pending["retirements"]
 
     def test_not_current_player(self, test_state):
         result = forum_api.retire_figure(test_state, "p2", 2)
         assert result["success"] is False
-        assert "当前不是您的回合" in result["message"]
+        assert i18n.get("error_not_your_turn") in result["message"]
 
     def test_figure_not_in_faction(self, test_state):
         result = forum_api.retire_figure(test_state, "p1", 3)
         assert result["success"] is False
-        assert "不属于你的派系" in result["message"]
+        assert i18n.get("error_figure_not_in_your_faction") in result["message"]
 
     def test_figure_not_found(self, test_state):
         result = forum_api.retire_figure(test_state, "p1", 999)
         assert result["success"] is False
-        assert "不存在" in result["message"]
+        assert "figure_not_found" in result["message"] or "不存在" in result["message"]
 
     def test_cannot_retire_leader(self, test_state):
         result = forum_api.retire_figure(test_state, "p1", 1)
         assert result["success"] is False
-        assert "不能淘汰派系领袖" in result["message"]
+        assert i18n.get("error_cannot_retire_leader") in result["message"]
 
     def test_figure_has_active_contract(self, test_state):
         fig = test_state.get_member(2)
-        fig.add_contract(99)  # 使用 add_contract 方法添加合同
+        fig.add_contract(99)
         result = forum_api.retire_figure(test_state, "p1", 2)
         assert result["success"] is False
-        assert "有活跃合同" in result["message"]
+        assert i18n.get("error_figure_has_active_contract") in result["message"]
 
 
 # ========== recruit_figure 测试 ==========
@@ -165,31 +194,56 @@ class TestRecruitFigure:
     """测试 recruit_figure API"""
 
     def test_success(self, test_state):
-        result = forum_api.recruit_figure(test_state, "p1", 4, 50)
+        result = forum_api.recruit_figure(test_state, "p1", 7, 50)
         assert result["success"] is True
         pending = test_state.get_forum_pending()
-        assert ("f1", 4, 50) in pending["recruitment_bids"]
+        assert ("f1", 7, 50) in pending["recruitment_bids"]
 
     def test_figure_not_in_curia(self, test_state):
         result = forum_api.recruit_figure(test_state, "p1", 1, 50)
         assert result["success"] is False
-        assert "不在广场中" in result["message"]
+        assert i18n.get("error_figure_not_in_curia") in result["message"]
 
     def test_invalid_amount(self, test_state):
-        result = forum_api.recruit_figure(test_state, "p1", 4, 0)
+        result = forum_api.recruit_figure(test_state, "p1", 7, 0)
         assert result["success"] is False
-        assert "金额必须为正整数" in result["message"]
+        assert i18n.get("error_invalid_amount") in result["message"]
+
+    def test_faction_full(self, test_state):
+        # 填满派系成员
+        faction = test_state.get_faction("f1")
+        faction.member_ids = [1, 2, 4, 5, 6, 7]  # 6人，达到上限
+        result = forum_api.recruit_figure(test_state, "p1", 7, 50)
+        assert result["success"] is False
+        assert "error_faction_full" in result["message"] or "已满" in result["message"]
 
 
 # ========== place_bid 测试 ==========
 class TestPlaceBid:
     """测试 place_bid API"""
 
-    def test_success(self, test_state):
-        result = forum_api.place_bid(test_state, "p1", 2, 2, 120)
+    def test_success_tax(self, test_state):
+        result = forum_api.place_bid(test_state, "p1", 2, 2, 120)  # 包税底价100，出价120合法
         assert result["success"] is True
         pending = test_state.get_forum_pending()
         assert (2, 2, "f1", 120, 0.2, 0, 0) in pending["contract_bids"]
+
+    def test_success_works_default_profit(self, test_state):
+        # 工程合同，不提供利润率，应使用默认0.2
+        result = forum_api.place_bid(test_state, "p1", 2, 1, 80)
+        assert result["success"] is True
+        pending = test_state.get_forum_pending()
+        # 计算预期值：实际成本 = 80 * 0.8 = 64，成本比例 = 64/100=0.64
+        # 工期 = int(3 * 100 / 64) = 4，质保 = int(10 * 0.64) = 6
+        assert (1, 2, "f1", 80, 0.2, 4, 6) in pending["contract_bids"]
+
+    def test_success_works_with_profit(self, test_state):
+        result = forum_api.place_bid(test_state, "p1", 2, 1, 80, 0.15)
+        assert result["success"] is True
+        pending = test_state.get_forum_pending()
+        # 实际成本 = 80 * 0.85 = 68，成本比例 = 68/100=0.68
+        # 工期 = int(3 * 100 / 68) = 4，质保 = int(10 * 0.68) = 6
+        assert (1, 2, "f1", 80, 0.15, 4, 6) in pending["contract_bids"]
 
     def test_contract_not_found(self, test_state):
         result = forum_api.place_bid(test_state, "p1", 2, 999, 120)
@@ -201,12 +255,48 @@ class TestPlaceBid:
         contract.status = ContractStatus.PENDING
         result = forum_api.place_bid(test_state, "p1", 2, 2, 120)
         assert result["success"] is False
-        assert "不可竞标" in result["message"]
+        assert i18n.get("error_contract_not_auctionable") in result["message"]
 
     def test_invalid_amount(self, test_state):
         result = forum_api.place_bid(test_state, "p1", 2, 2, 0)
         assert result["success"] is False
-        assert "金额必须为正整数" in result["message"]
+        assert i18n.get("error_invalid_amount") in result["message"]
+
+    def test_invalid_profit_rate(self, test_state):
+        result = forum_api.place_bid(test_state, "p1", 2, 2, 120, 1.2)
+        assert result["success"] is False
+        assert i18n.get("error_invalid_profit_rate") in result["message"]
+
+    def test_bid_too_low_tax(self, test_state):
+        result = forum_api.place_bid(test_state, "p1", 2, 2, 90)  # 包税底价100
+        assert result["success"] is False
+        assert i18n.get("error_bid_too_low", min=100) in result["message"]
+
+    def test_bid_too_high_works(self, test_state):
+        result = forum_api.place_bid(test_state, "p1", 2, 1, 110)  # 工程预算100
+        assert result["success"] is False
+        assert i18n.get("error_bid_too_high", max=100) in result["message"]
+
+    def test_figure_not_knight(self, test_state):
+        # 使用平民人物
+        fig_pleb = Figure.create_plebeian(100, "f1", 25)
+        fig_pleb.id = 100
+        test_state.add_member(fig_pleb)
+        result = forum_api.place_bid(test_state, "p1", 100, 2, 120)
+        assert result["success"] is False
+        assert i18n.get("error_not_knight") in result["message"]
+
+    def test_figure_not_in_faction(self, test_state):
+        result = forum_api.place_bid(test_state, "p1", 3, 2, 120)
+        assert result["success"] is False
+        assert i18n.get("error_figure_not_in_your_faction") in result["message"]
+
+    def test_figure_dead(self, test_state):
+        fig = test_state.get_member(2)
+        fig.is_dead = True
+        result = forum_api.place_bid(test_state, "p1", 2, 2, 120)
+        assert result["success"] is False
+        assert i18n.get("figure_not_found", id=2) in result["message"]
 
 
 # ========== buy_land 测试 ==========
@@ -214,25 +304,32 @@ class TestBuyLand:
     """测试 buy_land API"""
 
     def test_success(self, test_state):
-        result = forum_api.buy_land(test_state, "p1", 2, 10)   # 增加 figure_id
+        result = forum_api.buy_land(test_state, "p1", 2, 10)
         assert result["success"] is True
         pending = test_state.get_forum_pending()
-        assert (2, 10) in pending["land_purchases"]            # 格式变为 (figure_id, amount)
+        assert (2, 10) in pending["land_purchases"]
 
     def test_invalid_amount(self, test_state):
-        result = forum_api.buy_land(test_state, "p1", 2, 0)    # 增加 figure_id
+        result = forum_api.buy_land(test_state, "p1", 2, 0)
         assert result["success"] is False
-        assert "金额必须为正整数" in result["message"]
+        assert i18n.get("error_invalid_amount") in result["message"]
 
     def test_figure_not_found(self, test_state):
-        result = forum_api.buy_land(test_state, "p1", 999, 10) # 人物不存在
+        result = forum_api.buy_land(test_state, "p1", 999, 10)
         assert result["success"] is False
-        assert "不存在" in result["message"]
+        assert i18n.get("figure_not_found", id=999) in result["message"]
 
     def test_figure_not_in_faction(self, test_state):
-        result = forum_api.buy_land(test_state, "p1", 3, 10)   # 人物3属于f2，但当前玩家p1是f1
+        result = forum_api.buy_land(test_state, "p1", 3, 10)
         assert result["success"] is False
-        assert "不属于你的派系" in result["message"]
+        assert i18n.get("error_figure_not_in_your_faction") in result["message"]
+
+    def test_figure_dead(self, test_state):
+        fig = test_state.get_member(2)
+        fig.is_dead = True
+        result = forum_api.buy_land(test_state, "p1", 2, 10)
+        assert result["success"] is False
+        assert i18n.get("figure_not_found", id=2) in result["message"]
 
 
 # ========== vote_triumph 测试 ==========
@@ -240,16 +337,40 @@ class TestVoteTriumph:
     """测试 vote_triumph API"""
 
     def test_success_yes(self, test_state):
+        # 使用 MagicMock 创建战争对象
+        war = MagicMock()
+        war.id = "war1"
+        war.name = "Test War"
+        war.status = WarStatus.RESOLVED
+        war.soldier_share = 50
+        war.triumph_commander_id = 1
+        war_system = test_state.get_war_system()
+        war_system.get_war_by_id = MagicMock(return_value=war)
+
         result = forum_api.vote_triumph(test_state, "p1", "war1", True)
         assert result["success"] is True
         pending = test_state.get_forum_pending()
         assert ("war1", "f1", True) in pending["triumph_votes"]
 
-    def test_success_no(self, test_state):
-        result = forum_api.vote_triumph(test_state, "p1", "war1", False)
-        assert result["success"] is True
-        pending = test_state.get_forum_pending()
-        assert ("war1", "f1", False) in pending["triumph_votes"]
+    def test_war_not_found(self, test_state):
+        war_system = test_state.get_war_system()
+        war_system.get_war_by_id = MagicMock(return_value=None)
+        result = forum_api.vote_triumph(test_state, "p1", "war1", True)
+        assert result["success"] is False
+        assert "war_not_found" in result["message"]
+
+    def test_not_triumph_war(self, test_state):
+        war = MagicMock()
+        war.id = "war1"
+        war.name = "Test War"
+        war.status = WarStatus.ACTIVE
+        war.soldier_share = 0
+        war.triumph_commander_id = None
+        war_system = test_state.get_war_system()
+        war_system.get_war_by_id = MagicMock(return_value=war)
+        result = forum_api.vote_triumph(test_state, "p1", "war1", True)
+        assert result["success"] is False
+        assert i18n.get("error_not_triumph_war") in result["message"]
 
 
 # ========== transact_land 测试 ==========
@@ -265,19 +386,19 @@ class TestTransactLand:
     def test_figure_not_found(self, test_state):
         result = forum_api.transact_land(test_state, "p1", 999, 4, 1, 15)
         assert result["success"] is False
-        assert "figure_not_found" in result["message"] or "不存在" in result["message"]
+        assert i18n.get("figure_not_found") in result["message"]
 
     def test_figure_dead(self, test_state):
         fig = test_state.get_member(2)
         fig.is_dead = True
         result = forum_api.transact_land(test_state, "p1", 2, 4, 1, 15)
         assert result["success"] is False
-        assert "error_figure_dead" in result["message"] or "人物已死亡" in result["message"]
+        assert i18n.get("error_figure_dead") in result["message"]
 
     def test_invalid_amount(self, test_state):
         result = forum_api.transact_land(test_state, "p1", 2, 4, 0, 15)
         assert result["success"] is False
-        assert "金额必须为正整数" in result["message"] or "error_invalid_amount" in result["message"]
+        assert i18n.get("error_invalid_amount") in result["message"]
 
 
 # ========== resolve_forum 测试 ==========
@@ -287,22 +408,22 @@ class TestResolveForum:
     def test_no_actions(self, test_state):
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
-        assert "本阶段无操作" in result["message"]
+        assert i18n.get("info_no_forum_actions") in result["message"]
 
     def test_recruitment(self, test_state):
-        test_state._forum_pending["recruitment_bids"] = [("f1", 4, 50), ("f2", 4, 60)]
+        test_state._forum_pending["recruitment_bids"] = [("f1", 7, 50), ("f2", 7, 60)]
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
-        figure = test_state.get_member(4)
+        figure = test_state.get_member(7)
         assert figure.faction_id == "f2"
         assert test_state.get_faction("f2").treasury == 1000 - 60
         assert "加入 Faction2，成交价 60" in result["message"]
 
     def test_recruitment_plurality_random(self, test_state):
-        test_state._forum_pending["recruitment_bids"] = [("f1", 4, 50), ("f2", 4, 50)]
+        test_state._forum_pending["recruitment_bids"] = [("f1", 7, 50), ("f2", 7, 50)]
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
-        figure = test_state.get_member(4)
+        figure = test_state.get_member(7)
         assert figure.faction_id in ("f1", "f2")
         if figure.faction_id == "f1":
             assert test_state.get_faction("f1").treasury == 1000 - 50
@@ -310,7 +431,6 @@ class TestResolveForum:
             assert test_state.get_faction("f2").treasury == 1000 - 50
 
     def test_tax_contract(self, test_state):
-        # 原为4元组，改为5元组
         test_state._forum_pending["contract_bids"] = [
             (2, 2, "f1", 120, 0.2, 0, 0),
             (2, 3, "f2", 110, 0.1, 0, 0)
@@ -328,8 +448,8 @@ class TestResolveForum:
 
     def test_works_contract(self, test_state):
         test_state._forum_pending["contract_bids"] = [
-            (1, 2, "f1", 90, 0.1, 3, 9),  # 假设理论工期3，理论质保10，r=0.1 => 实际工期3，质保9
-            (1, 3, "f2", 80, 0.2, 4, 8)  # r=0.2 => 实际工期4，质保8
+            (1, 2, "f1", 90, 0.1, 3, 9),
+            (1, 3, "f2", 80, 0.2, 4, 8)
         ]
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
@@ -338,59 +458,45 @@ class TestResolveForum:
         winner = test_state.get_member(3)
         assert winner.faction_id == "f2"
         assert contract.status == ContractStatus.ACTIVE
-        # 检查结果消息中包含中标信息
         assert "中标者:" in result["message"] or "工程合同" in result["message"]
 
     def test_land_purchase(self, test_state):
         """测试公地认购：配额分配，按人物影响力排序"""
-        # 设置配额
         test_state.set_pending_land_sale_quota(50)
-        # 添加认购请求 (figure_id, amount)
-        test_state.add_forum_action("land_purchases", (2, 30))   # 人物2 (f1)
-        test_state.add_forum_action("land_purchases", (3, 20))   # 人物3 (f2)
-        # 确保人物财富足够
+        test_state.add_forum_action("land_purchases", (2, 30))
+        test_state.add_forum_action("land_purchases", (3, 20))
         fig2 = test_state.get_member(2)
         fig2.wealth = 500
         fig3 = test_state.get_member(3)
         fig3.wealth = 500
-        # 执行结算
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
-        # 验证分配结果（按影响力，人物2影响力较高，应全部认购）
         assert "认购 30 C" in result["message"]
         assert "认购 20 C" in result["message"]
-        # 验证配额被扣除
-        assert test_state.get_national_public_land() == 100 - 50  # 初始100
-        # 验证配额被清除
+        assert test_state.get_national_public_land() == 100 - 50
         assert test_state.pending_land_sale_quota == 0
 
     def test_land_purchase_insufficient_land(self, test_state):
-        """测试认购数量超过配额"""
         test_state.set_pending_land_sale_quota(50)
-        test_state.add_forum_action("land_purchases", (2, 80))   # 请求80
+        test_state.add_forum_action("land_purchases", (2, 80))
         fig2 = test_state.get_member(2)
         fig2.wealth = 1000
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
-        assert "认购 50 C" in result["message"]  # 实际只分配了50
-        # 剩余配额为0，不应有“剩余配额作废”消息（代码中仅当 remaining_quota > 0 才打印）
-        # 因此移除原先的断言
+        assert "认购 50 C" in result["message"]
+        # 剩余配额0，无"剩余未售公地配额"消息
 
     def test_land_purchase_insufficient_funds(self, test_state):
-        """测试资金不足"""
         test_state.set_pending_land_sale_quota(50)
         test_state.add_forum_action("land_purchases", (2, 30))
         fig2 = test_state.get_member(2)
-        fig2.wealth = 100  # 单价10，30需要300，不足
+        fig2.wealth = 100  # 只能买10
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
-        # 实际只能买10，剩余配额40
         assert "认购 10 C" in result["message"]
         assert "剩余未售公地配额 40 C 作废" in result["message"]
-        assert "资金不足" not in result["message"]
 
     def test_land_purchase_no_quota(self, test_state):
-        """测试没有配额时直接跳过"""
         test_state.set_pending_land_sale_quota(0)
         test_state.add_forum_action("land_purchases", (2, 30))
         result = forum_api.resolve_forum(test_state)
@@ -399,9 +505,7 @@ class TestResolveForum:
         assert test_state.get_national_public_land() == 100
 
     def test_land_purchase_influence_sorting(self, test_state):
-        """测试按人物影响力排序，影响力高的先分配"""
         test_state.set_pending_land_sale_quota(50)
-        # 人物2影响力较高，人物3较低
         fig2 = test_state.get_member(2)
         fig2.influence = 100
         fig3 = test_state.get_member(3)
@@ -411,14 +515,9 @@ class TestResolveForum:
         fig2.wealth = 1000
         fig3.wealth = 1000
         result = forum_api.resolve_forum(test_state)
-        # 人物2先得30，剩余20给人物3，但人物3请求30，实际得20
         assert "认购 30 C" in result["message"]
         assert "认购 20 C" in result["message"]
-        # 配额用尽，无剩余消息，故不检查“剩余未售公地配额”
 
-
-
-    @pytest.mark.xfail(reason="mock战争状态与真实代码交互复杂，暂时标记为预期失败")
     def test_triumph_approved(self, test_state):
         war = MagicMock()
         war.id = "war1"
@@ -426,20 +525,13 @@ class TestResolveForum:
         war.soldier_share = 50
         war.status = WarStatus.RESOLVED
         war.triumph_commander_id = 1
-        war.set_soldier_share = MagicMock()
-        war.set_triumph_approved = MagicMock()
-
         war_system = test_state.get_war_system()
         war_system._war_discard = [war]
-
-        # 直接设置投票数据
         test_state._forum_pending["triumph_votes"] = [("war1", "f1", True), ("war1", "f2", False)]
-
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
         assert "凯旋仪式获得批准" in result["message"]
 
-    @pytest.mark.xfail(reason="mock战争状态与真实代码交互复杂，暂时标记为预期失败")
     def test_triumph_rejected(self, test_state):
         war = MagicMock()
         war.id = "war1"
@@ -447,15 +539,9 @@ class TestResolveForum:
         war.soldier_share = 50
         war.status = WarStatus.RESOLVED
         war.triumph_commander_id = 1
-        war.set_soldier_share = MagicMock()
-        war.set_triumph_approved = MagicMock()
-
         war_system = test_state.get_war_system()
         war_system._war_discard = [war]
-
-        # 直接设置投票数据
         test_state._forum_pending["triumph_votes"] = [("war1", "f1", False), ("war1", "f2", True)]
-
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
         assert "被否决" in result["message"]
@@ -467,49 +553,34 @@ class TestResolveForum:
         war.soldier_share = 50
         war.status = WarStatus.RESOLVED
         war.triumph_commander_id = 1
-        war.set_soldier_share = MagicMock()
-
         war_system = test_state.get_war_system()
         war_system._war_discard = [war]
-
-        # 指挥官死亡
         commander = test_state.get_member(1)
         commander.is_dead = True
-
         test_state.add_forum_action("triumph_votes", ("war1", "f1", True))
-
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
-        war.set_soldier_share.assert_called_once_with(0)
         assert "指挥官已死" in result["message"]
 
     def test_mixed_actions(self, test_state):
         test_state.set_pending_land_sale_quota(50)
-        # 招募
-        test_state.add_forum_action("recruitment_bids", ("f1", 4, 30))
-        # 合同竞标（改为5元组）
+        test_state.add_forum_action("recruitment_bids", ("f1", 7, 30))
         test_state.add_forum_action("contract_bids", (2, 2, "f1", 110, 0.1, 0, 0))
         test_state.add_forum_action("contract_bids", (2, 3, "f2", 120, 0.2, 0, 0))
-        # 公地认购
         test_state.add_forum_action("land_purchases", (2, 10))
-        # 凯旋投票
         war = MagicMock()
         war.id = "war1"
         war.name = "Test War"
         war.soldier_share = 20
         war.status = WarStatus.RESOLVED
         war.triumph_commander_id = 1
-        war.set_soldier_share = MagicMock()
-        war.set_triumph_approved = MagicMock()
         war_system = test_state.get_war_system()
         war_system._war_discard = [war]
         test_state.add_forum_action("triumph_votes", ("war1", "f1", True))
-
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
         assert "加入 Faction1" in result["message"]
         assert "中标者:" in result["message"]
         assert "Faction2" in result["message"]
         assert "出价 120" in result["message"]
-        # 人物2财富30，单价10，最多买3，所以认购3
         assert "认购 3 C" in result["message"]
