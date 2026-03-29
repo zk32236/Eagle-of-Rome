@@ -210,8 +210,7 @@ class SenateCommand(Command):
                         try:
                             fig_id = int(parts[1])
                         except ValueError:
-                            print("❌ 人物ID必须是数字", file=sys.stderr)
-                            sys.stderr.flush()
+                            print("❌ 人物ID必须是数字", flush=True)
                             continue
                         from src.api import figure_api
                         result = figure_api.get_figure_info(self.state, fig_id)
@@ -244,17 +243,13 @@ class SenateCommand(Command):
                                                 f"{status}{tier_emoji} ID:{m['id']:<3} {m['name']:<25} 派系:{m['faction_id']:<12} 影响力:{m['influence']} 财富:{m['wealth']} 人气:{m['popularity']} 私地:{m['land_private']} 老兵:{m['veterans']} 官职:{office_display}")
                                         sys.stdout.flush()
                                     else:
-                                        print(f"派系 {faction.name} 无存活成员", file=sys.stderr)
-                                        sys.stderr.flush()
+                                        print(f"派系 {faction.name} 无存活成员", flush=True)
                                 else:
-                                    print(result["message"], file=sys.stderr)
-                                    sys.stderr.flush()
+                                    print(result["message"], flush=True)
                         else:
-                            print("无法获取当前玩家", file=sys.stderr)
-                            sys.stderr.flush()
+                            print("无法获取当前玩家", flush=True)
                 else:
-                    print("未知命令，支持 investigate <人物ID>、next/n", file=sys.stderr)
-                    sys.stderr.flush()
+                    print("未知命令，支持 investigate <人物ID>、next/n", flush=True)
 
     def _handle_step_1(self):
         # 清空上一回合的临时数据（提案、投票、否决）
@@ -272,13 +267,13 @@ class SenateCommand(Command):
                 leader_id = self.state.turn.leader_ids[0]
                 consul_figure = self.state.get_member(leader_id)
             if not consul_figure:
-                print("⚠️ 没有执政官，无法进行提案", file=sys.stderr)
+                print("⚠️ 没有执政官，无法进行提案", flush=True)
                 self._handle_next([])
                 return
 
             consul_player = self.state.get_player_by_faction(consul_figure.faction_id)
             if not consul_player:
-                print("⚠️ 执政官无对应玩家", file=sys.stderr)
+                print("⚠️ 执政官无对应玩家", flush=True)
                 self._handle_next([])
                 return
 
@@ -303,13 +298,13 @@ class SenateCommand(Command):
                     break
 
             if not consul_figure:
-                print("⚠️ 没有执政官，无法进行提案", file=sys.stderr)
+                print("⚠️ 没有执政官，无法进行提案", flush=True)
                 self._handle_next([])
                 return
 
             consul_player = self.state.get_player_by_faction(consul_figure.faction_id)
             if not consul_player:
-                print("⚠️ 执政官无对应玩家", file=sys.stderr)
+                print("⚠️ 执政官无对应玩家", flush=True)
                 self._handle_next([])
                 return
 
@@ -336,8 +331,7 @@ class SenateCommand(Command):
                     elif cmd == "propose":
                         self._handle_propose(parts[1:])
                     else:
-                        print("未知命令，支持 propose 和 next", file=sys.stderr)
-                        sys.stderr.flush()
+                        print("未知命令，支持 propose 和 next", flush=True)
             else:
                 # AI 玩家：自动生成提案
                 self.state.log_event(
@@ -470,7 +464,7 @@ class SenateCommand(Command):
                 if cmd in ("next", "n"):
                     break
                 else:
-                    print("未知命令，支持 next/n", file=sys.stderr)
+                    print("未知命令，支持 next/n", flush=True)
             self.state.set_current_player(original_player_id)
             self._handle_next([])
         else:
@@ -623,7 +617,7 @@ class SenateCommand(Command):
                     else:
                         print(f"❌ 否决失败: {result['message']}")
                 else:
-                    print("未知命令，支持 veto <提案ID> 或 next", file=sys.stderr)
+                    print("未知命令，支持 veto <提案ID> 或 next", flush=True)
 
             # 恢复原当前玩家
             self.state.set_current_player(original_player_id)
@@ -673,7 +667,7 @@ class SenateCommand(Command):
                 # ===== 新增：为起义战争指派总督指挥官 =====
                 self._assign_rebellion_commanders()
             else:
-                print(f"❌ 结算失败: {result['message']}", file=sys.stderr)
+                print(f"❌ 结算失败: {result['message']}", flush=True)
 
         else:
             # 手动模式
@@ -912,18 +906,17 @@ class SenateCommand(Command):
             elif cmd == "propose":
                 self._handle_propose(parts[1:])
             else:
-                print("未知命令，支持 propose 和 next", file=sys.stderr)
-                sys.stderr.flush()
+                print("未知命令，支持 propose 和 next", flush=True)
 
     def _handle_propose(self, args: List[str]):
         """处理 propose 命令，格式：propose <提案ID> [参数]"""
         if len(args) < 1:
-            print("❌ 用法: propose <法案ID> [参数]", file=sys.stderr)
+            print("❌ 用法: propose <法案ID> [参数]", flush=True)
             return
 
         proposal_id = args[0].upper()
         if not hasattr(self, "_proposals_map") or proposal_id not in self._proposals_map:
-            print(f"❌ 无效的法案ID: {proposal_id}", file=sys.stderr)
+            print(f"❌ 无效的法案ID: {proposal_id}", flush=True)
             return
 
         proposal_type, base_params = self._proposals_map[proposal_id]
@@ -948,12 +941,12 @@ class SenateCommand(Command):
         # 根据提案类型补充额外参数
         if proposal_type == "war":
             if len(args) < 2:
-                print("❌ 宣战提案需要指定军团数量", file=sys.stderr)
+                print("❌ 宣战提案需要指定军团数量", flush=True)
                 return
             try:
                 legions = int(args[1])
             except ValueError:
-                print("❌ 军团数量必须是数字", file=sys.stderr)
+                print("❌ 军团数量必须是数字", flush=True)
                 return
             kwargs["legions"] = legions
 
@@ -962,12 +955,12 @@ class SenateCommand(Command):
             ws = self.state.get_war_system()
             war = ws.get_war_by_id(war_id) if ws else None
             if not war:
-                print("❌ 战争不存在", file=sys.stderr)
+                print("❌ 战争不存在", flush=True)
                 return
             if war.naval_required:
                 naval_system = self.state.naval_system
                 if not naval_system or not naval_system.get_available_fleets():
-                    print("❌ 战争需要海战，但当前无可用舰队，无法宣战。请先建造舰队。", file=sys.stderr)
+                    print("❌ 战争需要海战，但当前无可用舰队，无法宣战。请先建造舰队。", flush=True)
                     return
 
         elif proposal_type == "peace":
@@ -976,12 +969,12 @@ class SenateCommand(Command):
 
         elif proposal_type == "governor":
             if len(args) < 2:
-                print("❌ 总督任命需要指定候选人ID", file=sys.stderr)
+                print("❌ 总督任命需要指定候选人ID", flush=True)
                 return
             try:
                 candidate_id = int(args[1])
             except ValueError:
-                print("❌ 候选人ID必须是数字", file=sys.stderr)
+                print("❌ 候选人ID必须是数字", flush=True)
                 return
             kwargs["candidate_id"] = candidate_id
 
@@ -992,17 +985,17 @@ class SenateCommand(Command):
                     modified_budget = int(args[1])
                     kwargs["modified_budget"] = modified_budget
                 except ValueError:
-                    print("❌ 修改预算必须是数字，请使用纯数字（如 80）", file=sys.stderr)
+                    print("❌ 修改预算必须是数字，请使用纯数字（如 80）", flush=True)
                     return  # 参数错误，不提交提案
 
         elif proposal_type == "land":
             if len(args) < 2:
-                print("❌ 土地法案需要指定百分比（如 0.05 表示 5%）", file=sys.stderr)
+                print("❌ 土地法案需要指定百分比（如 0.05 表示 5%）", flush=True)
                 return
             try:
                 percent = float(args[1])  # 直接使用小数，不再除以100
             except ValueError:
-                print("❌ 百分比必须是数字", file=sys.stderr)
+                print("❌ 百分比必须是数字", flush=True)
                 return
             kwargs["percent"] = percent
 
@@ -1012,18 +1005,18 @@ class SenateCommand(Command):
         else:
             player_id = self._get_current_player_id()
             if not player_id:
-                print("❌ 无法获取当前玩家", file=sys.stderr)
+                print("❌ 无法获取当前玩家", flush=True)
                 return
 
         # 特殊处理 takeover：直接执行，不经过 API
         if proposal_type == "takeover":
             if len(args) < 2:
-                print("❌ 接管战争需要指定增援军团数量", file=sys.stderr)
+                print("❌ 接管战争需要指定增援军团数量", flush=True)
                 return
             try:
                 additional_legions = int(args[1])
             except ValueError:
-                print("❌ 军团数量必须是数字", file=sys.stderr)
+                print("❌ 军团数量必须是数字", flush=True)
                 return
 
             war_id = kwargs["war_id"]
@@ -1034,7 +1027,7 @@ class SenateCommand(Command):
                 # print(f"✅ 已接管战争，增援 {additional_legions} 个军团")
                 pass
             else:
-                print(f"❌ 接管失败，请检查战争状态或权限", file=sys.stderr)
+                print(f"❌ 接管失败，请检查战争状态或权限", flush=True)
             return
 
         # 调用 API
@@ -1044,7 +1037,7 @@ class SenateCommand(Command):
             description = self._generate_proposal_description(proposal_type, kwargs)
             print(f"✅ {description}")
         else:
-            print(f"❌ {result['message']}", file=sys.stderr)
+            print(f"❌ {result['message']}", flush=True)
 
     def _get_current_player_id(self) -> Optional[str]:
         """获取当前玩家ID（直接使用游戏状态中的当前玩家）"""
@@ -1066,23 +1059,23 @@ class SenateCommand(Command):
                 consul = member
                 break
         if not consul:
-            print("❌ 您没有在罗马的执政官可以出征", file=sys.stderr)
+            print("❌ 您没有在罗马的执政官可以出征", flush=True)
             return False
 
         ws = self.state.get_war_system()
         war = ws.get_war_by_id(war_id) if ws else None
         if not war:
-            print("❌ 战争不存在", file=sys.stderr)
+            print("❌ 战争不存在", flush=True)
             return False
         if war.rebellion_province_id is not None:
-            print("❌ 起义战争应由总督自动接管，不能由执政官接管", file=sys.stderr)
+            print("❌ 起义战争应由总督自动接管，不能由执政官接管", flush=True)
             return False
         if war.status != WarStatus.ACTIVE:
-            print(f"❌ 战争 {war.name} 状态为 {war.status}，无法接管", file=sys.stderr)
+            print(f"❌ 战争 {war.name} 状态为 {war.status}，无法接管", flush=True)
             return False
         if war.commander_id is not None:
             # 已有指挥官，但可能为其他执政官或前执政官
-            print(f"⚠️ 战争已有指挥官，执政官将接管并增派军团", file=sys.stderr)
+            print(f"⚠️ 战争已有指挥官，执政官将接管并增派军团", flush=True)
 
         # 执行接管
         # 1. 设置指挥官
@@ -1093,25 +1086,25 @@ class SenateCommand(Command):
         # 2. 增派军团
         ms = self.state.get_military_system()
         if not ms:
-            print("❌ 军事系统不可用", file=sys.stderr)
+            print("❌ 军事系统不可用", flush=True)
             return False
 
         # 获取可用军团
         available = ms.get_available_legions()
         if not available:
-            print("❌ 没有可用军团", file=sys.stderr)
+            print("❌ 没有可用军团", flush=True)
             return False
 
         recruit_count = min(additional_legions, len(available))
         if recruit_count == 0:
-            print("❌ 无法征召军团", file=sys.stderr)
+            print("❌ 无法征召军团", flush=True)
             return False
         print(f"✅ 已接管战争，增援 {recruit_count} 个军团")
 
         results = ms.recruit_multiple(recruit_count)
         recruited_numbers = [r[0] for r in results if r[1]]
         if not recruited_numbers:
-            print("❌ 军团征召失败", file=sys.stderr)
+            print("❌ 军团征召失败", flush=True)
             return False
 
         # 指派军团到战争（不覆盖已有军团）
@@ -1121,7 +1114,7 @@ class SenateCommand(Command):
                 war.add_legion_number(num)
             print(f"      {msg}")
         else:
-            print(f"❌ 军团指派失败: {msg}", file=sys.stderr)
+            print(f"❌ 军团指派失败: {msg}", flush=True)
             return False
 
         # 如果旧指挥官存在且是 proconsul，将其召回
@@ -1393,7 +1386,7 @@ class SenateCommand(Command):
                             desc = self._generate_proposal_description("war", {"war_id": war.id, "legions": legions})
                             proposal_descriptions.append(desc)
                         else:
-                            print(f"⚠️ 提案失败: {result['message']}", file=sys.stderr)
+                            print(f"⚠️ 提案失败: {result['message']}", flush=True)
                             self.state.log_event(f"AI自动宣战失败: {result['message']}", level=logging.WARNING)
 
         # 2. 停战草案（待决停战）
@@ -1409,7 +1402,7 @@ class SenateCommand(Command):
                     desc = self._generate_proposal_description("peace", {"war_id": war.id})
                     proposal_descriptions.append(desc)
                 else:
-                    print(f"⚠️ 提案失败: {result['message']}", file=sys.stderr)
+                    print(f"⚠️ 提案失败: {result['message']}", flush=True)
                     self.state.log_event(f"AI自动停战提案失败: {result['message']}", level=logging.WARNING)
 
         # 3. 总督任命（行省空缺）
@@ -1469,7 +1462,7 @@ class SenateCommand(Command):
                                                                         "candidate_id": candidate.id})
                 proposal_descriptions.append(desc)
             else:
-                print(f"⚠️ 提案失败: {result['message']}", file=sys.stderr)
+                print(f"⚠️ 提案失败: {result['message']}", flush=True)
                 self.state.log_event(f"AI自动总督任命失败: {result['message']}", level=logging.WARNING)
 
         # 4. 预算合同
@@ -1510,7 +1503,7 @@ class SenateCommand(Command):
                         desc = self._generate_proposal_description("land", {"act_type": act_type, "percent": percent})
                         proposal_descriptions.append(desc)
                     else:
-                        print(f"⚠️ 提案失败: {result['message']}", file=sys.stderr)
+                        print(f"⚠️ 提案失败: {result['message']}", flush=True)
                         self.state.log_event(f"AI自动土地法案失败: {result['message']}", level=logging.WARNING)
 
         # 打印成功提案列表
@@ -1562,7 +1555,7 @@ class SenateCommand(Command):
                 else:
                     print(f"❌ 投票失败: {result['message']}")
             else:
-                print("未知命令，支持 vote <提案ID1> <提案ID2> ... 或 next", file=sys.stderr)
+                print("未知命令，支持 vote <提案ID1> <提案ID2> ... 或 next", flush=True)
 
     def _get_passed_proposals_from_votes(self, proposals: list) -> list:
         """仅根据已记录的投票计算通过提案（不调用决策器补投）"""

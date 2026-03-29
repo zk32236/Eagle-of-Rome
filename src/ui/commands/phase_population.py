@@ -59,11 +59,11 @@ class PopulationCommand(Command):
     # ---------- 核心执行 ----------
     def execute(self, args: List[str]) -> bool:
         if not self.state.is_phase_executed("forum"):
-            print("⚠️ 必须先执行广场阶段 (forum)", file=sys.stderr, flush=True)
+            print("⚠️ 必须先执行广场阶段 (forum)", flush=True)
             return False
 
         if self.state.is_phase_executed("population"):
-            print("⚠️ 人口阶段在本回合已执行过", file=sys.stderr, flush=True)
+            print("⚠️ 人口阶段在本回合已执行过", flush=True)
             return False
 
         self._auto_mode = self.state.config.get("testing.auto_population", False)
@@ -157,7 +157,7 @@ class PopulationCommand(Command):
                 self._step += 1
                 break
             else:
-                print(i18n.get("error_unknown_command"), file=sys.stderr, flush=True)
+                print(i18n.get("error_unknown_command"), flush=True)
 
 
     def _remove_office_holders(self, office_type: str):
@@ -279,7 +279,7 @@ class PopulationCommand(Command):
                 elif cmd == "investigate":
                     self._handle_investigate(args)
                 else:
-                    print(i18n.get("error_unknown_command"), file=sys.stderr, flush=True)
+                    print(i18n.get("error_unknown_command"), flush=True)
         else:
             # AI玩家自动处理（手动模式下遇到AI玩家进入此分支）
             faction = self.state.get_faction(player.faction_id) if player else None
@@ -419,13 +419,13 @@ class PopulationCommand(Command):
 
     def _handle_campaign(self, args):
         if len(args) != 2:
-            print(i18n.get("error_usage_campaign", default="用法: campaign <人物ID> <金额>"), file=sys.stderr, flush=True)
+            print(i18n.get("error_usage_campaign", default="用法: campaign <人物ID> <金额>"), flush=True)
             return
         try:
             fig_id = int(args[0])
             amount = int(args[1])
         except ValueError:
-            print(i18n.get("error_invalid_id"), file=sys.stderr, flush=True)
+            print(i18n.get("error_invalid_id"), flush=True)
             return
 
         player_id = self._get_current_player_id()
@@ -436,13 +436,13 @@ class PopulationCommand(Command):
 
     def _handle_vote(self, args):
         if len(args) != 2:
-            print(i18n.get("error_usage_vote", default="用法: vote <公职> <人物ID>"), file=sys.stderr, flush=True)
+            print(i18n.get("error_usage_vote", default="用法: vote <公职> <人物ID>"), flush=True)
             return
         office = args[0].lower()
         try:
             fig_id = int(args[1])
         except ValueError:
-            print(i18n.get("error_invalid_id"), file=sys.stderr, flush=True)
+            print(i18n.get("error_invalid_id"), flush=True)
             return
         player_id = self._get_current_player_id()
         if not player_id:
@@ -475,7 +475,7 @@ class PopulationCommand(Command):
                 self._step += 1
                 break
             else:
-                print(i18n.get("error_unknown_command"), file=sys.stderr, flush=True)
+                print(i18n.get("error_unknown_command"), flush=True)
 
     def _print_ui_04_2(self):
         """打印选举结果公示 UI 标题"""
@@ -638,9 +638,9 @@ class PopulationCommand(Command):
             try:
                 fig_id = int(args[0])
             except ValueError:
-                print(i18n.get("error_invalid_id"), file=sys.stderr, flush=True)
+                print(i18n.get("error_invalid_id"), flush=True)
                 return
             result = figure_api.get_figure_info(self.state, fig_id)
             print(result["message"])
         else:
-            print(i18n.get("error_usage_investigate"), file=sys.stderr, flush=True)
+            print(i18n.get("error_usage_investigate"), flush=True)

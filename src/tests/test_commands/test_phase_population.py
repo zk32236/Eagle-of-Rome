@@ -100,7 +100,7 @@ class TestPopulationCommandBase:
         with patch('builtins.print') as mock_print:
             result = cmd.execute([])
             assert result is False
-            mock_print.assert_any_call("⚠️ 人口阶段在本回合已执行过", file=unittest.mock.ANY, flush=True)
+            mock_print.assert_any_call("⚠️ 人口阶段在本回合已执行过", flush=True)
 
     def test_forum_not_executed(self, state_normal_mode):
         """前置阶段（forum）未执行时失败"""
@@ -108,8 +108,7 @@ class TestPopulationCommandBase:
         with patch('builtins.print') as mock_print:
             result = cmd.execute([])
             assert result is False
-            mock_print.assert_any_call("⚠️ 必须先执行广场阶段 (forum)", file=unittest.mock.ANY, flush=True)
-
+            mock_print.assert_any_call("⚠️ 必须先执行广场阶段 (forum)", flush=True)
 
 # ========== 自动模式测试 ==========
 
