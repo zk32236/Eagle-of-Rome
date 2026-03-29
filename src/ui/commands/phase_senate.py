@@ -89,6 +89,11 @@ class SenateCommand(Command):
         self._passed_land_acts = []
         self._peace_proposals = []
 
+        # 将游戏状态中的当前玩家设置为元老院阶段的第一个玩家（通常是执政官所属玩家）
+        if self._players:
+            self.state.set_current_player(self._players[0])
+
+        self._show_current_player_overview()
 
         # 状态机主循环
         while self._step <= 5:
@@ -418,6 +423,8 @@ class SenateCommand(Command):
 
                 if player.player_type == PlayerType.HUMAN:
                     print(f"\n🔹 轮到 {faction.name} 派系投票（玩家 {player_id}）")
+                    # 增加 PIN 校验（预留）
+                    self._wait_for_pin()
                     self._prompt_player_vote(proposals, player_id, faction.name)
                 else:
                     # AI 玩家自动投票（使用决策器）
@@ -922,6 +929,22 @@ class SenateCommand(Command):
         proposal_type, base_params = self._proposals_map[proposal_id]
         kwargs = base_params.copy()
 
+        existing_proposals = self.state.get_senate_proposals()
+        for prop in existing_proposals:
+            if prop["type"] == proposal_type:
+                if proposal_type == "budget" and prop.get("contract_id") == kwargs.get("contract_id"):
+                    print(f"❌ 合同 {kwargs.get('contract_id')} 已有待表决提案，请勿重复提交")
+                    return
+                elif proposal_type == "war" and prop.get("war_id") == kwargs.get("war_id"):
+                    print(f"❌ 战争 {kwargs.get('war_id')} 已有宣战提案")
+                    return
+                elif proposal_type == "peace" and prop.get("war_id") == kwargs.get("war_id"):
+                    print(f"❌ 战争 {kwargs.get('war_id')} 已有停战草案提案")
+                    return
+                elif proposal_type == "governor" and prop.get("province_id") == kwargs.get("province_id"):
+                    print(f"❌ 行省 {kwargs.get('province_id')} 已有总督任命提案")
+                    return
+
         # 根据提案类型补充额外参数
         if proposal_type == "war":
             if len(args) < 2:
@@ -969,7 +992,8 @@ class SenateCommand(Command):
                     modified_budget = int(args[1])
                     kwargs["modified_budget"] = modified_budget
                 except ValueError:
-                    print("❌ 修改预算必须是数字，忽略该参数", file=sys.stderr)
+                    print("❌ 修改预算必须是数字，请使用纯数字（如 80）", file=sys.stderr)
+                    return  # 参数错误，不提交提案
 
         elif proposal_type == "land":
             if len(args) < 2:

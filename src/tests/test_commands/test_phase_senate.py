@@ -1249,7 +1249,7 @@ class TestManualTakeover(unittest.TestCase):
         mock_fleet = MagicMock()
         self.state.naval_system.get_available_fleets = MagicMock(return_value=[mock_fleet])
 
-        mock_input.side_effect = ["next", "propose B01 6", "next", "vote B01", "next"]
+        mock_input.side_effect = ["next", "propose B01 6", "next", "", "vote B01", "next"]
 
         cmd = SenateCommand(self.state)
         cmd._auto_mode = False

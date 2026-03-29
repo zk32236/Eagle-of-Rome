@@ -12,8 +12,8 @@
     "force_battle_result": "",
     "bypass_player_check": false,
     "auto_forum": true,
-    "auto_population": false,
-    "auto_senate": true
+    "auto_population": true,
+    "auto_senate": false
   },
   "logging": {
     "enabled": true,
