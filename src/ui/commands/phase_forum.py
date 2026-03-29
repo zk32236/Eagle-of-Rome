@@ -1426,9 +1426,8 @@ class ForumCommand(Command):
                             total_price = amount * unit_price
                             # 直接记录交易，不经过 API 权限检查
                             self.state.add_forum_action("land_trades", (seller_id, buyer_id, amount, total_price))
-                            # 打印 AI 操作提示（使用卖家或买家的派系名称）
-                            faction_name = self.state.get_faction(seller.faction_id).name if seller.faction_id else "未知"
-                            print(f"🤖 AI派系 {faction_name} 进行了土地交易。", flush=True)
+                            print(f"🤖 AI派系 {self.state.get_faction(seller.faction_id).name} 进行了土地交易。",
+                                  flush=True)
                 except Exception as e:
                     logging.exception("交易市场环节自动决策异常")
             try:

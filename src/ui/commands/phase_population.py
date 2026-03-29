@@ -288,6 +288,9 @@ class PopulationCommand(Command):
             self.auto_processor.process_festival(player.player_id, faction, bypass_permission=True)
             self.auto_processor.process_vote(player.player_id, faction, bypass_permission=True)
             self._next_player()
+            # 同步游戏状态中的当前玩家
+            if self._current_player_index < len(self._players):
+                self.state.set_current_player(self._players[self._current_player_index])
             if self._current_player_index >= len(self._players):
                 self._step += 1
 

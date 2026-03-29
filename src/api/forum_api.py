@@ -259,10 +259,11 @@ def vote_triumph(state: GameState, player_id: str, war_id: str, vote: bool) -> d
 
 
 def transact_land(state: GameState, player_id: str, seller_id: int, buyer_id: int,
-                  land: int, price: int) -> dict:
-    ok, resp = _check_player_permission(state, player_id)
-    if not ok:
-        return resp
+                  land: int, price: int, bypass_permission: bool = False) -> dict:
+    if not bypass_permission:
+        ok, resp = _check_player_permission(state, player_id)
+        if not ok:
+            return resp
 
     seller = state.get_member(seller_id)
     buyer = state.get_member(buyer_id)
@@ -272,8 +273,6 @@ def transact_land(state: GameState, player_id: str, seller_id: int, buyer_id: in
         return api_response(False, i18n.get("error_figure_dead"))
     if land <= 0 or price <= 0:
         return api_response(False, i18n.get("error_invalid_amount"))
-
-    # 新增：检查卖家土地是否足够
     if seller._land_private < land:
         return api_response(False, i18n.get("error_insufficient_land"))
 
