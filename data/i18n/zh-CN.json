@@ -130,7 +130,7 @@
     "info_recruit_bid_recorded": "📢 已记录对 {name} 的出价 {amount}",
     "info_bid_recorded": "📢 已记录对 {contract_name} 的出价 {amount}",
     "info_land_purchase_recorded": "🏞️ 已记录认购公地 {amount} C",
-    "info_vote_recorded": "🗳️ 您的投票已记录: {vote}",
+    "info_vote_recorded": "投票成功：{office} 投给 {name}",
     "info_land_trade_recorded": "💱 已记录交易: {seller} → {buyer}",
     "info_no_forum_actions": "   本阶段无操作",
     "info_balance": "💰 {faction} 金库: {treasury} Talents",
@@ -162,12 +162,13 @@
     "error_invalid_profit_rate": "利润率必须在0到1之间",
     "error_bid_mismatch": "{type}合同出价必须等于 {base} * (1{sign}{rate}) = {expected}，当前出价 {actual}",
     "info_bid_recorded": "已记录出价：合同 {contract_name}，金额 {amount}",
-    "error_figure_not_candidate": "该人物不是此公职的合法候选人",
+    "error_figure_not_candidate": "不是此公职的合法候选人",
     "error_faction_full": "派系成员已满，无法招募新成员。",
     "error_not_knight": "只有骑士才能参与合同竞标。",
     "error_not_triumph_war": "当前战争不具备凯旋条件。",
     "error_unknown_contract_type": "未知的合同类型。",
     "error_no_land_sale_quota": "本回合无待售公地配额",
     "error_insufficient_wealth": "财富不足，无法购买",
-    "error_insufficient_land": "土地不足，无法交易"
+    "error_insufficient_land": "土地不足，无法交易",
+    "error_already_voted": "您已经为 {office} 投过票，不能重复投票。"
 }

@@ -220,7 +220,10 @@ class MortalityCommand(Command):
         victims = random.sample(living, min(death_count, len(living)))
 
         for victim in victims:
-            print(f"   💀 死神选中了 {victim.name} (阶级: {victim.class_tier.value})")
+            # 获取派系名称
+            faction = self.state.get_faction(victim.faction_id)
+            faction_name = faction.name if faction else "无派系"
+            print(f"   💀 死神选中了 {victim.name} ({faction_name}) (阶级: {victim.class_tier.value})")
 
             # 终止该人物持有的所有活跃合同
             if victim.has_active_contract:

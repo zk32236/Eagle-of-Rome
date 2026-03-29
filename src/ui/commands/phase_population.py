@@ -149,6 +149,7 @@ class PopulationCommand(Command):
         while True:
             print("\n> 请输入操作(ANYONE): ", end="", flush=True)
             cmd_input = input().strip()
+            self.state.log_event(f"[INPUT] {cmd_input}", level=logging.INFO)
             if not cmd_input:
                 continue
             parts = cmd_input.split()
@@ -243,6 +244,7 @@ class PopulationCommand(Command):
             while True:
                 print(f"\n> 请输入操作(PLAYER {player_id}): ", end="", flush=True)
                 cmd_input = input().strip()
+                self.state.log_event(f"[INPUT] {cmd_input}", level=logging.INFO)
                 if not cmd_input:
                     continue
                 parts = cmd_input.split()
@@ -467,6 +469,7 @@ class PopulationCommand(Command):
             print("   1. next/n → 进入元老院阶段", flush=True)
             print("\n> 请输入操作(ANYONE): ", end="", flush=True)
             cmd_input = input().strip()
+            self.state.log_event(f"[INPUT] {cmd_input}", level=logging.INFO)
             if not cmd_input:
                 continue
             parts = cmd_input.split()

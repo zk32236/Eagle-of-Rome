@@ -162,7 +162,7 @@ class AutoPlayerProcessor:
                 # 如果成功，API 内部已记录操作，这里只需输出提示
                 figure = self.state.get_member(fig_id)
                 if figure:
-                    print(f"   🤖 AI {faction.name} 淘汰了 {figure.get_formal_name()}", flush=True)
+                    print(f"   🤖 AI {faction.name} 淘汰了1位成员！", flush=True)
                 return True
             else:
                 self.state.log_event(

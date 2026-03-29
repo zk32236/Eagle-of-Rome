@@ -156,6 +156,7 @@ class TestForumCommand:
     # ========== 基础测试 ==========
     def test_already_executed(self, test_state, mock_deciders, capsys):
         """阶段已执行时再次执行应失败"""
+        test_state.mark_phase_executed("revenue")  # 新增
         test_state.mark_phase_executed("forum")
         retirement, recruitment, bid, land_trade, triumph = mock_deciders
         cmd = ForumCommand(test_state,
@@ -171,6 +172,7 @@ class TestForumCommand:
 
     def test_execute_success(self, test_state, mock_deciders):
         """成功执行广场阶段（全自动模式）"""
+        test_state.mark_phase_executed("revenue")  # 新增
         # 设置为全自动模式
         test_state.config._config["testing"] = {
             "auto_forum": True,
@@ -233,6 +235,7 @@ class TestForumCommand:
     # ========== 淘汰测试 ==========
     def test_process_retirements_with_candidate(self, test_state, mock_deciders):
         """有合格淘汰者时正确淘汰（AI模式）"""
+        test_state.mark_phase_executed("revenue")  # 新增
         test_state.config._config["testing"] = {"auto_forum": True, "bypass_player_check": False}
         retirement, recruitment, bid, land_trade, triumph = mock_deciders
         retirement.decide_whom_to_retire.return_value = 2
@@ -261,6 +264,7 @@ class TestForumCommand:
 
     def test_process_retirements_no_candidate(self, test_state, mock_deciders):
         """无合格淘汰者时跳过"""
+        test_state.mark_phase_executed("revenue")  # 新增
         test_state.config._config["testing"] = {"auto_forum": True, "bypass_player_check": False}
         retirement, recruitment, bid, land_trade, triumph = mock_deciders
         retirement.decide_whom_to_retire.return_value = None
@@ -507,6 +511,7 @@ class TestForumCommand:
 
     def test_auto_land_trade_success(self, test_state, mock_deciders):
         """自动土地交易成功执行"""
+        test_state.mark_phase_executed("revenue")  # 新增
         test_state.config._config["forum_rules"]["enable_private_land_trade"] = True
         test_state.config._config["testing"] = {"auto_forum": True, "bypass_player_check": False}
         retirement, recruitment, bid, land_trade, triumph = mock_deciders
@@ -543,6 +548,7 @@ class TestForumCommand:
 
     def test_auto_land_trade_failure(self, test_state, mock_deciders):
         """自动土地交易失败（买方财富不足）"""
+        test_state.mark_phase_executed("revenue")  # 新增
         test_state.config._config["forum_rules"]["enable_private_land_trade"] = True
         test_state.config._config["testing"] = {"auto_forum": True, "bypass_player_check": False}
         retirement, recruitment, bid, land_trade, triumph = mock_deciders
@@ -577,6 +583,7 @@ class TestForumCommand:
 
     def test_auto_land_trade_no_opportunity(self, test_state, mock_deciders):
         """无交易机会时跳过"""
+        test_state.mark_phase_executed("revenue")  # 新增
         test_state.config._config["forum_rules"]["enable_private_land_trade"] = True
         test_state.config._config["testing"] = {"auto_forum": True, "bypass_player_check": False}
         retirement, recruitment, bid, land_trade, triumph = mock_deciders

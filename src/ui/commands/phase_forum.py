@@ -14,12 +14,12 @@ from typing import List, Optional, Dict, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.api import forum_api, figure_api
 from src.core.i18n import i18n
-from src.core.entities.figure import Figure, ClassTier
+from src.core.entities.figure import Figure, ClassTier,RomanNameGenerator
 from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.core.localization import TerminologyService
-from src.core.systems.war_system import War, WarStatus
+from src.core.systems.war_system import WarStatus
 from src.core.entities.player import PlayerType
-from src.core.entities.figure import RomanNameGenerator
+
 
 
 if TYPE_CHECKING:
@@ -200,14 +200,6 @@ class ForumCommand(Command):
         """获取可竞标的合同（BUDGETED 状态）"""
         return [c for c in self.state.contracts if c.status == ContractStatus.BUDGETED]
 
-    def _get_available_land_for_sale(self) -> int:
-        """获取可用于出售的国家公地数量（根据待执行的土地法案）"""
-        acts = self.state.get_pending_land_acts()
-        total = 0
-        for act in acts:
-            if act['type'] == 'sale':
-                total += act['amount']
-        return total
 
     # ==================== 原有功能函数移植 ====================
 
@@ -451,20 +443,6 @@ class ForumCommand(Command):
                 sys.stdout.flush()
 
         return contracts
-
-    def _generate_fleet_construction_contract(self, war: War):
-        """为指定战争生成舰队建造合同"""
-        contract = self.state.create_contract(
-            ContractType.PUBLIC_WORKS,
-            0,  # 意大利
-            80,  # 预算，实际应从配置读取
-            self.state.turn.turn_number
-        )
-        contract._is_fleet_construction = True
-        contract.name = f"舰队建造（{war.name}）"
-        contract._target_war_id = war.id
-        composition = [{"type": "trireme", "count": 2}]
-        contract.set_fleet_composition(composition, war.enemy_naval_current, 80)
 
     # ==================== 新增：战争威胁、民变、凯旋等状态更新方法 ====================
 
@@ -980,6 +958,7 @@ class ForumCommand(Command):
         if not self._get_war_triumph():
             print("   📭 没有凯旋仪式需要授予", flush=True)
             return False
+
         vote = (vote_str == "yes")
         player_id = self._get_current_player_id()
         if not player_id:
@@ -987,22 +966,21 @@ class ForumCommand(Command):
             return False
 
         triumph = self._get_war_triumph()
-        if triumph:
-            war_id = triumph["war"].id
-            result = forum_api.vote_triumph(self.state, player_id, war_id, vote)
-            print(result["message"])
-            sys.stdout.flush()
-            return result["success"]
-        else:
+        if not triumph:
             return False
 
-        triumph = self._get_war_triumph()
-        if triumph:
-            war_id = triumph["war"].id
-            result = forum_api.vote_triumph(self.state, player_id, war_id, vote)
+        war_id = triumph["war"].id
+        commander = triumph["commander"]
 
-        print(result["message"])
-        sys.stdout.flush()
+        result = forum_api.vote_triumph(self.state, player_id, war_id, vote)
+        if result["success"]:
+            # 自定义友好的投票结果消息
+            commander_name = commander.get_formal_name()
+            vote_text = "支持" if vote else "反对"
+            print(f"✅ 已记录对 {commander_name} 凯旋的 {vote_text} 投票", flush=True)
+        else:
+            print(result["message"], flush=True)  # 保留原错误信息
+
         return result["success"]
 
     def _handle_transact(self, args: List[str]) -> bool:
@@ -1117,20 +1095,16 @@ class ForumCommand(Command):
         return True
 
     def _handle_next(self, args: List[str]) -> bool:
-
         if self._step == 0:
             self._step = 1
             self._players = self._get_step_players()
             self._current_player_index = 0
             print("\n--- 进入裁员环节 ---", flush=True)
         elif self._step in (1, 2, 3):
-
             if self._switch_to_next_player():
-                # 切换成功，留在当前步骤，等待新玩家输入
                 return True
             else:
                 # 所有玩家已完成，进入下一环节
-                # 检查是否启用私地交易环节
                 enable_private_trade = self.state.config.get("forum_rules.enable_private_land_trade", False)
                 if self._step == 3 and not enable_private_trade:
                     # 跳过步骤4，直接完成
@@ -1142,6 +1116,9 @@ class ForumCommand(Command):
                     self._step += 1
                     self._players = self._get_step_players()
                     self._current_player_index = 0
+                    # 同步游戏状态中的当前玩家为新步骤的第一个玩家
+                    if self._players:
+                        self.state.set_current_player(self._players[0])
                     if self._step == 2:
                         print("\n--- 进入市场环节 ---", flush=True)
                     elif self._step == 3:
@@ -1227,6 +1204,7 @@ class ForumCommand(Command):
         while True:
             print("\n> 请输入操作(ANY): ", end="", flush=True)
             cmd_input = input("").strip()
+            self.state.log_event(f"[INPUT] {cmd_input}", level=logging.INFO)
             if not cmd_input:
                 continue
             parts = cmd_input.split()
@@ -1255,6 +1233,7 @@ class ForumCommand(Command):
                 fig_id = self.retirement_decider.decide_whom_to_retire(faction)
                 if fig_id is not None:
                     forum_api.retire_figure(self.state, player_id, fig_id)
+                    print(f"🤖 AI派系 {faction.name} 进行了裁员操作。")
             except Exception as e:
                 logging.exception("裁员环节自动决策异常")
             self._handle_next([])
@@ -1267,6 +1246,7 @@ class ForumCommand(Command):
             while True:
                 print(f"\n> 请输入操作(PLAYER {player_id}): ", end="", flush=True)
                 cmd_input = input("").strip()
+                self.state.log_event(f"[INPUT] {cmd_input}", level=logging.INFO)
                 if not cmd_input:
                     continue
                 parts = cmd_input.split()
@@ -1321,6 +1301,7 @@ class ForumCommand(Command):
                     for k in knights:
                         print(f"   {k.name}: {k.wealth}")
                     self._apply_market_decisions(player_id, faction)
+                    print(f"🤖 AI派系 {faction.name} 进行了市场操作。")  # 新增
                     # ===== 新增：市场环节结束后打印骑士财富 =====
                     knights = [m for m in faction.get_members(self.state) if
                                m.class_tier == ClassTier.EQUES and not m.is_dead]
@@ -1339,6 +1320,7 @@ class ForumCommand(Command):
             while True:
                 print(f"\n> 请输入操作(PLAYER {player_id}): ", end="", flush=True)
                 cmd_input = input("").strip()
+                self.state.log_event(f"[INPUT] {cmd_input}", level=logging.INFO)
                 if not cmd_input:
                     continue
                 parts = cmd_input.split()
@@ -1381,6 +1363,7 @@ class ForumCommand(Command):
             )
             # 调用处理器执行市场决策
             self.auto_processor.process_market(player_id, faction)
+            print(f"🤖 AI派系 {faction.name} 进行了市场操作。")  # 新增
             self._handle_next([])
 
     def _handle_step_3(self):
@@ -1406,6 +1389,7 @@ class ForumCommand(Command):
             print("   1. next/n → 进入私地交易环节", flush=True)
             print("\n> 请输入操作(ANY): ", end="", flush=True)
             cmd_input = input("").strip()
+            self.state.log_event(f"[INPUT] {cmd_input}", level=logging.INFO)
             if not cmd_input:
                 continue
             parts = cmd_input.split()
@@ -1442,6 +1426,9 @@ class ForumCommand(Command):
                             total_price = amount * unit_price
                             # 直接记录交易，不经过 API 权限检查
                             self.state.add_forum_action("land_trades", (seller_id, buyer_id, amount, total_price))
+                            # 打印 AI 操作提示（使用卖家或买家的派系名称）
+                            faction_name = self.state.get_faction(seller.faction_id).name if seller.faction_id else "未知"
+                            print(f"🤖 AI派系 {faction_name} 进行了土地交易。", flush=True)
                 except Exception as e:
                     logging.exception("交易市场环节自动决策异常")
             try:
@@ -1461,6 +1448,7 @@ class ForumCommand(Command):
             while True:
                 print("\n> 请输入操作(ANY): ", end="", flush=True)
                 cmd_input = input("").strip()
+                self.state.log_event(f"[INPUT] {cmd_input}", level=logging.INFO)
                 if not cmd_input:
                     continue
                 parts = cmd_input.split()
@@ -1488,6 +1476,7 @@ class ForumCommand(Command):
             while True:
                 print(f"\n> 请输入操作(QUAESTOR {player_id}): ", end="", flush=True)
                 cmd_input = input("").strip()
+                self.state.log_event(f"[INPUT] {cmd_input}", level=logging.INFO)
                 if not cmd_input:
                     continue
                 parts = cmd_input.split()
@@ -1525,6 +1514,11 @@ class ForumCommand(Command):
     def _execute_normal(self) -> bool:
         """正常/全人工测试/自动模式：使用状态机，根据配置自动跳过输入"""
         try:
+            # 检查前置阶段
+            if not self.state.is_phase_executed("revenue"):
+                print("⚠️ 必须先执行收入阶段 (revenue)", flush=True)
+                return False
+
             if self.state.is_phase_executed("forum"):
                 print(i18n.get("error_phase_already_executed", phase="forum"), flush=True)
                 return False
@@ -1532,6 +1526,10 @@ class ForumCommand(Command):
             self._step = 0
             self._players = self._get_step_players()
             self._current_player_index = 0
+
+            # 将游戏状态中的当前玩家设置为人口阶段的第一个玩家
+            if self._players:
+                self.state.set_current_player(self._players[0])
 
             # 显示当前玩家信息（清屏+信息）
             self._show_current_player_overview()

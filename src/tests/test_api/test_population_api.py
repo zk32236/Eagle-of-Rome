@@ -236,21 +236,21 @@ class TestVote:
         assert result["success"] is False
         assert "不是此公职的合法候选人" in result["message"]
 
-    def test_duplicate_vote_overwrites(self, state_normal_mode):
-        """同一玩家对同一公职重复投票应覆盖旧记录"""
+    def test_duplicate_vote_rejected(self, state_normal_mode):
+        """同一玩家对同一公职重复投票应被拒绝"""
         fig1 = state_normal_mode.get_member(1)
         fig2 = state_normal_mode.get_member(2)
         fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
         fig2.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
 
-        population_api.vote(state_normal_mode, "p1", "consul", 1)
-        result = population_api.vote(state_normal_mode, "p1", "consul", 2)
+        # 第一次投票成功
+        result1 = population_api.vote(state_normal_mode, "p1", "consul", 1)
+        assert result1["success"] is True
 
-        assert result["success"] is True
-        votes = state_normal_mode._population_pending["votes"]
-        matching = [v for v in votes if v[0] == "p1" and v[1] == "consul"]
-        assert len(matching) == 1
-        assert matching[0][2] == 2
+        # 第二次投票应失败
+        result2 = population_api.vote(state_normal_mode, "p1", "consul", 2)
+        assert result2["success"] is False
+        assert "已经为 CONSUL 投过票" in result2["message"]  # 根据 i18n 翻译
 
     def test_not_current_player(self, state_normal_mode):
         """非当前玩家调用"""

@@ -228,10 +228,6 @@ def buy_land(state: GameState, player_id: str, figure_id: int, amount: int) -> d
 
 
 def vote_triumph(state: GameState, player_id: str, war_id: str, vote: bool) -> dict:
-    """
-    凯旋投票：记录投票，等待公示结算。
-    校验：战争存在且待凯旋。
-    """
     ok, resp = _check_player_permission(state, player_id)
     if not ok:
         return resp
@@ -250,9 +246,15 @@ def vote_triumph(state: GameState, player_id: str, war_id: str, vote: bool) -> d
     if not player:
         return api_response(False, i18n.get("error_no_current_player"))
 
+    # 获取指挥官名称，用于生成友好消息
+    commander = state.get_member(war.triumph_commander_id)
+    commander_name = commander.get_formal_name() if commander else "未知指挥官"
+
     state.add_forum_action("triumph_votes", (war_id, player.faction_id, vote))
 
-    message = i18n.get("info_vote_recorded", vote="支持" if vote else "反对")
+    vote_text = "支持" if vote else "反对"
+    message = f"✅ 已记录对 {commander_name} 凯旋的 {vote_text} 投票"
+
     return api_response(True, message, data={"vote": vote})
 
 

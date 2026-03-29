@@ -61,6 +61,7 @@ def vote(state: GameState, player_id: str, office: str, figure_id: int) -> dict:
     """
     为指定公职的候选人投票。
     权限：当前玩家（除非 bypass_player_check=True）。
+    规则：每个玩家在每个官职只能投一次，重复投票将报错。
     """
     bypass = state.config.get("testing.bypass_player_check", False)
 
@@ -81,22 +82,20 @@ def vote(state: GameState, player_id: str, office: str, figure_id: int) -> dict:
     if not figure or figure.is_dead:
         return api_response(False, i18n.get("figure_not_found", id=figure_id))
 
-    # 检查候选人资格（从 get_candidates 获取合法候选人列表）
+    # 检查候选人资格
     cand_result = get_candidates(state)
     if cand_result["success"]:
         candidates = cand_result["data"].get(office, [])
         if not any(c["id"] == figure_id for c in candidates):
             return api_response(False, i18n.get("error_figure_not_candidate"))
 
-    # 移除该玩家对该公职的旧投票（如有）
-    votes = state._population_pending["votes"]
-    new_votes = []
-    for v in votes:
+    # 检查是否已为该官职投过票
+    for v in state._population_pending["votes"]:
         if v[0] == player_id and v[1] == office:
-            continue  # 跳过旧的
-        new_votes.append(v)
-    new_votes.append((player_id, office, figure_id))
-    state._population_pending["votes"] = new_votes
+            return api_response(False, i18n.get("error_already_voted", office=office.upper()))
+
+    # 记录投票
+    state._population_pending["votes"].append((player_id, office, figure_id))
 
     message = i18n.get("info_vote_recorded", office=office.upper(), name=figure.get_formal_name())
     state.log_event(

@@ -65,12 +65,13 @@ class Command(ABC):
                 self.state.config.get("testing.auto_senate", False))
 
     def _show_current_player_overview(self):
-        # 优先使用子类自动模式标志（如果存在）
-        if hasattr(self, '_auto_mode') and self._auto_mode:
+        """清屏并显示当前玩家的派系信息（人物、金库、影响力等）"""
+        # 自动模式或非多玩家手动模式（单人模式）跳过
+        if self._is_auto_mode() or not self._is_multiplayer_manual():
             return
 
         player = self.state.get_current_player()
-        if not player or player.player_type != PlayerType.HUMAN:
+        if not player or player.player_type != "human":
             return
 
         faction = self.state.get_faction(player.faction_id)
@@ -110,16 +111,18 @@ class Command(ABC):
 
     def _wait_for_pin(self):
         """等待玩家输入 PIN（可为空），仅手动模式且人类玩家时生效"""
-        if hasattr(self, '_auto_mode') and self._auto_mode:
+        # 自动模式或非多玩家手动模式（单人模式）跳过
+        if self._is_auto_mode() or not self._is_multiplayer_manual():
             return
 
         player = self.state.get_current_player()
-        if not player or player.player_type != PlayerType.HUMAN:
+        if not player or player.player_type != "human":
             return
 
         print("\n🔐 请输入您的 PIN 码（直接回车跳过）: ", end="", flush=True)
         pin = input().strip()
         if pin:
+            # 预留验证逻辑
             pass
 
     def _switch_to_next_player(self) -> bool:
@@ -154,3 +157,12 @@ class Command(ABC):
                 self._show_current_player_overview()
                 return True
             return False
+
+    def _is_multiplayer_manual(self) -> bool:
+        """判断是否为多玩家手动模式（存在多个人类玩家，且当前阶段非自动）"""
+        # 如果当前阶段是自动模式，返回 False
+        if hasattr(self, '_auto_mode') and self._auto_mode:
+            return False
+        # 统计人类玩家数量
+        human_count = sum(1 for p in self.state.get_all_players() if p.player_type == "human")
+        return human_count > 1
