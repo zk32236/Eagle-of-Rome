@@ -248,6 +248,16 @@ class Province:
         self._governor_id = new_id
         self._governor_since = turn
 
+    def set_governor_designate(self, new_governor_id: Optional[int], old_governor_id: Optional[int] = None) -> None:
+        """设置候任总督，并记录本轮将被替换的旧总督。"""
+        self._governor_designate_id = new_governor_id
+        self._old_governor_id = old_governor_id
+
+    def clear_governor_designate(self) -> None:
+        """清空候任总督记录。"""
+        self._governor_designate_id = None
+        self._old_governor_id = None
+
     def set_event_flag(self, key: str, value: Any) -> None:
         """设置事件标记"""
         self._event_flags[key] = value

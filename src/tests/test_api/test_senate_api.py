@@ -132,9 +132,13 @@ class TestSenateAPI(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertIn("只有保民官可以行使否决权", result["message"])
 
-    @patch("src.api.senate_api.execute_war_declaration")
-    @patch("src.api.senate_api.process_war_takeover")
+    @patch("src.core.systems.political_system.PoliticalSystem.execute_war_declaration")
+    @patch("src.core.systems.political_system.PoliticalSystem.process_war_takeover")
     def test_resolve_senate(self, mock_takeover, mock_execute):
+        war = War(id="war1", name="测试战争", war_type=WarType.FOREIGN, strength=5, naval_required=False)
+        war.status = WarStatus.THREAT
+        self.state.get_war_system()._threats.append(war)
+
         # 添加提案、投票、否决
         war_proposal_id = self.state.add_senate_proposal(
             {"type": "war", "war_id": "war1", "legions": 6, "consul_id": 1})

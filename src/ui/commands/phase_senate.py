@@ -366,7 +366,7 @@ class SenateCommand(Command):
                 desc = self._generate_proposal_description(prop["type"], prop)
                 print(f" B{prop_id:02d}: {desc}")
             # 清空旧投票记录
-            self.state._senate_pending["votes"] = {}
+            self.state.clear_senate_votes()
             self._vote_on_proposals(proposals)
             self._handle_next([])
         else:
@@ -398,7 +398,7 @@ class SenateCommand(Command):
                 return
 
             # 重置投票记录
-            self.state._senate_pending["votes"] = {}
+            self.state.clear_senate_votes()
 
             # 保存原当前玩家，以便结束后恢复
             original_player_id = self.state.get_current_player().player_id
@@ -495,10 +495,7 @@ class SenateCommand(Command):
             return
 
 
-        if self._auto_mode:
-            passed_proposals = self._get_passed_proposals()
-        else:
-            passed_proposals = self._get_passed_proposals_from_votes(proposals)
+        passed_proposals = self._get_passed_proposals()
 
         if not passed_proposals:
             print("\n 📭 无提案需要通过保民官否决")
@@ -633,150 +630,24 @@ class SenateCommand(Command):
         print("############################################################\n")
         print("\t📜 元老院最终通过的法案：")
 
-        if self._auto_mode:
-            # 自动模式
-            from src.api import senate_api
-            result = senate_api.resolve_senate(self.state, vote_decider=self.vote_decider)
-            if result["success"]:
-                # 强制刷新合同对象（通过重新获取）
-                for proposal in self.state.get_senate_proposals():  # 或其他方式
-                    if proposal["type"] == "budget":
-                        contract = self.state.get_contract(proposal["contract_id"])
-                        if contract:
-                            self.state.log_event(
-                                f"元老院后合同 {contract.id} base_cost = {contract.base_cost}",
-                                level=logging.DEBUG
-                            )
-                passed_proposal_ids = result["data"].get("passed_proposals", [])
-                all_proposals = self.state.get_senate_proposals()
-                passed_proposals = [p for p in all_proposals if p["id"] in passed_proposal_ids]
-                self._print_announcement_header(passed_proposals)
-                if result["message"]:
-                    print(result["message"])
-                # 处理停战恢复
-                rejected_peace_wars = result["data"].get("rejected_peace_wars", [])
-                ws = self.state.get_war_system()
-                pending_peace_wars = ws.get_truce_wars_with_pending_treaty() if ws else []
-                all_rejected = list(set(rejected_peace_wars + pending_peace_wars))
-                if all_rejected:
-                    self._restore_rejected_peace_wars(all_rejected)
-                # ===== 恢复调用，放在停战恢复之后 =====
-                senate_api.process_war_takeover(self.state, decider=self.takeover_decider)
-                # ===== 新增：舰队指派补漏 =====
-                fleet_result = senate_api.assign_fleets_to_active_wars(self.state)
-                if fleet_result["success"] and fleet_result["message"]:
-                    print(fleet_result["message"])
-                # ===== 新增：为起义战争指派总督指挥官 =====
-                self._assign_rebellion_commanders()
-            else:
-                print(f"❌ 结算失败: {result['message']}", flush=True)
+        from src.api import senate_api
+        result = senate_api.resolve_senate(
+            self.state,
+            vote_decider=self.vote_decider,
+            takeover_decider=self.takeover_decider,
+        )
+        if result["success"]:
+            passed_snapshot = result["data"].get("passed_proposals_snapshot", [])
+            self._print_announcement_header(passed_snapshot)
+            if result["message"]:
+                print(result["message"])
 
-        else:
-            # 手动模式
-            proposals = self.state.get_senate_proposals()
-            passed_proposals = self._get_passed_proposals_from_votes(proposals)
-            vetoes = self.state._senate_pending["vetoes"]
-            passed_proposals = [p for p in passed_proposals if p["id"] not in vetoes]
-
-            self._print_announcement_header(passed_proposals)
-
-            # 执行通过的提案（并打印分组详情）
-            for proposal in passed_proposals:
-                ptype = proposal["type"]
-                try:
-                    if ptype == "war":
-                        ws = self.state.get_war_system()
-                        if ws:
-                            war = ws.get_war_by_id(proposal["war_id"])
-                            consul_id = proposal["consul_id"]
-                            legions = proposal["legions"]
-                            self._execute_war_declaration(war, consul_id, legions)
-                    elif ptype == "peace":
-                        ws = self.state.get_war_system()
-                        if ws:
-                            war = ws.get_war_by_id(proposal["war_id"])
-                            self._execute_passed_peace_treaty(war)
-                    elif ptype == "governor":
-                        province = self.state.get_province(proposal["province_id"])
-                        if province:
-                            province._governor_designate_id = proposal["candidate_id"]
-                            province._old_governor_id = proposal.get("old_governor_id")
-                            new_governor = self.state.get_member(proposal["candidate_id"])
-                            if new_governor:
-                                new_governor.is_absent = True
-                            print(
-                                f"    ✅ {province.name} 任命新总督: {new_governor.get_formal_name() if new_governor else '未知'} (候任)，旧总督 {self.state.get_member(proposal.get('old_governor_id')) and self.state.get_member(proposal['old_governor_id']).get_formal_name() or '无'} 仍在任")
-                    elif ptype == "budget":
-                        contract = self.state.get_contract(proposal["contract_id"])
-                        if contract:
-                            modified_budget = proposal.get("modified_budget")
-                            if modified_budget and modified_budget != contract.base_cost:
-                                # 保存原始预算（用于战斗力计算）
-                                contract._original_budget = contract.base_cost
-                                contract.base_cost = modified_budget
-                                self.state.log_event(
-                                    f"预算提案通过: 合同 {contract.name} 预算从 {contract._original_budget} 更新为 {modified_budget}",
-                                    level=logging.INFO,
-                                    extra={"contract_id": contract.id, "old_budget": contract._original_budget,
-                                           "new_budget": modified_budget}
-                                )
-                                print(
-                                    f"    ✅ {contract.name} 预算从 {contract._original_budget} 调整为 {modified_budget}")
-                            contract.status = ContractStatus.BUDGETED
-                            print(f"    ✅ {contract.name} 预算通过，状态变为 BUDGETED")
-                    elif ptype == "land":
-                        act_type = proposal["act_type"]
-                        percent = proposal["percent"]
-                        national_land = self.state.get_national_public_land()
-                        amount = int(national_land * percent)
-                        if act_type == "sale":
-                            self.state.set_pending_land_sale_quota(amount)
-                            print(f"    ✅ 贵族买地法案（出售 {amount} C 国家公地） 通过，等待下回合执行")
-                        else:
-                            self.state.add_pending_land_act({
-                                "type": "distribution",
-                                "percent": percent,
-                                "amount": amount,
-                                "description": f"平民分地法案（分配 {percent * 100:.1f}% 国家公地）"
-                            })
-                            print(f"    ✅ 平民分地法案（分配 {amount} C 国家公地） 通过，等待下回合执行")
-                except Exception as e:
-                    print(f"执行提案 {proposal['id']} 失败: {e}")
-                    self.state.log_event(f"执行提案失败: {e}", level=logging.ERROR,
-                                         extra={"proposal_id": proposal["id"]})
-
-            # 处理停战恢复
-            ws = self.state.get_war_system()
-            pending_peace_wars = ws.get_truce_wars_with_pending_treaty() if ws else []
-
-            # ===== 新增：收集被否决的停战战争（投票不通过或保民官否决）=====
-            rejected_peace_wars = []
-            passed_ids = set(p["id"] for p in passed_proposals)
-            for proposal in proposals:
-                if proposal["type"] == "peace":
-                    pid = proposal["id"]
-                    # 如果提案未通过（不在 passed_ids 中），则为被否决
-                    if pid not in passed_ids:
-                        war = ws.get_war_by_id(proposal["war_id"]) if ws else None
-                        if war:
-                            rejected_peace_wars.append(war)
-
-            # 合并未提交草案与被否决草案，去重后恢复
-            all_rejected = list(set(pending_peace_wars + rejected_peace_wars))
-            if all_rejected:
-                self._restore_rejected_peace_wars(all_rejected)
-
-            # ===== 新增：处理无指挥官的活跃战争（自动激活的战争）=====
-            if ws:
-                from src.api import senate_api
-                senate_api.process_war_takeover(self.state, decider=self.takeover_decider)
-
-            # ===== 新增：舰队指派补漏 =====
             fleet_result = senate_api.assign_fleets_to_active_wars(self.state)
             if fleet_result["success"] and fleet_result["message"]:
                 print(fleet_result["message"])
-            # ===== 新增：为起义战争指派总督指挥官 =====
             self._assign_rebellion_commanders()
+        else:
+            print(f"❌ 结算失败: {result['message']}", flush=True)
 
         self._step += 1
 
@@ -1171,8 +1042,7 @@ class SenateCommand(Command):
                 player_id = player.player_id
 
                 # 检查该玩家是否已对此提案投票
-                if (player_id in self.state._senate_pending["votes"] and
-                        pid in self.state._senate_pending["votes"][player_id]):
+                if self.state.has_senate_vote(player_id, pid):
                     continue
 
                 # 构造 issue
@@ -1233,8 +1103,8 @@ class SenateCommand(Command):
     def _get_passed_proposals(self) -> list:
         """获取已通过且未被否决的提案列表"""
         proposals = self.state.get_senate_proposals()
-        votes = self.state._senate_pending["votes"]
-        vetoes = self.state._senate_pending["vetoes"]
+        votes = self.state.get_senate_votes_copy()
+        vetoes = self.state.get_senate_vetoes_copy()
         passed = []
 
         for proposal in proposals:
@@ -1294,7 +1164,7 @@ class SenateCommand(Command):
         # 1. 宣战提案（战争威胁）
         ws = self.state.get_war_system()
         if ws:
-            threats = [w for w in ws._threats if w.status == WarStatus.THREAT]
+            threats = ws.get_threat_wars()
             if threats:
                 propose_chance = self.state.config.get("testing.propose_war_chance", 0.7)
                 always_declare = self.state.config.get("testing.always_declare", False)
@@ -1328,7 +1198,7 @@ class SenateCommand(Command):
 
         # 2. 停战草案（待决停战）
         if ws:
-            pending_peace = [w for w in ws._truce_wars if w.peace_treaty and w.peace_treaty.get('status') == 'pending']
+            pending_peace = ws.get_truce_wars_with_pending_treaty()
             for war in pending_peace:
                 result = senate_api.propose(
                     self.state, consul_player_id, "peace",
@@ -1512,7 +1382,7 @@ class SenateCommand(Command):
                 if not player:
                     continue
                 player_id = player.player_id
-                votes = self.state._senate_pending["votes"].get(player_id, {})
+                votes = self.state.get_senate_votes_copy().get(player_id, {})
                 if pid in votes:
                     if votes[pid]:
                         support_influence += influence
@@ -1532,18 +1402,7 @@ class SenateCommand(Command):
             return
         ws = self.state.get_war_system()
         for war in wars:
-            war.clear_peace_treaty()
-            # 直接移动，不清空 commander_id
-            if war in ws._truce_wars:
-                ws._truce_wars.remove(war)
-                if war not in ws._active_wars:
-                    ws._active_wars.append(war)
-                war.status = WarStatus.ACTIVE
-            elif war.status == WarStatus.TRUCE:
-                war.status = WarStatus.ACTIVE
-                if war not in ws._active_wars:
-                    ws._active_wars.append(war)
-            # 注意：不调用 ws._move_to_active，以免清空 commander_id
+            ws.restore_rejected_peace_treaty(war.id, preserve_commander=True)
 
     def _execute_passed_peace_treaty(self, war):
         """执行通过的停战草案（手动模式）"""
@@ -1564,7 +1423,7 @@ class SenateCommand(Command):
 
     def _print_senate_results(self, proposals: list):
         """打印元老院公示环节的详细投票结果（符合 UI 设计）"""
-        votes = self.state._senate_pending["votes"]
+        votes = self.state.get_senate_votes_copy()
         for prop in proposals:
             pid = prop["id"]
             desc = self._generate_proposal_description(prop["type"], prop)
@@ -1616,7 +1475,7 @@ class SenateCommand(Command):
         for proposal in proposals:
             pid = proposal["id"]
             # 检查是否已投票
-            votes = self.state._senate_pending["votes"].get(player_id, {})
+            votes = self.state.get_senate_votes_copy().get(player_id, {})
             if pid in votes:
                 continue
             issue = self._build_issue_from_proposal(proposal)
@@ -1704,10 +1563,8 @@ class SenateCommand(Command):
             new_fig = self.state.get_member(gov['new_governor_id'])
             old_fig = self.state.get_member(gov['old_governor_id']) if gov['old_governor_id'] else None
 
-            # 记录旧总督，供决算阶段返回
-            province._old_governor_id = gov['old_governor_id']
-            # 设置候任总督
-            province._governor_designate_id = gov['new_governor_id']
+            # 记录旧总督并设置候任总督，供决算阶段返回
+            province.set_governor_designate(gov['new_governor_id'], gov['old_governor_id'])
 
             if new_fig:
                 # 新总督离开罗马（在途），但暂不授予官职

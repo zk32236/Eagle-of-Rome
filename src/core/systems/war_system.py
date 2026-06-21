@@ -217,6 +217,33 @@ class WarSystem:
         return [w for w in self._truce_wars
                 if w.peace_treaty and w.peace_treaty.get('status') == 'approved']
 
+    def restore_rejected_peace_treaty(self, war_id: str, preserve_commander: bool = True) -> bool:
+        """将未获批准的停战草案恢复为活跃战争。"""
+        war = self.get_war_by_id(war_id)
+        if not war:
+            return False
+
+        war.clear_peace_treaty()
+        if not preserve_commander:
+            war.commander_id = None
+
+        if war in self._truce_wars:
+            self._truce_wars.remove(war)
+        if war not in self._active_wars:
+            self._active_wars.append(war)
+        war.status = WarStatus.ACTIVE
+
+        self.state.log_event(
+            f"停战草案未获批准，战争恢复为活跃: {war.name}",
+            level=logging.INFO,
+            extra={"war_id": war.id, "preserve_commander": preserve_commander}
+        )
+        return True
+
+    def activate_threat_as_war(self, war_id: str, commander_id: int, legions: int) -> bool:
+        """将威胁战争按元老院批准结果激活为战争。"""
+        return self.activate_war(war_id, commander_id, legions)
+
     # ===== 军团待解散管理 =====
     def add_legions_to_disband(self, legion_numbers: List[int]) -> None:
         """添加需要解散的军团编号（用于和约批准后）"""

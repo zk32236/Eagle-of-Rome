@@ -186,6 +186,25 @@ class GameState:
         """获取当前所有提案的副本"""
         return self._senate_pending["proposals"].copy()
 
+    def get_senate_votes_copy(self) -> dict:
+        """获取当前元老院投票记录副本。"""
+        return {
+            player_id: votes.copy()
+            for player_id, votes in self._senate_pending["votes"].items()
+        }
+
+    def get_senate_vetoes_copy(self) -> set:
+        """获取当前元老院否决记录副本。"""
+        return self._senate_pending["vetoes"].copy()
+
+    def has_senate_vote(self, player_id: str, proposal_id: int) -> bool:
+        """检查玩家是否已对指定提案投票。"""
+        return proposal_id in self._senate_pending["votes"].get(player_id, {})
+
+    def clear_senate_votes(self) -> None:
+        """清空当前元老院投票记录，保留提案与否决状态。"""
+        self._senate_pending["votes"] = {}
+
     def record_senate_vote(self, player_id: str, proposal_id: int, vote: bool) -> bool:
         """记录投票，返回是否成功（未重复投票）"""
         if player_id not in self._senate_pending["votes"]:
