@@ -21,6 +21,14 @@ def mock_war_system():
     ws._active_wars = []
     ws._threats = []
     ws._truce_wars = []
+
+    def all_wars():
+        return ws._war_deck + ws._war_discard + ws._active_wars + ws._threats + ws._truce_wars
+
+    ws.get_all_wars.side_effect = all_wars
+    ws.get_wars_with_indemnity_due.side_effect = lambda: [
+        war for war in all_wars() if getattr(war, "indemnity_due", 0) != 0
+    ]
     return ws
 
 def test_indemnity_income(mock_state, mock_war_system):

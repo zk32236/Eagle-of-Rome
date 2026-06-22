@@ -46,6 +46,7 @@ class Contract:
     _recommended_fleet_composition: List[Dict[str, Any]] = field(default_factory=list)
     _enemy_strength: int = 0  # 敌方海军强度（用于参考）
     _total_budget: int = 0  # 总预算（所有舰队建造成本之和）
+    _paid: bool = False  # 舰队建造合同是否已完成国库付款
 
     # 基本信息
     name: str = ""
@@ -142,6 +143,10 @@ class Contract:
     @is_fleet_construction.setter
     def is_fleet_construction(self, value: bool):
         self._is_fleet_construction = value
+
+    @property
+    def is_fleet_construction_paid(self) -> bool:
+        return self._paid
 
     @classmethod
     def create_tax_farming(cls, id: int, province: str, base_cost: int, expected_profit: int) -> "Contract":
@@ -324,6 +329,24 @@ class Contract:
         self._is_under_execution = False
         self.status = ContractStatus.EXPIRED
 
+    def record_tax_collection(self, amount: int) -> None:
+        self.total_collected += amount
+
+    def record_works_payment(self, amount: int) -> None:
+        self.total_spent += amount
+
+    def mark_fleet_construction_paid(self) -> None:
+        self._paid = True
+
+    def advance_warranty(self) -> int:
+        """递减工程质保期；质保结束时合同过期。"""
+        if self.status != ContractStatus.COMPLETED or self._warranty_remaining <= 0:
+            return self._warranty_remaining
+        self._warranty_remaining -= 1
+        if self._warranty_remaining <= 0:
+            self.status = ContractStatus.EXPIRED
+        return self._warranty_remaining
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
@@ -364,6 +387,7 @@ class Contract:
             "_recommended_fleet_composition": self._recommended_fleet_composition,
             "_enemy_strength": self._enemy_strength,
             "_total_budget": self._total_budget,
+            "_paid": self._paid,
             "_annual_profit": self._annual_profit,  # 兼容
         }
 
@@ -408,6 +432,7 @@ class Contract:
             _recommended_fleet_composition=data.get("_recommended_fleet_composition", []),
             _enemy_strength=data.get("_enemy_strength", 0),
             _total_budget=data.get("_total_budget", 0),
+            _paid=data.get("_paid", False),
             _annual_profit=data.get("_annual_profit", 0),
         )
         return contract

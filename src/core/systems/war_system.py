@@ -745,11 +745,27 @@ class WarSystem:
         """获取所有活跃战争"""
         return [w for w in self._active_wars if w.status == WarStatus.ACTIVE]
 
+    def get_all_wars(self) -> List[War]:
+        """获取战争系统持有的全部战争对象（去重后的只读副本）。"""
+        all_wars = self._war_deck + self._war_discard + self._active_wars + self._threats + self._truce_wars
+        seen = set()
+        result = []
+        for war in all_wars:
+            war_id = getattr(war, "id", id(war))
+            if war_id in seen:
+                continue
+            seen.add(war_id)
+            result.append(war)
+        return result
+
+    def get_wars_with_indemnity_due(self) -> List[War]:
+        """获取仍有赔款待结算的战争。"""
+        return [w for w in self.get_all_wars() if getattr(w, "indemnity_due", 0) != 0]
+
     # 在 WarSystem 类中
     def get_war_by_id(self, war_id: str) -> Optional[War]:
         """通过ID查找战争（搜索所有战争列表，包括停战列表）"""
-        all_wars = self._war_deck + self._war_discard + self._active_wars + self._threats + self._truce_wars
-        for war in all_wars:
+        for war in self.get_all_wars():
             if war.id == war_id:
                 return war
         return None

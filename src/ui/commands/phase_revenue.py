@@ -1,15 +1,12 @@
 # src/ui/commands/phase_revenue.py
 """
-税收阶段命令 - 处理税收、派系津贴、军团维护费和合同收益
-优化打印格式：表格化显示派系资金和私地收益
+税收阶段命令 - 负责阶段守卫、调用经济服务和展示收入结算结果。
 """
-import logging
+from typing import Dict, List, Tuple, TYPE_CHECKING
 
-from typing import List, Dict, Tuple, Optional, TYPE_CHECKING
-from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
-from src.core.entities.contract import ContractStatus, ContractType
-from src.ui.utils import get_progress_bar
+from src.core.service.economic_service import EconomicService
+from src.ui.commands.sys_base import Command
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -34,411 +31,121 @@ class RevenueCommand(Command):
             print("⚠️ 税收阶段在本回合已执行过")
             return False
 
-
-
         terms = TerminologyService.get()
         print(f"\n--- {terms.phase_revenue} Phase (Year {abs(self.state.turn.year)} BC) ---")
 
-        # 初始化派系抽成累计字典和津贴记录
-        faction_tax_collected: Dict[str, float] = {}
-        faction_stipend: Dict[str, int] = {}
+        result = EconomicService(self.state).settle_revenue_phase()
+        if not result["success"]:
+            print("⚠️ 税收阶段结算失败")
+            for error in result.get("errors", []):
+                print(f"   - {error}")
+            return False
 
-        # 获取配置
-        land_price = self.state.get_economic_rule("land_price_per_unit", 10)
-        public_income_rate = self.state.get_economic_rule("public_land_income_rate", 0.01)  # 新增
-        national_tax_rate = self.state.get_economic_rule("national_public_land_tax_rate", 0.02)
-        stipend = self.state.get_economic_rule("faction_stipend", 10)
-        tax_rate = self.state.get_economic_rule("faction_tax_rate", 0.1)
-
-        # 初始化派系抽成累计字典和津贴记录
-        faction_tax_collected: Dict[str, float] = {}
-        faction_stipend: Dict[str, int] = {}
-        for faction in self.state.factions.values():
-            faction_tax_collected[faction.id] = 0.0
-            faction_stipend[faction.id] = stipend
-
-        # 1. 国家公地收益（只执行一次）
-        national_land = self.state.get_national_public_land()
-        tax_income = int(round(national_land * land_price* public_income_rate * national_tax_rate))
-
-        # ===== 风调雨顺加成 =====
-        if "bumper_harvest" in self.state._active_events:
-            multiplier = self.state._active_events["bumper_harvest"]["multiplier"]
-            tax_income = int(round(tax_income * multiplier))
-            print(f"      🌾 风调雨顺加成: 国家公地收益 ×{multiplier}")
-        # =========================
-
-        # ===== 天灾影响（如果受灾行省是意大利）=====
-        if "disaster" in self.state._active_events:
-            disaster_info = self.state._active_events["disaster"]
-            if disaster_info["province_id"] == 0:
-                loss_ratio = disaster_info["loss_ratio"]
-                tax_income = int(round(tax_income * (1 - loss_ratio)))
-                print(f"      🌪️ 天灾影响: 国家公地收益减少 {loss_ratio * 100:.0f}%")
-        # =========================
-
-        self.state.add_treasury(tax_income)
-        print(f"💰 国家公地收益: \t+{tax_income} {terms.currency}")
-        print(f"📊 国库现有资金: \t{self.state.treasury} {terms.currency}\n")
-        self.state.log_event(...)
-
-        # 2. 私地收益（只执行一次）
-        private_data = self._collect_private_land_income(terms, faction_tax_collected, tax_rate)
-        total_net_private = sum(d[2] for d in private_data)
-        if total_net_private > 0:
-            self.state.log_event(...)
-
-        # 3. 合同收益结算（只执行一次）
-        self._collect_contract_revenues(terms, faction_tax_collected, tax_rate)
-        # ===== 新增：处理质保期递减 =====
-        self._process_contract_warranty()
-        # ================================
-
-        # 4.1 军团维护费（只执行一次） + 赔偿金处理
-        ms = self.state.get_military_system()
-        if ms:
-            total_maintenance, _ = ms.calculate_maintenance()
-            print(f"📊 军团维护费: \t{total_maintenance} {terms.currency}")
-            success, msg = ms.apply_maintenance(verbose=False)
-
-        # 4.2 海军维护费（只执行一次）
-
-        if self.state.naval_system:
-            success, msg = self.state.naval_system.apply_maintenance()
-            print(f"      ⚓ {msg}")
-        else:
-            print("      ⚓ 警告：naval_system 为 None，跳过舰队维护费")
-
-        # 5. 国家运营费扣除
-        self._deduct_national_opex()
-
-        self._settle_indemnities()
-
-        # 5. 先更新派系国库（处理抽成和津贴）
-        for faction_id, total_tax_float in faction_tax_collected.items():
-            tax_int = int(round(total_tax_float))
-            faction = self.state.get_faction(faction_id)
-            if faction:
-                faction.treasury += faction_stipend[faction_id] + tax_int
-                if tax_int > 0:
-                    self.state.log_event(
-                        f"派系抽成: {faction.name} +{tax_int}",
-                        extra={"type": "faction_tax", "faction_id": faction_id, "amount": tax_int}
-                    )
-                if faction_stipend[faction_id] > 0:
-                    self.state.log_event(
-                        f"派系津贴: {faction.name} +{faction_stipend[faction_id]}",
-                        extra={"type": "faction_stipend", "faction_id": faction_id,
-                               "amount": faction_stipend[faction_id]}
-                    )
-
-        # 6. 重新构建 faction_final（此时国库已更新）
-        faction_final = {}
-        for faction in self.state.factions.values():
-            faction_final[faction.id] = {
-                'stipend': faction_stipend.get(faction.id, 0),
-                'tax': int(round(faction_tax_collected.get(faction.id, 0.0))),
-                'final': faction.treasury
+        data = result["data"]
+        self._print_revenue_result(terms, data)
+        self.state.log_event(
+            f"税收阶段完成: 国库 {data['ending_treasury']}",
+            extra={
+                "type": "revenue_phase_complete",
+                "starting_treasury": data["starting_treasury"],
+                "ending_treasury": data["ending_treasury"],
+                "treasury_delta": data["treasury_delta"],
             }
-
-        # 7. 打印派系表格（只执行一次）
-        self._print_faction_table(terms, faction_final)
-
-        # 8. 打印私地收益表格（只执行一次）
-        self._print_private_land_table(private_data, terms)
-
-        # 9. 记录国库最终余额
-        self.state.log_event(...)
-
+        )
         self.state.mark_phase_executed("revenue")
-
         return True
 
     # ================================= MVP 0.7 ===========================================
 
-    # ======== MVP 0.7.3 国家运营 =======
-
     def _deduct_national_opex(self):
-        """扣除国家运营费（仅对已征服行省）"""
-        land_price = self.state.get_economic_rule("land_price_per_unit", 10)
-        rate = self.state.get_economic_rule("national_opex_rate", 0.003)
-
-        provinces = self.state.get_all_provinces()
-        conquered = [p for p in provinces if p.conquered]
-
-        if not conquered:
-            print("   🏛️ 无已征服行省，国家运营费为 0")
-            return
-
-        total_land = 0
-        print("\n   🏛️ 国家运营费计算：")
-        for p in conquered:
-            total_land += p.total_land
-            print(f"      行省 {p.name}: total_land={p.total_land}")
-
-        opex_float = total_land * land_price * rate
-        opex = int(opex_float)  # 向下取整
-
-        if opex > 0:
-
-            self.state.treasury -= opex
-
-            print(f"      土地单价: {land_price} Talents/单位, 费率: {rate}")
-            print(f"      总土地: {total_land}, 运营费 = {opex} Talents")
-            print(f"      国库扣除后余额: {self.state.treasury}")
-
-            self.state.log_event(
-                f"国家运营费扣除: {opex} Talents",
-                extra={
-                    "type": "national_opex",
-                    "amount": opex,
-                    "treasury_after": self.state.treasury,
-                    "total_land": total_land,
-                    "land_price": land_price,
-                    "rate": rate
-                }
-            )
-        else:
-            print(f"      运营费为 0，不扣除")
-
-    # ======== MVP 0.7.1 停战议和 =======
+        """兼容旧测试入口：扣除国家运营费并打印。"""
+        data = EconomicService(self.state).deduct_national_opex()
+        self._print_national_opex(data)
+        return data
 
     def _settle_indemnities(self):
-        """结算所有战争赔款（正：收入，负：支出）"""
-        war_system = self.state.get_war_system()
-        if not war_system:
-            return
-
-        all_wars = (war_system._war_deck + war_system._war_discard +
-                    war_system._active_wars + war_system._threats +
-                    war_system._truce_wars)
-        for war in all_wars:
-            amount = war.indemnity_due
-            if amount == 0:
-                continue
-
-            if amount > 0:
-                # 收入
-                self.state.add_treasury(amount)
-                print(f"      📦 战争赔款收入: {war.name} +{amount} Talents")
-                self.state.log_event(
-                    f"战争赔款收入: {war.name} +{amount}",
-                    extra={'type': 'indemnity_income', 'war_id': war.id, 'amount': amount}
-                )
-                war.set_indemnity_due(0)  # 清除赔款
-            else:
-                # 支出（amount为负）
-                if self.state.treasury < -amount:
-                    print(f"      💀 国库不足以支付战争赔款 {war.name} {-amount} Talents，共和覆灭！")
-                    self.state.log_event(
-                        f"国库不足支付赔款，共和覆灭",
-                        extra={'type': 'game_over', 'reason': 'indemnity', 'war_id': war.id, 'amount': -amount},
-                        level=logging.CRITICAL
-                    )
-                    # 国库不足，不清除赔款，等待下回合再次尝试
-                else:
-                    self.state.add_treasury(amount)
-                    print(f"      💸 战争赔款支出: {war.name} {-amount} Talents")
-                    self.state.log_event(
-                        f"战争赔款支出: {war.name} {-amount}",
-                        extra={'type': 'indemnity_expense', 'war_id': war.id, 'amount': -amount}
-                    )
-                    war.set_indemnity_due(0)  # 清除赔款
+        """兼容旧测试入口：结算战争赔款并打印。"""
+        rows = EconomicService(self.state).settle_indemnities()
+        self._print_indemnities(rows)
+        return rows
 
     # ================================= MVP 0.1-0.5 =======================================
 
     def _process_contract_warranty(self):
-        """处理已竣工合同的质保期递减"""
-        for contract in self.state.contracts:
-            if contract.status == ContractStatus.COMPLETED:
-                if contract._warranty_remaining > 0:
-                    contract._warranty_remaining -= 1
-                    if contract._warranty_remaining <= 0:
-                        contract.status = ContractStatus.EXPIRED
-                        self.state.log_event(
-                            f"工程合同质保期结束: {contract.name}",
-                            extra={"type": "warranty_expired", "contract_id": contract.id}
-                        )
+        """兼容旧入口：处理已竣工合同的质保期递减。"""
+        return EconomicService(self.state).process_contract_warranty()
 
-    def _collect_private_land_income(self, terms, faction_tax_collected: Dict[str, float], tax_rate: float) -> List[
-        Tuple[int, str, int, int]]:
-        land_price = self.state.get_economic_rule("land_price_per_unit", 10)
-        rate = self.state.get_economic_rule("private_land_income_rate", 0.05)
+    def _process_warranty_decay(self, terms=None):
+        """兼容扩展测试入口：递减质保并在到期时提示。"""
+        rows = self._process_contract_warranty()
+        for row in rows:
+            if row["expired"]:
+                print(f"工程合同质保期结束: {row['name']}")
+        return rows
 
-        # 风调雨顺倍率
-        multiplier = 1.0
-        if "bumper_harvest" in self.state._active_events:
-            multiplier = self.state._active_events["bumper_harvest"]["multiplier"]
-
-        # 天灾影响（只影响意大利）
-        disaster_loss = 1.0
-        if "disaster" in self.state._active_events:
-            disaster_info = self.state._active_events["disaster"]
-            if disaster_info["province_id"] == 0:  # 意大利
-                disaster_loss = 1.0 - disaster_info["loss_ratio"]
-
-        data = []
-        for fig in self.state.get_living_members():
-            try:
-                if fig.land_private <= 0:
-                    continue
-                income_float = fig.land_private * land_price * rate
-                # 应用风调雨顺加成
-                income_float *= multiplier
-                # 应用天灾影响（所有人物私地收入都受影响，因为假设私地主要在意大利）
-                # 如果后续需要更精细的行省关联，可扩展
-                income_float *= disaster_loss
-                if income_float <= 0:
-                    continue
-
-                tax_float = income_float * tax_rate
-                net_income_float = income_float - tax_float
-                net_income_int = int(round(net_income_float))
-                if net_income_int > 0:
-                    fig.add_wealth(net_income_int)
-                    if fig.faction_id and fig.faction_id in faction_tax_collected:
-                        faction_tax_collected[fig.faction_id] += tax_float
-                    data.append((fig.id, fig.get_formal_name(), net_income_int, fig.wealth))
-            except Exception as e:
-                self.state.log_exception(
-                    e,
-                    context=f"私地收益处理失败: 人物 {fig.id} {fig.name}",
-                    extra={"figure_id": fig.id, "land_private": fig.land_private}
-                )
-                continue
-        return data
+    def _collect_private_land_income(
+            self,
+            terms,
+            faction_tax_collected: Dict[str, float],
+            tax_rate: float
+    ) -> List[Tuple[int, str, int, int]]:
+        return EconomicService(self.state).collect_private_land_income(faction_tax_collected, tax_rate)
 
     def _collect_contract_revenues(self, terms, faction_tax_collected: Dict[str, float], tax_rate: float):
-        """处理合同收益，逐条记录，包含异常处理"""
-        from src.core.entities.contract import ContractType, ContractStatus
-        active_contracts = [c for c in self.state.contracts
-                            if c.status == ContractStatus.ACTIVE]
+        return EconomicService(self.state).collect_contract_revenues(faction_tax_collected, tax_rate)
 
-        for contract in active_contracts:
-            try:
-                if contract.contract_type == ContractType.TAX_FARMING:
-                    winning_bid = contract.winning_bid
-                    if not winning_bid:
-                        continue
-                    figure = self.state.get_member(winning_bid["bidder_id"])
-                    if not figure or figure.is_dead:
-                        contract.terminate()
-                        province = self.state.get_province(contract.province_id)
-                        if province:
-                            province.unbind_tax_contract()
-                        continue
+    def _print_revenue_result(self, terms, data: Dict):
+        self._print_indemnities(data["indemnities"])
+        self._print_national_opex(data["national_opex"])
+        self._print_public_land_income(terms, data["public_land_income"])
 
-                    # 获取合同价和利润率
-                    contract_price = contract.contract_price
-                    profit_rate = contract.profit_rate
+        military = data["maintenance"]["military"]
+        if military.get("available"):
+            print(f"📊 军团维护费: \t{military.get('total', 0)} {terms.currency}")
 
-                    # 骑士毛利润
-                    gross_profit = int(contract_price * profit_rate)
-                    # 派系抽成
-                    tax_float = gross_profit * tax_rate
-                    tax_int = int(round(tax_float))
-                    net_profit = gross_profit - tax_int
+        naval = data["maintenance"]["naval"]
+        print(f"      ⚓ {naval.get('message', '')}")
 
-                    # 国库收入 = 合同价
-                    self.state.add_treasury(contract_price)
+        self._print_faction_table(terms, data["faction_rows"])
+        self._print_private_land_table(data["private_land_rows"], terms)
 
+    def _print_indemnities(self, rows: List[Dict]):
+        for row in rows:
+            amount = row["amount"]
+            if row["kind"] == "income":
+                print(f"      📦 战争赔款收入: {row['name']} +{amount} Talents")
+            elif row["kind"] == "expense":
+                print(f"      💸 战争赔款支出: {row['name']} {-amount} Talents")
+            elif row["kind"] == "insufficient":
+                print(f"      💀 国库不足以支付战争赔款 {row['name']} {-amount} Talents，共和覆灭！")
 
-                    # 骑士净收入
-                    figure.add_wealth(net_profit)
+    def _print_national_opex(self, data: Dict):
+        provinces = data.get("provinces", [])
+        if not provinces:
+            print("   🏛️ 无已征服行省，国家运营费为 0")
+            return
 
-                    contract.total_collected += contract_price
+        print("\n   🏛️ 国家运营费计算：")
+        for province in provinces:
+            print(f"      行省 {province['name']}: total_land={province['total_land']}")
 
-                    # 派系抽成累计
-                    if figure.faction_id and figure.faction_id in faction_tax_collected:
-                        faction_tax_collected[figure.faction_id] += tax_float
+        amount = data.get("amount", 0)
+        if amount > 0:
+            print(f"      土地单价: {data['land_price']} Talents/单位, 费率: {data['rate']}")
+            print(f"      总土地: {data['total_land']}, 运营费 = {amount} Talents")
+            print(f"      国库扣除后余额: {data['treasury_after']}")
+        else:
+            print("      运营费为 0，不扣除")
 
-                    if contract.remaining_years > 0:
-                        contract.remaining_years -= 1
-                        if contract.remaining_years == 0:
-                            contract.mark_complete(self.state.turn.turn_number)
-                            province = self.state.get_province(contract.province_id)
-                            if province:
-                                province.unbind_tax_contract()
+    def _print_public_land_income(self, terms, data: Dict):
+        for modifier in data.get("modifiers", []):
+            if modifier["type"] == "bumper_harvest":
+                print(f"      🌾 风调雨顺加成: 国家公地收益 ×{modifier['multiplier']}")
+            elif modifier["type"] == "disaster":
+                print(f"      🌪️ 天灾影响: 国家公地收益减少 {modifier['loss_ratio'] * 100:.0f}%")
 
-                    # 日志
-                    self.state.log_event(
-                        f"包税合同收益: {figure.name} 净得 {net_profit}，国库 +{contract_price}",
-                        extra={
-                            "type": "tax_contract_revenue",
-                            "contract_id": contract.id,
-                            "figure_id": figure.id,
-                            "net_profit": net_profit,
-                            "treasury_gain": contract_price
-                        }
-                    )
-
-                elif contract.contract_type == ContractType.PUBLIC_WORKS:
-                    figure = self.state.get_member(contract.awarded_to)
-                    if not figure or figure.is_dead:
-                        contract.terminate()
-                        province = self.state.get_province(contract.province_id)
-                        if province:
-                            province.unbind_project_contract()
-                        continue
-
-                    if contract.remaining_years > 0:
-                        annual_income = contract.annual_income
-                        annual_cost = contract._annual_cost
-                        if contract.remaining_years == 1:
-                            paid = contract.total_spent
-                            total_bid = contract.base_cost
-                            payment = total_bid - paid
-                            cost = annual_cost
-                        else:
-                            payment = annual_income
-                            cost = annual_cost
-
-                        profit_float = float(payment - cost)
-                        if profit_float > 0:
-                            tax_float = profit_float * tax_rate
-                            tax_int = int(round(tax_float))
-                        else:
-                            tax_float = 0.0
-                            tax_int = 0
-
-                        knight_net_profit = profit_float - tax_float
-                        knight_net_gain = int(round(knight_net_profit))
-                        self.state.add_treasury(-payment)
-                        figure.add_wealth(knight_net_gain)
-                        contract.total_spent += payment
-                        contract.remaining_years -= 1
-
-                        if figure.faction_id and figure.faction_id in faction_tax_collected:
-                            faction_tax_collected[figure.faction_id] += tax_float
-
-                        # 日志：工程合同收益
-                        self.state.log_event(
-                            f"工程合同 {contract.id} 收益: 支付 {payment}, 成本 {cost}, 利润 {profit_float}, 税收 {tax_int}, 骑士净得 {knight_net_gain}",
-                            level=logging.DEBUG
-                        )
-
-                        if contract.remaining_years <= 0:
-                            # 如果是舰队合同，不立即标记完成，等待舰队建成
-                            if getattr(contract, '_is_fleet_construction', False):
-                                # 仅记录已支付完成（可选，用于标记）
-                                contract._paid = True
-                                # 剩余年限已为0，下次收入阶段不会再次支付
-                            else:
-                                contract.mark_complete(self.state.turn.turn_number)
-                                province = self.state.get_province(contract.province_id)
-                                if province:
-                                    province.unbind_project_contract()
-                                self.state.log_event(
-                                    f"工程合同竣工: {contract.name}",
-                                    extra={"type": "works_contract_complete", "contract_id": contract.id}
-                                )
-            except Exception as e:
-                self.state.log_exception(
-                    e,
-                    context=f"合同收益处理失败: 合同 {contract.id}",
-                    extra={"contract_id": contract.id, "contract_type": contract.contract_type.value}
-                )
-                continue
+        print(f"💰 国家公地收益: \t+{data.get('amount', 0)} {terms.currency}")
+        print(f"📊 国库现有资金: \t{data.get('treasury_after', self.state.treasury)} {terms.currency}\n")
 
     def _print_faction_table(self, terms, faction_data: Dict[str, dict]):
         factions = list(self.state.factions.values())
@@ -447,30 +154,26 @@ class RevenueCommand(Command):
         factions.sort(key=lambda f: f.name)
 
         print("💰 派系金库收益 (Faction Treasury):")
-        # 表头
         header = "        "
         for f in factions:
             header += f"{f.name:<12}"
         print(header)
 
-        # 财政拨款
         row = "财政拨款"
         for f in factions:
-            stipend = faction_data[f.id]['stipend']
+            stipend = faction_data.get(f.id, {}).get("stipend", 0)
             row += f"  +{stipend:<10}"
         print(row)
 
-        # 会员贡献
         row = "会员贡献"
         for f in factions:
-            tax = faction_data[f.id]['tax']
+            tax = faction_data.get(f.id, {}).get("tax", 0)
             row += f"  +{tax:<10}"
         print(row)
 
-        # 现有资金
         row = "现有资金"
         for f in factions:
-            final = faction_data[f.id]['final']
+            final = faction_data.get(f.id, {}).get("final", f.treasury)
             row += f"  {final:<10}"
         print(row)
 
