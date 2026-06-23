@@ -260,10 +260,12 @@ def vote_triumph(state: GameState, player_id: str, war_id: str, vote: bool) -> d
 
 def transact_land(state: GameState, player_id: str, seller_id: int, buyer_id: int,
                   land: int, price: int, bypass_permission: bool = False) -> dict:
+    player = None
     if not bypass_permission:
         ok, resp = _check_player_permission(state, player_id)
         if not ok:
             return resp
+        player = state.get_player(player_id)
 
     seller = state.get_member(seller_id)
     buyer = state.get_member(buyer_id)
@@ -273,7 +275,10 @@ def transact_land(state: GameState, player_id: str, seller_id: int, buyer_id: in
         return api_response(False, i18n.get("error_figure_dead"))
     if land <= 0 or price <= 0:
         return api_response(False, i18n.get("error_invalid_amount"))
-    if seller._land_private < land:
+    if not bypass_permission and player:
+        if seller.faction_id != player.faction_id or buyer.faction_id != player.faction_id:
+            return api_response(False, i18n.get("error_figure_not_in_your_faction"))
+    if not seller.can_sell_land(land):
         return api_response(False, i18n.get("error_insufficient_land"))
 
     state.add_forum_action("land_trades", (seller_id, buyer_id, land, price))
@@ -552,7 +557,7 @@ def resolve_land_trades(state: GameState) -> dict:
             else:
                 results.append(f"⚠️ 土地数量无效")
 
-    state._forum_pending["land_trades"] = []
+    state.clear_forum_action("land_trades")
 
     message = "\n".join(results) if results else ""
     return api_response(True, message, data={"results": results})

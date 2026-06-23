@@ -241,6 +241,11 @@ class GameState:
         for key in self._forum_pending:
             self._forum_pending[key] = []
 
+    def clear_forum_action(self, category: str) -> None:
+        """清除指定类别的广场阶段临时数据。"""
+        if category in self._forum_pending:
+            self._forum_pending[category] = []
+
     def get_forum_pending(self) -> dict:
         """获取当前所有广场阶段临时数据副本"""
         return {k: v.copy() for k, v in self._forum_pending.items()}

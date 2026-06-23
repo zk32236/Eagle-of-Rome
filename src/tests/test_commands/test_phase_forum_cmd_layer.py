@@ -610,6 +610,40 @@ class TestForumCommand:
         assert "Trade complete" not in output
         assert "土地交易失败" not in output
 
+    def test_auto_land_trade_records_via_forum_api(self, test_state, mock_deciders):
+        """自动私地交易必须通过 forum_api.transact_land 记录。"""
+        test_state.config._config["forum_rules"]["enable_private_land_trade"] = True
+        retirement, recruitment, bid, land_trade, triumph = mock_deciders
+        land_trade.decide_trade.return_value = (2, 4, 3)
+        seller = test_state.get_member(2)
+        seller._land_private = 5
+        seller.office = "quaestor"
+        buyer = test_state.get_member(4)
+        buyer.wealth = 100
+
+        cmd = ForumCommand(test_state,
+                           retirement_decider=retirement,
+                           recruitment_decider=recruitment,
+                           bid_decider=bid,
+                           land_trade_decider=land_trade,
+                           triumph_decider=triumph)
+        cmd._auto_mode = True
+        cmd._players = ["p1"]
+        cmd._current_player_index = 0
+
+        with patch('src.ui.commands.phase_forum.forum_api.transact_land',
+                   return_value={"success": True, "message": "recorded", "data": {}, "errors": []}) as mock_transact:
+            with patch('src.ui.commands.phase_forum.forum_api.resolve_land_trades',
+                       return_value={"success": True, "message": "", "data": {"results": []}, "errors": []}):
+                with patch.object(test_state, 'add_forum_action', wraps=test_state.add_forum_action) as mock_add:
+                    with patch('sys.stdout', new_callable=StringIO):
+                        cmd._handle_step_4()
+
+        mock_transact.assert_called_once()
+        kwargs = mock_transact.call_args.kwargs
+        assert kwargs["bypass_permission"] is True
+        assert not any(args[0] == "land_trades" for args, _ in mock_add.call_args_list)
+
     # ========== 凯旋显示测试 ==========
     def test_triumph_display(self, test_state, mock_deciders):
         """凯旋信息在公告环节显示"""

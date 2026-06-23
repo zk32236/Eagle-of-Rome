@@ -1424,10 +1424,20 @@ class ForumCommand(Command):
                             service = LandTradingService(self.state)
                             unit_price = service.calculate_land_price(seller, buyer)
                             total_price = amount * unit_price
-                            # 直接记录交易，不经过 API 权限检查
-                            self.state.add_forum_action("land_trades", (seller_id, buyer_id, amount, total_price))
-                            print(f"🤖 AI派系 {self.state.get_faction(seller.faction_id).name} 进行了土地交易。",
-                                  flush=True)
+                            result = forum_api.transact_land(
+                                self.state,
+                                player_id or "",
+                                seller_id,
+                                buyer_id,
+                                amount,
+                                total_price,
+                                bypass_permission=True
+                            )
+                            if result["success"]:
+                                print(f"🤖 AI派系 {self.state.get_faction(seller.faction_id).name} 进行了土地交易。",
+                                      flush=True)
+                            else:
+                                print(f"⚠️ 土地交易失败：{result['message']}", flush=True)
                 except Exception as e:
                     logging.exception("交易市场环节自动决策异常")
             try:

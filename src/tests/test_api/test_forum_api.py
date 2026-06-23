@@ -391,6 +391,30 @@ class TestTransactLand:
         pending = test_state.get_forum_pending()
         assert (2, 4, 1, 15) in pending["land_trades"]
 
+    def test_not_current_player(self, test_state):
+        result = forum_api.transact_land(test_state, "p2", 2, 4, 1, 15)
+        assert result["success"] is False
+        assert i18n.get("error_not_your_turn") in result["message"]
+
+    def test_figure_not_in_player_faction(self, test_state):
+        result = forum_api.transact_land(test_state, "p1", 2, 3, 1, 15)
+        assert result["success"] is False
+        assert i18n.get("error_figure_not_in_your_faction") in result["message"]
+
+    def test_bypass_permission_allows_auto_trade_recording(self, test_state):
+        result = forum_api.transact_land(
+            test_state,
+            "p1",
+            2,
+            3,
+            1,
+            15,
+            bypass_permission=True
+        )
+        assert result["success"] is True
+        pending = test_state.get_forum_pending()
+        assert (2, 3, 1, 15) in pending["land_trades"]
+
     def test_figure_not_found(self, test_state):
         result = forum_api.transact_land(test_state, "p1", 999, 4, 1, 15)
         assert result["success"] is False
@@ -407,6 +431,17 @@ class TestTransactLand:
         result = forum_api.transact_land(test_state, "p1", 2, 4, 0, 15)
         assert result["success"] is False
         assert i18n.get("error_invalid_amount") in result["message"]
+
+    def test_resolve_land_trades_clears_only_land_trades(self, test_state):
+        test_state.add_forum_action("land_trades", (2, 4, 1, 15))
+        test_state.add_forum_action("recruitment_bids", ("f1", 7, 30))
+
+        result = forum_api.resolve_land_trades(test_state)
+
+        assert result["success"] is True
+        pending = test_state.get_forum_pending()
+        assert pending["land_trades"] == []
+        assert pending["recruitment_bids"] == [("f1", 7, 30)]
 
 
 # ========== resolve_forum 测试 ==========
