@@ -1099,6 +1099,8 @@ class ForumCommand(Command):
             self._step = 1
             self._players = self._get_step_players()
             self._current_player_index = 0
+            if self._players:
+                self.state.set_current_player(self._players[0])
             print("\n--- 进入裁员环节 ---", flush=True)
         elif self._step in (1, 2, 3):
             if self._switch_to_next_player():

@@ -17,6 +17,7 @@ import io
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import List, Optional
+from unittest.mock import patch
 
 # 添加项目根目录到Python路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -29,6 +30,9 @@ from src.ui.commands.sys_base import Command
 from src.ui.commands.sys_help import HelpCommand
 from src.ui.commands.sys_exit import ExitCommand
 from src.ui.debug_cli import DebugCLI
+from src.core.game_state import GameState
+from src.core.entities.entities import Faction
+from src.core.entities.player import Player, PlayerType
 
 
 class TestCommandFramework(unittest.TestCase):
@@ -46,6 +50,10 @@ class TestCommandFramework(unittest.TestCase):
 
         # 创建注册器实例
         self.registry = CommandRegistry(self.commands_dir)
+
+    def _make_cli(self) -> DebugCLI:
+        with patch('src.ui.debug_cli.GameState', return_value=GameState.create_for_testing({})):
+            return DebugCLI()
 
     def test_registry_discovers_commands(self):
         """测试注册器能自动发现help和exit命令"""
@@ -185,7 +193,7 @@ class TestCommandFramework(unittest.TestCase):
 
     def test_cli_initialization(self):
         """测试CLI初始化"""
-        cli = DebugCLI()
+        cli = self._make_cli()
 
         self.assertTrue(cli.running, "CLI初始时应为运行状态")
         self.assertIsNotNone(cli.registry, "CLI应初始化注册器")
@@ -197,7 +205,7 @@ class TestCommandFramework(unittest.TestCase):
 
     def test_command_instance_creation(self):
         """测试命令实例创建"""
-        cli = DebugCLI()
+        cli = self._make_cli()
 
         # 创建help命令实例
         help_instance = cli._create_command_instance("help")
@@ -224,6 +232,20 @@ class TestCommandFramework(unittest.TestCase):
         # 执行带参数的 help
         result = help_cmd.execute(["arg1", "arg2"])
         self.assertTrue(result, "带参数的help应能执行")
+
+    def test_cli_prompt_restores_ai_current_player_to_human(self):
+        """交互提示符遇到 AI current_player 时恢复到首个人类玩家。"""
+        cli = self._make_cli()
+        cli.state.add_faction(Faction("human_faction", "Humans", treasury=100))
+        cli.state.add_faction(Faction("ai_faction", "AI", treasury=100))
+        cli.state.add_player(Player("human_player", "human_faction", PlayerType.HUMAN))
+        cli.state.add_player(Player("ai_player", "ai_faction", PlayerType.AI))
+        cli.state.set_current_player("ai_player")
+
+        prompt = cli._get_prompt_prefix()
+
+        self.assertEqual(prompt, "[human_player Humans] ")
+        self.assertEqual(cli.state.get_current_player().player_id, "human_player")
 
 
 class TestCommandIsolation(unittest.TestCase):

@@ -13,6 +13,7 @@ from typing import Optional
 from src.core.i18n import i18n
 from src.ui.commands.sys_registry import CommandRegistry
 from src.core.game_state import GameState
+from src.core.entities.player import PlayerType
 from src.api import game_api
 
 # 添加项目根目录到Python路径
@@ -87,12 +88,36 @@ class DebugCLI:
 
     def _get_prompt_prefix(self) -> str:
         """返回提示符前缀，如 [Player1] """
+        self._ensure_interactive_player()
         player = self.state.get_current_player()
         if player:
             faction = self.state.get_faction(player.faction_id)
             faction_name = faction.name if faction else "无派系"
             return f"[{player.player_id} {faction_name}] "
         return "> "
+
+    def _ensure_interactive_player(self) -> None:
+        """交互式 CLI 中避免 AI 玩家长期占据顶层 current player。"""
+        player = self.state.get_current_player()
+        if not player or player.player_type != PlayerType.AI:
+            return
+        human_player = next(
+            (p for p in self.state.get_all_players() if p.player_type == PlayerType.HUMAN),
+            None
+        )
+        if not human_player:
+            return
+        old_id = player.player_id
+        self.state.set_current_player(human_player.player_id)
+        self.state.log_event(
+            "CLI current player restored to human player",
+            level=logging.DEBUG,
+            extra={
+                "from_player": old_id,
+                "to_player": human_player.player_id,
+                "reason": "interactive_prompt_ai_player"
+            }
+        )
 
     def _get_next_phase(self) -> Optional[str]:
         """返回下一个未执行的阶段名，若全部执行则返回None"""
@@ -103,6 +128,7 @@ class DebugCLI:
 
     # src/ui/debug_cli.py
     def _execute_phase_with_ui(self, phase_name: str) -> bool:
+        self._ensure_interactive_player()
         player = self.state.get_current_player()
         if not player:
             print("当前没有玩家")

@@ -232,6 +232,30 @@ class TestForumCommand:
             # 记录警告但通过
             print("Warning: No output from _generate_new_figures, but figures were generated.")
 
+    def test_step0_to_step1_syncs_state_current_player_before_retire(self, test_state, mock_deciders):
+        """残留 AI current_player 时，进入裁员环节应同步为首个步骤玩家。"""
+        test_state.set_current_player("p2")
+        retirement, recruitment, bid, land_trade, triumph = mock_deciders
+        cmd = ForumCommand(test_state,
+                           retirement_decider=retirement,
+                           recruitment_decider=recruitment,
+                           bid_decider=bid,
+                           land_trade_decider=land_trade,
+                           triumph_decider=triumph)
+        cmd._step = 0
+
+        with patch('sys.stdout', new_callable=StringIO):
+            cmd._handle_next([])
+
+        assert cmd._get_current_player_id() == "p1"
+        assert test_state.get_current_player().player_id == "p1"
+
+        with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
+            result = cmd._handle_retire(["2"])
+
+        assert result is True
+        assert i18n.get("error_not_your_turn") not in mock_stdout.getvalue()
+
     # ========== 淘汰测试 ==========
     def test_process_retirements_with_candidate(self, test_state, mock_deciders):
         """有合格淘汰者时正确淘汰（AI模式）"""
