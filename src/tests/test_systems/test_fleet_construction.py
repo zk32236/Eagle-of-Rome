@@ -24,9 +24,9 @@ def test_fleet_construction_lifecycle():
 
     state._war_system = WarSystem(state)
     war = War(id="war1", name="Test Naval War", naval_required=True)
-    war.status = WarStatus.ACTIVE  # 改为 ACTIVE，以触发自动指派
+    war.status = WarStatus.THREAT
     war._enemy_naval_current = 2
-    state.get_war_system()._threats = [war]  # 注意：生成合同时需要战争在 _threats 中，但建造完成后检查时 war 应来自 _active_wars
+    state.get_war_system().get_naval_threat_wars = Mock(return_value=[war])
 
     state.turn = Mock()
     state.turn.turn_number = 1
@@ -56,6 +56,7 @@ def test_fleet_construction_lifecycle():
     assert completed == []
     assert fleet.status.value == "building"
 
+    war.status = WarStatus.ACTIVE
     war_system_mock = Mock()
     war_system_mock.get_war_by_id.return_value = war
     state.get_war_system = Mock(return_value=war_system_mock)

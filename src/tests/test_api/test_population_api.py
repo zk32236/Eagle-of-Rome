@@ -11,6 +11,7 @@ from src.core.entities.entities import Faction, GameTurn
 from src.core.entities.player import Player, PlayerType
 from src.api import population_api
 from src.core.i18n import i18n
+from src.ui.processors.auto_player_processor import AutoPlayerProcessor
 
 i18n.load("zh-CN")
 
@@ -157,6 +158,33 @@ def state_bypass_mode(state_with_two_players):
 
 # ========== TestCampaign ==========
 
+class TestPopulationPending:
+    def test_empty_record_copy_replace_and_clear(self, state_base):
+        assert state_base.get_population_pending_snapshot() == {
+            "campaigns": [],
+            "votes": [],
+        }
+
+        state_base.record_population_campaign("p1", 1, 10)
+        campaigns = state_base.get_population_campaigns()
+        campaigns.append(("tamper", 9, 99))
+        assert state_base.get_population_campaigns() == [("p1", 1, 10)]
+
+        assert state_base.record_population_vote("p1", "consul", 1) is True
+        assert state_base.record_population_vote("p1", "consul", 2) is False
+        assert state_base.record_population_vote(
+            "p1", "consul", 2, replace=True
+        ) is True
+        votes = state_base.get_population_votes()
+        votes.clear()
+        assert state_base.get_population_votes() == [("p1", "consul", 2)]
+
+        state_base.clear_population_pending()
+        assert state_base.get_population_pending_snapshot() == {
+            "campaigns": [],
+            "votes": [],
+        }
+
 class TestCampaign:
     """测试 campaign API"""
 
@@ -209,6 +237,26 @@ class TestCampaign:
         assert result["success"] is True
         fig = state_auto_mode.get_member(1)
         assert fig.wealth == 40
+
+    def test_explicit_bypass_keeps_business_validation(self, state_normal_mode):
+        result = population_api.campaign(
+            state_normal_mode,
+            "p2",
+            1,
+            100,
+            bypass_permission=True
+        )
+        assert result["success"] is False
+        assert state_normal_mode.get_member(1).wealth == 50
+
+        result = population_api.campaign(
+            state_normal_mode,
+            "p2",
+            999,
+            10,
+            bypass_permission=True
+        )
+        assert result["success"] is False
 
 
 # ========== TestVote ==========
@@ -265,6 +313,103 @@ class TestVote:
         fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
         result = population_api.vote(state_auto_mode, "p2", "consul", 1)
         assert result["success"] is True
+
+    def test_explicit_bypass_replaces_vote_but_keeps_candidate_validation(
+        self,
+        state_normal_mode
+    ):
+        fig1 = state_normal_mode.get_member(1)
+        fig2 = state_normal_mode.get_member(2)
+        fig1.office_history.append(OfficeTerm("praetor", -10, -9))
+        fig2.office_history.append(OfficeTerm("praetor", -10, -9))
+
+        assert population_api.vote(
+            state_normal_mode,
+            "p2",
+            "consul",
+            1,
+            bypass_permission=True
+        )["success"]
+        assert population_api.vote(
+            state_normal_mode,
+            "p2",
+            "consul",
+            2,
+            bypass_permission=True
+        )["success"]
+        assert state_normal_mode.get_population_votes() == [
+            ("p2", "consul", 2)
+        ]
+
+        result = population_api.vote(
+            state_normal_mode,
+            "p2",
+            "consul",
+            3,
+            bypass_permission=True
+        )
+        assert result["success"] is False
+
+
+class TestAutoPopulationApi:
+    def _processor(self, state, festival_decider=None, vote_decider=None):
+        return AutoPlayerProcessor(
+            state,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            festival_decider=festival_decider,
+            vote_decider=vote_decider,
+        )
+
+    def test_festival_uses_api_with_explicit_bypass(self, state_normal_mode):
+        decider = MagicMock()
+        decider.decide_festivals.return_value = {2: 10}
+        processor = self._processor(state_normal_mode, festival_decider=decider)
+        faction = state_normal_mode.get_faction("f2")
+
+        with patch(
+            "src.api.population_api.get_candidates",
+            return_value={
+                "success": True,
+                "data": {"consul": [{"id": 2}]},
+            }
+        ), patch("src.api.population_api.campaign") as campaign_mock:
+            campaign_mock.return_value = {"success": True, "message": "ok"}
+            processor.process_festival("p2", faction, bypass_permission=True)
+
+        campaign_mock.assert_called_once_with(
+            state_normal_mode,
+            "p2",
+            2,
+            10,
+            bypass_permission=True
+        )
+
+    def test_vote_uses_api_with_explicit_bypass(self, state_normal_mode):
+        decider = MagicMock()
+        decider.decide_vote.return_value = 2
+        processor = self._processor(state_normal_mode, vote_decider=decider)
+        faction = state_normal_mode.get_faction("f2")
+
+        with patch(
+            "src.api.population_api.get_candidates",
+            return_value={
+                "success": True,
+                "data": {"consul": [{"id": 2}]},
+            }
+        ), patch("src.api.population_api.vote") as vote_mock:
+            vote_mock.return_value = {"success": True, "message": "ok"}
+            processor.process_vote("p2", faction, bypass_permission=True)
+
+        vote_mock.assert_called_once_with(
+            state_normal_mode,
+            "p2",
+            "consul",
+            2,
+            bypass_permission=True
+        )
 
 
 # ========== TestGetCandidates ==========

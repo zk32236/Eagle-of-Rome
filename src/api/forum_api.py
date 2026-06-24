@@ -466,8 +466,9 @@ def resolve_forum(state: GameState) -> dict:
                     continue
 
                 cost = actual_buy * land_price
-                figure.wealth -= cost
-                figure._land_private += actual_buy
+                if not figure.buy_land(actual_buy, land_price):
+                    results.append(f"⚠️ {figure.get_formal_name()} 资金不足，无法认购")
+                    continue
                 figure.update_influence()
                 state.add_treasury(cost)
                 state.add_national_public_land(-actual_buy)
@@ -487,7 +488,7 @@ def resolve_forum(state: GameState) -> dict:
             votes_by_war.setdefault(war_id, []).append((faction_id, vote))
 
     if war_system:
-        for war in war_system._war_discard:
+        for war in war_system.get_resolved_wars():
             if war.soldier_share <= 0 or war.status != WarStatus.RESOLVED or war.triumph_commander_id is None:
                 continue
 

@@ -131,7 +131,7 @@ def test_state():
 
     # 添加战争系统（用于凯旋）
     war_system = MagicMock(spec=WarSystem)
-    war_system._war_discard = []
+    war_system.get_resolved_wars.return_value = []
     war_system.get_war_by_id = MagicMock(return_value=None)
     state.get_war_system = MagicMock(return_value=war_system)
 
@@ -519,6 +519,22 @@ class TestResolveForum:
         assert test_state.get_national_public_land() == 100 - 50
         assert test_state.pending_land_sale_quota == 0
 
+    def test_land_purchase_updates_figure_and_treasury_atomically(self, test_state):
+        test_state.set_pending_land_sale_quota(2)
+        test_state.add_forum_action("land_purchases", (2, 2))
+        figure = test_state.get_member(2)
+        figure.wealth = 30
+        initial_land = figure.land_private
+        initial_treasury = test_state.treasury
+
+        result = forum_api.resolve_forum(test_state)
+
+        assert result["success"] is True
+        assert figure.wealth == 10
+        assert figure.land_private == initial_land + 2
+        assert test_state.treasury == initial_treasury + 20
+        assert test_state.get_national_public_land() == 98
+
     def test_land_purchase_insufficient_land(self, test_state):
         test_state.set_pending_land_sale_quota(50)
         test_state.add_forum_action("land_purchases", (2, 80))
@@ -569,7 +585,7 @@ class TestResolveForum:
         war.status = WarStatus.RESOLVED
         war.triumph_commander_id = 1
         war_system = test_state.get_war_system()
-        war_system._war_discard = [war]
+        war_system.get_resolved_wars.return_value = [war]
         test_state._forum_pending["triumph_votes"] = [("war1", "f1", True), ("war1", "f2", False)]
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
@@ -583,7 +599,7 @@ class TestResolveForum:
         war.status = WarStatus.RESOLVED
         war.triumph_commander_id = 1
         war_system = test_state.get_war_system()
-        war_system._war_discard = [war]
+        war_system.get_resolved_wars.return_value = [war]
         test_state._forum_pending["triumph_votes"] = [("war1", "f1", False), ("war1", "f2", True)]
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
@@ -597,7 +613,7 @@ class TestResolveForum:
         war.status = WarStatus.RESOLVED
         war.triumph_commander_id = 1
         war_system = test_state.get_war_system()
-        war_system._war_discard = [war]
+        war_system.get_resolved_wars.return_value = [war]
         commander = test_state.get_member(1)
         commander.is_dead = True
         test_state.add_forum_action("triumph_votes", ("war1", "f1", True))
@@ -618,7 +634,7 @@ class TestResolveForum:
         war.status = WarStatus.RESOLVED
         war.triumph_commander_id = 1
         war_system = test_state.get_war_system()
-        war_system._war_discard = [war]
+        war_system.get_resolved_wars.return_value = [war]
         test_state.add_forum_action("triumph_votes", ("war1", "f1", True))
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True

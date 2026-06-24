@@ -12,12 +12,18 @@ from src.core.i18n import i18n
 from src.core.entities.figure import Figure, ClassTier, OfficeTerm
 
 
-def campaign(state: GameState, player_id: str, figure_id: int, amount: int) -> dict:
+def campaign(
+    state: GameState,
+    player_id: str,
+    figure_id: int,
+    amount: int,
+    bypass_permission: bool = False
+) -> dict:
     """
     举办庆典，消耗人物财富，增加人气。
     权限：当前玩家，且人物属于当前玩家派系（除非 bypass_player_check=True）。
     """
-    bypass = state.config.get("testing.bypass_player_check", False)
+    bypass = bypass_permission or state.config.get("testing.bypass_player_check", False)
 
     if not bypass:
         if not state.is_current_player(player_id):
@@ -46,8 +52,7 @@ def campaign(state: GameState, player_id: str, figure_id: int, amount: int) -> d
     figure.popularity += amount
     figure.update_influence()
 
-    # 记录到临时存储（可选）
-    state._population_pending["campaigns"].append((player_id, figure_id, amount))
+    state.record_population_campaign(player_id, figure_id, amount)
 
     message = i18n.get("info_campaign_success", name=figure.get_formal_name(), amount=amount)
     state.log_event(
@@ -57,13 +62,19 @@ def campaign(state: GameState, player_id: str, figure_id: int, amount: int) -> d
     return api_response(True, message, data={"figure_id": figure_id, "amount": amount})
 
 
-def vote(state: GameState, player_id: str, office: str, figure_id: int) -> dict:
+def vote(
+    state: GameState,
+    player_id: str,
+    office: str,
+    figure_id: int,
+    bypass_permission: bool = False
+) -> dict:
     """
     为指定公职的候选人投票。
     权限：当前玩家（除非 bypass_player_check=True）。
     规则：每个玩家在每个官职只能投一次，重复投票将报错。
     """
-    bypass = state.config.get("testing.bypass_player_check", False)
+    bypass = bypass_permission or state.config.get("testing.bypass_player_check", False)
 
     if not bypass:
         if not state.is_current_player(player_id):
@@ -89,13 +100,13 @@ def vote(state: GameState, player_id: str, office: str, figure_id: int) -> dict:
         if not any(c["id"] == figure_id for c in candidates):
             return api_response(False, i18n.get("error_figure_not_candidate"))
 
-    # 检查是否已为该官职投过票
-    for v in state._population_pending["votes"]:
-        if v[0] == player_id and v[1] == office:
-            return api_response(False, i18n.get("error_already_voted", office=office.upper()))
-
-    # 记录投票
-    state._population_pending["votes"].append((player_id, office, figure_id))
+    if not state.record_population_vote(
+        player_id,
+        office,
+        figure_id,
+        replace=bypass_permission
+    ):
+        return api_response(False, i18n.get("error_already_voted", office=office.upper()))
 
     message = i18n.get("info_vote_recorded", office=office.upper(), name=figure.get_formal_name())
     state.log_event(
@@ -205,9 +216,9 @@ def _format_candidates_message(data: Dict[str, List[Dict]]) -> str:
 def resolve_election(state: GameState) -> dict:
     """
     统计投票结果，确定当选者，授予官职。
-    根据 _population_pending["votes"] 记录进行加权计票。
+    根据人口阶段投票记录进行加权计票。
     """
-    votes = state._population_pending.get("votes", [])
+    votes = state.get_population_votes()
     if not votes:
         return api_response(True, "无投票记录", data={})
 

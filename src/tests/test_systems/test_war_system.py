@@ -1,6 +1,7 @@
 # src/tests/test_systems/test_war_system.py
 
 import pytest
+from unittest.mock import MagicMock
 from src.core.systems.war_system import WarSystem
 from src.core.entities.war import War, WarStatus
 from src.core.game_state import GameState
@@ -91,3 +92,46 @@ class TestWarThreatMechanism:
         assert len(events) == 0
         assert len(war_system._active_wars) == 1
         assert war_system._active_wars[0].threat_level == 3
+
+
+class TestWarSystemPublicInterfaces:
+    def test_resolved_and_naval_queries_return_copies(self, game_state):
+        ws = WarSystem(game_state)
+        resolved = War(id="resolved", name="Resolved")
+        resolved.status = WarStatus.RESOLVED
+        naval = War(id="naval", name="Naval", naval_required=True)
+        naval.status = WarStatus.THREAT
+        land = War(id="land", name="Land", naval_required=False)
+        land.status = WarStatus.THREAT
+        ws._war_discard = [resolved]
+        ws._threats = [naval, land]
+
+        resolved_copy = ws.get_resolved_wars()
+        naval_copy = ws.get_naval_threat_wars()
+        resolved_copy.clear()
+        naval_copy.clear()
+
+        assert ws.get_resolved_wars() == [resolved]
+        assert ws.get_naval_threat_wars() == [naval]
+
+    def test_rebellion_registration_is_idempotent_and_active(self, game_state):
+        ws = WarSystem(game_state)
+        province = MagicMock()
+        province.province_id = 7
+        province.name = "Sicilia"
+        war = ws.create_rebellion_war(province)
+
+        assert ws.register_rebellion_war(war) is True
+        assert ws.register_rebellion_war(war) is False
+        assert war.status == WarStatus.ACTIVE
+        assert ws.get_active_wars() == [war]
+
+    def test_clear_legions_to_disband_returns_copy_and_clears(self, game_state):
+        ws = WarSystem(game_state)
+        ws.add_legions_to_disband([1, 2])
+
+        pending = ws.clear_legions_to_disband()
+        pending.append(3)
+
+        assert pending == [1, 2, 3]
+        assert ws.clear_legions_to_disband() == []

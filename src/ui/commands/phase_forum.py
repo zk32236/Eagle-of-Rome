@@ -153,7 +153,7 @@ class ForumCommand(Command):
         try:
             war_system = self.state.get_war_system()
             if war_system:
-                for war in war_system._war_discard:
+                for war in war_system.get_resolved_wars():
                     # 修正：使用 triumph_commander_id 且不为 None
                     if war.soldier_share > 0 and war.status == WarStatus.RESOLVED and war.triumph_commander_id is not None:
                         commander = self.state.get_member(war.triumph_commander_id)
@@ -185,7 +185,7 @@ class ForumCommand(Command):
         war_system = self.state.get_war_system()
         if not war_system:
             return None
-        for war in war_system._war_discard:
+        for war in war_system.get_resolved_wars():
             # 使用 triumph_commander_id，且必须不为 None
             if war.status == WarStatus.RESOLVED and war.soldier_share > 0 and war.triumph_commander_id is not None:
                 commander = self.state.get_member(war.triumph_commander_id)
@@ -499,14 +499,14 @@ class ForumCommand(Command):
                 war_system = self.state.get_war_system()
                 if war_system:
                     rebellion_war = war_system.create_rebellion_war(province)
-                    war_system._active_wars.append(rebellion_war)
-                    province.set_event_flag("rebellion_active", True)
-                    print(f"      ⚔️ 行省 {province.name} 爆发起义！战争 {rebellion_war.name} 已激活。")
-                    self.state.log_event(
-                        f"行省起义：{province.name}",
-                        extra={"type": "rebellion", "province_id": province.province_id}
-                    )
-                    any_change = True
+                    if war_system.register_rebellion_war(rebellion_war):
+                        province.set_event_flag("rebellion_active", True)
+                        print(f"      ⚔️ 行省 {province.name} 爆发起义！战争 {rebellion_war.name} 已激活。")
+                        self.state.log_event(
+                            f"行省起义：{province.name}",
+                            extra={"type": "rebellion", "province_id": province.province_id}
+                        )
+                        any_change = True
 
             # 自动升级
             if 0 < province.grievance < 3:

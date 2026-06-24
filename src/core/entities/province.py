@@ -258,6 +258,21 @@ class Province:
         self._governor_designate_id = None
         self._old_governor_id = None
 
+    def complete_governor_transition(
+        self,
+        turn: int,
+        promote_designate: bool = True
+    ) -> tuple[Optional[int], Optional[int]]:
+        """完成候任总督交接并清理本轮临时记录。"""
+        old_governor_id = self._old_governor_id
+        designate_id = self._governor_designate_id
+        if designate_id is not None and promote_designate:
+            self._governor_id = designate_id
+            self._governor_since = turn
+        self._governor_designate_id = None
+        self._old_governor_id = None
+        return old_governor_id, designate_id
+
     def set_event_flag(self, key: str, value: Any) -> None:
         """设置事件标记"""
         self._event_flags[key] = value

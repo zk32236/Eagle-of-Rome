@@ -228,6 +228,58 @@ class GameState:
             "proposal_id_counter": 1
         }
 
+    # 人口阶段玩家操作
+    def record_population_campaign(self, player_id: str, figure_id: int, amount: int) -> None:
+        """记录一次已完成的庆典。"""
+        self._population_pending["campaigns"].append((player_id, figure_id, amount))
+
+    def get_population_campaigns(self) -> list:
+        """返回庆典记录副本。"""
+        return self._population_pending["campaigns"].copy()
+
+    def record_population_vote(
+        self,
+        player_id: str,
+        office: str,
+        figure_id: int,
+        replace: bool = False
+    ) -> bool:
+        """记录人口阶段投票；replace=True 时覆盖同玩家同官职旧票。"""
+        votes = self._population_pending["votes"]
+        existing_index = next(
+            (
+                index
+                for index, vote in enumerate(votes)
+                if vote[0] == player_id and vote[1] == office
+            ),
+            None
+        )
+        if existing_index is not None:
+            if not replace:
+                return False
+            votes[existing_index] = (player_id, office, figure_id)
+            return True
+        votes.append((player_id, office, figure_id))
+        return True
+
+    def get_population_votes(self) -> list:
+        """返回投票记录副本。"""
+        return self._population_pending["votes"].copy()
+
+    def get_population_pending_snapshot(self) -> dict:
+        """返回人口阶段临时数据快照。"""
+        return {
+            "campaigns": self.get_population_campaigns(),
+            "votes": self.get_population_votes(),
+        }
+
+    def clear_population_pending(self) -> None:
+        """清空人口阶段临时数据。"""
+        self._population_pending = {
+            "campaigns": [],
+            "votes": [],
+        }
+
     # 广场阶段玩家操作
     def add_forum_action(self, category: str, data) -> None:
         """添加广场阶段操作记录"""

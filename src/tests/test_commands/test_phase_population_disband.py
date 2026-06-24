@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 from src.ui.commands.phase_population import PopulationCommand
 from src.core.entities.war import War, WarStatus
 from src.core.entities.figure import Figure
+from src.core.entities.legion import LegionStatus
 from src.core.game_state import GameState
 from src.core.systems.war_system import WarSystem
 from src.core.systems.military_system import MilitarySystem
@@ -46,8 +47,8 @@ class TestPopulationDisband:
     def test_disband_with_triumph(self, mock_state, mock_war, mock_commander):
         """测试凯旋已批准的战争：显示凯旋式并解散军团"""
         ws = mock_state.get_war_system.return_value
-        ws._war_discard = [mock_war]
-        ws._legions_to_disband = []
+        ws.get_resolved_wars.return_value = [mock_war]
+        ws.clear_legions_to_disband.return_value = []
         ms = mock_state.get_military_system.return_value
         ms.disband_legions_for_war.return_value = (3, [])
         mock_state.get_member.return_value = mock_commander
@@ -61,8 +62,8 @@ class TestPopulationDisband:
         """测试凯旋未批准的战争：只解散军团，不显示凯旋式"""
         mock_war.triumph_approved = False
         ws = mock_state.get_war_system.return_value
-        ws._war_discard = [mock_war]
-        ws._legions_to_disband = []
+        ws.get_resolved_wars.return_value = [mock_war]
+        ws.clear_legions_to_disband.return_value = []
         ms = mock_state.get_military_system.return_value
         ms.disband_legions_for_war.return_value = (3, [])
 
@@ -75,8 +76,8 @@ class TestPopulationDisband:
         """测试指挥官已死亡：不显示凯旋式，但军团仍解散"""
         mock_commander.is_dead = True
         ws = mock_state.get_war_system.return_value
-        ws._war_discard = [mock_war]
-        ws._legions_to_disband = []
+        ws.get_resolved_wars.return_value = [mock_war]
+        ws.clear_legions_to_disband.return_value = []
         ms = mock_state.get_military_system.return_value
         ms.disband_legions_for_war.return_value = (3, [])
         mock_state.get_member.return_value = mock_commander
@@ -90,8 +91,8 @@ class TestPopulationDisband:
         """测试战争没有军团记录，不应调用解散"""
         mock_war.legion_numbers = []
         ws = mock_state.get_war_system.return_value
-        ws._war_discard = [mock_war]
-        ws._legions_to_disband = []
+        ws.get_resolved_wars.return_value = [mock_war]
+        ws.clear_legions_to_disband.return_value = []
         ms = mock_state.get_military_system.return_value
 
         cmd = PopulationCommand(mock_state)
@@ -109,8 +110,8 @@ class TestPopulationDisband:
         war2.legion_numbers = [4, 5]
 
         ws = mock_state.get_war_system.return_value
-        ws._war_discard = [mock_war, war2]
-        ws._legions_to_disband = []
+        ws.get_resolved_wars.return_value = [mock_war, war2]
+        ws.clear_legions_to_disband.return_value = []
         ms = mock_state.get_military_system.return_value
         ms.disband_legions_for_war.side_effect = [(3, []), (2, [])]
 
@@ -121,3 +122,42 @@ class TestPopulationDisband:
         assert ms.disband_legions_for_war.call_count == 2
         ms.disband_legions_for_war.assert_any_call([1, 2, 3])
         ms.disband_legions_for_war.assert_any_call([4, 5])
+
+    def test_failed_pending_legions_are_requeued(self, mock_state):
+        ws = mock_state.get_war_system.return_value
+        ws.get_resolved_wars.return_value = []
+        ws.clear_legions_to_disband.return_value = [1, 2]
+        ms = mock_state.get_military_system.return_value
+        ms.disband_legions_for_war.return_value = (1, ["Legio II 解散失败"])
+
+        legion1 = MagicMock()
+        legion1.status = LegionStatus.DISBANDED
+        legion2 = MagicMock()
+        legion2.status = LegionStatus.ACTIVE
+        ms.get_legion_by_number.side_effect = [legion1, legion2]
+
+        PopulationCommand(mock_state)._process_legion_disbandment_and_triumphs()
+
+        ws.add_legions_to_disband.assert_called_once_with([2])
+
+    def test_failed_resolved_war_legions_move_to_pending_queue(
+        self,
+        mock_state,
+        mock_war
+    ):
+        ws = mock_state.get_war_system.return_value
+        ws.get_resolved_wars.return_value = [mock_war]
+        ws.clear_legions_to_disband.return_value = []
+        ms = mock_state.get_military_system.return_value
+        ms.disband_legions_for_war.return_value = (2, ["Legio III 解散失败"])
+
+        disbanded = MagicMock()
+        disbanded.status = LegionStatus.DISBANDED
+        failed = MagicMock()
+        failed.status = LegionStatus.ACTIVE
+        ms.get_legion_by_number.side_effect = [disbanded, disbanded, failed]
+
+        PopulationCommand(mock_state)._process_legion_disbandment_and_triumphs()
+
+        ws.add_legions_to_disband.assert_called_once_with([3])
+        mock_war.clear_legion_numbers.assert_called_once()

@@ -12,6 +12,7 @@ from src.core.localization import TerminologyService
 from src.core.entities.figure import Figure, ClassTier
 from src.core.entities.player import PlayerType
 from src.core.entities.war import WarStatus
+from src.core.entities.legion import LegionStatus
 from src.core.entities.contract import ContractStatus
 from src.api import population_api
 from src.api import figure_api
@@ -500,12 +501,14 @@ class PopulationCommand(Command):
         # 2. 手动模式下打印选举后影响力表格（选举前 → 选举后）
         if not self._auto_mode and self._pre_election_influences:
             post_influences = self._get_faction_influences()
-            total_spent = sum(amount for _, _, amount in self.state._population_pending.get("campaigns", []))
+            total_spent = sum(
+                amount
+                for _, _, amount in self.state.get_population_campaigns()
+            )
             self._print_influence_table(self._pre_election_influences, post_influences, total_spent, total_spent)
 
         # 3. 清除临时数据
-        self.state._population_pending["campaigns"] = []
-        self.state._population_pending["votes"] = []
+        self.state.clear_population_pending()
         self._pre_election_influences = {}
 
     def _process_legion_disbandment_and_triumphs(self):
@@ -515,10 +518,7 @@ class PopulationCommand(Command):
         if not ws or not ms:
             return
 
-        for war in ws._war_discard:
-            if war.status != WarStatus.RESOLVED:
-                continue
-
+        for war in ws.get_resolved_wars():
             if war.triumph_approved:
                 commander_id = war.triumph_commander_id or war.commander_id
                 commander = self.state.get_member(commander_id) if commander_id else None
@@ -532,20 +532,37 @@ class PopulationCommand(Command):
                     war.set_triumph_approved(False)
 
             if war.legion_numbers:
-                disbanded, errors = ms.disband_legions_for_war(war.legion_numbers)
+                legion_numbers = list(war.legion_numbers)
+                disbanded, errors = ms.disband_legions_for_war(legion_numbers)
                 if disbanded > 0:
                     print(f"      解散 {disbanded} 个参与 {war.name} 的军团")
                 for err in errors:
                     print(f"      ⚠️ {err}")
+                if errors:
+                    failed_legions = []
+                    for legion_number in legion_numbers:
+                        legion = ms.get_legion_by_number(legion_number)
+                        if legion is None or legion.status != LegionStatus.DISBANDED:
+                            failed_legions.append(legion_number)
+                    if failed_legions:
+                        ws.add_legions_to_disband(failed_legions)
                 war.clear_legion_numbers()
 
-        if ws._legions_to_disband:
-            disbanded, errors = ms.disband_legions_for_war(ws._legions_to_disband)
+        legions_to_disband = ws.clear_legions_to_disband()
+        if legions_to_disband:
+            disbanded, errors = ms.disband_legions_for_war(legions_to_disband)
             if disbanded > 0:
                 print(f"      解散 {disbanded} 个从降级战争返回的军团")
             for err in errors:
                 print(f"      ⚠️ {err}")
-            ws._legions_to_disband.clear()
+            if errors:
+                failed_legions = []
+                for legion_number in legions_to_disband:
+                    legion = ms.get_legion_by_number(legion_number)
+                    if legion is None or legion.status != LegionStatus.DISBANDED:
+                        failed_legions.append(legion_number)
+                if failed_legions:
+                    ws.add_legions_to_disband(failed_legions)
 
     def _convert_battlefield_commanders(self):
         """战场指挥官转换（支持无战争情况）"""

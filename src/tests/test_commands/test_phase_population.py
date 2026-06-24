@@ -356,8 +356,6 @@ class TestPopulationCommandManual:
     def test_step3_legion_triumph_display(self, state_normal_mode, monkeypatch, capsys):
         """凯旋式信息在公示环节正确显示"""
         war_system = MagicMock()
-        war_system._war_discard = []
-        war_system._legions_to_disband = []  # 防止进入解散分支
         war = MagicMock()
         war.status = WarStatus.RESOLVED
         war.triumph_approved = True
@@ -365,7 +363,8 @@ class TestPopulationCommandManual:
         war.commander_id = 1
         war.legion_numbers = []
         war.set_triumph_approved = MagicMock()
-        war_system._war_discard = [war]
+        war_system.get_resolved_wars.return_value = [war]
+        war_system.clear_legions_to_disband.return_value = []
         state_normal_mode.get_war_system = MagicMock(return_value=war_system)
 
         ms = MagicMock()
@@ -469,8 +468,8 @@ class TestPopulationCommandManual:
 
         # 模拟战争系统
         ws = MagicMock()
-        ws._war_discard = [war]
-        ws._legions_to_disband = []
+        ws.get_resolved_wars.return_value = [war]
+        ws.clear_legions_to_disband.return_value = []
 
         # 模拟军事系统
         ms = MagicMock()

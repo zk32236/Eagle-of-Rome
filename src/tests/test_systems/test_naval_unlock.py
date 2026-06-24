@@ -27,7 +27,7 @@ def test_naval_unlock_after_pyrrhic():
     war.status = WarStatus.THREAT   # 使用枚举值
     war._enemy_naval_current = 5
     war_system = Mock()
-    war_system._threats = [war]
+    war_system.get_naval_threat_wars.return_value = [war]
     state.get_war_system = lambda: war_system
     state.create_contract = lambda *args, **kwargs: Mock()
 

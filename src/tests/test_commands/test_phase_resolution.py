@@ -17,6 +17,7 @@ if project_root not in sys.path:
 from src.core.entities.entities import GameTurn, Faction
 from src.core.entities.figure import Figure
 from src.core.entities.contract import ContractType, ContractStatus
+from src.core.entities.province import Province
 from src.core.game_state import GameState
 from src.ui.commands.phase_resolution import ResolutionCommand
 
@@ -64,6 +65,44 @@ class TestResolutionCommand(unittest.TestCase):
         self.state._executed_phases.add("combat")
         cmd.execute([])
         self.assertEqual(self.state._active_events, {})
+
+    def test_governor_transition_promotes_and_clears_temporary_state(self):
+        province = Province(
+            1,
+            "Sicilia",
+            100,
+            governor_id=1,
+            old_governor_id=1,
+            governor_designate_id=2,
+        )
+
+        old_id, designate_id = province.complete_governor_transition(5)
+
+        self.assertEqual((old_id, designate_id), (1, 2))
+        self.assertEqual(province.governor_id, 2)
+        self.assertEqual(province.governor_since, 5)
+        self.assertIsNone(province.old_governor_id)
+        self.assertIsNone(province.governor_designate_id)
+
+    def test_governor_transition_can_clear_invalid_designate_without_promoting(self):
+        province = Province(
+            1,
+            "Sicilia",
+            100,
+            governor_id=1,
+            old_governor_id=1,
+            governor_designate_id=999,
+        )
+
+        old_id, designate_id = province.complete_governor_transition(
+            5,
+            promote_designate=False
+        )
+
+        self.assertEqual((old_id, designate_id), (1, 999))
+        self.assertEqual(province.governor_id, 1)
+        self.assertIsNone(province.old_governor_id)
+        self.assertIsNone(province.governor_designate_id)
 
 
     def test_deficit_increment(self):

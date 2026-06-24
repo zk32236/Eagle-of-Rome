@@ -57,6 +57,31 @@ class WarSystem:
         war.status = WarStatus.ACTIVE
         return war
 
+    def register_rebellion_war(self, war: War) -> bool:
+        """将起义战争登记为活跃战争，按战争 ID 防止重复。"""
+        if any(existing.id == war.id for existing in self.get_all_wars()):
+            return False
+        for container in (
+            self._war_deck,
+            self._war_discard,
+            self._threats,
+            self._truce_wars,
+        ):
+            if war in container:
+                container.remove(war)
+        war.status = WarStatus.ACTIVE
+        self._active_wars.append(war)
+        self.state.log_event(
+            f"起义战争登记为活跃: {war.name}",
+            extra={
+                "type": "rebellion_war_registered",
+                "war_id": war.id,
+                "phase": "forum",
+                "status": war.status.value,
+            }
+        )
+        return True
+
     def get_wars_with_naval(self) -> List[War]:
         """返回所有需要海战的战争（当前版本空实现）"""
         return [w for w in self._active_wars if w.naval_required]
@@ -744,6 +769,17 @@ class WarSystem:
     def get_active_wars(self) -> List[War]:
         """获取所有活跃战争"""
         return [w for w in self._active_wars if w.status == WarStatus.ACTIVE]
+
+    def get_resolved_wars(self) -> List[War]:
+        """获取已解决/弃牌区战争的副本。"""
+        return self._war_discard.copy()
+
+    def get_naval_threat_wars(self) -> List[War]:
+        """获取需要海战的威胁战争副本。"""
+        return [
+            w for w in self._threats
+            if w.status == WarStatus.THREAT and w.naval_required
+        ]
 
     def get_all_wars(self) -> List[War]:
         """获取战争系统持有的全部战争对象（去重后的只读副本）。"""

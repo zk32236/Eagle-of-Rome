@@ -80,7 +80,7 @@ class NavalSystem:
         if not war_system:
             return []
 
-        threatening_wars = [w for w in war_system._threats if w.naval_required]
+        threatening_wars = war_system.get_naval_threat_wars()
         if not threatening_wars:
             return []
 

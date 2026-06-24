@@ -92,8 +92,30 @@ class ResolutionCommand(Command):
 
     def _process_governor_return(self):
         for province in self.state.get_all_provinces():
+            designate_id = province.governor_designate_id
+            designate = (
+                self.state.get_member(designate_id)
+                if designate_id is not None
+                else None
+            )
+            promote_designate = designate is not None and not designate.is_dead
+            old_id, designate_id = province.complete_governor_transition(
+                self.state.turn.turn_number,
+                promote_designate=promote_designate
+            )
+            self.state.log_event(
+                f"总督交接完成: province={province.province_id}",
+                level=logging.DEBUG,
+                extra={
+                    "type": "governor_transition",
+                    "phase": "resolution",
+                    "province_id": province.province_id,
+                    "old_governor_id": old_id,
+                    "designate_id": designate_id,
+                    "promoted": promote_designate,
+                }
+            )
             # 先处理返回罗马的旧总督
-            old_id = province._old_governor_id
             if old_id is not None:
                 old_fig = self.state.get_member(old_id)
                 if old_fig and not old_fig.is_dead:
@@ -102,20 +124,13 @@ class ResolutionCommand(Command):
                     old_fig.update_influence()
                     print(f"      🔄 旧总督 {old_fig.get_formal_name()} 返回罗马")
                     self.state.log_event(f"旧总督 {old_fig.get_formal_name()} 返回罗马")
-                province._old_governor_id = None
 
             # 再处理候任总督上任
-            designate_id = province._governor_designate_id
-            if designate_id is not None:
-                new_fig = self.state.get_member(designate_id)
-                if new_fig and not new_fig.is_dead:
-                    # 新总督正式上任
-                    province._governor_id = designate_id
-                    new_fig.office = province.governor_type
-                    new_fig.update_influence()
-                    print(f"      👑 新总督 {new_fig.get_formal_name()} 正式上任 {province.name}")
-                    self.state.log_event(f"新总督 {new_fig.get_formal_name()} 正式上任 {province.name}")
-                province._governor_designate_id = None
+            if promote_designate:
+                designate.office = province.governor_type
+                designate.update_influence()
+                print(f"      👑 新总督 {designate.get_formal_name()} 正式上任 {province.name}")
+                self.state.log_event(f"新总督 {designate.get_formal_name()} 正式上任 {province.name}")
 
     def _check_all_conditions(self, terms):
         """检查所有胜利/失败条件，打印简洁信息"""
