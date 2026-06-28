@@ -1,16 +1,20 @@
 ﻿# EOR Codex Runtime Profile
 
-Updated: 2026-06-20
+Updated: 2026-06-28
 
 ## Status
 
 This is the active Codex/PyCharm runtime baseline for Eagle of Rome.
+
+Since 2026-06-28, the project uses a unified code + documentation Git repository baseline. New agents should treat the C-drive project root as the only official collaboration baseline.
 
 ## Active PyCharm Project
 
 | Item | Value |
 | --- | --- |
 | Project root | `C:\Users\Kerl\PycharmProjects\Eagle of Rome` |
+| Official docs root | `C:\Users\Kerl\PycharmProjects\Eagle of Rome\docs` |
+| Official PM docs | `C:\Users\Kerl\PycharmProjects\Eagle of Rome\docs\MVP 0.9 项目管理` |
 | PyCharm config | `.idea` exists under project root. |
 | Main run configuration | `Python.main` from `.idea\workspace.xml` |
 | Main script | `$PROJECT_DIR$/main.py` |
@@ -42,6 +46,31 @@ C:\Users\Kerl\PycharmProjects\Eagle of Rome\Scripts\python.exe
 ```
 
 But this interpreter currently does **not** have pytest installed. Codex should not use it for test validation unless it is explicitly repaired or PyCharm is confirmed to use it for a specific run.
+
+The project-local virtualenv files (`Lib/`, `Scripts/`, `pyvenv.cfg`) are intentionally ignored by Git and should not be committed.
+
+## Unified Repository Baseline
+
+Effective date: 2026-06-28
+
+| Item | Value |
+| --- | --- |
+| Unified project root | `C:\Users\Kerl\PycharmProjects\Eagle of Rome` |
+| Official documentation root | `C:\Users\Kerl\PycharmProjects\Eagle of Rome\docs` |
+| Formal task / acceptance archive | `C:\Users\Kerl\PycharmProjects\Eagle of Rome\docs\MVP 0.9 项目管理\03 开发任务书` |
+| PM task archive | `C:\Users\Kerl\PycharmProjects\Eagle of Rome\docs\MVP 0.9 项目管理\02_项目任务书` |
+| GitHub remote | `https://github.com/zk32236/Eagle-of-Rome.git` |
+| Current pushed branch | `debug-phase3-stderr-removal` |
+
+Key integration commits:
+
+```text
+ae9b163 repo hygiene before docs integration
+963f288 Add project documentation baseline under docs
+637d36b Address ZP-01 repository audit findings
+```
+
+`E:\Eagle of Rome` is retained only as a legacy document workspace and historical source. Do not archive new task briefs, acceptance reports, audit reports, or code handoffs there unless the user explicitly requests a historical copy.
 
 ## Codex Standard Environment
 
@@ -121,6 +150,12 @@ C:\Users\Kerl\PycharmProjects\Eagle of Rome
 ```
 
 Do not treat the historical document archive at `E:\Eagle of Rome` as the active source root unless a task explicitly references it.
+
+Do not treat the historical document archive at `E:\Eagle of Rome` as the active documentation root. Formal collaboration documents should be created under:
+
+```text
+C:\Users\Kerl\PycharmProjects\Eagle of Rome\docs\MVP 0.9 项目管理
+```
 
 Recommended handoff directory:
 

@@ -2,10 +2,12 @@
 
 ## Project Paths
 
-- `E:\Eagle of Rome` is for project documents, architecture documents, MVP plans, and historical archives only.
-- `C:\Users\Kerl\PycharmProjects\Eagle of Rome` is the active codebase, PyCharm project root, test root, and Codex/DeepSeek handoff root.
+- `C:\Users\Kerl\PycharmProjects\Eagle of Rome` is the only official project root, Git repository root, code root, documentation root, PyCharm project root, test root, and Codex/DeepSeek handoff root.
+- `C:\Users\Kerl\PycharmProjects\Eagle of Rome\docs` is the official documentation root for architecture documents, MVP plans, task briefs, acceptance reports, audit reports, and historical documentation baselines.
+- `E:\Eagle of Rome` is now only a legacy document workspace and historical source. Do not use it as the official collaboration baseline after 2026-06-28.
+- Apply code changes only under `C:\Users\Kerl\PycharmProjects\Eagle of Rome`.
+- Store formal task briefs and acceptance reports under `C:\Users\Kerl\PycharmProjects\Eagle of Rome\docs\MVP 0.9 项目管理\...` unless a task explicitly says otherwise.
 - Do not add code, runtime caches, test artifacts, or handoff files under `E:\Eagle of Rome`.
-- Apply code changes only under `C:\Users\Kerl\PycharmProjects\Eagle of Rome` unless the user explicitly asks to edit documents.
 
 ## Startup Context
 
@@ -39,6 +41,13 @@ $env:PYTHONDONTWRITEBYTECODE='1'
 ```text
 C:\Users\Kerl\PycharmProjects\Eagle of Rome\.agents
 ```
+
+Store formal project-management records, task briefs, SA/CGT/KIMI acceptance reports, and audit reports under:
+
+```text
+C:\Users\Kerl\PycharmProjects\Eagle of Rome\docs\MVP 0.9 项目管理
+```
+
 - Use `$eor-deepseek-codex-loop` whenever handling DeepSeek code changes, patches, implementation reports, test logs, or next-round fixes.
 - If any participant deviates from the required DeepSeek -> Codex review/debug -> DeepSeek feedback loop, Codex must warn before proceeding.
 
