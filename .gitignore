@@ -10,6 +10,9 @@ ENV/
 .venv
 virtualenv/
 venv.bak/
+Lib/
+Scripts/
+pyvenv.cfg
 logs/
 
 # PyCharm
@@ -66,3 +69,8 @@ Thumbs.db
 
 # Project specific - DO NOT ignore source code
 # Keep the following line to avoid accidentally adding sensitive files, but we already have source code to track.
+
+# Integrated project documentation
+docs/**/_tmp_xlsx_*/
+docs/**/.git/
+docs/**/.agents/
