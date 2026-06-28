@@ -1,0 +1,18 @@
+✅ 测试全部通过！ 8个单元测试均成功，验证了：
+
+多实例独立创建
+
+状态隔离
+
+reset 重置
+
+测试工厂方法
+
+GameState 基础框架已成功改造，满足指令1-2的验收标准。
+
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_core/test_game_state.py
+........
+----------------------------------------------------------------------
+Ran 8 tests in 0.003s
+
+OK

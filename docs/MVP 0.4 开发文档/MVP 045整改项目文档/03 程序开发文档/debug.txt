@@ -1,0 +1,115 @@
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m pytest src/tests/test_commands/test_sys_registry.py -v
+================================================================================================================================================= test session starts =================================================================================================================================================
+platform win32 -- Python 3.10.6, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+collected 10 items
+
+src/tests/test_commands/test_sys_registry.py::test_normal_scan PASSED                                                                                                                                                                                                                                            [ 10%] 
+src/tests/test_commands/test_sys_registry.py::test_skip_private PASSED                                                                                                                                                                                                                                           [ 20%]
+src/tests/test_commands/test_sys_registry.py::test_import_fail_skip PASSED                                                                                                                                                                                                                                       [ 30%] 
+src/tests/test_commands/test_sys_registry.py::test_multiple_commands_one_file PASSED                                                                                                                                                                                                                             [ 40%] 
+src/tests/test_commands/test_sys_registry.py::test_name_conflict PASSED                                                                                                                                                                                                                                          [ 50%]
+src/tests/test_commands/test_sys_registry.py::test_alias_conflict PASSED                                                                                                                                                                                                                                         [ 60%] 
+src/tests/test_commands/test_sys_registry.py::test_alias_name_conflict FAILED                                                                                                                                                                                                                                    [ 70%]
+src/tests/test_commands/test_sys_registry.py::test_execute_exception PASSED                                                                                                                                                                                                                                      [ 80%] 
+src/tests/test_commands/test_sys_registry.py::test_get_command_names PASSED                                                                                                                                                                                                                                      [ 90%] 
+src/tests/test_commands/test_sys_registry.py::test_get_command_info PASSED                                                                                                                                                                                                                                       [100%] 
+
+====================================================================================================================================================== FAILURES ======================================================================================================================================================= 
+______________________________________________________________________________________________________________________________________________ test_alias_name_conflict _______________________________________________________________________________________________________________________________________________ 
+
+tmp_path = WindowsPath('C:/Users/Kerl/AppData/Local/Temp/pytest-of-Kerl/pytest-0/test_alias_name_conflict0')
+
+    def test_alias_name_conflict(tmp_path):
+        """命令A的别名等于命令B的主名，应冲突"""
+        content1 = '''
+    from src.ui.commands.sys_base import Command
+
+    class CmdA(Command):
+        name = "cmda"
+        aliases = ["b"]
+        def execute(self, args): return True
+    '''
+        content2 = '''
+    from src.ui.commands.sys_base import Command
+
+    class CmdB(Command):
+        name = "b"
+        aliases = []
+        def execute(self, args): return True
+    '''
+        create_command_file(tmp_path, "file1.py", content1)
+        create_command_file(tmp_path, "file2.py", content2)
+
+        with pytest.raises(ValueError, match="别名冲突.*b"):
+>           CommandRegistry(str(tmp_path))
+
+src\tests\test_commands\test_sys_registry.py:207:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src\ui\commands\sys_registry.py:36: in __init__
+    self._scan_and_register(commands_dir)
+src\ui\commands\sys_registry.py:61: in _scan_and_register
+    self._register(cmd_class)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <src.ui.commands.sys_registry.CommandRegistry object at 0x00000182C071FFA0>, cmd_class = <class 'file2.CmdB'>
+
+    def _register(self, cmd_class: Type[Command]):
+        """
+        注册命令，严格检测重复
+
+        Args:
+            cmd_class: 要注册的命令类
+
+        Raises:
+            ValueError: 主名或别名冲突时抛出
+        """
+        name = cmd_class.name
+
+        if name in self._commands:
+            existing_file = self._commands[name].__module__
+>           raise ValueError(
+                f"命令名冲突: '{name}' 已存在于 {existing_file}\n"
+                f"新命令: {cmd_class.__module__}"
+            )
+E           ValueError: 命令名冲突: 'b' 已存在于 file1
+E           新命令: file2
+
+src\ui\commands\sys_registry.py:128: ValueError
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = WindowsPath('C:/Users/Kerl/AppData/Local/Temp/pytest-of-Kerl/pytest-0/test_alias_name_conflict0')
+
+    def test_alias_name_conflict(tmp_path):
+        """命令A的别名等于命令B的主名，应冲突"""
+        content1 = '''
+    from src.ui.commands.sys_base import Command
+
+    class CmdA(Command):
+        name = "cmda"
+        aliases = ["b"]
+        def execute(self, args): return True
+    '''
+        content2 = '''
+    from src.ui.commands.sys_base import Command
+
+    class CmdB(Command):
+        name = "b"
+        aliases = []
+        def execute(self, args): return True
+    '''
+        create_command_file(tmp_path, "file1.py", content1)
+        create_command_file(tmp_path, "file2.py", content2)
+
+>       with pytest.raises(ValueError, match="别名冲突.*b"):
+E       AssertionError: Regex pattern did not match.
+E         Expected regex: '别名冲突.*b'
+E         Actual message: "命令名冲突: 'b' 已存在于 file1\n新命令: file2"
+
+src\tests\test_commands\test_sys_registry.py:206: AssertionError
+=============================================================================================================================================== short test summary info =============================================================================================================================================== 
+FAILED src/tests/test_commands/test_sys_registry.py::test_alias_name_conflict - AssertionError: Regex pattern did not match.
+============================================================================================================================================= 1 failed, 9 passed in 0.23s ============================================================================================================================================= 
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> 

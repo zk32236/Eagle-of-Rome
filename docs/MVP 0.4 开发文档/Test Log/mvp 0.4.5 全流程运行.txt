@@ -1,0 +1,1845 @@
+"C:\Users\Kerl\PycharmProjects\Eagle of Rome\Scripts\python.exe" "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+   📝 Terminology: original
+🏛️  Eagle of Rome - MVP 0.4.3 Contract System
+   Active terms: Senate/Senators/Talents
+   Phase order: mortality → revenue → forum → population → senate → combat → resolution
+Type 'help' for commands, 'exit' to quit
+
+> load
+   📝 Terminology: original
+   Optimates: Ex-Consul(Numerius · Sempronius · Gracchus), Ex-Praetor(Titus · Plautius · Pompeius), Ex-Quaestor(Quartus)
+   Populares: Ex-Consul(Sextus · Valerius · Macedonicus), Ex-Praetor(Gaius · Claudius · Sulla), Ex-Quaestor(Vibius)
+   Equites: Ex-Consul(Publius · Domitius · Longus), Ex-Praetor(Decimus · Sulpicius · Buteo), Ex-Quaestor(Marcus · Domitius · Sulla)
+   👑 Optimates leader: Decimus · Veturius · Buteo (Power: 6)
+   👑 Populares leader: Manius · Sempronius · Buteo (Power: 6)
+   👑 Equites leader: Quintus · Manlius · Cicero (Power: 6)
+
+✅ Scenario loaded: MVP 0.4.5 - Magistrate Elections
+   Year: 264 BC
+   Active figures: 17/300
+   Generation config: 3🏛️ 2💰 1👤 = 6/faction
+
+   Faction Details:
+      Optimates [PLAYER]
+         Members: 3🏛️ 2💰 1👤 | Power: 23 | Leader: Decimus · Veturius · Buteo
+      Populares 
+         Members: 3🏛️ 2💰 1👤 | Power: 19 | Leader: Manius · Sempronius · Buteo
+      Equites 
+         Members: 3🏛️ 2💰 0👤 | Power: 18 | Leader: Quintus · Manlius · Cicero
+
+
+✅ Game loaded!
+==================================================
+Year: 264 BC (Turn 1)
+Phase: init
+Treasury: 100 Talents
+--------------------------------------------------
+FACTIONS & MEMBERS:
+
+Optimates (optimates) - Treasury: 50Talents
+  [PLAYER CONTROLLED]
+  🟢🏛️ Numerius · Sempronius · Gracchus(ID:1)[权4财16人5地4兵0席4]
+  🟢💰 Titus · Plautius · Pompeius(ID:2)[权0财19人3地0兵0席0]
+  🟢👤 Quartus(ID:3)[权0财3人0地0兵0席0]
+  👑🏛️ Decimus · Veturius · Buteo(ID:4)[权3财12人2地3兵0席3]
+  🟢🏛️ Manius · Manlius · Rufus(ID:5)[权4财10人2地4兵0席4]
+  🟢💰 Titus · Sulpicius(ID:6)[权0财16人2地0兵0席0]
+
+Populares (populares) - Treasury: 50Talents
+  🟢🏛️ Sextus · Valerius · Macedonicus(ID:7)[权4财11人3地4兵0席4]
+  🟢💰 Gaius · Claudius · Sulla(ID:8)[权0财21人3地0兵0席0]
+  🟢👤 Vibius(ID:9)[权0财7人2地0兵0席0]
+  👑🏛️ Manius · Sempronius · Buteo(ID:10)[权4财15人3地4兵0席4]
+  🟢🏛️ Marcus · Veturius · Rufus(ID:11)[权4财13人3地4兵0席4]
+  🟢💰 Spurius · Valerius · Rufus(ID:12)[权0财20人3地0兵0席0]
+
+Equites (equites) - Treasury: 50Talents
+  🟢🏛️ Publius · Domitius · Longus(ID:13)[权2财14人5地2兵0席2]
+  🟢💰 Decimus · Sulpicius · Buteo(ID:14)[权0财26人2地0兵0席0]
+  🟢💰 Marcus · Domitius · Sulla(ID:15)[权0财28人2地0兵0席0]
+  🟢🏛️ Gnaeus · Calpurnius · Bibulus(ID:16)[权4财15人3地4兵0席4]
+  👑🏛️ Quintus · Manlius · Cicero(ID:17)[权2财16人2地2兵0席2]
+==================================================
+
+   Progress: [░░░░░░░] 0/7
+
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 3 number(s) from pool (1-300)...
+Current living: 17
+  [Draw 1] Number 119...
+     -> No member assigned (safe)
+  [Draw 2] Number 23...
+     -> No member assigned (safe)
+  [Draw 3] Number 214...
+     -> No member assigned (safe)
+✅ No deaths this year
+
+   Progress: [█░░░░░░] 1/7
+
+> r
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   Optimates: +10 Talents
+   Populares: +10 Talents
+   Equites: +10 Talents
+   ⚔️  Military system: 10 legions ready
+   ✅ No Legion maintenance needed
+
+   📊 State Treasury: 200 Talents
+
+   🛡️  Legion Status:
+      Available: 10 | Active: 0 | Veteran: 0
+      Assigned to wars: 0
+      Maintenance: 0 Talents/turn
+
+   Progress: [██░░░░░] 2/7
+
+> f
+
+--- Forum Phase (Year 264 BC) ---
+
+   📢 2 new figure(s) arrive in the Senate:
+      👤 Titus · Stone (plebeian)
+      👤 Decius (plebeian)
+
+   🏛️  Figures in Senate:
+
+      👤 PLEBEIAN (2):
+         ID:18 Titus · Stone
+            [财6人1]
+         ID:19 Decius
+            [财8]
+
+   📜 2 new contract(s) announced:
+      包税: 科西嘉包税权
+      工程: 水道桥工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 科西嘉包税权
+            预付:26 年收益:22 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 水道桥工程
+            预算:30 预期利润:6
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+
+   Progress: [███░░░░] 3/7
+
+> p
+
+--- Population Phase (Year 264 BC) ---
+   📚 Loaded 5 wars into deck
+   🟢 Treasury: 200 Talents
+   🛡️  Active legions: 0/10
+
+   🏛️  State of the Republic: Calm
+
+   🛡️  Legion Review:
+      🟢 Calm state: 10 Legion(s) available for recruitment
+
+   👥 Population Events:
+      No significant events
+
+   Progress: [████░░░] 4/7
+
+> s
+
+--- Senate Phase (Year 264 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (1 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ✅ Numerius · Semproniu (Optimate) Age:45 CHA: 8 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Titus · Plautius · P (Optimate) Age:38 CHA: 6 Prereq:✓ Cooldown:OK → Age 38 < 40
+         ❌ Quartus              (Optimate) Age:33 CHA: 2 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Decimus · Veturius · (Optimate) Age:44 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Manius · Manlius · R (Optimate) Age:43 CHA: 9 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Titus · Sulpicius    (Optimate) Age:36 CHA: 5 Prereq:✗ Cooldown:OK → Age 36 < 40
+         ✅ Sextus · Valerius ·  (Populare) Age:45 CHA: 8 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Gaius · Claudius · S (Populare) Age:38 CHA: 5 Prereq:✓ Cooldown:OK → Age 38 < 40
+         ❌ Vibius               (Populare) Age:33 CHA: 3 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Manius · Sempronius  (Populare) Age:42 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Marcus · Veturius ·  (Populare) Age:43 CHA: 5 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Spurius · Valerius · (Populare) Age:38 CHA: 3 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ✅ Publius · Domitius · (Equites ) Age:45 CHA: 8 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Decimus · Sulpicius  (Equites ) Age:38 CHA: 3 Prereq:✓ Cooldown:OK → Age 38 < 40
+         ❌ Marcus · Domitius ·  (Equites ) Age:33 CHA: 4 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Gnaeus · Calpurnius  (Equites ) Age:41 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Quintus · Manlius ·  (Equites ) Age:42 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Titus · Stone        (?       ) Age:34 CHA: 2 Prereq:✗ Cooldown:OK → Age 34 < 40
+         ❌ Decius               (?       ) Age:27 CHA: 4 Prereq:✗ Cooldown:OK → Age 27 < 40
+
+      🏆 TOP 2 CANDIDATES (by CHA):
+         1. Numerius · Semproniu (Optimates)
+            CHA: 8 | Pop: 5 | Age:45 | History: quqaestor(-8), praetor(-5), consul(-2)
+         2. Sextus · Valerius ·  (Populares)
+            CHA: 8 | Pop: 3 | Age:45 | History: quqaestor(-8), praetor(-5), consul(-2)
+
+      🗳️  VOTING RESULTS:
+         Numerius · Semproniu:   28 ( 62.2%) ████████████
+         Sextus · Valerius · :   17 ( 37.8%) ███████
+
+      ✓ WINNER: Numerius · Sempronius · Gracchus (Optimates)
+        Power bonus: +5
+      🏛️ Numerius · Sempronius · Gracchus elected as consul
+
+   Electing PRAETOR (1 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=2y, Prerequisite=Quaestor
+         ✅ Numerius · Semproniu (Optimate) Age:45 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Plautius · P (Optimate) Age:38 MAN: 8 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Quartus              (Optimate) Age:33 MAN: 3 Prereq:✓ Cooldown:OK → Age 33 < 35
+         ❌ Decimus · Veturius · (Optimate) Age:44 MAN: 5 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Manius · Manlius · R (Optimate) Age:43 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Titus · Sulpicius    (Optimate) Age:36 MAN: 9 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ✅ Sextus · Valerius ·  (Populare) Age:45 MAN: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius · Claudius · S (Populare) Age:38 MAN: 8 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Vibius               (Populare) Age:33 MAN: 2 Prereq:✓ Cooldown:OK → Age 33 < 35
+         ❌ Manius · Sempronius  (Populare) Age:42 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Marcus · Veturius ·  (Populare) Age:43 MAN: 3 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Spurius · Valerius · (Populare) Age:38 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ✅ Publius · Domitius · (Equites ) Age:45 MAN: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Decimus · Sulpicius  (Equites ) Age:38 MAN: 9 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Marcus · Domitius ·  (Equites ) Age:33 MAN: 6 Prereq:✓ Cooldown:OK → Age 33 < 35
+         ❌ Gnaeus · Calpurnius  (Equites ) Age:41 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Quintus · Manlius ·  (Equites ) Age:42 MAN: 3 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Titus · Stone        (?       ) Age:34 MAN: 4 Prereq:✗ Cooldown:OK → Age 34 < 35
+         ❌ Decius               (?       ) Age:27 MAN: 3 Prereq:✗ Cooldown:OK → Age 27 < 35
+
+      🏆 TOP 2 CANDIDATES (by MAN):
+         1. Decimus · Sulpicius  (Equites)
+            MAN: 9 | Pop: 2 | Age:38 | History: quqaestor(-6), praetor(-3)
+         2. Titus · Plautius · P (Optimates)
+            MAN: 8 | Pop: 3 | Age:38 | History: quqaestor(-6), praetor(-3)
+
+      🗳️  VOTING RESULTS:
+         Titus · Plautius · P:   31 ( 68.9%) █████████████
+         Decimus · Sulpicius :   14 ( 31.1%) ██████
+
+      ✓ WINNER: Titus · Plautius · Pompeius (Optimates)
+        Power bonus: +3
+      ⚖️ Titus · Plautius · Pompeius elected as praetor
+
+   Electing QUQAESTOR (1 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ Numerius · Semproniu (Optimate) Age:45 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Plautius · P (Optimate) Age:38 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Quartus              (Optimate) Age:33 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Decimus · Veturius · (Optimate) Age:44 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Manius · Manlius · R (Optimate) Age:43 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Sulpicius    (Optimate) Age:36 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Sextus · Valerius ·  (Populare) Age:45 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius · Claudius · S (Populare) Age:38 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Vibius               (Populare) Age:33 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Manius · Sempronius  (Populare) Age:42 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Marcus · Veturius ·  (Populare) Age:43 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Spurius · Valerius · (Populare) Age:38 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Publius · Domitius · (Equites ) Age:45 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Decimus · Sulpicius  (Equites ) Age:38 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Marcus · Domitius ·  (Equites ) Age:33 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gnaeus · Calpurnius  (Equites ) Age:41 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Quintus · Manlius ·  (Equites ) Age:42 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Stone        (?       ) Age:34 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Decius               (?       ) Age:27 STR: 2 Prereq:✓ Cooldown:OK → Age 27 < 30
+
+      🏆 TOP 2 CANDIDATES (by STR):
+         1. Quartus              (Optimates)
+            STR: 7 | Pop: 0 | Age:33 | History: quqaestor(-4)
+         2. Vibius               (Populares)
+            STR: 7 | Pop: 2 | Age:33 | History: quqaestor(-4)
+
+      🗳️  VOTING RESULTS:
+         Quartus             :   28 ( 62.2%) ████████████
+         Vibius              :   17 ( 37.8%) ███████
+
+      ✓ WINNER: Quartus (Optimates)
+        Power bonus: +2
+      💰 Quartus elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      Optimates: Numerius · Sempronius · Gracchus (Power: 9)
+      Populares: Sextus · Valerius · Macedonicus (Power: 4)
+      Equites: Gnaeus · Calpurnius · Bibulus (Power: 4)
+
+   🎤 Presiding Officer: Numerius · Sempronius · Gracchus
+
+   📋 Processing 2 pending contract(s)...
+
+   📊 Voting: 科西嘉包税权
+      Cost: 26 | Expected: 22
+
+      Candidates (Equites):
+         1. Titus · Plautius · Pompeius (Optimates) [Wealth:19]
+         2. Titus · Sulpicius (Optimates) [Wealth:16]
+         3. Gaius · Claudius · Sulla (Populares) [Wealth:21]
+         4. Spurius · Valerius · Rufus (Populares) [Wealth:20]
+         5. Decimus · Sulpicius · Buteo (Equites) [Wealth:26]
+
+      ✅ Awarded to Marcus · Domitius · Sulla (Equites)
+         Marcus · Domitius · Sulla paid 26 Talents
+         Treasury +26 Talents
+
+   🏗️ Assigning: 水道桥工程
+      Budget: 30 | Profit: 6
+      👑 Assigned by Consul Numerius · Sempronius · Gracchus
+
+      Available Equites:
+         1. Titus · Plautius · Pompeius (Optimates) [Mgmt:8]
+         2. Titus · Sulpicius (Optimates) [Mgmt:9]
+         3. Gaius · Claudius · Sulla (Populares) [Mgmt:8]
+         4. Spurius · Valerius · Rufus (Populares) [Mgmt:8]
+         5. Decimus · Sulpicius · Buteo (Equites) [Mgmt:9]
+
+      ✅ Assigned to Titus · Plautius · Pompeius (Optimates)
+         Reason: loyal_to_optimates
+         Duration: 2 years
+
+   Progress: [█████░░] 5/7
+
+> c
+
+--- Combat Phase (Year 264 BC) ---
+   ☮️  No active conflicts - phase skipped
+
+   Progress: [██████░] 6/7
+
+> n
+
+⛔ CANNOT ADVANCE
+   Missing phases: Revolution
+
+   Options:
+      1. Execute missing phases
+      2. 'next force' to skip
+      3. 'turn' to auto-complete
+
+> x
+
+--- Revolution Phase (Year 264 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: Optimates (21 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟡 Optimates: MODERATE risk (avg Loyalty: 5.7)
+      🟡 Populares: MODERATE risk (avg Loyalty: 5.7)
+      🟢 Equites: LOW risk (avg Loyalty: 6.2)
+
+   📊 Contract Year Summary:
+      ▶️  Active: 2
+
+==================================================
+   📜 ANNUAL REPORT - Year 264 BC
+==================================================
+
+   💰 Treasury: 226 Talents
+
+   📊 Faction Standings:
+      1. 👑 Optimates: 21 Influence
+      2. 👑 Populares: 12 Influence
+      3. 👑 Equites: 8 Influence
+
+   ☮️  Peace prevails
+
+   📜 Active Contracts: 2 (Annual Revenue: 7)
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   Progress: [███████] 7/7
+
+> n
+
+📅 Year 263 BC (Turn 2)
+   [Cleared 7 phase locks]
+   ⛔ Ineligible (2y rule): Numerius · Sempronius · Gracchus(1), Sextus · Valerius · Macedonicus(4), Gnaeus · Calpurnius · Bibulus(new)
+Advanced to Year 263 BC
+
+📅 Year 263 BC:
+   Completed: 0/7 phases
+      ○ 💀 Mortality
+      ○ 💰 Revenue
+      ○ 📜 Forum
+      ○ 👥 Population
+      ○ 🏛️ Senate
+      ○ ⚔️ Combat
+      ○ 🔚 Revolution
+   ⏳ 7 remaining
+
+> turn
+
+############################################################
+ TURN 2 (263 BC)
+ Terms: Senate/Senators/Talents
+############################################################
+
+[1/7] 💀 Mortality...
+
+--- Mortality Phase (Year 263 BC) ---
+Drawing 3 number(s) from pool (1-300)...
+Current living: 19
+  [Draw 1] Number 205...
+     -> No member assigned (safe)
+  [Draw 2] Number 57...
+     -> No member assigned (safe)
+  [Draw 3] Number 217...
+     -> No member assigned (safe)
+✅ No deaths this year
+
+   Progress: [█░░░░░░] 1/7
+
+[1/7] 💰 Revenue...
+
+--- Revenue Phase (Year 263 BC) ---
+   💰 Base tax: +100 Talents
+   Optimates: +10 Talents
+   Populares: +10 Talents
+   Equites: +10 Talents
+   ✅ No Legion maintenance needed
+
+   📜 Contract Revenues:
+      📊 科西嘉包税权: Marcus · Domitius · Sulla +4 Talents
+      🏗️ 水道桥工程: Treasury -15, Titus · Plautius · Pompeius +3 profit
+
+   📊 State Treasury: 311 Talents
+
+   🛡️  Legion Status:
+      Available: 10 | Active: 0 | Veteran: 0
+      Assigned to wars: 0
+      Maintenance: 0 Talents/turn
+
+   📋 Contract Status:
+      ▶️  Active: 2
+
+   Progress: [██░░░░░] 2/7
+
+[1/7] 📜 Forum...
+
+--- Forum Phase (Year 263 BC) ---
+
+   📢 2 new figure(s) arrive in the Senate:
+      👤 Quartus (plebeian)
+      👤 Sextilis (plebeian)
+
+   🏛️  Figures in Senate:
+
+      👤 PLEBEIAN (4):
+         ID:18 Titus · Stone
+            [财6人1]
+         ID:19 Decius
+            [财8]
+         ID:20 Quartus
+            [权1财5人2]
+         ID:21 Sextilis
+            [权2财5人1]
+
+   📜 2 new contract(s) announced:
+      包税: 西西里包税权
+      工程: 罗马大道工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:3 西西里包税权
+            预付:37 年收益:17 期限:5年
+            💡 Senate Phase: use 'vote contract 3'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:4 罗马大道工程
+            预算:54 预期利润:10
+            💡 Senate Phase: Consul uses 'assign works 4 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+
+   Progress: [███░░░░] 3/7
+
+[1/7] 👥 Population...
+
+--- Population Phase (Year 263 BC) ---
+   🟢 Treasury: 311 Talents
+   🛡️  Active legions: 0/10
+
+   🏛️  State of the Republic: Calm
+
+   🛡️  Legion Review:
+      🟢 Calm state: 10 Legion(s) available for recruitment
+
+   👥 Population Events:
+      No significant events
+
+   Progress: [████░░░] 4/7
+
+[1/7] 🏛️ Senate...
+
+--- Senate Phase (Year 263 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (1 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Numerius · Semproniu (Optimate) Age:45 CHA: 8 Prereq:✓ Cooldown:CD → Already holding this office
+         ❌ Titus · Plautius · P (Optimate) Age:38 CHA: 6 Prereq:✓ Cooldown:OK → Age 38 < 40
+         ❌ Quartus              (Optimate) Age:33 CHA: 2 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Decimus · Veturius · (Optimate) Age:44 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Manius · Manlius · R (Optimate) Age:43 CHA: 9 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Titus · Sulpicius    (Optimate) Age:36 CHA: 5 Prereq:✗ Cooldown:OK → Age 36 < 40
+         ✅ Sextus · Valerius ·  (Populare) Age:45 CHA: 8 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Gaius · Claudius · S (Populare) Age:38 CHA: 5 Prereq:✓ Cooldown:OK → Age 38 < 40
+         ❌ Vibius               (Populare) Age:33 CHA: 3 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Manius · Sempronius  (Populare) Age:42 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Marcus · Veturius ·  (Populare) Age:43 CHA: 5 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Spurius · Valerius · (Populare) Age:38 CHA: 3 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ✅ Publius · Domitius · (Equites ) Age:45 CHA: 8 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Decimus · Sulpicius  (Equites ) Age:38 CHA: 3 Prereq:✓ Cooldown:OK → Age 38 < 40
+         ❌ Marcus · Domitius ·  (Equites ) Age:33 CHA: 4 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Gnaeus · Calpurnius  (Equites ) Age:41 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Quintus · Manlius ·  (Equites ) Age:42 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Titus · Stone        (?       ) Age:34 CHA: 2 Prereq:✗ Cooldown:OK → Age 34 < 40
+         ❌ Decius               (?       ) Age:27 CHA: 4 Prereq:✗ Cooldown:OK → Age 27 < 40
+         ❌ Quartus              (?       ) Age:29 CHA: 4 Prereq:✗ Cooldown:OK → Age 29 < 40
+         ❌ Sextilis             (?       ) Age:21 CHA: 2 Prereq:✗ Cooldown:OK → Age 21 < 40
+
+      🏆 TOP 2 CANDIDATES (by CHA):
+         1. Sextus · Valerius ·  (Populares)
+            CHA: 8 | Pop: 3 | Age:45 | History: quqaestor(-8), praetor(-5), consul(-2)
+         2. Publius · Domitius · (Equites)
+            CHA: 8 | Pop: 5 | Age:45 | History: quqaestor(-8), praetor(-5), consul(-2)
+
+      🗳️  VOTING RESULTS:
+         Publius · Domitius ·:   28 ( 62.2%) ████████████
+         Sextus · Valerius · :   17 ( 37.8%) ███████
+
+      ✓ WINNER: Publius · Domitius · Longus (Equites)
+        Power bonus: +5
+      🏛️ Publius · Domitius · Longus elected as consul
+
+   Electing PRAETOR (1 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=2y, Prerequisite=Quaestor
+         ✅ Numerius · Semproniu (Optimate) Age:45 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Titus · Plautius · P (Optimate) Age:38 MAN: 8 Prereq:✓ Cooldown:CD → Already holding this office
+         ❌ Quartus              (Optimate) Age:33 MAN: 3 Prereq:✓ Cooldown:OK → Age 33 < 35
+         ❌ Decimus · Veturius · (Optimate) Age:44 MAN: 5 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Manius · Manlius · R (Optimate) Age:43 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Titus · Sulpicius    (Optimate) Age:36 MAN: 9 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ✅ Sextus · Valerius ·  (Populare) Age:45 MAN: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius · Claudius · S (Populare) Age:38 MAN: 8 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Vibius               (Populare) Age:33 MAN: 2 Prereq:✓ Cooldown:OK → Age 33 < 35
+         ❌ Manius · Sempronius  (Populare) Age:42 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Marcus · Veturius ·  (Populare) Age:43 MAN: 3 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Spurius · Valerius · (Populare) Age:38 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ✅ Publius · Domitius · (Equites ) Age:45 MAN: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Decimus · Sulpicius  (Equites ) Age:38 MAN: 9 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Marcus · Domitius ·  (Equites ) Age:33 MAN: 6 Prereq:✓ Cooldown:OK → Age 33 < 35
+         ❌ Gnaeus · Calpurnius  (Equites ) Age:41 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Quintus · Manlius ·  (Equites ) Age:42 MAN: 3 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Titus · Stone        (?       ) Age:34 MAN: 4 Prereq:✗ Cooldown:OK → Age 34 < 35
+         ❌ Decius               (?       ) Age:27 MAN: 3 Prereq:✗ Cooldown:OK → Age 27 < 35
+         ❌ Quartus              (?       ) Age:29 MAN: 3 Prereq:✗ Cooldown:OK → Age 29 < 35
+         ❌ Sextilis             (?       ) Age:21 MAN: 2 Prereq:✗ Cooldown:OK → Age 21 < 35
+
+      🏆 TOP 2 CANDIDATES (by MAN):
+         1. Decimus · Sulpicius  (Equites)
+            MAN: 9 | Pop: 2 | Age:38 | History: quqaestor(-6), praetor(-3)
+         2. Gaius · Claudius · S (Populares)
+            MAN: 8 | Pop: 3 | Age:38 | History: quqaestor(-6), praetor(-3)
+
+      🗳️  VOTING RESULTS:
+         Decimus · Sulpicius :   28 ( 62.2%) ████████████
+         Gaius · Claudius · S:   17 ( 37.8%) ███████
+
+      ✓ WINNER: Decimus · Sulpicius · Buteo (Equites)
+        Power bonus: +3
+      ⚖️ Decimus · Sulpicius · Buteo elected as praetor
+
+   Electing QUQAESTOR (1 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ Numerius · Semproniu (Optimate) Age:45 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Plautius · P (Optimate) Age:38 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Quartus              (Optimate) Age:33 STR: 7 Prereq:✓ Cooldown:CD → Already holding this office
+         ✅ Decimus · Veturius · (Optimate) Age:44 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Manius · Manlius · R (Optimate) Age:43 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Sulpicius    (Optimate) Age:36 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Sextus · Valerius ·  (Populare) Age:45 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius · Claudius · S (Populare) Age:38 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Vibius               (Populare) Age:33 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Manius · Sempronius  (Populare) Age:42 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Marcus · Veturius ·  (Populare) Age:43 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Spurius · Valerius · (Populare) Age:38 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Publius · Domitius · (Equites ) Age:45 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Decimus · Sulpicius  (Equites ) Age:38 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Marcus · Domitius ·  (Equites ) Age:33 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gnaeus · Calpurnius  (Equites ) Age:41 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Quintus · Manlius ·  (Equites ) Age:42 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Stone        (?       ) Age:34 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Decius               (?       ) Age:27 STR: 2 Prereq:✓ Cooldown:OK → Age 27 < 30
+         ❌ Quartus              (?       ) Age:29 STR: 3 Prereq:✓ Cooldown:OK → Age 29 < 30
+         ❌ Sextilis             (?       ) Age:21 STR: 1 Prereq:✓ Cooldown:OK → Age 21 < 30
+
+      🏆 TOP 2 CANDIDATES (by STR):
+         1. Vibius               (Populares)
+            STR: 7 | Pop: 2 | Age:33 | History: quqaestor(-4)
+         2. Marcus · Domitius ·  (Equites)
+            STR: 7 | Pop: 2 | Age:33 | History: quqaestor(-4)
+
+      🗳️  VOTING RESULTS:
+         Vibius              :   31 ( 68.9%) █████████████
+         Marcus · Domitius · :   14 ( 31.1%) ██████
+
+      ✓ WINNER: Vibius (Populares)
+        Power bonus: +2
+      💰 Vibius elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      Optimates: Numerius · Sempronius · Gracchus (Power: 9)
+      Populares: Sextus · Valerius · Macedonicus (Power: 4)
+      Equites: Publius · Domitius · Longus (Power: 7)
+
+   🎤 Presiding Officer: Numerius · Sempronius · Gracchus
+
+   📋 Processing 2 pending contract(s)...
+
+   📊 Voting: 西西里包税权
+      Cost: 37 | Expected: 17
+
+      Candidates (Equites):
+         1. Titus · Plautius · Pompeius (Optimates) [Wealth:22]
+         2. Titus · Sulpicius (Optimates) [Wealth:16]
+         3. Gaius · Claudius · Sulla (Populares) [Wealth:21]
+         4. Spurius · Valerius · Rufus (Populares) [Wealth:20]
+         5. Decimus · Sulpicius · Buteo (Equites) [Wealth:26]
+
+      ✅ Awarded to Decimus · Sulpicius · Buteo (Equites)
+         Decimus · Sulpicius · Buteo paid 37 Talents
+         Treasury +37 Talents
+
+   🏗️ Assigning: 罗马大道工程
+      Budget: 54 | Profit: 10
+      👑 Assigned by Consul Numerius · Sempronius · Gracchus
+
+      Available Equites:
+         1. Titus · Plautius · Pompeius (Optimates) [Mgmt:8]
+         2. Titus · Sulpicius (Optimates) [Mgmt:9]
+         3. Gaius · Claudius · Sulla (Populares) [Mgmt:8]
+         4. Spurius · Valerius · Rufus (Populares) [Mgmt:8]
+         5. Decimus · Sulpicius · Buteo (Equites) [Mgmt:9]
+
+      ✅ Assigned to Titus · Sulpicius (Optimates)
+         Reason: loyal_to_optimates
+         Duration: 2 years
+
+   Progress: [█████░░] 5/7
+
+[1/7] ⚔️ Combat...
+
+--- Combat Phase (Year 263 BC) ---
+   ☮️  No active conflicts - phase skipped
+
+   Progress: [██████░] 6/7
+
+[1/7] 🔚 Revolution...
+
+--- Revolution Phase (Year 263 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: Optimates (21 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟡 Optimates: MODERATE risk (avg Loyalty: 5.7)
+      🟡 Populares: MODERATE risk (avg Loyalty: 5.7)
+      🟢 Equites: LOW risk (avg Loyalty: 6.2)
+
+   📊 Contract Year Summary:
+      ▶️  Active: 4
+
+==================================================
+   📜 ANNUAL REPORT - Year 263 BC
+==================================================
+
+   💰 Treasury: 348 Talents
+
+   📊 Faction Standings:
+      1. 👑 Optimates: 21 Influence
+      2. 👑 Equites: 16 Influence
+      3. 👑 Populares: 14 Influence
+
+   ☮️  Peace prevails
+
+   📜 Active Contracts: 4 (Annual Revenue: 15)
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   Progress: [███████] 7/7
+
+############################################################
+ ✅ TURN COMPLETE - All 7 phases executed
+############################################################
+
+> next
+
+📅 Year 262 BC (Turn 3)
+   [Cleared 7 phase locks]
+   ⛔ Ineligible (2y rule): Numerius · Sempronius · Gracchus(2), Sextus · Valerius · Macedonicus(5), Publius · Domitius · Longus(1)
+Advanced to Year 262 BC
+
+📅 Year 262 BC:
+   Completed: 0/7 phases
+      ○ 💀 Mortality
+      ○ 💰 Revenue
+      ○ 📜 Forum
+      ○ 👥 Population
+      ○ 🏛️ Senate
+      ○ ⚔️ Combat
+      ○ 🔚 Revolution
+   ⏳ 7 remaining
+
+> turn
+
+############################################################
+ TURN 3 (262 BC)
+ Terms: Senate/Senators/Talents
+############################################################
+
+[1/7] 💀 Mortality...
+
+--- Mortality Phase (Year 262 BC) ---
+Drawing 3 number(s) from pool (1-300)...
+Current living: 21
+  [Draw 1] Number 200...
+     -> No member assigned (safe)
+  [Draw 2] Number 93...
+     -> No member assigned (safe)
+  [Draw 3] Number 103...
+     -> No member assigned (safe)
+✅ No deaths this year
+
+   Progress: [█░░░░░░] 1/7
+
+[1/7] 💰 Revenue...
+
+--- Revenue Phase (Year 262 BC) ---
+   💰 Base tax: +100 Talents
+   Optimates: +10 Talents
+   Populares: +10 Talents
+   Equites: +10 Talents
+   ✅ No Legion maintenance needed
+
+   📜 Contract Revenues:
+      📊 科西嘉包税权: Marcus · Domitius · Sulla +4 Talents
+      🏗️ 水道桥工程: Treasury -15, Titus · Plautius · Pompeius +3 profit
+         ✅ Project completed! Total profit: 30
+      📊 西西里包税权: Decimus · Sulpicius · Buteo +3 Talents
+      🏗️ 罗马大道工程: Treasury -27, Titus · Sulpicius +5 profit
+
+   📊 State Treasury: 406 Talents
+
+   🛡️  Legion Status:
+      Available: 10 | Active: 0 | Veteran: 0
+      Assigned to wars: 0
+      Maintenance: 0 Talents/turn
+
+   📋 Contract Status:
+      ▶️  Active: 3
+      ✅ Completed: 1
+
+   Progress: [██░░░░░] 2/7
+
+[1/7] 📜 Forum...
+
+--- Forum Phase (Year 262 BC) ---
+
+   📢 2 new figure(s) arrive in the Senate:
+      👤 Vibius (plebeian)
+      💰 Manius · Papirius (eques)
+
+   🏛️  Figures in Senate:
+
+      💰 EQUES (1):
+         ID:23 Manius · Papirius
+            [权1财28人1]
+
+      👤 PLEBEIAN (5):
+         ID:18 Titus · Stone
+            [财6人1]
+         ID:19 Decius
+            [财8]
+         ID:20 Quartus
+            [权1财5人2]
+         ID:21 Sextilis
+            [权2财5人1]
+         ID:22 Vibius
+            [财6]
+
+   📜 2 new contract(s) announced:
+      包税: 西西里包税权
+      工程: 水道桥工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:5 西西里包税权
+            预付:21 年收益:13 期限:5年
+            💡 Senate Phase: use 'vote contract 5'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:6 水道桥工程
+            预算:58 预期利润:11
+            💡 Senate Phase: Consul uses 'assign works 6 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+
+   Progress: [███░░░░] 3/7
+
+[1/7] 👥 Population...
+
+--- Population Phase (Year 262 BC) ---
+   🟢 Treasury: 406 Talents
+   🛡️  Active legions: 0/10
+
+   🏛️  State of the Republic: Calm
+
+   🛡️  Legion Review:
+      🟢 Calm state: 10 Legion(s) available for recruitment
+
+   👥 Population Events:
+      No significant events
+
+   Progress: [████░░░] 4/7
+
+[1/7] 🏛️ Senate...
+
+--- Senate Phase (Year 262 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (1 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Numerius · Semproniu (Optimate) Age:45 CHA: 8 Prereq:✓ Cooldown:OK → Already holding this office
+         ❌ Titus · Plautius · P (Optimate) Age:38 CHA: 6 Prereq:✓ Cooldown:OK → Age 38 < 40
+         ❌ Quartus              (Optimate) Age:33 CHA: 2 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Decimus · Veturius · (Optimate) Age:44 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Manius · Manlius · R (Optimate) Age:43 CHA: 9 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Titus · Sulpicius    (Optimate) Age:36 CHA: 5 Prereq:✗ Cooldown:OK → Age 36 < 40
+         ✅ Sextus · Valerius ·  (Populare) Age:45 CHA: 8 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Gaius · Claudius · S (Populare) Age:38 CHA: 5 Prereq:✓ Cooldown:OK → Age 38 < 40
+         ❌ Vibius               (Populare) Age:33 CHA: 3 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Manius · Sempronius  (Populare) Age:42 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Marcus · Veturius ·  (Populare) Age:43 CHA: 5 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Spurius · Valerius · (Populare) Age:38 CHA: 3 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ❌ Publius · Domitius · (Equites ) Age:45 CHA: 8 Prereq:✓ Cooldown:CD → Already holding this office
+         ❌ Decimus · Sulpicius  (Equites ) Age:38 CHA: 3 Prereq:✓ Cooldown:OK → Age 38 < 40
+         ❌ Marcus · Domitius ·  (Equites ) Age:33 CHA: 4 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Gnaeus · Calpurnius  (Equites ) Age:41 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Quintus · Manlius ·  (Equites ) Age:42 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Titus · Stone        (?       ) Age:34 CHA: 2 Prereq:✗ Cooldown:OK → Age 34 < 40
+         ❌ Decius               (?       ) Age:27 CHA: 4 Prereq:✗ Cooldown:OK → Age 27 < 40
+         ❌ Quartus              (?       ) Age:29 CHA: 4 Prereq:✗ Cooldown:OK → Age 29 < 40
+         ❌ Sextilis             (?       ) Age:21 CHA: 2 Prereq:✗ Cooldown:OK → Age 21 < 40
+         ❌ Vibius               (?       ) Age:27 CHA: 3 Prereq:✗ Cooldown:OK → Age 27 < 40
+         ❌ Manius · Papirius    (?       ) Age:33 CHA: 3 Prereq:✗ Cooldown:OK → Age 33 < 40
+
+      🏆 TOP 2 CANDIDATES (by CHA):
+         1. Sextus · Valerius ·  (Populares)
+            CHA: 8 | Pop: 3 | Age:45 | History: quqaestor(-8), praetor(-5), consul(-2)
+
+      🗳️  VOTING RESULTS:
+         Sextus · Valerius · :   45 (100.0%) ████████████████████
+
+      ✓ WINNER: Sextus · Valerius · Macedonicus (Populares)
+        Power bonus: +5
+      🏛️ Sextus · Valerius · Macedonicus elected as consul
+
+   Electing PRAETOR (1 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=2y, Prerequisite=Quaestor
+         ✅ Numerius · Semproniu (Optimate) Age:45 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Titus · Plautius · P (Optimate) Age:38 MAN: 8 Prereq:✓ Cooldown:OK → Already holding this office
+         ❌ Quartus              (Optimate) Age:33 MAN: 3 Prereq:✓ Cooldown:OK → Age 33 < 35
+         ❌ Decimus · Veturius · (Optimate) Age:44 MAN: 5 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Manius · Manlius · R (Optimate) Age:43 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Titus · Sulpicius    (Optimate) Age:36 MAN: 9 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ✅ Sextus · Valerius ·  (Populare) Age:45 MAN: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius · Claudius · S (Populare) Age:38 MAN: 8 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Vibius               (Populare) Age:33 MAN: 2 Prereq:✓ Cooldown:OK → Age 33 < 35
+         ❌ Manius · Sempronius  (Populare) Age:42 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Marcus · Veturius ·  (Populare) Age:43 MAN: 3 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Spurius · Valerius · (Populare) Age:38 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ✅ Publius · Domitius · (Equites ) Age:45 MAN: 3 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Decimus · Sulpicius  (Equites ) Age:38 MAN: 9 Prereq:✓ Cooldown:CD → Already holding this office
+         ❌ Marcus · Domitius ·  (Equites ) Age:33 MAN: 6 Prereq:✓ Cooldown:OK → Age 33 < 35
+         ❌ Gnaeus · Calpurnius  (Equites ) Age:41 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Quintus · Manlius ·  (Equites ) Age:42 MAN: 3 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Titus · Stone        (?       ) Age:34 MAN: 4 Prereq:✗ Cooldown:OK → Age 34 < 35
+         ❌ Decius               (?       ) Age:27 MAN: 3 Prereq:✗ Cooldown:OK → Age 27 < 35
+         ❌ Quartus              (?       ) Age:29 MAN: 3 Prereq:✗ Cooldown:OK → Age 29 < 35
+         ❌ Sextilis             (?       ) Age:21 MAN: 2 Prereq:✗ Cooldown:OK → Age 21 < 35
+         ❌ Vibius               (?       ) Age:27 MAN: 4 Prereq:✗ Cooldown:OK → Age 27 < 35
+         ❌ Manius · Papirius    (?       ) Age:33 MAN: 7 Prereq:✗ Cooldown:OK → Age 33 < 35
+
+      🏆 TOP 2 CANDIDATES (by MAN):
+         1. Gaius · Claudius · S (Populares)
+            MAN: 8 | Pop: 3 | Age:38 | History: quqaestor(-6), praetor(-3)
+         2. Numerius · Semproniu (Optimates)
+            MAN: 5 | Pop: 5 | Age:45 | History: quqaestor(-8), praetor(-5), consul(-2)
+
+      🗳️  VOTING RESULTS:
+         Gaius · Claudius · S:   31 ( 68.9%) █████████████
+         Numerius · Semproniu:   14 ( 31.1%) ██████
+
+      ✓ WINNER: Gaius · Claudius · Sulla (Populares)
+        Power bonus: +3
+      ⚖️ Gaius · Claudius · Sulla elected as praetor
+
+   Electing QUQAESTOR (1 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ Numerius · Semproniu (Optimate) Age:45 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Plautius · P (Optimate) Age:38 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Quartus              (Optimate) Age:33 STR: 7 Prereq:✓ Cooldown:OK → Already holding this office
+         ✅ Decimus · Veturius · (Optimate) Age:44 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Manius · Manlius · R (Optimate) Age:43 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Sulpicius    (Optimate) Age:36 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Sextus · Valerius ·  (Populare) Age:45 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius · Claudius · S (Populare) Age:38 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Vibius               (Populare) Age:33 STR: 7 Prereq:✓ Cooldown:CD → Already holding this office
+         ✅ Manius · Sempronius  (Populare) Age:42 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Marcus · Veturius ·  (Populare) Age:43 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Spurius · Valerius · (Populare) Age:38 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Publius · Domitius · (Equites ) Age:45 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Decimus · Sulpicius  (Equites ) Age:38 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Marcus · Domitius ·  (Equites ) Age:33 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gnaeus · Calpurnius  (Equites ) Age:41 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Quintus · Manlius ·  (Equites ) Age:42 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Stone        (?       ) Age:34 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Decius               (?       ) Age:27 STR: 2 Prereq:✓ Cooldown:OK → Age 27 < 30
+         ❌ Quartus              (?       ) Age:29 STR: 3 Prereq:✓ Cooldown:OK → Age 29 < 30
+         ❌ Sextilis             (?       ) Age:21 STR: 1 Prereq:✓ Cooldown:OK → Age 21 < 30
+         ❌ Vibius               (?       ) Age:27 STR: 2 Prereq:✓ Cooldown:OK → Age 27 < 30
+         ✅ Manius · Papirius    (?       ) Age:33 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+
+      🏆 TOP 2 CANDIDATES (by STR):
+         1. Marcus · Domitius ·  (Equites)
+            STR: 7 | Pop: 2 | Age:33 | History: quqaestor(-4)
+         2. Gnaeus · Calpurnius  (Equites)
+            STR: 7 | Pop: 3 | Age:41 | History: None
+
+      🗳️  VOTING RESULTS:
+         Gnaeus · Calpurnius :   45 (100.0%) ████████████████████
+         Marcus · Domitius · :    0 (  0.0%) 
+
+      ✓ WINNER: Gnaeus · Calpurnius · Bibulus (Equites)
+        Power bonus: +2
+      💰 Gnaeus · Calpurnius · Bibulus elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      Optimates: Numerius · Sempronius · Gracchus (Power: 9)
+      Populares: Sextus · Valerius · Macedonicus (Power: 9)
+      Equites: Publius · Domitius · Longus (Power: 7)
+
+   🎤 Presiding Officer: Numerius · Sempronius · Gracchus
+
+   📋 Processing 2 pending contract(s)...
+
+   📊 Voting: 西西里包税权
+      Cost: 21 | Expected: 13
+
+      Candidates (Equites):
+         1. Titus · Plautius · Pompeius (Optimates) [Wealth:25]
+         2. Titus · Sulpicius (Optimates) [Wealth:21]
+         3. Gaius · Claudius · Sulla (Populares) [Wealth:21]
+         4. Spurius · Valerius · Rufus (Populares) [Wealth:20]
+         5. Decimus · Sulpicius · Buteo (Equites) [Wealth:-8]
+
+      ✅ Awarded to Titus · Plautius · Pompeius (Optimates)
+         Titus · Plautius · Pompeius paid 21 Talents
+         Treasury +21 Talents
+
+   🏗️ Assigning: 水道桥工程
+      Budget: 58 | Profit: 11
+      👑 Assigned by Consul Numerius · Sempronius · Gracchus
+
+      Available Equites:
+         1. Titus · Plautius · Pompeius (Optimates) [Mgmt:8]
+         2. Titus · Sulpicius (Optimates) [Mgmt:9]
+         3. Gaius · Claudius · Sulla (Populares) [Mgmt:8]
+         4. Spurius · Valerius · Rufus (Populares) [Mgmt:8]
+         5. Decimus · Sulpicius · Buteo (Equites) [Mgmt:9]
+
+      ✅ Assigned to Titus · Sulpicius (Optimates)
+         Reason: loyal_to_optimates
+         Duration: 2 years
+
+   Progress: [█████░░] 5/7
+
+[1/7] ⚔️ Combat...
+
+--- Combat Phase (Year 262 BC) ---
+   ☮️  No active conflicts - phase skipped
+
+   Progress: [██████░] 6/7
+
+[1/7] 🔚 Revolution...
+
+--- Revolution Phase (Year 262 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: Populares (22 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟡 Optimates: MODERATE risk (avg Loyalty: 5.7)
+      🟡 Populares: MODERATE risk (avg Loyalty: 5.7)
+      🟢 Equites: LOW risk (avg Loyalty: 6.2)
+
+   📊 Contract Year Summary:
+      ▶️  Active: 5
+      ✅ Completed this year: 1
+
+==================================================
+   📜 ANNUAL REPORT - Year 262 BC
+==================================================
+
+   💰 Treasury: 427 Talents
+
+   📊 Faction Standings:
+      1. 👑 Populares: 22 Influence
+      2. 👑 Optimates: 21 Influence
+      3. 👑 Equites: 18 Influence
+
+   ☮️  Peace prevails
+
+   📜 Active Contracts: 5 (Annual Revenue: 19)
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   Progress: [███████] 7/7
+
+############################################################
+ ✅ TURN COMPLETE - All 7 phases executed
+############################################################
+
+> next
+
+📅 Year 261 BC (Turn 4)
+   [Cleared 7 phase locks]
+   ⛔ Ineligible (2y rule): Numerius · Sempronius · Gracchus(3), Sextus · Valerius · Macedonicus(1), Publius · Domitius · Longus(2)
+Advanced to Year 261 BC
+
+📅 Year 261 BC:
+   Completed: 0/7 phases
+      ○ 💀 Mortality
+      ○ 💰 Revenue
+      ○ 📜 Forum
+      ○ 👥 Population
+      ○ 🏛️ Senate
+      ○ ⚔️ Combat
+      ○ 🔚 Revolution
+   ⏳ 7 remaining
+
+> turn
+
+############################################################
+ TURN 4 (261 BC)
+ Terms: Senate/Senators/Talents
+############################################################
+
+[1/7] 💀 Mortality...
+
+--- Mortality Phase (Year 261 BC) ---
+Drawing 3 number(s) from pool (1-300)...
+Current living: 23
+  [Draw 1] Number 203...
+     -> No member assigned (safe)
+  [Draw 2] Number 123...
+     -> No member assigned (safe)
+  [Draw 3] Number 285...
+     -> No member assigned (safe)
+✅ No deaths this year
+
+   Progress: [█░░░░░░] 1/7
+
+[1/7] 💰 Revenue...
+
+--- Revenue Phase (Year 261 BC) ---
+   💰 Base tax: +100 Talents
+   Optimates: +10 Talents
+   Populares: +10 Talents
+   Equites: +10 Talents
+   ✅ No Legion maintenance needed
+
+   📜 Contract Revenues:
+      📊 科西嘉包税权: Marcus · Domitius · Sulla +4 Talents
+      📊 西西里包税权: Decimus · Sulpicius · Buteo +3 Talents
+      🏗️ 罗马大道工程: Treasury -27, Titus · Sulpicius +5 profit
+         ✅ Project completed! Total profit: 54
+      📊 西西里包税权: Titus · Plautius · Pompeius +2 Talents
+      🏗️ 水道桥工程: Treasury -29, Titus · Sulpicius +5 profit
+
+   📊 State Treasury: 471 Talents
+
+   🛡️  Legion Status:
+      Available: 10 | Active: 0 | Veteran: 0
+      Assigned to wars: 0
+      Maintenance: 0 Talents/turn
+
+   📋 Contract Status:
+      ▶️  Active: 4
+      ✅ Completed: 2
+
+   Progress: [██░░░░░] 2/7
+
+[1/7] 📜 Forum...
+
+--- Forum Phase (Year 261 BC) ---
+
+   📢 2 new figure(s) arrive in the Senate:
+      👤 Caius (plebeian)
+      🏛️ Publius · Valerius · Gracchus (nobile)
+
+   🏛️  Figures in Senate:
+
+      🏛️ NOBILE (1):
+         ID:25 Publius · Valerius · Gracchus
+            [权3财19人4] 家族:Valerius
+
+      💰 EQUES (1):
+         ID:23 Manius · Papirius
+            [权1财28人1]
+
+      👤 PLEBEIAN (6):
+         ID:18 Titus · Stone
+            [财6人1]
+         ID:19 Decius
+            [财8]
+         ID:20 Quartus
+            [权1财5人2]
+         ID:21 Sextilis
+            [权2财5人1]
+         ID:22 Vibius
+            [财6]
+         ID:24 Caius
+            [权2财8人2]
+
+   📜 2 new contract(s) announced:
+      包税: 撒丁尼亚包税权
+      工程: 港口扩建工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:7 撒丁尼亚包税权
+            预付:28 年收益:20 期限:5年
+            💡 Senate Phase: use 'vote contract 7'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:8 港口扩建工程
+            预算:51 预期利润:10
+            💡 Senate Phase: Consul uses 'assign works 8 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+
+   Progress: [███░░░░] 3/7
+
+[1/7] 👥 Population...
+
+--- Population Phase (Year 261 BC) ---
+   🟢 Treasury: 471 Talents
+   🛡️  Active legions: 0/10
+
+   🏛️  State of the Republic: Calm
+
+   🛡️  Legion Review:
+      🟢 Calm state: 10 Legion(s) available for recruitment
+
+   👥 Population Events:
+      📢 Urban unrest in the capital
+
+   Progress: [████░░░] 4/7
+
+[1/7] 🏛️ Senate...
+
+--- Senate Phase (Year 261 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (1 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Numerius · Semproniu (Optimate) Age:45 CHA: 8 Prereq:✓ Cooldown:OK → Already holding this office
+         ❌ Titus · Plautius · P (Optimate) Age:38 CHA: 6 Prereq:✓ Cooldown:OK → Age 38 < 40
+         ❌ Quartus              (Optimate) Age:33 CHA: 2 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Decimus · Veturius · (Optimate) Age:44 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Manius · Manlius · R (Optimate) Age:43 CHA: 9 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Titus · Sulpicius    (Optimate) Age:36 CHA: 5 Prereq:✗ Cooldown:OK → Age 36 < 40
+         ❌ Sextus · Valerius ·  (Populare) Age:45 CHA: 8 Prereq:✓ Cooldown:CD → Already holding this office
+         ❌ Gaius · Claudius · S (Populare) Age:38 CHA: 5 Prereq:✓ Cooldown:OK → Age 38 < 40
+         ❌ Vibius               (Populare) Age:33 CHA: 3 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Manius · Sempronius  (Populare) Age:42 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Marcus · Veturius ·  (Populare) Age:43 CHA: 5 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Spurius · Valerius · (Populare) Age:38 CHA: 3 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ❌ Publius · Domitius · (Equites ) Age:45 CHA: 8 Prereq:✓ Cooldown:OK → Already holding this office
+         ❌ Decimus · Sulpicius  (Equites ) Age:38 CHA: 3 Prereq:✓ Cooldown:OK → Age 38 < 40
+         ❌ Marcus · Domitius ·  (Equites ) Age:33 CHA: 4 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Gnaeus · Calpurnius  (Equites ) Age:41 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Quintus · Manlius ·  (Equites ) Age:42 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Titus · Stone        (?       ) Age:34 CHA: 2 Prereq:✗ Cooldown:OK → Age 34 < 40
+         ❌ Decius               (?       ) Age:27 CHA: 4 Prereq:✗ Cooldown:OK → Age 27 < 40
+         ❌ Quartus              (?       ) Age:29 CHA: 4 Prereq:✗ Cooldown:OK → Age 29 < 40
+         ❌ Sextilis             (?       ) Age:21 CHA: 2 Prereq:✗ Cooldown:OK → Age 21 < 40
+         ❌ Vibius               (?       ) Age:27 CHA: 3 Prereq:✗ Cooldown:OK → Age 27 < 40
+         ❌ Manius · Papirius    (?       ) Age:33 CHA: 3 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Caius                (?       ) Age:34 CHA: 4 Prereq:✗ Cooldown:OK → Age 34 < 40
+         ❌ Publius · Valerius · (?       ) Age:42 CHA: 7 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+   Electing PRAETOR (1 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=2y, Prerequisite=Quaestor
+         ✅ Numerius · Semproniu (Optimate) Age:45 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Titus · Plautius · P (Optimate) Age:38 MAN: 8 Prereq:✓ Cooldown:OK → Already holding this office
+         ❌ Quartus              (Optimate) Age:33 MAN: 3 Prereq:✓ Cooldown:OK → Age 33 < 35
+         ❌ Decimus · Veturius · (Optimate) Age:44 MAN: 5 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Manius · Manlius · R (Optimate) Age:43 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Titus · Sulpicius    (Optimate) Age:36 MAN: 9 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ✅ Sextus · Valerius ·  (Populare) Age:45 MAN: 3 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Gaius · Claudius · S (Populare) Age:38 MAN: 8 Prereq:✓ Cooldown:CD → Already holding this office
+         ❌ Vibius               (Populare) Age:33 MAN: 2 Prereq:✓ Cooldown:OK → Age 33 < 35
+         ❌ Manius · Sempronius  (Populare) Age:42 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Marcus · Veturius ·  (Populare) Age:43 MAN: 3 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Spurius · Valerius · (Populare) Age:38 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ✅ Publius · Domitius · (Equites ) Age:45 MAN: 3 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Decimus · Sulpicius  (Equites ) Age:38 MAN: 9 Prereq:✓ Cooldown:OK → Already holding this office
+         ❌ Marcus · Domitius ·  (Equites ) Age:33 MAN: 6 Prereq:✓ Cooldown:OK → Age 33 < 35
+         ✅ Gnaeus · Calpurnius  (Equites ) Age:41 MAN: 4 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Quintus · Manlius ·  (Equites ) Age:42 MAN: 3 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Titus · Stone        (?       ) Age:34 MAN: 4 Prereq:✗ Cooldown:OK → Age 34 < 35
+         ❌ Decius               (?       ) Age:27 MAN: 3 Prereq:✗ Cooldown:OK → Age 27 < 35
+         ❌ Quartus              (?       ) Age:29 MAN: 3 Prereq:✗ Cooldown:OK → Age 29 < 35
+         ❌ Sextilis             (?       ) Age:21 MAN: 2 Prereq:✗ Cooldown:OK → Age 21 < 35
+         ❌ Vibius               (?       ) Age:27 MAN: 4 Prereq:✗ Cooldown:OK → Age 27 < 35
+         ❌ Manius · Papirius    (?       ) Age:33 MAN: 7 Prereq:✗ Cooldown:OK → Age 33 < 35
+         ❌ Caius                (?       ) Age:34 MAN: 3 Prereq:✗ Cooldown:OK → Age 34 < 35
+         ❌ Publius · Valerius · (?       ) Age:42 MAN: 6 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+
+      🏆 TOP 2 CANDIDATES (by MAN):
+         1. Numerius · Semproniu (Optimates)
+            MAN: 5 | Pop: 5 | Age:45 | History: quqaestor(-8), praetor(-5), consul(-2)
+         2. Gnaeus · Calpurnius  (Equites)
+            MAN: 4 | Pop: 3 | Age:41 | History: quqaestor(3)
+
+      🗳️  VOTING RESULTS:
+         Gnaeus · Calpurnius :   31 ( 68.9%) █████████████
+         Numerius · Semproniu:   14 ( 31.1%) ██████
+
+      ✓ WINNER: Gnaeus · Calpurnius · Bibulus (Equites)
+        Power bonus: +3
+      ⚖️ Gnaeus · Calpurnius · Bibulus elected as praetor
+
+   Electing QUQAESTOR (1 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ Numerius · Semproniu (Optimate) Age:45 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Plautius · P (Optimate) Age:38 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Quartus              (Optimate) Age:33 STR: 7 Prereq:✓ Cooldown:OK → Already holding this office
+         ✅ Decimus · Veturius · (Optimate) Age:44 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Manius · Manlius · R (Optimate) Age:43 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Sulpicius    (Optimate) Age:36 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Sextus · Valerius ·  (Populare) Age:45 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius · Claudius · S (Populare) Age:38 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Vibius               (Populare) Age:33 STR: 7 Prereq:✓ Cooldown:OK → Already holding this office
+         ✅ Manius · Sempronius  (Populare) Age:42 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Marcus · Veturius ·  (Populare) Age:43 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Spurius · Valerius · (Populare) Age:38 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Publius · Domitius · (Equites ) Age:45 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Decimus · Sulpicius  (Equites ) Age:38 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Marcus · Domitius ·  (Equites ) Age:33 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Gnaeus · Calpurnius  (Equites ) Age:41 STR: 7 Prereq:✓ Cooldown:CD → Cooldown: 1/2 years
+         ✅ Quintus · Manlius ·  (Equites ) Age:42 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Stone        (?       ) Age:34 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Decius               (?       ) Age:27 STR: 2 Prereq:✓ Cooldown:OK → Age 27 < 30
+         ❌ Quartus              (?       ) Age:29 STR: 3 Prereq:✓ Cooldown:OK → Age 29 < 30
+         ❌ Sextilis             (?       ) Age:21 STR: 1 Prereq:✓ Cooldown:OK → Age 21 < 30
+         ❌ Vibius               (?       ) Age:27 STR: 2 Prereq:✓ Cooldown:OK → Age 27 < 30
+         ✅ Manius · Papirius    (?       ) Age:33 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Caius                (?       ) Age:34 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Publius · Valerius · (?       ) Age:42 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+
+      🏆 TOP 2 CANDIDATES (by STR):
+         1. Marcus · Domitius ·  (Equites)
+            STR: 7 | Pop: 2 | Age:33 | History: quqaestor(-4)
+         2. Quintus · Manlius ·  (Equites)
+            STR: 7 | Pop: 2 | Age:42 | History: None
+
+      🗳️  VOTING RESULTS:
+         Marcus · Domitius · :   31 ( 68.9%) █████████████
+         Quintus · Manlius · :   14 ( 31.1%) ██████
+
+      ✓ WINNER: Marcus · Domitius · Sulla (Equites)
+        Power bonus: +2
+      💰 Marcus · Domitius · Sulla elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      Optimates: Numerius · Sempronius · Gracchus (Power: 9)
+      Populares: Sextus · Valerius · Macedonicus (Power: 9)
+      Equites: Gnaeus · Calpurnius · Bibulus (Power: 9)
+
+   🎤 Presiding Officer: Numerius · Sempronius · Gracchus
+
+   📋 Processing 2 pending contract(s)...
+
+   📊 Voting: 撒丁尼亚包税权
+      Cost: 28 | Expected: 20
+
+      Candidates (Equites):
+         1. Titus · Plautius · Pompeius (Optimates) [Wealth:6]
+         2. Titus · Sulpicius (Optimates) [Wealth:31]
+         3. Gaius · Claudius · Sulla (Populares) [Wealth:21]
+         4. Spurius · Valerius · Rufus (Populares) [Wealth:20]
+         5. Decimus · Sulpicius · Buteo (Equites) [Wealth:-5]
+
+      ✅ Awarded to Titus · Sulpicius (Optimates)
+         Titus · Sulpicius paid 28 Talents
+         Treasury +28 Talents
+
+   🏗️ Assigning: 港口扩建工程
+      Budget: 51 | Profit: 10
+      👑 Assigned by Consul Numerius · Sempronius · Gracchus
+
+      Available Equites:
+         1. Titus · Plautius · Pompeius (Optimates) [Mgmt:8]
+         2. Titus · Sulpicius (Optimates) [Mgmt:9]
+         3. Gaius · Claudius · Sulla (Populares) [Mgmt:8]
+         4. Spurius · Valerius · Rufus (Populares) [Mgmt:8]
+         5. Decimus · Sulpicius · Buteo (Equites) [Mgmt:9]
+
+      ✅ Assigned to Titus · Plautius · Pompeius (Optimates)
+         Reason: loyal_to_optimates
+         Duration: 2 years
+
+   Progress: [█████░░] 5/7
+
+[1/7] ⚔️ Combat...
+
+--- Combat Phase (Year 261 BC) ---
+   ☮️  No active conflicts - phase skipped
+
+   Progress: [██████░] 6/7
+
+[1/7] 🔚 Revolution...
+
+--- Revolution Phase (Year 261 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: Equites (23 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟡 Optimates: MODERATE risk (avg Loyalty: 5.7)
+      🟡 Populares: MODERATE risk (avg Loyalty: 5.7)
+      🟢 Equites: LOW risk (avg Loyalty: 6.2)
+
+   📊 Contract Year Summary:
+      ▶️  Active: 6
+      ✅ Completed this year: 2
+
+==================================================
+   📜 ANNUAL REPORT - Year 261 BC
+==================================================
+
+   💰 Treasury: 499 Talents
+
+   📊 Faction Standings:
+      1. 👑 Equites: 23 Influence
+      2. 👑 Populares: 22 Influence
+      3. 👑 Optimates: 21 Influence
+
+   ☮️  Peace prevails
+
+   📜 Active Contracts: 6 (Annual Revenue: 23)
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   Progress: [███████] 7/7
+
+############################################################
+ ✅ TURN COMPLETE - All 7 phases executed
+############################################################
+
+> next
+
+📅 Year 260 BC (Turn 5)
+   [Cleared 7 phase locks]
+   ⛔ Ineligible (2y rule): Numerius · Sempronius · Gracchus(4), Sextus · Valerius · Macedonicus(2), Gnaeus · Calpurnius · Bibulus(new)
+Advanced to Year 260 BC
+
+📅 Year 260 BC:
+   Completed: 0/7 phases
+      ○ 💀 Mortality
+      ○ 💰 Revenue
+      ○ 📜 Forum
+      ○ 👥 Population
+      ○ 🏛️ Senate
+      ○ ⚔️ Combat
+      ○ 🔚 Revolution
+   ⏳ 7 remaining
+
+> turn
+
+############################################################
+ TURN 5 (260 BC)
+ Terms: Senate/Senators/Talents
+############################################################
+
+[1/7] 💀 Mortality...
+
+--- Mortality Phase (Year 260 BC) ---
+Drawing 3 number(s) from pool (1-300)...
+Current living: 25
+  [Draw 1] Number 157...
+     -> No member assigned (safe)
+  [Draw 2] Number 271...
+     -> No member assigned (safe)
+  [Draw 3] Number 294...
+     -> No member assigned (safe)
+✅ No deaths this year
+
+   Progress: [█░░░░░░] 1/7
+
+[1/7] 💰 Revenue...
+
+--- Revenue Phase (Year 260 BC) ---
+   💰 Base tax: +100 Talents
+   Optimates: +10 Talents
+   Populares: +10 Talents
+   Equites: +10 Talents
+   ✅ No Legion maintenance needed
+
+   📜 Contract Revenues:
+      📊 科西嘉包税权: Marcus · Domitius · Sulla +4 Talents
+      📊 西西里包税权: Decimus · Sulpicius · Buteo +3 Talents
+      📊 西西里包税权: Titus · Plautius · Pompeius +2 Talents
+      🏗️ 水道桥工程: Treasury -29, Titus · Sulpicius +5 profit
+         ✅ Project completed! Total profit: 58
+      📊 撒丁尼亚包税权: Titus · Sulpicius +4 Talents
+      🏗️ 港口扩建工程: Treasury -25, Titus · Plautius · Pompeius +5 profit
+
+   📊 State Treasury: 545 Talents
+
+   🛡️  Legion Status:
+      Available: 10 | Active: 0 | Veteran: 0
+      Assigned to wars: 0
+      Maintenance: 0 Talents/turn
+
+   📋 Contract Status:
+      ▶️  Active: 5
+      ✅ Completed: 3
+
+   Progress: [██░░░░░] 2/7
+
+[1/7] 📜 Forum...
+
+--- Forum Phase (Year 260 BC) ---
+
+   📢 2 new figure(s) arrive in the Senate:
+      👤 Decius (plebeian)
+      💰 Decimus · Fabius (eques)
+
+   🏛️  Figures in Senate:
+
+      🏛️ NOBILE (1):
+         ID:25 Publius · Valerius · Gracchus
+            [权3财19人4] 家族:Valerius
+
+      💰 EQUES (2):
+         ID:23 Manius · Papirius
+            [权1财28人1]
+         ID:27 Decimus · Fabius
+            [权3财15人1]
+
+      👤 PLEBEIAN (7):
+         ID:18 Titus · Stone
+            [财6人1]
+         ID:19 Decius
+            [财8]
+         ID:20 Quartus
+            [权1财5人2]
+         ID:21 Sextilis
+            [权2财5人1]
+         ID:22 Vibius
+            [财6]
+         ID:24 Caius
+            [权2财8人2]
+         ID:26 Decius
+            [权2财6]
+
+   📜 2 new contract(s) announced:
+      包税: 伊利里亚包税权
+      工程: 罗马大道工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:9 伊利里亚包税权
+            预付:39 年收益:21 期限:5年
+            💡 Senate Phase: use 'vote contract 9'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:10 罗马大道工程
+            预算:51 预期利润:10
+            💡 Senate Phase: Consul uses 'assign works 10 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+
+   Progress: [███░░░░] 3/7
+
+[1/7] 👥 Population...
+
+--- Population Phase (Year 260 BC) ---
+   🟢 Treasury: 545 Talents
+   🛡️  Active legions: 0/10
+
+   🏛️  State of the Republic: Calm
+
+   🛡️  Legion Review:
+      🟢 Calm state: 10 Legion(s) available for recruitment
+
+   👥 Population Events:
+      📢 Migration from the provinces
+
+   Progress: [████░░░] 4/7
+
+[1/7] 🏛️ Senate...
+
+--- Senate Phase (Year 260 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (1 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Numerius · Semproniu (Optimate) Age:45 CHA: 8 Prereq:✓ Cooldown:OK → Already holding this office
+         ❌ Titus · Plautius · P (Optimate) Age:38 CHA: 6 Prereq:✓ Cooldown:OK → Age 38 < 40
+         ❌ Quartus              (Optimate) Age:33 CHA: 2 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Decimus · Veturius · (Optimate) Age:44 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Manius · Manlius · R (Optimate) Age:43 CHA: 9 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Titus · Sulpicius    (Optimate) Age:36 CHA: 5 Prereq:✗ Cooldown:OK → Age 36 < 40
+         ❌ Sextus · Valerius ·  (Populare) Age:45 CHA: 8 Prereq:✓ Cooldown:OK → Already holding this office
+         ❌ Gaius · Claudius · S (Populare) Age:38 CHA: 5 Prereq:✓ Cooldown:OK → Age 38 < 40
+         ❌ Vibius               (Populare) Age:33 CHA: 3 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Manius · Sempronius  (Populare) Age:42 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Marcus · Veturius ·  (Populare) Age:43 CHA: 5 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Spurius · Valerius · (Populare) Age:38 CHA: 3 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ❌ Publius · Domitius · (Equites ) Age:45 CHA: 8 Prereq:✓ Cooldown:OK → Already holding this office
+         ❌ Decimus · Sulpicius  (Equites ) Age:38 CHA: 3 Prereq:✓ Cooldown:OK → Age 38 < 40
+         ❌ Marcus · Domitius ·  (Equites ) Age:33 CHA: 4 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ✅ Gnaeus · Calpurnius  (Equites ) Age:41 CHA: 8 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Quintus · Manlius ·  (Equites ) Age:42 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Titus · Stone        (?       ) Age:34 CHA: 2 Prereq:✗ Cooldown:OK → Age 34 < 40
+         ❌ Decius               (?       ) Age:27 CHA: 4 Prereq:✗ Cooldown:OK → Age 27 < 40
+         ❌ Quartus              (?       ) Age:29 CHA: 4 Prereq:✗ Cooldown:OK → Age 29 < 40
+         ❌ Sextilis             (?       ) Age:21 CHA: 2 Prereq:✗ Cooldown:OK → Age 21 < 40
+         ❌ Vibius               (?       ) Age:27 CHA: 3 Prereq:✗ Cooldown:OK → Age 27 < 40
+         ❌ Manius · Papirius    (?       ) Age:33 CHA: 3 Prereq:✗ Cooldown:OK → Age 33 < 40
+         ❌ Caius                (?       ) Age:34 CHA: 4 Prereq:✗ Cooldown:OK → Age 34 < 40
+         ❌ Publius · Valerius · (?       ) Age:42 CHA: 7 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Decius               (?       ) Age:22 CHA: 4 Prereq:✗ Cooldown:OK → Age 22 < 40
+         ❌ Decimus · Fabius     (?       ) Age:38 CHA: 6 Prereq:✗ Cooldown:OK → Age 38 < 40
+
+      🏆 TOP 2 CANDIDATES (by CHA):
+         1. Gnaeus · Calpurnius  (Equites)
+            CHA: 8 | Pop: 3 | Age:41 | History: quqaestor(3), praetor(4)
+
+      🗳️  VOTING RESULTS:
+         Gnaeus · Calpurnius :   45 (100.0%) ████████████████████
+
+      ✓ WINNER: Gnaeus · Calpurnius · Bibulus (Equites)
+        Power bonus: +5
+      🏛️ Gnaeus · Calpurnius · Bibulus elected as consul
+
+   Electing PRAETOR (1 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=2y, Prerequisite=Quaestor
+         ✅ Numerius · Semproniu (Optimate) Age:45 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Titus · Plautius · P (Optimate) Age:38 MAN: 8 Prereq:✓ Cooldown:OK → Already holding this office
+         ❌ Quartus              (Optimate) Age:33 MAN: 3 Prereq:✓ Cooldown:OK → Age 33 < 35
+         ❌ Decimus · Veturius · (Optimate) Age:44 MAN: 5 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Manius · Manlius · R (Optimate) Age:43 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Titus · Sulpicius    (Optimate) Age:36 MAN: 9 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ✅ Sextus · Valerius ·  (Populare) Age:45 MAN: 3 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Gaius · Claudius · S (Populare) Age:38 MAN: 8 Prereq:✓ Cooldown:OK → Already holding this office
+         ❌ Vibius               (Populare) Age:33 MAN: 2 Prereq:✓ Cooldown:OK → Age 33 < 35
+         ❌ Manius · Sempronius  (Populare) Age:42 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Marcus · Veturius ·  (Populare) Age:43 MAN: 3 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Spurius · Valerius · (Populare) Age:38 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ✅ Publius · Domitius · (Equites ) Age:45 MAN: 3 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Decimus · Sulpicius  (Equites ) Age:38 MAN: 9 Prereq:✓ Cooldown:OK → Already holding this office
+         ❌ Marcus · Domitius ·  (Equites ) Age:33 MAN: 6 Prereq:✓ Cooldown:OK → Age 33 < 35
+         ❌ Gnaeus · Calpurnius  (Equites ) Age:41 MAN: 4 Prereq:✓ Cooldown:CD → Cooldown: 1/2 years
+         ❌ Quintus · Manlius ·  (Equites ) Age:42 MAN: 3 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Titus · Stone        (?       ) Age:34 MAN: 4 Prereq:✗ Cooldown:OK → Age 34 < 35
+         ❌ Decius               (?       ) Age:27 MAN: 3 Prereq:✗ Cooldown:OK → Age 27 < 35
+         ❌ Quartus              (?       ) Age:29 MAN: 3 Prereq:✗ Cooldown:OK → Age 29 < 35
+         ❌ Sextilis             (?       ) Age:21 MAN: 2 Prereq:✗ Cooldown:OK → Age 21 < 35
+         ❌ Vibius               (?       ) Age:27 MAN: 4 Prereq:✗ Cooldown:OK → Age 27 < 35
+         ❌ Manius · Papirius    (?       ) Age:33 MAN: 7 Prereq:✗ Cooldown:OK → Age 33 < 35
+         ❌ Caius                (?       ) Age:34 MAN: 3 Prereq:✗ Cooldown:OK → Age 34 < 35
+         ❌ Publius · Valerius · (?       ) Age:42 MAN: 6 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Decius               (?       ) Age:22 MAN: 2 Prereq:✗ Cooldown:OK → Age 22 < 35
+         ❌ Decimus · Fabius     (?       ) Age:38 MAN: 6 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+
+      🏆 TOP 2 CANDIDATES (by MAN):
+         1. Numerius · Semproniu (Optimates)
+            MAN: 5 | Pop: 5 | Age:45 | History: quqaestor(-8), praetor(-5), consul(-2)
+         2. Sextus · Valerius ·  (Populares)
+            MAN: 3 | Pop: 3 | Age:45 | History: quqaestor(-8), praetor(-5), consul(-2)
+
+      🗳️  VOTING RESULTS:
+         Sextus · Valerius · :   31 ( 68.9%) █████████████
+         Numerius · Semproniu:   14 ( 31.1%) ██████
+
+      ✓ WINNER: Sextus · Valerius · Macedonicus (Populares)
+        Power bonus: +3
+      ⚖️ Sextus · Valerius · Macedonicus elected as praetor
+
+   Electing QUQAESTOR (1 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ Numerius · Semproniu (Optimate) Age:45 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Plautius · P (Optimate) Age:38 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Quartus              (Optimate) Age:33 STR: 7 Prereq:✓ Cooldown:OK → Already holding this office
+         ✅ Decimus · Veturius · (Optimate) Age:44 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Manius · Manlius · R (Optimate) Age:43 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Sulpicius    (Optimate) Age:36 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Sextus · Valerius ·  (Populare) Age:45 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius · Claudius · S (Populare) Age:38 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Vibius               (Populare) Age:33 STR: 7 Prereq:✓ Cooldown:OK → Already holding this office
+         ✅ Manius · Sempronius  (Populare) Age:42 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Marcus · Veturius ·  (Populare) Age:43 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Spurius · Valerius · (Populare) Age:38 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Publius · Domitius · (Equites ) Age:45 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Decimus · Sulpicius  (Equites ) Age:38 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Marcus · Domitius ·  (Equites ) Age:33 STR: 7 Prereq:✓ Cooldown:CD → Already holding this office
+         ✅ Gnaeus · Calpurnius  (Equites ) Age:41 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Quintus · Manlius ·  (Equites ) Age:42 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Titus · Stone        (?       ) Age:34 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Decius               (?       ) Age:27 STR: 2 Prereq:✓ Cooldown:OK → Age 27 < 30
+         ❌ Quartus              (?       ) Age:29 STR: 3 Prereq:✓ Cooldown:OK → Age 29 < 30
+         ❌ Sextilis             (?       ) Age:21 STR: 1 Prereq:✓ Cooldown:OK → Age 21 < 30
+         ❌ Vibius               (?       ) Age:27 STR: 2 Prereq:✓ Cooldown:OK → Age 27 < 30
+         ✅ Manius · Papirius    (?       ) Age:33 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Caius                (?       ) Age:34 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Publius · Valerius · (?       ) Age:42 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Decius               (?       ) Age:22 STR: 3 Prereq:✓ Cooldown:OK → Age 22 < 30
+         ✅ Decimus · Fabius     (?       ) Age:38 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+
+      🏆 TOP 2 CANDIDATES (by STR):
+         1. Gnaeus · Calpurnius  (Equites)
+            STR: 7 | Pop: 3 | Age:41 | History: quqaestor(3), praetor(4), consul(5)
+         2. Quintus · Manlius ·  (Equites)
+            STR: 7 | Pop: 2 | Age:42 | History: None
+
+      🗳️  VOTING RESULTS:
+         Quintus · Manlius · :   31 ( 68.9%) █████████████
+         Gnaeus · Calpurnius :   14 ( 31.1%) ██████
+
+      ✓ WINNER: Quintus · Manlius · Cicero (Equites)
+        Power bonus: +2
+      💰 Quintus · Manlius · Cicero elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      Optimates: Numerius · Sempronius · Gracchus (Power: 9)
+      Populares: Sextus · Valerius · Macedonicus (Power: 12)
+      Equites: Gnaeus · Calpurnius · Bibulus (Power: 14)
+
+   🎤 Presiding Officer: Gnaeus · Calpurnius · Bibulus
+
+   📋 Processing 2 pending contract(s)...
+
+   📊 Voting: 伊利里亚包税权
+      Cost: 39 | Expected: 21
+
+      Candidates (Equites):
+         1. Titus · Plautius · Pompeius (Optimates) [Wealth:13]
+         2. Titus · Sulpicius (Optimates) [Wealth:12]
+         3. Gaius · Claudius · Sulla (Populares) [Wealth:21]
+         4. Spurius · Valerius · Rufus (Populares) [Wealth:20]
+         5. Decimus · Sulpicius · Buteo (Equites) [Wealth:-2]
+
+      ✅ Awarded to Gaius · Claudius · Sulla (Populares)
+         Gaius · Claudius · Sulla paid 39 Talents
+         Treasury +39 Talents
+
+   🏗️ Assigning: 罗马大道工程
+      Budget: 51 | Profit: 10
+      👑 Assigned by Consul Numerius · Sempronius · Gracchus
+
+      Available Equites:
+         1. Titus · Plautius · Pompeius (Optimates) [Mgmt:8]
+         2. Titus · Sulpicius (Optimates) [Mgmt:9]
+         3. Gaius · Claudius · Sulla (Populares) [Mgmt:8]
+         4. Spurius · Valerius · Rufus (Populares) [Mgmt:8]
+         5. Decimus · Sulpicius · Buteo (Equites) [Mgmt:9]
+
+      ✅ Assigned to Titus · Sulpicius (Optimates)
+         Reason: loyal_to_optimates
+         Duration: 2 years
+
+   Progress: [█████░░] 5/7
+
+[1/7] ⚔️ Combat...
+
+--- Combat Phase (Year 260 BC) ---
+   ☮️  No active conflicts - phase skipped
+
+   Progress: [██████░] 6/7
+
+[1/7] 🔚 Revolution...
+
+--- Revolution Phase (Year 260 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: Equites (30 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟡 Optimates: MODERATE risk (avg Loyalty: 5.7)
+      🟡 Populares: MODERATE risk (avg Loyalty: 5.7)
+      🟢 Equites: LOW risk (avg Loyalty: 6.2)
+
+   📊 Contract Year Summary:
+      ▶️  Active: 7
+      ✅ Completed this year: 3
+
+==================================================
+   📜 ANNUAL REPORT - Year 260 BC
+==================================================
+
+   💰 Treasury: 584 Talents
+
+   📊 Faction Standings:
+      1. 👑 Equites: 30 Influence
+      2. 👑 Populares: 25 Influence
+      3. 👑 Optimates: 21 Influence
+
+   ☮️  Peace prevails
+
+   📜 Active Contracts: 7 (Annual Revenue: 27)
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   Progress: [███████] 7/7
+
+############################################################
+ ✅ TURN COMPLETE - All 7 phases executed
+############################################################
+
+> next
+
+📅 Year 259 BC (Turn 6)
+   [Cleared 7 phase locks]
+   ⛔ Ineligible (2y rule): Numerius · Sempronius · Gracchus(5), Sextus · Valerius · Macedonicus(3), Gnaeus · Calpurnius · Bibulus(1)
+Advanced to Year 259 BC
+
+📅 Year 259 BC:
+   Completed: 0/7 phases
+      ○ 💀 Mortality
+      ○ 💰 Revenue
+      ○ 📜 Forum
+      ○ 👥 Population
+      ○ 🏛️ Senate
+      ○ ⚔️ Combat
+      ○ 🔚 Revolution
+   ⏳ 7 remaining
+
+> status
+==================================================
+Year: 259 BC (Turn 6)
+Phase: resolution
+Treasury: 584 Talents
+--------------------------------------------------
+FACTIONS & MEMBERS:
+
+Optimates (optimates) - Treasury: 100Talents
+  [PLAYER CONTROLLED]
+  👑🏛️ Numerius · Sempronius · Gracchus(ID:1)[🏛️con][权9财16人5地4兵0席4] C
+  🟢💰 Titus · Plautius · Pompeius(ID:2)[⚖️pra][权3财13人3地0兵0席0]
+  🟢👤 Quartus(ID:3)[💰quq][权2财3人0地0兵0席0]
+  🟢🏛️ Decimus · Veturius · Buteo(ID:4)[权3财12人2地3兵0席3]
+  🟢🏛️ Manius · Manlius · Rufus(ID:5)[权4财10人2地4兵0席4]
+  🟢💰 Titus · Sulpicius(ID:6)[权0财12人2地0兵0席0]
+
+Populares (populares) - Treasury: 100Talents
+  👑🏛️ Sextus · Valerius · Macedonicus(ID:7)[⚖️pra][权7财11人3地4兵0席4]
+  🟢💰 Gaius · Claudius · Sulla(ID:8)[⚖️pra][权3财-18人3地0兵0席0]
+  🟢👤 Vibius(ID:9)[💰quq][权2财7人2地0兵0席0]
+  🟢🏛️ Manius · Sempronius · Buteo(ID:10)[权4财15人3地4兵0席4]
+  🟢🏛️ Marcus · Veturius · Rufus(ID:11)[权4财13人3地4兵0席4]
+  🟢💰 Spurius · Valerius · Rufus(ID:12)[权0财20人3地0兵0席0]
+
+Equites (equites) - Treasury: 100Talents
+  🟢🏛️ Publius · Domitius · Longus(ID:13)[🏛️con][权7财14人5地2兵0席2] C
+  🟢💰 Decimus · Sulpicius · Buteo(ID:14)[⚖️pra][权3财-2人2地0兵0席0]
+  🟢💰 Marcus · Domitius · Sulla(ID:15)[💰quq][权2财18人2地0兵0席0]
+  👑🏛️ Gnaeus · Calpurnius · Bibulus(ID:16)[🏛️con][权9财15人3地4兵0席4] C
+  🟢🏛️ Quintus · Manlius · Cicero(ID:17)[💰quq][权4财16人2地2兵0席2]
+==================================================
+
+   Progress: [░░░░░░░] 0/7
+
+> 

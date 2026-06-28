@@ -1,0 +1,580 @@
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：迁移合同组功能命令至新框架（指令15）
+
+核心输入：
+
+《EOR Command命令体系架构设计细化文档_V1.2》
+
+《EOR_开发指南.docx》
+
+已迁移的命令参考：func_military.py（特别是交互式命令的处理方式）
+
+基线代码：原 src/ui/debug_cli.py 中关于 contracts、vote contract、assign works 命令的处理逻辑（分别对应 _show_contracts、_vote_contract_interactive、_assign_works 方法）
+
+已完善的 GameState 类及合同系统：contract.py（包含 Contract、ContractType、ContractStatus）
+
+核心任务：
+
+创建合同功能命令文件：
+
+路径：src/ui/commands/func_contracts.py
+
+该文件应包含三个命令类：ContractsCommand、VoteContractCommand、AssignWorksCommand，均继承 Command。
+
+元数据定义：
+
+ContractsCommand：
+
+name = "contracts"
+
+aliases = []（原基线无别名）
+
+description = "显示所有合同状态（待决、执行中、已完成）"
+
+VoteContractCommand：
+
+name = "vote_contract"（注意：原命令为 vote contract，但命令名不能包含空格，因此用下划线连接，用户输入仍为 vote contract <id>，通过解析参数处理。类名可用 VoteContractCommand，name 属性为 "vote_contract"，但注册器会自动匹配别名？不，我们需要让用户输入 vote contract 两个词。有两种方式：a) 将命令名设为 vote，然后通过子命令方式处理；b) 保持原样，让用户输入 vote contract 作为完整命令，注册器需要支持多词命令名。但我们的注册器目前只支持单词命令名。原基线中 vote contract 是两个词，但实际命令解析是将第一个词作为命令名，后续作为参数，所以 vote 是命令名，contract 是第一个参数。因此应该创建 VoteCommand 类，然后在内部判断第一个参数是否为 contract。但原 debug_cli.py 中 vote contract 是作为一个整体处理的，但在命令解析时，输入 vote contract 1 会被拆分为 cmd_name="vote", args=["contract", "1"]。所以我们需要一个 VoteCommand 来处理所有以 vote 开头的命令，再根据第一个参数决定是 contract 还是其他（目前只有 contract）。但这样会增加复杂度。更简单的做法是保持与基线一致：创建 VoteCommand，然后在 execute 中检查 args[0] == "contract"。不过原 _handle_command 中使用了 cmd.startswith("vote contract ") 这样的判断，说明 vote contract 被当作一个复合命令处理。实际上，原代码中是这样处理的：
+
+python
+elif cmd.startswith("vote contract "):
+    parts = cmd.split()
+    if len(parts) >= 3:
+        try:
+            contract_id = int(parts[2])
+            self._vote_contract_interactive(contract_id)
+        ...
+即用户输入 vote contract 1，解析时 parts = ["vote", "contract", "1"]，第一个词是 vote，第二个是 contract，第三个是 ID。因此，我们需要一个命令类 VoteCommand，其 name = "vote"，然后在 execute 中检查 args[0] 是否为 "contract"，然后提取 ID。但这样会使得命令名变为 vote，而不是 vote contract。在帮助信息中会显示为 vote ...，而不是 vote contract。为了保持兼容性和用户习惯，我们可以：
+
+选项A：创建 VoteContractCommand 类，name = "vote_contract"，但用户输入 vote contract 时，注册器找不到，因为命令名不匹配。我们可以在注册器中支持别名包含空格？目前不支持。
+
+选项B：保持与基线一致的解析方式：在 func_contracts.py 中定义 VoteCommand，name = "vote"，然后在 execute 中解析 args[0] 是否为 "contract"，并处理。但这样会使得 vote 命令可能在未来扩展其他子命令（如 vote something else）。但当前只有 vote contract，可以接受。
+
+选项C：将 vote contract 视为一个整体命令名，修改注册器支持多词命令名？这改动较大，不建议。
+
+根据原基线逻辑，vote contract 和 assign works 都是作为独立命令处理的，但输入格式为 vote contract 1，第一个词是 vote，第二个词是 contract 作为参数。因此，我们可以将 vote 作为命令名，然后在命令内部根据 args 判断是哪种投票。但这样会使得 vote 命令包含子命令，而不是独立命令。但考虑到目前只有一种投票，可以简化。不过为了清晰，我们可以创建两个命令类：VoteContractCommand 和 AssignWorksCommand，但它们的 name 属性分别设为 "vote_contract" 和 "assign_works"，这样用户输入时需要输入 vote_contract 1，与原始用户习惯不符。原始用户输入是 vote contract 1，中间有空格。如果改为下划线，会破坏兼容性。
+
+因此，最佳方案是保持命令解析方式不变：在 DebugCLI 中，仍然将第一个词作为命令名，后续作为参数。所以 vote contract 1 的命令名是 "vote"，参数是 ["contract", "1"]。因此，我们需要一个 VoteCommand 类，其 name = "vote"，aliases = []，然后在 execute 中处理。同样，assign works 命令名是 "assign"，参数是 ["works", "2", "3"]，但我们已经有了 AssignCommand（在军事组中）用于指派指挥官，这会导致冲突！因为 assign 命令已经被 AssignCommand 占用了（用于指派指挥官）。原基线中 assign 命令是用于指派指挥官，而 assign works 是用于指派工程合同，两者是独立的。在整改后的架构中，我们已经在 func_military.py 中定义了 AssignCommand，用于指派指挥官和军团。如果现在再定义一个 AssignCommand 用于工程合同，会导致命令名冲突。因此，必须区分。
+
+分析原基线：assign 命令有两种用法：assign（无参数，用于交互式指派指挥官）和 assign works <cid> <fid>。在 _handle_command 中，assign 被处理为进入交互式指派；而 assign works 通过 cmd.startswith("assign works ") 单独处理。所以实际上，assign works 是 assign 命令的一个子命令。在我们的整改中，我们已经将 assign（交互式指派指挥官）实现在 AssignCommand 中。那么 assign works 应该如何实现？它应该作为 AssignCommand 的一部分，在 execute 中判断 args[0] 是否为 "works"，然后执行工程合同指派。但 AssignCommand 已经实现了完整的交互式指派逻辑，如果再加入 assign works 的处理，会使得 AssignCommand 变得臃肿且复杂。
+
+因此，我们需要重新考虑设计。可能有两种方案：
+
+将 assign works 单独作为一个命令类，命名为 AssignWorksCommand，命令名设为 "assign_works"，用户输入时需要输入 assign_works 2 3，但这改变了用户习惯，不被允许。
+将 AssignCommand 拆分为两个命令：AssignCommanderCommand 和 AssignWorksCommand，但这样会增加命令数量，且用户仍然需要输入不同的命令名。
+保留 AssignCommand 作为交互式指派指挥官，同时在 func_contracts.py 中定义 AssignWorksCommand，但命令名冲突无法解决，因为 assign 已经被占用。
+仔细查看原基线代码：在 _handle_command 中，assign 命令的检测是在 elif cmd == "assign": 分支，而 assign works 是通过 elif cmd.startswith("assign works "): 在更早的分支捕获的。所以实际上，assign works 优先于 assign 被处理。因此，当用户输入 assign works ... 时，它不会进入 assign 的处理分支。
+
+在我们的新架构中，命令分发是由 CommandRegistry 根据第一个词决定的。所以当用户输入 assign works 2 3 时，命令名为 "assign"，参数为 ["works", "2", "3"]。我们需要一个命令类来处理 "assign" 命令，并且这个类能够根据参数区分是指挥官指派还是工程合同指派。但我们在军事组中已经有一个 AssignCommand 用于指挥官指派，如果现在再定义一个同名的类，会导致冲突。实际上，我们可以在 func_military.py 中的 AssignCommand 里增加对 args 的判断：如果 args 不为空且第一个参数是 "works"，则调用工程合同处理逻辑。但这样会将两个不同的功能耦合在一起，且工程合同处理需要访问合同系统，使得 func_military 模块依赖合同模块，耦合度增加。
+
+更好的做法是：创建两个独立的命令类，分别处理不同的功能，但它们的命令名不同。例如：
+
+指挥官指派：命令名仍为 assign，由 AssignCommanderCommand 处理。
+
+工程合同指派：命令名为 assign_works，由 AssignWorksCommand 处理。
+
+但用户必须输入 assign_works，而不是 assign works。为了保持兼容，我们可以让 AssignWorksCommand 的 name 为 "assign"，并且设置一个别名 "assign_works"？这也不行，因为别名也是单词。所以无法同时满足。
+
+考虑到原基线中，assign works 是作为 assign 的一个子命令，而 assign 已经用于指挥官指派。为了不破坏现有用户习惯，我们可以在 AssignCommand 中实现分派逻辑：当 args 的第一个元素为 "works" 时，执行工程合同指派；否则执行原来的指挥官指派。这样，AssignCommand 就包含了两种功能，并通过参数区分。虽然这导致了一个命令类负责两个不同的业务，但确实保持了用户输入的兼容性。
+
+权衡之后，我决定采用这种方式：在 func_military.py 的 AssignCommand 中增加对工程合同指派的支持。因为：
+
+用户输入不变。
+
+不需要新增命令文件。
+
+虽然耦合度增加，但工程合同指派本身也涉及 assign 这个词，逻辑上可以接受。
+
+因此，指令15不包含 assign works 命令的迁移，而是将 assign works 作为对 AssignCommand 的增强，在后续的指令中（或作为指令14的补充）来完成。或者，我们可以将 assign works 单独作为一个命令，命令名为 assign_works，并通过别名 aw 等方式提供，但这样会改变用户习惯，不推荐。
+
+基于以上分析，我决定：指令15只迁移 contracts 和 vote contract 两个命令。assign works 命令将作为对 AssignCommand 的增强，在稍后的单独指令中处理（或者作为指令14的补充）。这样可以让合同组命令保持纯粹，避免复杂性。
+
+因此，指令15的核心任务如下：
+
+移植业务逻辑：
+
+ContractsCommand：
+
+从原 _show_contracts 方法移植逻辑。
+
+使用 self.state.contracts 获取合同列表，按状态分组（待决、执行中、已完成、已过期）。
+
+按照原格式打印输出，包括合同 ID、名称、类型、金额、剩余年限等。
+
+若没有合同，打印提示。
+
+VoteContractCommand：
+
+命令名设为 "vote"，因为用户输入 vote contract <id>，第一个词是 vote。
+
+在 execute(self, args) 中，首先检查 args 长度是否至少为 2，且 args[0].lower() == "contract"，否则打印用法错误。
+
+解析 args[1] 为整数合同 ID，若转换失败则报错。
+
+从 self.state.contracts 中找到对应合同，若不存在或状态不是 PENDING 或类型不是 TAX_FARMING，报错。
+
+获取骑士阶层候选人（class_tier.value == "eques"），按财富排序，选择最富有的（模拟竞标），但原基线是显示候选人列表并让用户选择，是交互式的。原 _vote_contract_interactive 中确实有交互式选择。我们需要完整移植交互逻辑。
+
+因此，需要实现交互：显示候选人列表（包括财富、能否预付），让用户输入选择。使用 input() 获取输入。
+
+执行授予：调用 contract.award(winner.id, winner_faction.id, self.state.turn.turn_number)，扣除获胜者财富，增加国库。
+
+打印成功信息。
+
+辅助方法：
+
+可能需要实现 _get_eques_candidates() 获取骑士候选人。
+
+输入验证可使用类似 _input_int 的辅助方法（可复制 func_military.py 中的 _input_int 或定义公共模块，但为简单，可在命令类内定义私有方法）。
+
+编写单元测试：
+
+路径：src/tests/test_commands/test_func_contracts.py
+
+使用 pytest，模拟 GameState、contracts、figures。
+
+测试用例：
+
+test_contracts_show：验证输出包含合同信息。
+
+test_vote_contract_success：模拟用户输入，测试投票成功流程。
+
+test_vote_contract_invalid_id：合同 ID 不存在或类型不对。
+
+test_vote_contract_no_candidates：没有骑士候选人。
+
+test_vote_contract_cannot_afford：候选人财富不足，但原逻辑中候选人列表只显示可负担的？原基线会显示财富并标记能否负担，但允许选择不能负担的？原代码中只有 can_afford = "✅" if member.wealth >= contract.base_cost else "❌"，但在授予前会检查财富。所以测试应包括选择不能负担的候选人时，授予失败。
+
+注意模拟 input。
+
+手动验证：
+
+运行 python main.py，load 加载场景，forum 生成合同。
+
+执行 contracts 查看合同。
+
+执行 vote contract 1，按提示选择候选人，验证成功。
+
+测试各种异常输入。
+
+交付物：
+
+src/ui/commands/func_contracts.py
+
+src/tests/test_commands/test_func_contracts.py
+
+验收标准：
+
+单元测试通过率 100%。
+
+在 CLI 中执行 contracts 和 vote contract 命令，输出和行为与原基线一致。
+
+代码通过《EOR MVP 0.4.5代码审查Checklist》中 Command 模块的相关检查项。
+
+命令注册正确，help 中显示这两个命令的描述。
+
+特别说明：
+
+assign works 命令不在本指令中迁移，将作为对 AssignCommand 的增强在后续处理。因此本指令仅处理 contracts 和 vote contract。
+
+对于 vote contract，命令名采用 vote，在 execute 中判断第一个参数是否为 contract。这是为了保持用户输入习惯，同时避免创建多个 vote 子命令。
+
+请在 feature/refactor-0.4.5 分支上操作，完成后提交代码并附上测试结果。如有问题，随时沟通。
+
+豆包（项目经理）
+
+
+单元测试通过
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m pytest src/tests/test_commands/test_func_contracts.py -v
+================================================================================================================================================= test session starts =================================================================================================================================================
+platform win32 -- Python 3.10.6, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+collected 13 items
+
+src/tests/test_commands/test_func_contracts.py::test_contracts_no_contracts PASSED                                                                                                                                                                                                                               [  7%] 
+src/tests/test_commands/test_func_contracts.py::test_contracts_with_pending PASSED                                                                                                                                                                                                                               [ 15%] 
+src/tests/test_commands/test_func_contracts.py::test_contracts_with_active PASSED                                                                                                                                                                                                                                [ 23%] 
+src/tests/test_commands/test_func_contracts.py::test_contracts_with_completed PASSED                                                                                                                                                                                                                             [ 30%] 
+src/tests/test_commands/test_func_contracts.py::test_contracts_with_expired PASSED                                                                                                                                                                                                                               [ 38%] 
+src/tests/test_commands/test_func_contracts.py::test_vote_wrong_args PASSED                                                                                                                                                                                                                                      [ 46%] 
+src/tests/test_commands/test_func_contracts.py::test_vote_invalid_contract_id PASSED                                                                                                                                                                                                                             [ 53%]
+src/tests/test_commands/test_func_contracts.py::test_vote_contract_not_found PASSED                                                                                                                                                                                                                              [ 61%] 
+src/tests/test_commands/test_func_contracts.py::test_vote_contract_not_pending PASSED                                                                                                                                                                                                                            [ 69%] 
+src/tests/test_commands/test_func_contracts.py::test_vote_contract_not_tax_farming PASSED                                                                                                                                                                                                                        [ 76%] 
+src/tests/test_commands/test_func_contracts.py::test_vote_no_candidates PASSED                                                                                                                                                                                                                                   [ 84%]
+src/tests/test_commands/test_func_contracts.py::test_vote_success PASSED                                                                                                                                                                                                                                         [ 92%] 
+src/tests/test_commands/test_func_contracts.py::test_vote_cannot_afford PASSED                                                                                                                                                                                                                                   [100%] 
+
+================================================================================================================================================= 13 passed in 0.12s ================================================================================================================================================== 
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> 
+
+
+系统测试
+
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+
+============================================================
+   Eagle of Rome - MVP 0.4.5 (整改后版本)
+============================================================
+项目根目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+Python路径: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src
+============================================================
+[DEBUG] 命令目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands
+[DEBUG] 发现的命令: ['contracts', 'vote', 'persuade', 'load', 'l', 'assign', 'disband', 'legions', 'recruit', 'wars', 'festival', 'status', 'sts', 'combat', 'c', 'forum', 'f', 'mortality', 'm', 'next', 'n', 'population', 'p', 'resolution', 'x', 'revenue', 'r', 'senate', 's', 'step', 'turn', 'reload', 'terms', 'exit', 'quit', 'help', 'h']
+
+============================================================
+   Eagle of Rome - Debug CLI (整改后版本)
+============================================================
+输入 'help' 查看可用命令，'exit' 退出游戏
+
+> load
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+> help
+
+============================================================
+   Eagle of Rome - 可用命令列表
+============================================================
+  assign                       交互式指派指挥官和军团到战争
+  combat      (别名: c)          执行战斗阶段 (Combat Phase)
+  contracts                    显示所有合同状态（待决、执行中、已完成）
+  disband                      交互式解散军团
+  exit        (别名: quit)       退出游戏
+  festival                     举办庆典，消耗个人财富增加人气，用法: festival <人物ID> <金额>
+  forum       (别名: f)          执行广场阶段 (Forum Phase)
+  help        (别名: h)          显示所有可用命令的帮助信息
+  legions                      显示军团状态
+  load        (别名: l)          加载场景 (默认: mvp_test.json)
+  mortality   (别名: m)          执行天命阶段 (Mortality Phase)
+  next        (别名: n)          推进到下一年。用法: next [force] (force 可跳过未完成阶段检查)
+  persuade                     说服 Curia 中的指定人物加入你的派系，用法: persuade <人物ID>
+  population  (别名: p)          执行人口阶段 (Population Phase)
+  recruit                      交互式征召军团
+  reload                       重新加载配置文件 (data/config/game_config.json)
+  resolution  (别名: x)          执行决议阶段 (Resolution Phase)
+  revenue     (别名: r)          执行税收阶段 (Revenue Phase)
+  senate      (别名: s)          执行元老院阶段 (Senate Phase)
+  status      (别名: sts)        显示当前游戏状态摘要（国库、人物数等）
+  step                         逐步执行回合，每阶段后暂停等待输入
+  terms                        切换术语预设，用法: terms [preset] (预设: original/historical_roman/generic_latin/chinese_historical)
+  turn                         自动执行完整回合（依次执行所有7个阶段）
+  vote                         投票授予包税合同，用法: vote contract <合同ID>
+  wars                         显示战争状态（牌堆、活跃、弃牌）
+============================================================
+输入 'exit' 或 'quit' 退出游戏
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 3
+  [Draw 1] Number 115...
+     -> No member assigned (safe)
+> r
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   元老院派: +10 Talents
+   平民派: +10 Talents
+
+   📊 State Treasury: 200 Talents
+> f
+
+--- Forum Phase (Year 264 BC) ---
+
+   📢 2 new figure(s) arrive in the Senate:
+      🏛️ Publius · Atilius · Macedonicus (nobile)
+      👤 Caius (plebeian)
+
+   🏛️  Figures in Senate:
+
+      🏛️ NOBILE (1):
+         ID:4 Publius · Atilius · Macedonicus
+            [权6财13人3] 家族:Atilius
+
+      👤 PLEBEIAN (1):
+         ID:5 Caius
+            [权2财4人2]
+
+   📜 2 new contract(s) announced:
+      包税: 山南高卢包税权
+      工程: 港口扩建工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 山南高卢包税权
+            预付:31 年收益:10 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 港口扩建工程
+            预算:34 预期利润:6
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+> contract
+未知命令: contract
+输入 'help' 查看可用命令
+> contracts
+
+============================================================
+   📜 Senate Contracts
+============================================================
+
+   ⏳ PENDING (Awaiting Senate Action):
+      ID:1 📊 Tax: 山南高卢包税权
+         Cost: 31 | Profit: 10
+         💡 Use: vote contract 1
+      ID:2 🏗️ Works: 港口扩建工程
+         Cost: 34 | Profit: 6
+============================================================
+> vote contract 1
+❌ 没有符合资格的骑士候选人
+> vote contract 2
+❌ 这不是包税合同
+> status
+
+==================================================
+   📊 游戏状态摘要
+==================================================
+   回合: 第 1 年 (264 BC)
+   国库: 200 塔兰特
+   存活人物: 5 人
+   派系数: 2 个
+==================================================
+> p
+
+--- Population Phase (Year 264 BC) ---
+   🟢 Treasury: 200 Talents
+
+   🏛️  State of the Republic: Calm
+
+   👥 Population Events:
+      No significant events
+> s
+
+--- Senate Phase (Year 264 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (2 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Publius · Atilius ·  (?       ) Age:44 CHA: 6 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Caius                (?       ) Age:27 CHA: 5 Prereq:✗ Cooldown:OK → Age 27 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Publius · Atilius ·  (?       ) Age:44 CHA: 6 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Caius                (?       ) Age:27 CHA: 5 Prereq:✗ Cooldown:OK → Age 27 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+   Electing PRAETOR (1 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=2y, Prerequisite=Quaestor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Gaius Marius         (平民派     ) Age:35 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Lucius Sulla         (元老院派    ) Age:45 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Publius · Atilius ·  (?       ) Age:44 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Caius                (?       ) Age:27 MAN: 4 Prereq:✗ Cooldown:OK → Age 27 < 35
+      ⚠️  No eligible candidates for praetor!
+      ⚠️  No eligible candidate for praetor
+
+   Electing QUQAESTOR (1 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ Marcus Brutus        (元老院派    ) Age:40 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius Marius         (平民派     ) Age:35 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Lucius Sulla         (元老院派    ) Age:45 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Publius · Atilius ·  (?       ) Age:44 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Caius                (?       ) Age:27 STR: 4 Prereq:✓ Cooldown:OK → Age 27 < 30
+
+      🏆 TOP 2 CANDIDATES (by STR):
+         1. Publius · Atilius ·  (?)
+            STR: 5 | Pop: 3 | Age:44 | History: None
+         2. Marcus Brutus        (元老院派)
+            STR: 0 | Pop: 3 | Age:40 | History: None
+
+      🗳️  VOTING RESULTS:
+         Marcus Brutus       :    7 ( 58.3%) ███████████
+         Publius · Atilius · :    5 ( 41.7%) ████████
+
+      ✓ WINNER: Marcus Brutus (元老院派)
+        Power bonus: +2
+      💰 Marcus Brutus elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      元老院派: Marcus Brutus (Power: 7)
+      平民派: Gaius Marius (Power: 4)
+
+   🎤 Presiding Officer: Marcus Brutus
+
+   📋 Processing 2 pending contract(s)...
+
+   📊 Voting: 山南高卢包税权
+      Cost: 31 | Expected: 10
+      ⚠️  No eligible Equites candidates
+
+   🏗️ Assigning: 港口扩建工程
+      Budget: 34 | Profit: 6
+      ⏳ Awaiting Consul election...
+> help
+
+============================================================
+   Eagle of Rome - 可用命令列表
+============================================================
+  assign                       交互式指派指挥官和军团到战争
+  combat      (别名: c)          执行战斗阶段 (Combat Phase)
+  contracts                    显示所有合同状态（待决、执行中、已完成）
+  disband                      交互式解散军团
+  exit        (别名: quit)       退出游戏
+  festival                     举办庆典，消耗个人财富增加人气，用法: festival <人物ID> <金额>
+  forum       (别名: f)          执行广场阶段 (Forum Phase)
+  help        (别名: h)          显示所有可用命令的帮助信息
+  legions                      显示军团状态
+  load        (别名: l)          加载场景 (默认: mvp_test.json)
+  mortality   (别名: m)          执行天命阶段 (Mortality Phase)
+  next        (别名: n)          推进到下一年。用法: next [force] (force 可跳过未完成阶段检查)
+  persuade                     说服 Curia 中的指定人物加入你的派系，用法: persuade <人物ID>
+  population  (别名: p)          执行人口阶段 (Population Phase)
+  recruit                      交互式征召军团
+  reload                       重新加载配置文件 (data/config/game_config.json)
+  resolution  (别名: x)          执行决议阶段 (Resolution Phase)
+  revenue     (别名: r)          执行税收阶段 (Revenue Phase)
+  senate      (别名: s)          执行元老院阶段 (Senate Phase)
+  status      (别名: sts)        显示当前游戏状态摘要（国库、人物数等）
+  step                         逐步执行回合，每阶段后暂停等待输入
+  terms                        切换术语预设，用法: terms [preset] (预设: original/historical_roman/generic_latin/chinese_historical)
+  turn                         自动执行完整回合（依次执行所有7个阶段）
+  vote                         投票授予包税合同，用法: vote contract <合同ID>
+  wars                         显示战争状态（牌堆、活跃、弃牌）
+============================================================
+输入 'exit' 或 'quit' 退出游戏
+> terms original
+   📝 Terminology: original
+✅ 已切换至: original
+   现在使用: Senate/Senators/Talents
+> status
+
+==================================================
+   📊 游戏状态摘要
+==================================================
+   回合: 第 1 年 (264 BC)
+   国库: 200 塔兰特
+   存活人物: 5 人
+   派系数: 2 个
+==================================================
+> s
+⚠️ 元老院阶段在本回合已执行过
+> c
+
+--- Combat Phase (Year 264 BC) ---
+   ☮️  No war system - phase skipped
+> x
+
+--- Revolution Phase (Year 264 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: 元老院派 (13 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟡 元老院派: MODERATE risk (avg Loyalty: 5.0)
+      🟡 平民派: MODERATE risk (avg Loyalty: 5.0)
+
+==================================================
+   📜 ANNUAL REPORT - Year 264 BC
+==================================================
+
+   💰 Treasury: 200 Talents
+
+   📊 Faction Standings:
+      1. 👑 元老院派: 13 Influence
+      2. 👑 平民派: 4 Influence
+
+   ☮️  Peace prevails
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   📉 Annual Decay:
+      Marcus Brutus: pop-0(-50%), age 41
+      Gaius Marius: pop-1(-50%), age 36
+      Lucius Sulla: pop-1(-50%), age 46
+      Publius · Atilius · Macedonicus: pop-0(-50%), age 45
+      Caius: pop-0(-50%), age 28
+> n
+已推进至 263 BC
+
+📅 Year 263 BC:
+   Completed: 0/7 phases
+      ○ Mortality
+      ○ Revenue
+      ○ Forum
+      ○ Population
+      ○ Senate
+      ○ Combat
+      ○ Revolution
+   ⏳ 7 remaining
+> 
+
+
+
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git status
+On branch feature/refactor-0.4.5
+Your branch is up to date with 'origin/feature/refactor-0.4.5'.
+
+        new file:   src/tests/test_commands/test_func_contracts.py
+        new file:   src/ui/commands/func_contracts.py
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+        modified:   src/tests/test_commands/test_func_contracts.py
+        modified:   src/ui/commands/func_contracts.py
+
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome>
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git commit -m "feat: 迁移合同组功能命令至新框架（指令15）"
+[feature/refactor-0.4.5 c303054] feat: 迁移合同组功能命令至新框架（指令15）
+ 2 files changed, 405 insertions(+)
+ create mode 100644 src/tests/test_commands/test_func_contracts.py
+ create mode 100644 src/ui/commands/func_contracts.py
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git tag -a v0.4.5-015 -m "MVP0.4.5-015 基线版本 - 迁移合同组功能命令至新框架（指令15）"
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git push origin feature/refactor-0.4.5
+Enumerating objects: 15, done.
+Counting objects: 100% (15/15), done.
+Delta compression using up to 12 threads
+Compressing objects: 100% (9/9), done.
+Writing objects: 100% (9/9), 4.29 KiB | 1.43 MiB/s, done.
+Total 9 (delta 4), reused 0 (delta 0), pack-reused 0 (from 0)
+remote: Resolving deltas: 100% (4/4), completed with 4 local objects.
+To https://github.com/zk32236/Eagle-of-Rome.git
+   c9cf50c..c303054  feature/refactor-0.4.5 -> feature/refactor-0.4.5
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git push origin v0.4.5-015
+Enumerating objects: 1, done.
+Counting objects: 100% (1/1), done.
+Writing objects: 100% (1/1), 251 bytes | 251.00 KiB/s, done.
+Total 1 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
+To https://github.com/zk32236/Eagle-of-Rome.git
+ * [new tag]         v0.4.5-015 -> v0.4.5-015
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> 

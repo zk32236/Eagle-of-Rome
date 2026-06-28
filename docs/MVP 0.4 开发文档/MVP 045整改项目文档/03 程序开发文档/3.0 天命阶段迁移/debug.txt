@@ -1,0 +1,19 @@
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_commands/test_phase_mortality.py
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 3
+  [Draw 1] Number 136...
+     -> No member assigned (safe)
+......
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 3
+  [Draw 1] Number 255...
+     -> No member assigned (safe)
+.
+----------------------------------------------------------------------
+Ran 7 tests in 0.013s
+
+OK
+

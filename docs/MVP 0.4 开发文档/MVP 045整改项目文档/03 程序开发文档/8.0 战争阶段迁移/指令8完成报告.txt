@@ -1,0 +1,318 @@
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：迁移 Combat 阶段命令至新框架（指令8）
+
+**核心输入**：
+1. 《EOR Command命令体系架构设计细化文档_V1.1》
+2. 《EOR GameState状态管理架构设计细化文档_V1.1》
+3. 《EOR_开发指南.docx》
+4. 基线代码：
+   - `src/core/phases/combat_phase.py`
+   - `src/core/systems/war_system.py`
+   - `src/core/systems/military_system.py`
+   - `src/core/entities/war.py`
+   - `src/core/entities/legion.py`
+   （均位于 feature/refactor-0.4.5 分支）
+5. 已迁移的命令参考：`phase_mortality.py`、`phase_senate.py` 等
+6. 已完善的 `GameState` 类（包含战争系统、军事系统、人物管理等方法）
+
+**核心任务**：
+1. **创建 Combat 命令文件**：
+   - 路径：`src/ui/commands/phase_combat.py`
+   - 类名：`CombatCommand`，继承 `Command`
+   - 元数据：
+     - `name = "combat"`
+     - `aliases = ["c"]`
+     - `description = "执行战斗阶段 (Combat Phase)"`
+
+2. **移植业务逻辑**：
+   - 从原 `combat_phase.py` 的 `CombatPhase.execute()` 方法复制核心逻辑，适配到新命令的 `execute(self, args: List[str]) -> bool` 中。
+   - **关键适配点**：
+     - 使用 `self.state.get_war_system()` 获取战争系统实例。
+     - 使用 `self.state.get_military_system()` 获取军事系统实例。
+     - 使用 `self.state.get_active_wars()` 获取活跃战争列表。
+     - 遍历活跃战争，对每场已指派指挥官的战争调用 `_resolve_battle()` 方法。
+     - 使用 `self.state.get_member()` 获取指挥官人物信息。
+     - 使用 `self.state.log_event()` 记录战斗结果事件。
+     - 使用 `self.state.is_phase_executed("combat")` 检查阶段是否已执行，若已执行则打印提示并返回 `False`。
+     - 执行成功后调用 `self.state.mark_phase_executed("combat")`。
+   - 原代码中的私有方法（如 `_resolve_battle`、`_apply_battle_result`、`_simplified_crt` 等）应作为命令的私有方法移植，保持逻辑完整。
+   - 注意处理指挥官伤亡、军团晋升/解散、战争状态更新等逻辑。
+   - 确保所有打印输出与原基线一致（保留原有的输出格式和 emoji）。
+
+3. **按需补充 GameState 方法**：
+   - 若在移植过程中发现 GameState 缺少必要的方法（例如直接访问战争系统、军事系统的复杂操作），请在 `src/core/game_state.py` 中添加。
+   - 可能需要的辅助方法：
+     - `get_war_by_id(war_id)`：通过 ID 获取战争对象。
+     - `get_legions_for_battle(war_id)`：获取指派到某战争的所有军团。
+     - `report_commander_casualty(war_id, status, turn)`：记录指挥官伤亡状态。
+   - 优先复用 `war_system` 和 `military_system` 的现有接口，仅当这些接口不足以满足需求时才补充。
+
+4. **编写单元测试**：
+   - 路径：`src/tests/test_commands/test_phase_combat.py`
+   - 测试用例至少覆盖：
+     - `test_execute_success`：使用模拟的 GameState 设置测试数据（包含活跃战争、指派指挥官、军团等），验证命令返回 True，且输出包含战斗过程。
+     - `test_already_executed`：先标记阶段已执行，再执行命令，验证返回 False。
+     - `test_no_active_wars`：测试没有活跃战争时，命令应自动完成（返回 True，打印提示）。
+     - `test_unassigned_wars`：测试有战争但未指派指挥官时，应跳过并提示。
+     - `test_battle_outcomes`：Mock CRT 判定结果，验证不同结果（TRIUMPH、VICTORY、STALEMATE、DEFEAT、DISASTER）下，军团状态、指挥官状态、战争状态是否正确更新。
+     - `test_commander_casualty`：测试指挥官阵亡/逃跑/被俘时，战争状态正确记录，军团召回或解散。
+   - 可使用动态导入或直接导入命令类进行测试，必要时 Mock 战争系统和军事系统的方法。
+
+5. **手动验证**：
+   - 运行 `python main.py`，执行 `load` 加载测试场景，然后执行以下命令序列：
+     - `recruit` 征召军团（需要实现 `recruit` 命令，但可先不要求，手动在测试中设置好军团）
+     - `assign` 指派指挥官和军团到战争（需要实现 `assign` 命令，同样可先手动设置状态）
+     - `combat` 执行战斗阶段，观察输出是否与原版本一致。
+   - 多次执行验证阶段重复执行检查。
+
+6. **清理旧文件**：
+   - 确认新命令完全替代原功能后，执行 `git rm src/core/phases/combat_phase.py` 删除原文件。
+   - 提交信息：`chore(cleanup): remove old combat_phase.py after migration`
+
+**交付物**：
+1. `src/ui/commands/phase_combat.py`
+2. `src/tests/test_commands/test_phase_combat.py`
+3. 可能修改的 `src/core/game_state.py`（补充的方法）
+4. 删除原 `src/core/phases/combat_phase.py` 的 Git 操作记录
+
+**验收标准**：
+1. 单元测试通过率 100%。
+2. 在 CLI 中执行 `combat` 命令（在适当准备后），输出和行为与原基线完全一致（可通过手动对比验证）。
+3. 阶段执行状态检查正常工作：同一回合内重复执行返回 False 并提示。
+4. 代码通过《EOR MVP 0.4.5代码审查Checklist》中 Command 模块和 GameState 模块的相关检查项。
+5. 无遗留的旧文件（`combat_phase.py` 已删除）。
+
+请开始工作，完成后提交代码并附上测试结果。如有问题，随时沟通。
+
+豆包（项目经理）
+
+
+单元测试
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_commands/test_phase_combat.py
+
+--- Combat Phase (Year 264 BC) ---
+   ☮️  No active conflicts - phase skipped
+............
+----------------------------------------------------------------------
+Ran 12 tests in 0.046s
+
+OK
+
+
+系统测试
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+
+============================================================
+   Eagle of Rome - MVP 0.4.5 (整改后版本)
+============================================================
+项目根目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+Python路径: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src
+============================================================
+[DEBUG] 命令目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands
+[DEBUG] 发现的命令: ['load', 'l', 'status', 'sts', 'combat', 'c', 'forum', 'f', 'mortality', 'm', 'population', 'p', 'revenue', 'r', 'senate', 's', 'exit', 'quit', 'help', 'h']
+
+============================================================
+   Eagle of Rome - Debug CLI (整改后版本)
+============================================================
+输入 'help' 查看可用命令，'exit' 退出游戏
+
+> load
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 3
+  [Draw 1] Number 34...
+     -> No member assigned (safe)
+> r
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   元老院派: +10 Talents
+   平民派: +10 Talents
+
+   📊 State Treasury: 200 Talents
+> f
+
+--- Forum Phase (Year 264 BC) ---
+
+   📢 1 new figure(s) arrive in the Senate:
+      👤 Marcus · Fields (plebeian)
+
+   🏛️  Figures in Senate:
+
+      👤 PLEBEIAN (1):
+         ID:4 Marcus · Fields
+            [权2财8人1]
+
+   📜 2 new contract(s) announced:
+      包税: 西西里包税权
+      工程: 公共浴场工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 西西里包税权
+            预付:23 年收益:12 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 公共浴场工程
+            预算:57 预期利润:11
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+> p
+
+--- Population Phase (Year 264 BC) ---
+   🟢 Treasury: 200 Talents
+
+   🏛️  State of the Republic: Calm
+
+   👥 Population Events:
+      No significant events
+> s
+
+--- Senate Phase (Year 264 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (2 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=10y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Marcus · Fields      (?       ) Age:27 CHA: 5 Prereq:✗ Cooldown:OK → Age 27 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=10y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Marcus · Fields      (?       ) Age:27 CHA: 5 Prereq:✗ Cooldown:OK → Age 27 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+   Electing PRAETOR (2 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=5y, Prerequisite=Quaestor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Gaius Marius         (平民派     ) Age:35 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Lucius Sulla         (元老院派    ) Age:45 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Marcus · Fields      (?       ) Age:27 MAN: 3 Prereq:✗ Cooldown:OK → Age 27 < 35
+      ⚠️  No eligible candidates for praetor!
+      ⚠️  No eligible candidate for praetor
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=5y, Prerequisite=Quaestor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Gaius Marius         (平民派     ) Age:35 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Lucius Sulla         (元老院派    ) Age:45 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Marcus · Fields      (?       ) Age:27 MAN: 3 Prereq:✗ Cooldown:OK → Age 27 < 35
+      ⚠️  No eligible candidates for praetor!
+      ⚠️  No eligible candidate for praetor
+
+   Electing QUQAESTOR (2 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ Marcus Brutus        (元老院派    ) Age:40 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius Marius         (平民派     ) Age:35 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Lucius Sulla         (元老院派    ) Age:45 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Marcus · Fields      (?       ) Age:27 STR: 2 Prereq:✓ Cooldown:OK → Age 27 < 30
+
+      🏆 TOP 3 CANDIDATES (by STR):
+         1. Marcus Brutus        (元老院派)
+            STR: 0 | Pop: 3 | Age:40 | History: None
+         2. Gaius Marius         (平民派)
+            STR: 0 | Pop: 5 | Age:35 | History: None
+         3. Lucius Sulla         (元老院派)
+            STR: 0 | Pop: 4 | Age:45 | History: None
+
+      🗳️  VOTING RESULTS:
+         Lucius Sulla        :    7 ( 58.3%) ███████████
+         Gaius Marius        :    5 ( 41.7%) ████████
+         Marcus Brutus       :    0 (  0.0%) 
+
+      ✓ WINNER: Lucius Sulla (元老院派)
+        Power bonus: +2
+      💰 Lucius Sulla elected as quqaestor
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ Marcus Brutus        (元老院派    ) Age:40 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius Marius         (平民派     ) Age:35 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Lucius Sulla         (元老院派    ) Age:45 STR: 0 Prereq:✓ Cooldown:CD → Already holding this office
+         ❌ Marcus · Fields      (?       ) Age:27 STR: 2 Prereq:✓ Cooldown:OK → Age 27 < 30
+
+      🏆 TOP 3 CANDIDATES (by STR):
+         1. Marcus Brutus        (元老院派)
+            STR: 0 | Pop: 3 | Age:40 | History: None
+         2. Gaius Marius         (平民派)
+            STR: 0 | Pop: 5 | Age:35 | History: None
+
+      🗳️  VOTING RESULTS:
+         Marcus Brutus       :    7 ( 58.3%) ███████████
+         Gaius Marius        :    5 ( 41.7%) ████████
+      📤 Lucius Sulla steps down as quqaestor (power: 0)
+
+      ✓ WINNER: Marcus Brutus (元老院派)
+        Power bonus: +2
+      💰 Marcus Brutus elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      元老院派: Marcus Brutus (Power: 7)
+      平民派: Gaius Marius (Power: 4)
+
+   🎤 Presiding Officer: Marcus Brutus
+
+   📋 Processing 2 pending contract(s)...
+
+   📊 Voting: 西西里包税权
+      Cost: 23 | Expected: 12
+      ⚠️  No eligible Equites candidates
+
+   🏗️ Assigning: 公共浴场工程
+      Budget: 57 | Profit: 11
+      ⏳ Awaiting Consul election...
+> c
+
+--- Combat Phase (Year 264 BC) ---
+   ☮️  No war system - phase skipped
+> c
+⚠️ 战斗阶段在本回合已执行过
+> help
+
+============================================================
+   Eagle of Rome - 可用命令列表
+============================================================
+  combat      (别名: c)          执行战斗阶段 (Combat Phase)
+  exit        (别名: quit)       退出游戏
+  forum       (别名: f)          执行广场阶段 (Forum Phase)
+  help        (别名: h)          显示所有可用命令的帮助信息
+  load        (别名: l)          加载场景 (默认: mvp_test.json)
+  mortality   (别名: m)          执行天命阶段 (Mortality Phase)
+  population  (别名: p)          执行人口阶段 (Population Phase)
+  revenue     (别名: r)          执行税收阶段 (Revenue Phase)
+  senate      (别名: s)          执行元老院阶段 (Senate Phase)
+  status      (别名: sts)        显示当前游戏状态摘要（国库、人物数等）
+============================================================
+输入 'exit' 或 'quit' 退出游戏
+> exit
+感谢游玩 Eagle of Rome！再见！
+
+Process finished with exit code 0

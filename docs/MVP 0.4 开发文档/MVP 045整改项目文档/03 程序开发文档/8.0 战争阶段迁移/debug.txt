@@ -1,0 +1,51 @@
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_commands/test_phase_combat.py
+
+--- Combat Phase (Year 264 BC) ---
+   ☮️  No active conflicts - phase skipped
+.F.F...F..F.
+======================================================================
+FAIL: test_battle_outcomes_defeat_fled (src.tests.test_commands.test_phase_combat.TestCombatCommand)      
+测试失败结果且将领逃跑
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\AppData\Local\Programs\Python\Python310\lib\unittest\mock.py", line 1369, in patched
+    return func(*newargs, **newkeywargs)
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_commands\test_phase_combat.py", line 275, in test_battle_outcomes_defeat_fled
+    self.assertIn("RESULT: DEFEAT", output)
+AssertionError: 'RESULT: DEFEAT' not found in '\n--- Combat Phase (Year 264 BC) ---\n\n   ⚔️  Resolving 1 active conflict(s)...\n\n   🎯 Battle: Test War\n      Enemy Strength: 8\n      🎖️  Commander : Test Commander (Mil: 5)\n      🛡️  Forces: 2 Legion(s) (+4)\n         • Legio 1 [Str:2]\n          • Legio 2 [
+Str:2]\n      ⚔️  Total Force: 9 vs Enemy 8\n\n      🎲 Dice roll: 2\n      📊 Combat Total: 2 + 9 - 8 = 3\n\n      ⏸️ RESULT: STALEMATE\n      ⏳ Stalemate. War continues...\n'
+
+======================================================================
+FAIL: test_battle_outcomes_stalemate (src.tests.test_commands.test_phase_combat.TestCombatCommand)
+测试僵持结果
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\AppData\Local\Programs\Python\Python310\lib\unittest\mock.py", line 1369, in patched
+    return func(*newargs, **newkeywargs)
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_commands\test_phase_combat.py", line 249, in test_battle_outcomes_stalemate
+    self.assertIn("RESULT: STALEMATE", output)
+AssertionError: 'RESULT: STALEMATE' not found in '\n--- Combat Phase (Year 264 BC) ---\n\n   ⚔️  Resolving 1 active conflict(s)...\n\n   🎯 Battle: Test War\n      Enemy Strength: 8\n      🎖️  Comman der: Test Commander (Mil: 5)\n      🛡️  Forces: 2 Legion(s) (+4)\n         • Legio 1 [Str:2]\n          • Legio 
+2 [Str:2]\n      ⚔️  Total Force: 9 vs Enemy 8\n\n      🎲 Dice roll: 5\n      📊 Combat Total: 5 + 9 - 8 = 6\n\n      ✅ RESULT: VICTORY\n      ✓ Victory! Test War concluded successfully.\n      🏆 Legio 1 returns in triumph!\n      🏆 Legio 2 returns in triumph!\n'
+
+======================================================================
+FAIL: test_commander_dead (src.tests.test_commands.test_phase_combat.TestCombatCommand)
+测试指挥官已死亡的情况
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_commands\test_phase_combat.py", line 352, in test_commander_dead
+    self.assertIn("commander unavailable!", output)
+AssertionError: 'commander unavailable!' not found in '\n--- Combat Phase (Year 264 BC) ---\n\n   ⚔️  Resolving 1 active conflict(s)...\n\n   🎯 Battle: Test War\n      Enemy Strength: 5\n      💀 Commander unavailable! War stalls...\n'
+
+======================================================================
+FAIL: test_no_legions_assigned (src.tests.test_commands.test_phase_combat.TestCombatCommand)
+测试指派了指挥官但无军团的情况
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_commands\test_phase_combat.py", line 336, in test_no_legions_assigned
+    self.assertIn("No legions assigned!", output)
+AssertionError: 'No legions assigned!' not found in '\n--- Combat Phase (Year 264 BC) ---\n\n   ⚔️  Resolving 1 active conflict(s)...\n\n   🎯 Battle: Test War\n      Enemy Strength: 5\n      ❌ No Legions assigned!\n'
+
+----------------------------------------------------------------------
+Ran 12 tests in 0.048s
+
+FAILED (failures=4)

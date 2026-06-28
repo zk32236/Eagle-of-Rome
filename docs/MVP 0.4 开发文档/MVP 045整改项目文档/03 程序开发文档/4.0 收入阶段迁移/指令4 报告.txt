@@ -1,0 +1,279 @@
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：迁移 Revenue 阶段命令至新框架（指令4）
+
+核心输入：
+
+《EOR Command命令体系架构设计细化文档_V1.1》
+
+《EOR GameState状态管理架构设计细化文档_V1.1》
+
+《EOR_开发指南.docx》
+
+基线代码：src/core/phases/revenue_phase.py（位于 feature/refactor-0.4.5 分支）
+
+已迁移的命令参考：phase_mortality.py
+
+已完善的 GameState 类（包含国库属性、配置获取等方法）
+
+核心任务：
+
+创建 Revenue 命令文件：
+
+路径：src/ui/commands/phase_revenue.py
+
+类名：RevenueCommand，继承 Command
+
+元数据：
+
+name = "revenue"
+
+aliases = ["r"]
+
+description = "执行税收阶段 (Revenue Phase)"
+
+移植业务逻辑：
+
+从原 revenue_phase.py 的 RevenuePhase.execute() 方法复制核心逻辑，并适配到新命令的 execute(self, args: List[str]) -> bool 中。
+
+关键适配点：
+
+使用 self.state.treasury 获取/设置国库金额（注意：原代码中 state.treasury 是属性，整改后需使用 self.state.treasury 属性访问器）。
+
+使用 self.state._config.get("economic_rules.base_tax", 100) 获取基础税收配置（或通过 GameState 的配置访问方法）。
+
+使用 self.state.factions 遍历派系，为每个派系增加津贴（faction.treasury += stipend）。
+
+使用 self.state.get_military_system() 获取军事系统并调用 apply_maintenance() 处理军团维护费。
+
+使用 self.state.log_event() 记录事件。
+
+使用 self.state.is_phase_executed("revenue") 检查阶段是否已执行，若已执行则打印提示并返回 False。
+
+执行成功后调用 self.state.mark_phase_executed("revenue")。
+
+确保所有打印输出与原基线一致（保留原有的输出格式和 emoji）。
+
+按需补充 GameState 方法：
+
+若在移植过程中发现 GameState 缺少必要的方法（例如直接修改派系国库、访问合同列表等），请直接在 src/core/game_state.py 中添加。
+
+添加的方法需遵循现有命名规范，并编写对应的单元测试（可放在 test_game_state.py 或新建测试文件）。
+
+特别注意：派系的 treasury 属性应通过 GameState 提供公共方法修改，避免外部直接操作派系内部属性。例如可添加 add_faction_treasury(faction_id, amount) 方法。
+
+处理合同收益逻辑（MVP 0.4.3 新增）：
+
+原 revenue_phase.py 中包含 _process_contract_revenues 方法，处理包税合同和工程合同的收益结算。
+
+将此逻辑完整移植，注意：
+
+使用 self.state.contracts 访问合同列表（当前为占位空列表，需在后续完善，但先移植逻辑）。
+
+使用 self.state.get_member(contract.awarded_to) 获取承包商人物。
+
+使用 contract.execute_tax_collection() 和 contract.execute_works_payment() 处理合同收益。
+
+若 Contract 类尚未完全实现，可先保留原逻辑框架，但确保代码不崩溃。
+
+编写单元测试：
+
+路径：src/tests/test_commands/test_phase_revenue.py
+
+测试用例至少覆盖：
+
+test_execute_success：使用模拟的 GameState 设置测试数据，验证命令返回 True，且国库、派系资金正确更新。
+
+test_already_executed：先标记阶段已执行，再执行命令，验证返回 False。
+
+test_military_maintenance：模拟军事系统，验证维护费扣除逻辑。
+
+test_contract_revenue：模拟合同列表，验证合同收益处理（可先简单测试不崩溃）。
+
+test_insufficient_treasury：测试国库不足时军团维护费处理（原逻辑会强制解散部分军团，需验证）。
+
+可使用动态导入或直接导入命令类进行测试，必要时 mock 军事系统和合同模块。
+
+手动验证：
+
+运行 python main.py，执行 load 加载测试场景，然后输入 revenue 或 r，观察输出是否与原版本一致。
+
+检查国库、派系资金等是否正确更新。
+
+清理旧文件：
+
+确认新命令完全替代原功能后，执行 git rm src/core/phases/revenue_phase.py 删除原文件。
+
+提交信息：chore(cleanup): remove old revenue_phase.py after migration
+
+交付物：
+
+src/ui/commands/phase_revenue.py
+
+src/tests/test_commands/test_phase_revenue.py
+
+可能修改的 src/core/game_state.py（补充的方法）
+
+删除原 src/core/phases/revenue_phase.py 的 Git 操作记录
+
+验收标准：
+
+单元测试通过率 100%。
+
+在 CLI 中执行 revenue 命令，输出和行为与原基线完全一致（可通过手动对比验证）。
+
+阶段执行状态检查正常工作：同一回合内重复执行返回 False 并提示。
+
+代码通过《EOR MVP 0.4.5代码审查Checklist》中 Command 模块和 GameState 模块的相关检查项。
+
+无遗留的旧文件（revenue_phase.py 已删除）。
+
+
+单元测试：
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_commands/test_phase_revenue.py
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   元老院派: +10 Talents
+   平民派: +10 Talents
+
+   📊 State Treasury: 200 Talents
+.....
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   元老院派: +10 Talents
+   平民派: +10 Talents
+   ⚠️ Treasury shortfall! 2 legion(s) disbanded
+
+   📊 State Treasury: 100 Talents
+Military summary
+..
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   元老院派: +10 Talents
+   平民派: +10 Talents
+   ✅ Paid 10 Talents for legion maintenance
+
+   📊 State Treasury: 200 Talents
+Military summary
+..
+----------------------------------------------------------------------
+Ran 9 tests in 0.013s
+
+OK
+
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_core/test_game_state.py
+.............
+----------------------------------------------------------------------
+Ran 13 tests in 0.012s
+
+OK
+
+系统测试：
+
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+
+============================================================
+   Eagle of Rome - MVP 0.4.5 (整改后版本)
+============================================================
+项目根目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+Python路径: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src
+============================================================
+[DEBUG] 命令目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands
+[DEBUG] 发现的命令: ['load', 'l', 'status', 's', 'mortality', 'm', 'revenue', 'r', 'exit', 'quit', 'help', 'h']
+
+============================================================
+   Eagle of Rome - Debug CLI (整改后版本)
+============================================================
+输入 'help' 查看可用命令，'exit' 退出游戏
+
+> help
+
+============================================================
+   Eagle of Rome - 可用命令列表
+============================================================
+  exit       (别名: quit)       退出游戏
+  help       (别名: h)          显示所有可用命令的帮助信息
+  load       (别名: l)          加载场景 (默认: mvp_test.json)
+  mortality  (别名: m)          执行天命阶段 (Mortality Phase)
+  revenue    (别名: r)          执行税收阶段 (Revenue Phase)
+  status     (别名: s)          显示当前游戏状态摘要（国库、人物数等）
+============================================================
+输入 'exit' 或 'quit' 退出游戏
+> load
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 3
+  [Draw 1] Number 86...
+     -> No member assigned (safe)
+> r
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   元老院派: +10 Talents
+   平民派: +10 Talents
+
+   📊 State Treasury: 200 Talents
+> status
+
+==================================================
+   📊 游戏状态摘要
+==================================================
+   回合: 第 1 年 (264 BC)
+   国库: 200 塔兰特
+   存活人物: 3 人
+   派系数: 2 个
+==================================================
+> r
+⚠️ 税收阶段在本回合已执行过
+> exit
+感谢游玩 Eagle of Rome！再见！
+
+Process finished with exit code 0
+
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git rm src/core/phases/revenue_phase.py
+rm 'src/core/phases/revenue_phase.py'
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git commit -m "chore(cleanup): remove old revenue_phase.py after migration"
+[feature/refactor-0.4.5 246c655] chore(cleanup): remove old revenue_phase.py after migration
+ create mode 100644 src/tests/test_commands/test_phase_revenue.py
+ create mode 100644 src/ui/commands/phase_revenue.py
+Your branch is ahead of 'origin/feature/refactor-0.4.5' by 1 commit.
+  (use "git push" to publish your local commits)
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+        modified:   src/core/game_state.py
+        modified:   src/tests/test_commands/test_phase_revenue.py
+        modified:   src/tests/test_core/test_game_state.py
+
+no changes added to commit (use "git add" and/or "git commit -a")
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git add .
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git commit -m "feat: 迁移 Revenue 阶段命令至新框架（指令4）"
+[feature/refactor-0.4.5 7b8b339] feat: 迁移 Revenue 阶段命令至新框架（指令4）
+ 4 files changed, 669 insertions(+), 40 deletions(-)
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git tag -a v0.4.5-004 -m "MVP0.4.5-004 基线版本 - 迁移 Revenue 阶段命令至新框架（指令4）"
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git push origin feature/refactor-0.4.5
+Enumerating objects: 33, done.
+Counting objects: 100% (33/33), done.
+Delta compression using up to 12 threads
+Compressing objects: 100% (22/22), done.
+Writing objects: 100% (22/22), 8.18 KiB | 2.04 MiB/s, done.
+Total 22 (delta 12), reused 0 (delta 0), pack-reused 0 (from 0)
+remote: Resolving deltas: 100% (12/12), completed with 8 local objects.
+To https://github.com/zk32236/Eagle-of-Rome.git
+   50c3ce2..7b8b339  feature/refactor-0.4.5 -> feature/refactor-0.4.5
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git push origin v0.4.5-004
+Enumerating objects: 1, done.
+Counting objects: 100% (1/1), done.
+Writing objects: 100% (1/1), 248 bytes | 248.00 KiB/s, done.
+Total 1 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
+To https://github.com/zk32236/Eagle-of-Rome.git
+ * [new tag]         v0.4.5-004 -> v0.4.5-004

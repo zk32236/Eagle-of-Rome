@@ -1,0 +1,296 @@
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：迁移 Forum 阶段命令至新框架（指令5）
+
+核心输入：
+
+《EOR Command命令体系架构设计细化文档_V1.1》
+
+《EOR GameState状态管理架构设计细化文档_V1.1》
+
+《EOR_开发指南.docx》
+
+基线代码：src/core/phases/forum_phase.py（位于 feature/refactor-0.4.5 分支）
+
+已迁移的命令参考：phase_mortality.py、phase_revenue.py
+
+已完善的 GameState 类（包含国库、配置、合同列表、curia 占位等）
+
+核心任务：
+
+创建 Forum 命令文件：
+
+路径：src/ui/commands/phase_forum.py
+
+类名：ForumCommand，继承 Command
+
+元数据：
+
+name = "forum"
+
+aliases = ["f"]
+
+description = "执行广场阶段 (Forum Phase)"
+
+移植业务逻辑：
+
+从原 forum_phase.py 的 ForumPhase.execute() 方法复制核心逻辑，适配到新命令的 execute(self, args: List[str]) -> bool 中。
+
+关键适配点：
+
+使用 self.state.curia 访问 Curia 实例（需确认 GameState 中有 curia 属性，目前为 _curia，可能需要添加 @property 访问器）。
+
+使用 self.state.contracts 访问合同列表。
+
+调用 self.state.curia.add_figure() 将新人物放入等待区。
+
+调用 self.state.curia.get_available_by_tier() 等方法显示等待区人物。
+
+调用 self.state.add_member() 添加新生成的人物到全局成员列表（原逻辑中，新人物生成后同时加入 GameState.members 和 Curia，需注意顺序）。
+
+使用 self.state.config.get() 获取配置（如人物生成规则，但原逻辑硬编码了随机生成，可先保持原样）。
+
+使用 self.state.is_phase_executed("forum") 检查阶段是否已执行，若已执行则打印提示并返回 False。
+
+执行成功后调用 self.state.mark_phase_executed("forum")。
+
+确保所有打印输出与原基线一致（保留原有的输出格式和 emoji）。
+
+按需补充 GameState 方法：
+
+若 GameState 缺少对 curia 的公开访问，请添加 @property def curia(self): return self._curia。
+
+确保 _curia 在 reset() 中被正确初始化为 Curia() 实例（目前 reset 中 self._curia = None，应改为 self._curia = Curia()）。
+
+合同生成部分需确保 Contract 类可用，并调用其工厂方法创建合同，然后追加到 self.state.contracts。
+
+若需要，可添加辅助方法如 generate_new_figures 等，但建议保持命令内逻辑清晰即可。
+
+处理阶段执行状态：
+
+在命令开始时检查 self.state.is_phase_executed("forum")，若已执行则打印提示并返回 False。
+
+执行成功后调用 self.state.mark_phase_executed("forum")。
+
+编写单元测试：
+
+路径：src/tests/test_commands/test_phase_forum.py
+
+测试用例至少覆盖：
+
+test_execute_success：验证命令返回 True，且 curia 中新增了人物（可通过 len(state.curia.get_all_available()) 检查），合同列表增加。
+
+test_already_executed：先标记阶段已执行，再执行命令，验证返回 False。
+
+test_generate_figures：验证新人物生成逻辑（可 Mock 随机数以控制生成数量，检查人物阶层分布）。
+
+test_generate_contracts：验证合同生成（检查合同数量、类型）。
+
+test_curia_display：验证输出包含 Curia 中的人物信息（可通过捕获输出断言）。
+
+可使用动态导入或直接导入命令类进行测试，必要时 Mock 随机模块。
+
+手动验证：
+
+运行 python main.py，执行 load 加载测试场景，然后输入 forum 或 f，观察输出是否与原版本一致（包括人物生成、合同生成、Curia 显示）。
+
+检查 curia 中人物是否可用后续命令（如 persuade 等，但本指令不要求实现，仅验证状态正确）。
+
+清理旧文件：
+
+确认新命令完全替代原功能后，执行 git rm src/core/phases/forum_phase.py 删除原文件。
+
+提交信息：chore(cleanup): remove old forum_phase.py after migration
+
+交付物：
+
+src/ui/commands/phase_forum.py
+
+src/tests/test_commands/test_phase_forum.py
+
+可能修改的 src/core/game_state.py（补充 curia 访问和初始化）
+
+删除原 src/core/phases/forum_phase.py 的 Git 操作记录
+
+验收标准：
+
+单元测试通过率 100%。
+
+在 CLI 中执行 forum 命令，输出和行为与原基线完全一致（可通过手动对比验证）。
+
+阶段执行状态检查正常工作：同一回合内重复执行返回 False 并提示。
+
+代码通过《EOR MVP 0.4.5代码审查Checklist》中 Command 模块和 GameState 模块的相关检查项。
+
+无遗留的旧文件（forum_phase.py 已删除）。
+
+
+
+单元测试：
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_commands/test_phase_forum.py
+
+--- Forum Phase (Year 264 BC) ---
+
+   📢 1 new figure(s) arrive in the Senate:
+      👤 Statius (plebeian)
+
+   🏛️  Figures in Senate:
+
+      👤 PLEBEIAN (1):
+         ID:1 Statius
+            [财8]
+
+   📜 2 new contract(s) announced:
+      包税: 撒丁尼亚包税权
+      工程: 港口扩建工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 撒丁尼亚包税权
+            预付:36 年收益:24 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 港口扩建工程
+            预算:43 预期利润:8
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+......
+----------------------------------------------------------------------
+Ran 6 tests in 0.005s
+
+OK
+
+系统测试：
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+
+============================================================
+   Eagle of Rome - MVP 0.4.5 (整改后版本)
+============================================================
+项目根目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+Python路径: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src
+============================================================
+[DEBUG] 命令目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands
+[DEBUG] 发现的命令: ['load', 'l', 'status', 's', 'forum', 'f', 'mortality', 'm', 'revenue', 'r', 'exit', 'quit', 'help', 'h']
+
+============================================================
+   Eagle of Rome - Debug CLI (整改后版本)
+============================================================
+输入 'help' 查看可用命令，'exit' 退出游戏
+
+> help
+
+============================================================
+   Eagle of Rome - 可用命令列表
+============================================================
+  exit       (别名: quit)       退出游戏
+  forum      (别名: f)          执行广场阶段 (Forum Phase)
+  help       (别名: h)          显示所有可用命令的帮助信息
+  load       (别名: l)          加载场景 (默认: mvp_test.json)
+  mortality  (别名: m)          执行天命阶段 (Mortality Phase)
+  revenue    (别名: r)          执行税收阶段 (Revenue Phase)
+  status     (别名: s)          显示当前游戏状态摘要（国库、人物数等）
+============================================================
+输入 'exit' 或 'quit' 退出游戏
+> load
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 3
+  [Draw 1] Number 110...
+     -> No member assigned (safe)
+> r
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   元老院派: +10 Talents
+   平民派: +10 Talents
+
+   📊 State Treasury: 200 Talents
+> f
+
+--- Forum Phase (Year 264 BC) ---
+
+   📢 1 new figure(s) arrive in the Senate:
+      👤 Caius (plebeian)
+
+   🏛️  Figures in Senate:
+
+      👤 PLEBEIAN (1):
+         ID:4 Caius
+            [权1财7]
+
+   📜 2 new contract(s) announced:
+      包税: 山南高卢包税权
+      工程: 罗马大道工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 山南高卢包税权
+            预付:30 年收益:11 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 罗马大道工程
+            预算:33 预期利润:6
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+> f
+⚠️ 广场阶段在本回合已执行过
+> exit
+感谢游玩 Eagle of Rome！再见！
+
+Process finished with exit code 0
+
+
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git rm src/core/phases/forum_phase.py
+On branch feature/refactor-0.4.5
+Your branch is up to date with 'origin/feature/refactor-0.4.5'.
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+        new file:   src/ui/commands/phase_forum.py
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+        modified:   src/core/game_state.py
+        modified:   src/tests/test_commands/test_phase_forum.py
+        modified:   src/ui/commands/phase_forum.py
+
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git commit -m "feat: 迁移 Forum 阶段命令至新框架（指令5）"
+[feature/refactor-0.4.5 b92ddd9] feat: 迁移 Forum 阶段命令至新框架（指令5）
+ 4 files changed, 341 insertions(+), 203 deletions(-)
+ delete mode 100644 src/core/phases/forum_phase.py
+ create mode 100644 src/tests/test_commands/test_phase_forum.py
+ create mode 100644 src/ui/commands/phase_forum.py
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git tag -a v0.4.5-005 -m "MVP0.4.5-005 基线版本 - 迁移 Forum 阶段命令至新框架（指令5"
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git push origin feature/refactor-0.4.5
+Enumerating objects: 21, done.
+Counting objects: 100% (21/21), done.
+Delta compression using up to 12 threads
+Compressing objects: 100% (12/12), done.
+Writing objects: 100% (12/12), 5.28 KiB | 2.64 MiB/s, done.
+Total 12 (delta 6), reused 0 (delta 0), pack-reused 0 (from 0)
+remote: Resolving deltas: 100% (6/6), completed with 6 local objects.
+To https://github.com/zk32236/Eagle-of-Rome.git
+   7b8b339..b92ddd9  feature/refactor-0.4.5 -> feature/refactor-0.4.5
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git push origin v0.4.5-005
+Enumerating objects: 1, done.
+Counting objects: 100% (1/1), done.
+Writing objects: 100% (1/1), 243 bytes | 243.00 KiB/s, done.
+Total 1 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
+To https://github.com/zk32236/Eagle-of-Rome.git
+ * [new tag]         v0.4.5-005 -> v0.4.5-005

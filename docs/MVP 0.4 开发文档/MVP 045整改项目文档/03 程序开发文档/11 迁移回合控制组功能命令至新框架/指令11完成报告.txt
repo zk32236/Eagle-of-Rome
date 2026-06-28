@@ -1,0 +1,736 @@
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：迁移回合控制组功能命令至新框架（指令11）
+
+核心输入：
+
+《EOR Command命令体系架构设计细化文档_V1.2》
+
+《EOR_开发指南.docx》
+
+已迁移的命令参考：func_load.py、func_status.py、sys_config.py
+
+基线代码：原 src/ui/debug_cli.py 中关于 next、next force、turn、step 命令的处理逻辑（约第50-80行、第100-130行）
+
+已完善的 GameState 类及阶段命令（phase_mortality、phase_revenue 等）
+
+核心任务：
+
+创建回合控制命令文件：
+
+路径：src/ui/commands/func_turn_control.py
+
+该文件应包含三个命令类：NextCommand、TurnCommand、StepCommand，均继承 Command。
+
+元数据定义：
+
+NextCommand：
+
+name = "next"
+
+aliases = ["n"]（原基线支持 n 作为别名）
+
+description = "推进到下一年。用法: next [force] (force 可跳过未完成阶段检查)"
+
+TurnCommand：
+
+name = "turn"
+
+aliases = []（原基线无别名）
+
+description = "自动执行完整回合（依次执行所有7个阶段）"
+
+StepCommand：
+
+name = "step"
+
+aliases = []
+
+description = "逐步执行回合，每阶段后暂停等待输入"
+
+移植业务逻辑：
+
+NextCommand：
+
+从原 _next_turn 方法移植逻辑。
+
+检查 args 是否包含 "force" 字符串（不区分大小写），决定是否强制推进。
+
+调用 self.state.is_phase_executed() 检查所有阶段是否已执行（可硬编码阶段列表或从 self.state 获取，但原基线有 phase_sequence 列表，可考虑在命令内部定义）。
+
+若有缺失且未 force，打印缺失阶段列表，返回 False。
+
+若缺失但 force，打印警告并继续。
+
+调用 self.state.advance_year() 推进回合，打印新年份。
+
+调用 self.state.get_status_summary() 或自定义输出显示回合摘要（原基线会显示阶段进度，可参考移植）。
+
+TurnCommand：
+
+从原 _do_full_turn 方法移植逻辑（auto=True 版本）。
+
+获取当前回合已执行阶段，按顺序（mortality → revenue → forum → population → senate → combat → resolution）依次执行每个未执行的阶段。
+
+对每个阶段，获取对应的命令类并执行（可通过注册器或直接实例化阶段命令类）。建议使用注册器执行，保持统一：self.state.registry.execute(phase_name, self.state, [])，但注意 TurnCommand 实例没有注册器引用，需要从外部传入或通过全局方式获取。一个可行方案是在命令中通过 self.state 获取注册器？但 GameState 并不持有注册器。因此更简单的方式是直接实例化阶段命令类（如 MortalityCommand(self.state).execute([])），但需导入所有阶段命令类。考虑到可维护性，可以在命令文件中导入所有阶段命令类并依次调用。
+
+执行每个阶段后，不暂停（auto=True）。
+
+执行完成后打印回合完成信息。
+
+StepCommand：
+
+从原 _do_full_turn 方法移植逻辑（auto=False 版本）。
+
+与 TurnCommand 类似，但每执行一个阶段后，使用 input(" Press Enter...") 暂停等待用户按键。
+
+注意处理 KeyboardInterrupt 等情况，确保不崩溃。
+
+辅助方法：
+
+可在文件内定义私有辅助方法 _execute_phase(phase_name) 来执行单个阶段，避免重复代码。
+
+阶段顺序可定义为类常量或模块级列表：PHASE_SEQUENCE = ["mortality", "revenue", "forum", "population", "senate", "combat", "resolution"]。
+
+编写单元测试：
+
+路径：src/tests/test_commands/test_func_turn_control.py
+
+使用 pytest 框架，模拟 GameState 和阶段命令的执行。
+
+测试用例至少覆盖：
+
+test_next_success：所有阶段已执行，调用 next，验证 advance_year 被调用，返回 True。
+
+test_next_missing_phases：有阶段未执行，无 force，验证返回 False，打印缺失列表。
+
+test_next_force：有阶段未执行，带 force，验证 advance_year 被调用，返回 True。
+
+test_turn_full：模拟部分阶段已执行，调用 turn，验证所有未执行阶段被依次执行。
+
+test_step：模拟逐步执行，验证每个阶段执行后暂停（可通过 mock input 模拟用户输入）。
+
+注意：测试中可 mock 阶段命令的 execute 方法，避免真实执行。
+
+需要使用 unittest.mock.patch 模拟 input 和阶段命令调用。
+
+手动验证：
+
+运行 python main.py，进入 CLI。
+
+执行 load 加载场景。
+
+执行 turn，观察是否自动执行所有7个阶段，输出与手动依次执行一致。
+
+执行 step，观察每阶段后暂停，按 Enter 继续。
+
+执行部分阶段后，执行 next，查看缺失阶段提示。
+
+执行 next force，强制推进，观察年份增加。
+
+确保命令无异常崩溃。
+
+交付物：
+
+src/ui/commands/func_turn_control.py
+
+src/tests/test_commands/test_func_turn_control.py
+
+验收标准：
+
+单元测试通过率 100%。
+
+在 CLI 中执行 next、turn、step 命令，输出和行为与原基线完全一致。
+
+代码通过《EOR MVP 0.4.5代码审查Checklist》中 Command 模块的相关检查项。
+
+命令注册正确，help 中能显示这三个命令的描述。
+
+请在 feature/refactor-0.4.5 分支上操作，完成后提交代码并附上测试结果。如有问题，随时沟通。
+
+豆包（项目经理）
+
+
+单元测试通过率
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m pytest src/tests/test_commands/test_func_turn_control.py -v
+================================================================================================================================================= test session starts =================================================================================================================================================
+platform win32 -- Python 3.10.6, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+collected 10 items
+
+src/tests/test_commands/test_func_turn_control.py::test_next_success_all_done PASSED                                                                                                                                                                                                                             [ 10%] 
+src/tests/test_commands/test_func_turn_control.py::test_next_missing_phases_no_force PASSED                                                                                                                                                                                                                      [ 20%] 
+src/tests/test_commands/test_func_turn_control.py::test_next_force PASSED                                                                                                                                                                                                                                        [ 30%] 
+src/tests/test_commands/test_func_turn_control.py::test_next_force_case_insensitive PASSED                                                                                                                                                                                                                       [ 40%] 
+src/tests/test_commands/test_func_turn_control.py::test_turn_execute_all_phases PASSED                                                                                                                                                                                                                           [ 50%]
+src/tests/test_commands/test_func_turn_control.py::test_turn_skip_already_executed PASSED                                                                                                                                                                                                                        [ 60%] 
+src/tests/test_commands/test_func_turn_control.py::test_turn_all_done PASSED                                                                                                                                                                                                                                     [ 70%]
+src/tests/test_commands/test_func_turn_control.py::test_step_execute_with_input PASSED                                                                                                                                                                                                                           [ 80%]
+src/tests/test_commands/test_func_turn_control.py::test_step_interrupt PASSED                                                                                                                                                                                                                                    [ 90%] 
+src/tests/test_commands/test_func_turn_control.py::test_step_skip_executed PASSED                                                                                                                                                                                                                                [100%]
+
+================================================================================================================================================= 10 passed in 0.13s ================================================================================================================================================== 
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> 
+
+
+系统测试
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+
+============================================================
+   Eagle of Rome - MVP 0.4.5 (整改后版本)
+============================================================
+项目根目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+Python路径: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src
+============================================================
+[DEBUG] 命令目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands
+[DEBUG] 发现的命令: ['load', 'l', 'status', 'sts', 'combat', 'c', 'forum', 'f', 'mortality', 'm', 'next', 'n', 'population', 'p', 'resolution', 'x', 'revenue', 'r', 'senate', 's', 'step', 'turn', 'reload', 'terms', 'exit', 'quit', 'help', 'h']
+
+============================================================
+   Eagle of Rome - Debug CLI (整改后版本)
+============================================================
+输入 'help' 查看可用命令，'exit' 退出游戏
+
+> load
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+> help
+
+============================================================
+   Eagle of Rome - 可用命令列表
+============================================================
+  combat      (别名: c)          执行战斗阶段 (Combat Phase)
+  exit        (别名: quit)       退出游戏
+  forum       (别名: f)          执行广场阶段 (Forum Phase)
+  help        (别名: h)          显示所有可用命令的帮助信息
+  load        (别名: l)          加载场景 (默认: mvp_test.json)
+  mortality   (别名: m)          执行天命阶段 (Mortality Phase)
+  next        (别名: n)          推进到下一年。用法: next [force] (force 可跳过未完成阶段检查)
+  population  (别名: p)          执行人口阶段 (Population Phase)
+  reload                       重新加载配置文件 (data/config/game_config.json)
+  resolution  (别名: x)          执行决议阶段 (Resolution Phase)
+  revenue     (别名: r)          执行税收阶段 (Revenue Phase)
+  senate      (别名: s)          执行元老院阶段 (Senate Phase)
+  status      (别名: sts)        显示当前游戏状态摘要（国库、人物数等）
+  step                         逐步执行回合，每阶段后暂停等待输入
+  terms                        切换术语预设，用法: terms [preset] (预设: original/historical_roman/generic_latin/chinese_historical)
+  turn                         自动执行完整回合（依次执行所有7个阶段）
+============================================================
+输入 'exit' 或 'quit' 退出游戏
+> turn
+
+############################################################
+ 回合 1 (264 BC)
+ 术语: Senate/Senators/Talents
+############################################################
+
+[1/7] Mortality...
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 3
+  [Draw 1] Number 79...
+     -> No member assigned (safe)
+
+[2/7] Revenue...
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   元老院派: +10 Talents
+   平民派: +10 Talents
+
+   📊 State Treasury: 200 Talents
+
+[3/7] Forum...
+
+--- Forum Phase (Year 264 BC) ---
+
+   📢 1 new figure(s) arrive in the Senate:
+      👤 Gnaeus · Hill (plebeian)
+
+   🏛️  Figures in Senate:
+
+      👤 PLEBEIAN (1):
+         ID:4 Gnaeus · Hill
+            [财3人2]
+
+   📜 2 new contract(s) announced:
+      包税: 伊利里亚包税权
+      工程: 港口扩建工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 伊利里亚包税权
+            预付:38 年收益:22 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 港口扩建工程
+            预算:30 预期利润:6
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+
+[4/7] Population...
+
+--- Population Phase (Year 264 BC) ---
+   🟢 Treasury: 200 Talents
+
+   🏛️  State of the Republic: Calm
+
+   👥 Population Events:
+      No significant events
+
+[5/7] Senate...
+
+--- Senate Phase (Year 264 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (2 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gnaeus · Hill        (?       ) Age:31 CHA: 3 Prereq:✗ Cooldown:OK → Age 31 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gnaeus · Hill        (?       ) Age:31 CHA: 3 Prereq:✗ Cooldown:OK → Age 31 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+   Electing PRAETOR (1 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=2y, Prerequisite=Quaestor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Gaius Marius         (平民派     ) Age:35 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Lucius Sulla         (元老院派    ) Age:45 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Gnaeus · Hill        (?       ) Age:31 MAN: 4 Prereq:✗ Cooldown:OK → Age 31 < 35
+      ⚠️  No eligible candidates for praetor!
+      ⚠️  No eligible candidate for praetor
+
+   Electing QUQAESTOR (1 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ Marcus Brutus        (元老院派    ) Age:40 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius Marius         (平民派     ) Age:35 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Lucius Sulla         (元老院派    ) Age:45 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gnaeus · Hill        (?       ) Age:31 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+
+      🏆 TOP 2 CANDIDATES (by STR):
+         1. Gnaeus · Hill        (?)
+            STR: 4 | Pop: 2 | Age:31 | History: None
+         2. Marcus Brutus        (元老院派)
+            STR: 0 | Pop: 3 | Age:40 | History: None
+
+      🗳️  VOTING RESULTS:
+         Marcus Brutus       :   12 (100.0%) ████████████████████
+         Gnaeus · Hill       :    0 (  0.0%) 
+
+      ✓ WINNER: Marcus Brutus (元老院派)
+        Power bonus: +2
+      💰 Marcus Brutus elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      元老院派: Marcus Brutus (Power: 7)
+      平民派: Gaius Marius (Power: 4)
+
+   🎤 Presiding Officer: Marcus Brutus
+
+   📋 Processing 2 pending contract(s)...
+
+   📊 Voting: 伊利里亚包税权
+      Cost: 38 | Expected: 22
+      ⚠️  No eligible Equites candidates
+
+   🏗️ Assigning: 港口扩建工程
+      Budget: 30 | Profit: 6
+      ⏳ Awaiting Consul election...
+
+[6/7] Combat...
+
+--- Combat Phase (Year 264 BC) ---
+   ☮️  No war system - phase skipped
+
+[7/7] Revolution...
+
+--- Revolution Phase (Year 264 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: 元老院派 (13 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟡 元老院派: MODERATE risk (avg Loyalty: 5.0)
+      🟡 平民派: MODERATE risk (avg Loyalty: 5.0)
+
+==================================================
+   📜 ANNUAL REPORT - Year 264 BC
+==================================================
+
+   💰 Treasury: 200 Talents
+
+   📊 Faction Standings:
+      1. 👑 元老院派: 13 Influence
+      2. 👑 平民派: 4 Influence
+
+   ☮️  Peace prevails
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   📉 Annual Decay:
+      Marcus Brutus: pop-0(-50%), age 41
+      Gaius Marius: pop-1(-50%), age 36
+      Lucius Sulla: pop-1(-50%), age 46
+      Gnaeus · Hill: pop-0(-50%), age 32
+
+############################################################
+ ✅ 回合完成 - 所有7个阶段已执行
+############################################################
+> next
+已推进至 263 BC
+
+📅 Year 263 BC:
+   Completed: 0/7 phases
+      ○ Mortality
+      ○ Revenue
+      ○ Forum
+      ○ Population
+      ○ Senate
+      ○ Combat
+      ○ Revolution
+   ⏳ 7 remaining
+> step
+
+############################################################
+ 回合 2 (263 BC)
+############################################################
+
+[1/7] Mortality...
+
+--- Mortality Phase (Year 263 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 4
+  [Draw 1] Number 95...
+     -> No member assigned (safe)
+   按 Enter 继续...
+
+[2/7] Revenue...
+
+--- Revenue Phase (Year 263 BC) ---
+   💰 Base tax: +100 Talents
+   元老院派: +10 Talents
+   平民派: +10 Talents
+
+   📊 State Treasury: 300 Talents
+
+   📋 Contract Status:
+      ⏳ Pending: 2
+   按 Enter 继续...
+
+[3/7] Forum...
+
+--- Forum Phase (Year 263 BC) ---
+
+   📢 2 new figure(s) arrive in the Senate:
+      💰 Sextus · Fabius · Macedonicus (eques)
+      👤 Salvius (plebeian)
+
+   🏛️  Figures in Senate:
+
+      💰 EQUES (1):
+         ID:5 Sextus · Fabius · Macedonicus
+            [权1财23人2]
+
+      👤 PLEBEIAN (2):
+         ID:4 Gnaeus · Hill
+            [财3人1]
+         ID:6 Salvius
+            [权2财7人1]
+
+   📜 2 new contract(s) announced:
+      包税: 山南高卢包税权
+      工程: 港口扩建工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 伊利里亚包税权
+            预付:38 年收益:22 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+         ID:3 山南高卢包税权
+            预付:33 年收益:14 期限:5年
+            💡 Senate Phase: use 'vote contract 3'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 港口扩建工程
+            预算:30 预期利润:6
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+         ID:4 港口扩建工程
+            预算:32 预期利润:6
+            💡 Senate Phase: Consul uses 'assign works 4 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+   按 Enter 继续...
+
+[4/7] Population...
+
+--- Population Phase (Year 263 BC) ---
+   🟢 Treasury: 300 Talents
+
+   🏛️  State of the Republic: Calm
+
+   👥 Population Events:
+      No significant events
+   按 Enter 继续...
+
+[5/7] Senate...
+
+--- Senate Phase (Year 263 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (2 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:41 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:36 CHA: 0 Prereq:✗ Cooldown:OK → Age 36 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:46 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gnaeus · Hill        (?       ) Age:32 CHA: 3 Prereq:✗ Cooldown:OK → Age 32 < 40
+         ❌ Sextus · Fabius · Ma (?       ) Age:35 CHA: 4 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Salvius              (?       ) Age:31 CHA: 4 Prereq:✗ Cooldown:OK → Age 31 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:41 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:36 CHA: 0 Prereq:✗ Cooldown:OK → Age 36 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:46 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gnaeus · Hill        (?       ) Age:32 CHA: 3 Prereq:✗ Cooldown:OK → Age 32 < 40
+         ❌ Sextus · Fabius · Ma (?       ) Age:35 CHA: 4 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Salvius              (?       ) Age:31 CHA: 4 Prereq:✗ Cooldown:OK → Age 31 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+   Electing PRAETOR (1 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=2y, Prerequisite=Quaestor
+         ✅ Marcus Brutus        (元老院派    ) Age:41 MAN: 0 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Gaius Marius         (平民派     ) Age:36 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Lucius Sulla         (元老院派    ) Age:46 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Gnaeus · Hill        (?       ) Age:32 MAN: 4 Prereq:✗ Cooldown:OK → Age 32 < 35
+         ❌ Sextus · Fabius · Ma (?       ) Age:35 MAN: 5 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Salvius              (?       ) Age:31 MAN: 3 Prereq:✗ Cooldown:OK → Age 31 < 35
+
+      🏆 TOP 2 CANDIDATES (by MAN):
+         1. Marcus Brutus        (元老院派)
+            MAN: 0 | Pop: 1 | Age:41 | History: quqaestor(1)
+
+      🗳️  VOTING RESULTS:
+         Marcus Brutus       :    5 (100.0%) ████████████████████
+
+      ✓ WINNER: Marcus Brutus (元老院派)
+        Power bonus: +3
+      ⚖️ Marcus Brutus elected as praetor
+
+   Electing QUQAESTOR (1 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ❌ Marcus Brutus        (元老院派    ) Age:41 STR: 0 Prereq:✓ Cooldown:CD → Cooldown: 1/2 years
+         ✅ Gaius Marius         (平民派     ) Age:36 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Lucius Sulla         (元老院派    ) Age:46 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gnaeus · Hill        (?       ) Age:32 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Sextus · Fabius · Ma (?       ) Age:35 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Salvius              (?       ) Age:31 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+
+      🏆 TOP 2 CANDIDATES (by STR):
+         1. Gnaeus · Hill        (?)
+            STR: 4 | Pop: 1 | Age:32 | History: None
+         2. Sextus · Fabius · Ma (?)
+            STR: 3 | Pop: 2 | Age:35 | History: None
+
+      🗳️  VOTING RESULTS:
+         Sextus · Fabius · Ma:    5 (100.0%) ████████████████████
+         Gnaeus · Hill       :    0 (  0.0%) 
+
+      ✓ WINNER: Sextus · Fabius · Macedonicus (?)
+        Power bonus: +2
+      💰 Sextus · Fabius · Macedonicus elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      元老院派: Marcus Brutus (Power: 10)
+      平民派: Gaius Marius (Power: 4)
+
+   🎤 Presiding Officer: Marcus Brutus
+
+   📋 Processing 4 pending contract(s)...
+
+   📊 Voting: 伊利里亚包税权
+      Cost: 38 | Expected: 22
+      ⚠️  No eligible Equites candidates
+
+   🏗️ Assigning: 港口扩建工程
+      Budget: 30 | Profit: 6
+      ⏳ Awaiting Consul election...
+
+   📊 Voting: 山南高卢包税权
+      Cost: 33 | Expected: 14
+      ⚠️  No eligible Equites candidates
+
+   🏗️ Assigning: 港口扩建工程
+      Budget: 32 | Profit: 6
+      ⏳ Awaiting Consul election...
+   按 Enter 继续...
+
+[6/7] Combat...
+
+--- Combat Phase (Year 263 BC) ---
+   ☮️  No war system - phase skipped
+   按 Enter 继续...
+
+[7/7] Revolution...
+
+--- Revolution Phase (Year 263 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: 元老院派 (16 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟡 元老院派: MODERATE risk (avg Loyalty: 5.0)
+      🟡 平民派: MODERATE risk (avg Loyalty: 5.0)
+
+==================================================
+   📜 ANNUAL REPORT - Year 263 BC
+==================================================
+
+   💰 Treasury: 300 Talents
+
+   📊 Faction Standings:
+      1. 👑 元老院派: 16 Influence
+      2. 👑 平民派: 4 Influence
+
+   ☮️  Peace prevails
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   📉 Annual Decay:
+      Gaius Marius: pop-0(-50%), age 37
+      Lucius Sulla: pop-0(-50%), age 47
+      Sextus · Fabius · Macedonicus: pop-0(-50%), age 36
+   按 Enter 继续...
+
+############################################################
+ ✅ 回合完成 - 所有7个阶段已执行
+############################################################
+> n
+已推进至 262 BC
+
+📅 Year 262 BC:
+   Completed: 0/7 phases
+      ○ Mortality
+      ○ Revenue
+      ○ Forum
+      ○ Population
+      ○ Senate
+      ○ Combat
+      ○ Revolution
+   ⏳ 7 remaining
+> m
+
+--- Mortality Phase (Year 262 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 6
+  [Draw 1] Number 78...
+     -> No member assigned (safe)
+> n
+
+⛔ 无法推进，缺失阶段: Revenue, Forum, Population, Senate, Combat, Revolution
+   使用 'next force' 强制推进，或执行缺失阶段
+> n force
+
+⚠️ 强制推进 - 跳过: revenue, forum, population, senate, combat, resolution
+已推进至 261 BC
+
+📅 Year 261 BC:
+   Completed: 0/7 phases
+      ○ Mortality
+      ○ Revenue
+      ○ Forum
+      ○ Population
+      ○ Senate
+      ○ Combat
+      ○ Revolution
+   ⏳ 7 remaining
+> exit
+感谢游玩 Eagle of Rome！再见！
+
+Process finished with exit code 0
+
+
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git status
+On branch feature/refactor-0.4.5
+Your branch is up to date with 'origin/feature/refactor-0.4.5'.
+
+        new file:   src/tests/test_commands/test_func_turn_control.py
+        new file:   src/ui/commands/func_turn_control.py
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+        modified:   src/tests/test_commands/test_func_turn_control.py
+        modified:   src/ui/commands/func_turn_control.py
+        modified:   src/ui/commands/sys_registry.py
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git add .
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git commit -m "feat: 迁移回合控制组功能命令至新框架（指令11）"
+[feature/refactor-0.4.5 babc11f] feat: 迁移回合控制组功能命令至新框架（指令11）
+ 3 files changed, 440 insertions(+), 68 deletions(-)
+ create mode 100644 src/tests/test_commands/test_func_turn_control.py
+ create mode 100644 src/ui/commands/func_turn_control.py
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git tag -a v0.4.5-011 -m "MVP0.4.5-011 基线版本 - 迁移回合控制组功能命令至新框架（指令11）"
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git push origin feature/refactor-0.4.5
+Enumerating objects: 17, done.
+Counting objects: 100% (17/17), done.
+Delta compression using up to 12 threads
+Compressing objects: 100% (10/10), done.
+Writing objects: 100% (10/10), 4.99 KiB | 2.50 MiB/s, done.
+Total 10 (delta 5), reused 0 (delta 0), pack-reused 0 (from 0)
+remote: Resolving deltas: 100% (5/5), completed with 5 local objects.
+To https://github.com/zk32236/Eagle-of-Rome.git
+   a0be4fb..babc11f  feature/refactor-0.4.5 -> feature/refactor-0.4.5
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git push origin v0.4.5-011
+Enumerating objects: 1, done.
+Counting objects: 100% (1/1), done.
+Writing objects: 100% (1/1), 258 bytes | 258.00 KiB/s, done.
+Total 1 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
+To https://github.com/zk32236/Eagle-of-Rome.git
+ * [new tag]         v0.4.5-011 -> v0.4.5-011
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome>

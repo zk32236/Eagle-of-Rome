@@ -1,0 +1,42 @@
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+
+============================================================
+   Eagle of Rome - MVP 0.4.5 (整改后版本)
+============================================================
+项目根目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+Python路径: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src
+============================================================
+[DEBUG] 命令目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands
+[DEBUG] 发现的命令: ['contracts', 'vote', 'persuade', 'land', 'seats', 'trade', 'load', 'l', 'assign', 'disband', 'legions', 'recruit', 'wars', 'festival', 'status', 'sts', 'combat', 'c', 'forum', 'f', 'mortality', 'm', 'next', 'n', 'population', 'p', 'resolution', 'x', 'revenue', 'r', 'senate', 's', 'step', 'turn', 'reload', 'terms', 'exit', 'quit', 'help', 'h']
+
+============================================================
+   Eagle of Rome - Debug CLI (整改后版本)
+============================================================
+输入 'help' 查看可用命令，'exit' 退出游戏
+
+> load
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ Game loaded!
+==================================================
+
+==================================================
+Year: 264 BC (Turn 1)
+Phase: init
+Treasury: 100 Talents
+--------------------------------------------------
+FACTIONS & MEMBERS:
+
+元老院派 (senate) - Treasury: 50Talents [PLAYER CONTROLLED]
+  🟢🏛️ Marcus Brutus(ID:1)[权0财20人3地0兵0席0]
+  🟢🏛️ Lucius Sulla(ID:3)[权0财30人4地0兵0席0]
+  Total Power: 0
+
+平民派 (populares) - Treasury: 30Talents
+  🟢👤 Gaius Marius(ID:2)[权0财10人5地0兵0席0]
+  Total Power: 0
+
+==================================================
+
+   Progress: [░░░░░░░] 0/7
+> 

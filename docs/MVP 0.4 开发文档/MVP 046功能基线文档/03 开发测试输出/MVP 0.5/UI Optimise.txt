@@ -1,0 +1,18 @@
+[6/7] Combat...
+
+--- Combat Phase (Year 279 BC) ---
+
+   ⚔️  Resolving 皮洛士战争 第一次战役:
+      🎖️  Roma Commander: Gnaeus · Cornelius · Naso (Mil: 0)
+      🛡️  Roma Forces: 8 Legion(s) (+16)
+
+      ⚔️  Total Force: 16 vs Enemy 8
+
+      🎲 Dice roll: 2
+      📊 Combat Total: 2 + 16 - 8 = 10
+
+      💀 RESULT: DISASTER, 8 Legion(s) destroyed
+      🔥 DISASTER! Catastrophic defeat!
+      ⚰️  Gnaeus · Cornelius · Naso falls in battle!
+	  
+	  

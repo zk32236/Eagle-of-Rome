@@ -1,0 +1,329 @@
+欢迎加入 EOR MVP 0.4.5 代码整改项目！我是项目经理豆包，接下来将由我向你下达开发指令，由你负责具体代码实现。
+本次整改的核心目标是对 CLI 命令、GameState 状态管理、配置管理三个模块进行渐进式优化，提升代码的可维护性和可测试性，不修改任何原有业务逻辑，确保功能完全兼容 MVP 0.4.5 基线版本。开发环境与版本控制
+你将在现有 MVP 0.4.5 代码库的基础上进行开发，请不要新建项目，直接在项目根目录下操作。
+
+请务必使用 Git 进行版本管理，已为你创建好基线提交（tag: v0.4.5），请基于此创建特性分支：git checkout -b feature/refactor-0.4.5。后续所有整改代码均提交到该分支，便于随时对比和回溯。
+工作方式
+我会将整个整改任务分解为多个指令，按顺序逐一下达。每个指令会明确：
+
+核心输入：架构设计文档、基线代码等参考资料
+
+核心任务：需要完成的具体开发工作
+
+交付物：需要输出的代码文件路径
+
+验收标准：可验证的指标（单元测试、功能测试等）
+
+请你严格按照指令要求完成代码，并确保代码通过《EOR MVP 0.4.5代码审查Checklist》中的相关检查项。每个指令完成后，我会进行验收，通过后再下达下一个指令。
+
+开发过程中如有疑问，可随时与我或架构师沟通。
+
+代码提交时请遵循《EOR_开发指南》中的 Git 提交规范。
+
+现在请熟悉基线代码和架构设计文档。准备好了就通知我下达第一个指令。
+
+
+
+
+EOR 项目开发指令1-1
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：创建项目目录结构与Command基础框架
+
+核心输入：
+
+《EOR Command命令体系架构设计细化文档_V1.1》
+
+《EOR_开发指南.docx》
+
+基线代码（整体，需在Git feature/refactor-0.4.5分支上操作）
+
+核心任务：
+
+创建整改后目录结构：
+
+在项目根目录下确保 src/ui/commands/ 存在（扁平化，无子目录）
+
+在 src/ 下创建 tests/ 目录，并建立镜像子目录 tests/test_ui/、tests/test_core/ 等（可先不填充）
+
+放置空 __init__.py 使包可导入
+
+编写Command基类：
+
+文件路径：src/ui/commands/sys_base.py
+
+定义抽象基类 Command，继承 ABC
+
+类属性：name: ClassVar[str]、aliases: ClassVar[List[str]]、description: ClassVar[str]
+
+抽象方法：def execute(self, args: List[str]) -> bool（使用 from typing import List）
+
+使用字符串前向引用避免循环导入（例如 def __init__(self, state: "GameState"):）
+
+编写命令注册器：
+
+文件路径：src/ui/commands/sys_registry.py
+
+实现 CommandRegistry 类，包含：
+
+__init__(self, command_dir: str)：扫描指定目录，调用 _scan_and_register
+
+_scan_and_register(self)：遍历目录下所有 .py 文件（排除 _ 开头的），动态导入模块，提取继承自 Command 的类，注册到内部字典（键为命令名和别名）
+
+注册时检测冲突：若 name 或 aliases 已存在，抛出 ValueError 并终止启动
+
+execute(self, cmd_name: str, state, args: List[str]) -> bool：查找命令类，实例化（传入 state），调用其 execute 方法，捕获异常并打印错误（确保不崩溃）
+
+动态导入使用 importlib.util（参考设计文档伪代码）
+
+实现两个示例命令：
+
+src/ui/commands/sys_help.py：
+
+类 HelpCommand 继承 Command
+
+name = "help"，aliases = ["h"]，description = "Show this help message"
+
+execute 中遍历注册器所有命令，格式化输出名称、别名、描述
+
+src/ui/commands/sys_exit.py：
+
+类 ExitCommand 继承 Command
+
+name = "exit"，aliases = ["quit"]，description = "Exit the game"
+
+execute 中设置一个标志（可通过回调或抛出特殊异常让主循环退出，建议使用返回值 + 主循环判断）
+
+编写最小CLI：
+
+文件路径：src/ui/debug_cli.py
+
+类 DebugCLI：
+
+__init__(self)：创建 self.running = True；创建 self.registry = CommandRegistry("src/ui/commands/")；暂时不创建 GameState，传 None 给命令实例（命令中若需访问 state 需先判断）
+
+run(self)：while self.running: 读取输入，分割命令名和参数，调用 self.registry.execute(cmd_name, None, args)，根据返回值决定是否退出（若命令返回 False 可设置 self.running = False）
+
+异常捕获：在 run 中使用 try-except 捕获所有异常，打印错误信息，防止单条命令崩溃导致整个CLI退出
+
+修改入口：
+
+调整 main.py：仅导入并运行 DebugCLI().run()
+
+编写框架测试：
+
+文件路径：src/tests/test_ui/test_command_framework.py
+
+测试用例：
+
+test_registry_discovers_commands：验证注册器能发现 help 和 exit 命令
+
+test_help_command_output：执行 help 命令，检查输出字符串是否包含 "help" 和 "exit"
+
+test_exit_command：模拟执行 exit 命令，验证返回 False 或触发退出机制（可通过模拟或检查标志）
+
+交付物（逐一输出交付物，每输出一个交付物后，停顿等待继续输出指令，直到全部交付物输出完毕）：
+
+整改后的目录结构（含 __init__.py）
+
+src/ui/commands/sys_base.py
+
+src/ui/commands/sys_registry.py
+
+src/ui/commands/sys_help.py
+
+src/ui/commands/sys_exit.py
+
+src/ui/debug_cli.py
+
+main.py（修改后）
+
+src/tests/test_ui/test_command_framework.py
+
+验收标准：
+
+运行 python main.py 进入 CLI，输入 help 显示包含 help 和 exit 的命令列表，输入 exit 退出程序。
+
+所有单元测试通过率 100%。
+
+代码通过《EOR MVP 0.4.5代码审查Checklist》中通用规则（命名规范、异常处理、Pythonic原则）。
+
+无任何第三方依赖（仅 Python 标准库）。
+
+EOR 项目开发指令1-2
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：实现GameState多实例基础（不含业务方法）
+
+核心输入：
+
+《EOR GameState状态管理架构设计细化文档_V1.1》
+
+《EOR_开发指南.docx》
+
+基线代码：src/core/game_state.py（注意从 Git feature/refactor-0.4.5 分支上操作）
+
+核心任务：
+
+改造GameState类：
+
+文件路径：src/core/game_state.py
+
+删除类属性 _instance 和 __new__ 方法
+
+修改 __init__(self, config_path=None)：
+
+初始化实例属性：self._members: Dict[int, Figure] = {}、self._factions: Dict[str, Faction] = {}、self._treasury: int = 0 等（可先简单定义，后续逐步补充）
+
+调用 self.reset() 清空状态
+
+实现 reset(self)：
+
+清空所有实例属性字典、列表，重置为初始值
+
+注释掉配置加载部分（后续指令实现），仅初始化基本状态
+
+实现类方法 create_for_testing(cls, test_config: Dict) -> "GameState"：
+
+使用 cls.__new__(cls) 创建实例，绕过 __init__
+
+设置实例的 _config = test_config
+
+调用实例的 reset()
+
+返回实例
+
+保留所有公共方法（如 get_member、add_member 等）的占位实现，可暂时返回默认值或 NotImplementedError，确保方法存在
+
+配置临时处理：
+
+在 __init__ 中暂时将 self._config 设为空字典 {}，或硬编码少量默认值（如 {"test": True}）
+
+注释掉 _load_config 的调用和实现，避免文件依赖
+
+编写单元测试：
+
+文件路径：src/tests/test_core/test_game_state.py
+
+测试用例：
+
+test_multi_instance_creation：创建两个实例，验证 state_a is not state_b
+
+test_state_isolation：修改实例A的属性（如 state_a._treasury = 100），验证实例B的对应属性未改变
+
+test_reset：修改实例后调用 reset()，验证状态恢复初始
+
+test_create_for_testing：调用工厂方法传入测试配置，验证返回实例且 _config 与传入一致
+
+交付物（逐一输出交付物，每输出一个交付物后，停顿等待继续输出指令，直到全部交付物输出完毕）：
+
+src/core/game_state.py（改造后）
+
+src/tests/test_core/test_game_state.py
+
+验收标准：
+
+单元测试通过率 100%。
+
+代码中无 _instance 和 __new__ 单例相关代码。
+
+可通过 state_a is not state_b 验证多实例独立。
+
+代码通过审查清单中 GameState 模块的检查项。
+
+EOR 项目开发指令1-3
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：整合GameState到CLI，并实现加载场景命令（模拟）
+
+核心输入：
+
+《EOR GameState状态管理架构设计细化文档_V1.1》
+
+《EOR Command命令体系架构设计细化文档_V1.1》
+
+《EOR_开发指南.docx》
+
+基线代码：src/core/scenario_loader.py
+
+核心任务：
+
+修改DebugCLI整合GameState：
+
+在 src/ui/debug_cli.py 的 __init__ 中创建 self.state = GameState()（使用无参构造）
+
+在调用 self.registry.execute(cmd_name, self.state, args) 时传入 self.state
+
+实现load命令：
+
+文件路径：src/ui/commands/func_load.py
+
+类 LoadCommand 继承 Command
+
+name = "load"，aliases = ["l"]，description = "Load a scenario (mvp_test.json)"
+
+execute(self, args: List[str]) -> bool：
+
+调用 ScenarioLoader.load_scenario(self.state, "mvp_test.json")（注意需要修改加载器以接收state参数）
+
+捕获可能的异常（文件不存在、JSON解析错误），打印错误信息，返回 False
+
+成功时打印加载摘要，返回 True
+
+修改ScenarioLoader：
+
+文件路径：src/core/scenario_loader.py
+
+将 load_scenario 函数改为接受 state: GameState 参数，不再内部创建新实例
+
+移除内部 GameState() 调用，改为使用传入的 state
+
+调整 _load_factions、_load_figures 等方法，使用传入的 state 进行操作
+
+确保加载逻辑与基线一致（人物生成规则、派系创建等），但改为操作传入的实例
+
+实现status命令：
+
+文件路径：src/ui/commands/func_status.py
+
+类 StatusCommand 继承 Command
+
+name = "status"，aliases = ["s"]，description = "Show current game state summary"
+
+execute(self, args: List[str]) -> bool：
+
+调用 self.state.get_status_summary()（该方法已在基线中存在，但需确认是否依赖于未实现的属性；若缺失，可先简单输出国库、人物数等基本信息）
+
+打印摘要信息，返回 True
+
+编写集成测试：
+
+文件路径：src/tests/test_integration/test_cli_basic.py
+
+测试用例（使用模拟输入或直接调用CLI方法）：
+
+test_load_and_status：模拟执行 load 命令，然后执行 status，验证状态有变化（如国库金额、人物数量不为0）
+
+test_load_twice：连续加载两次，验证第二次加载覆盖第一次的状态
+
+交付物（逐一输出交付物，每输出一个交付物后，停顿等待继续输出指令，直到全部交付物输出完毕）：
+
+src/ui/debug_cli.py（修改后）
+
+src/ui/commands/func_load.py
+
+src/ui/commands/func_status.py
+
+src/core/scenario_loader.py（修改后）
+
+src/tests/test_integration/test_cli_basic.py
+
+验收标准：
+
+CLI 启动后，输入 load 能正常加载场景，输入 status 显示游戏状态信息（至少包含国库、人物数）。
+
+集成测试通过率 100%。
+
+代码通过审查清单中 Command 模块和 GameState 模块的相关检查项。
+
+所有命令行为与原基线一致（可通过手动测试对比）。

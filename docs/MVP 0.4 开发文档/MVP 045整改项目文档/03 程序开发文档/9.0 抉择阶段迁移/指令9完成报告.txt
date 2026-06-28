@@ -1,0 +1,379 @@
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：迁移 Resolution 阶段命令至新框架（指令9）
+
+**核心输入**：
+1. 《EOR Command命令体系架构设计细化文档_V1.1》
+2. 《EOR GameState状态管理架构设计细化文档_V1.1》
+3. 《EOR_开发指南.docx》
+4. 基线代码：`src/core/phases/resolution_phase.py`（位于 feature/refactor-0.4.5 分支）
+5. 已迁移的命令参考：`phase_mortality.py`、`phase_combat.py` 等
+6. 已完善的 `GameState` 类（包含国库、战争系统、军事系统、合同列表、阶段标记等方法）
+
+**核心任务**：
+1. **创建 Resolution 命令文件**：
+   - 路径：`src/ui/commands/phase_resolution.py`
+   - 类名：`ResolutionCommand`，继承 `Command`
+   - 元数据：
+     - `name = "resolution"`
+     - `aliases = ["x"]`（原基线使用 `x` 作为别名）
+     - `description = "执行决议阶段 (Resolution Phase)"`
+
+2. **移植业务逻辑**：
+   - 从原 `resolution_phase.py` 的 `ResolutionPhase.execute()` 方法复制核心逻辑，适配到新命令的 `execute(self, args: List[str]) -> bool` 中。
+   - **关键适配点**：
+     - 使用 `self.state.get_war_system()` 获取战争系统（用于胜利条件中的活跃战争判断）。
+     - 使用 `self.state.get_military_system()` 获取军事系统（可选）。
+     - 使用 `self.state.contracts` 访问合同列表，调用 `contract.expire()` 处理过期合同。
+     - 使用 `self.state.log_event()` 记录重要事件（如胜利、革命风险等）。
+     - 使用 `self.state.is_phase_executed("resolution")` 检查阶段是否已执行，若已执行则打印提示并返回 `False`。
+     - 执行成功后调用 `self.state.mark_phase_executed("resolution")`。
+   - 原代码中的私有方法（如 `_check_victory_conditions`、`_check_revolution_risk`、`_process_contract_expiration`、`_generate_annual_report`、`_prepare_next_year`、`_apply_annual_decay` 等）应作为命令的私有方法移植，保持逻辑完整。
+   - 注意：`_apply_annual_decay` 方法中调用了 `fig.apply_annual_decay(decay_rates)`，确保 `Figure` 类中已存在该方法（基线中有，应保留）。
+   - 确保所有打印输出与原基线一致（保留原有的输出格式和 emoji）。
+
+3. **按需补充 GameState 方法**：
+   - 若在移植过程中发现 GameState 缺少必要的方法（例如获取所有存活人物、获取派系影响力等），请在 `src/core/game_state.py` 中添加。
+   - 可能需要的辅助方法（大部分已存在，可复用）：
+     - `get_living_members()` 已存在。
+     - `get_faction(faction_id)` 已存在。
+     - `factions` 属性已存在。
+   - 若需计算派系总影响力，可复用 `faction.get_total_influence(state)` 方法（已在 `Faction` 类中）。
+   - 确保 `_apply_annual_decay` 能正确调用人物方法，无需额外补充。
+
+4. **编写单元测试**：
+   - 路径：`src/tests/test_commands/test_phase_resolution.py`
+   - 测试用例至少覆盖：
+     - `test_execute_success`：使用模拟的 GameState 设置测试数据（包含派系、人物、合同、战争等），验证命令返回 True，且输出包含年度报告等内容。
+     - `test_already_executed`：先标记阶段已执行，再执行命令，验证返回 False。
+     - `test_victory_conditions`：模拟派系影响力，验证胜利条件检查输出正确。
+     - `test_revolution_risk`：模拟人物忠诚度，验证革命风险评估输出正确。
+     - `test_contract_expiration`：模拟待决合同，验证过期逻辑。
+     - `test_annual_decay`：模拟人物私兵和人气，验证年度衰减正确。
+     - `test_advance_year_preparation`：验证 `_prepare_next_year` 中状态重置逻辑（如阶段标记已由 `advance_year` 处理，但可测试调用）。
+   - 可使用动态导入或直接导入命令类进行测试，必要时 Mock 相关模块。
+
+5. **手动验证**：
+   - 运行 `python main.py`，执行 `load` 加载测试场景，然后依次执行之前的所有阶段（或使用 `turn` 自动执行），最后执行 `resolution` 或 `x`，观察输出是否与原版本一致（年度报告、合同过期、衰减等）。
+   - 多次执行验证阶段重复执行检查。
+
+6. **清理旧文件**：
+   - 确认新命令完全替代原功能后，执行 `git rm src/core/phases/resolution_phase.py` 删除原文件。
+   - 提交信息：`chore(cleanup): remove old resolution_phase.py after migration`
+
+**交付物**：
+1. `src/ui/commands/phase_resolution.py`
+2. `src/tests/test_commands/test_phase_resolution.py`
+3. 可能修改的 `src/core/game_state.py`（补充的方法）
+4. 删除原 `src/core/phases/resolution_phase.py` 的 Git 操作记录
+
+**验收标准**：
+1. 单元测试通过率 100%。
+2. 在 CLI 中执行 `resolution` 命令，输出和行为与原基线完全一致（可通过手动对比验证）。
+3. 阶段执行状态检查正常工作：同一回合内重复执行返回 False 并提示。
+4. 代码通过《EOR MVP 0.4.5代码审查Checklist》中 Command 模块和 GameState 模块的相关检查项。
+5. 无遗留的旧文件（`resolution_phase.py` 已删除）。
+
+请开始工作，完成后提交代码并附上测试结果。如有问题，随时沟通。
+
+豆包（项目经理）
+
+
+单元测试：
+
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_commands/test_phase_resolution.py
+.
+--- Revolution Phase (Year 264 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: 元老院派 (5 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟢 元老院派: LOW risk (avg Loyalty: 8.0)
+      🔴 平民派: HIGH risk (avg Loyalty: 3.0)
+
+==================================================
+   📜 ANNUAL REPORT - Year 264 BC
+==================================================
+
+   💰 Treasury: 200 Talents
+
+   📊 Faction Standings:
+      1.    元老院派: 5 Influence
+      2.    平民派: 4 Influence
+
+   ☮️  Peace prevails
+
+   🚨 Risk Alert: 平民派
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   📉 Annual Decay:
+      Marcus: vets-0, pop-5(-50%), age 41
+      Gaius: vets-0, pop-4(-50%), age 36
+........
+----------------------------------------------------------------------
+Ran 9 tests in 0.016s
+
+OK
+
+
+系统测试：
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+
+============================================================
+   Eagle of Rome - MVP 0.4.5 (整改后版本)
+============================================================
+项目根目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+Python路径: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src
+============================================================
+[DEBUG] 命令目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands
+[DEBUG] 发现的命令: ['load', 'l', 'status', 'sts', 'combat', 'c', 'forum', 'f', 'mortality', 'm', 'population', 'p', 'resolution', 'x', 'revenue', 'r', 'senate', 's', 'exit', 'quit', 'help', 'h']
+
+============================================================
+   Eagle of Rome - Debug CLI (整改后版本)
+============================================================
+输入 'help' 查看可用命令，'exit' 退出游戏
+
+> load
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 3
+  [Draw 1] Number 64...
+     -> No member assigned (safe)
+> r
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   元老院派: +10 Talents
+   平民派: +10 Talents
+
+   📊 State Treasury: 200 Talents
+> f
+
+--- Forum Phase (Year 264 BC) ---
+
+   📢 2 new figure(s) arrive in the Senate:
+      👤 Marcus · Smith (plebeian)
+      🏛️ Appius · Papirius · Caesar (nobile)
+
+   🏛️  Figures in Senate:
+
+      🏛️ NOBILE (1):
+         ID:5 Appius · Papirius · Caesar
+            [权3财13人2] 家族:Papirius
+
+      👤 PLEBEIAN (1):
+         ID:4 Marcus · Smith
+            [财4人1]
+
+   📜 2 new contract(s) announced:
+      包税: 撒丁尼亚包税权
+      工程: 港口扩建工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 撒丁尼亚包税权
+            预付:40 年收益:16 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 港口扩建工程
+            预算:46 预期利润:9
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+> p
+
+--- Population Phase (Year 264 BC) ---
+   🟢 Treasury: 200 Talents
+
+   🏛️  State of the Republic: Calm
+
+   👥 Population Events:
+      No significant events
+> s
+
+--- Senate Phase (Year 264 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (2 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=10y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Marcus · Smith       (?       ) Age:23 CHA: 5 Prereq:✗ Cooldown:OK → Age 23 < 40
+         ❌ Appius · Papirius ·  (?       ) Age:46 CHA: 6 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=10y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Marcus · Smith       (?       ) Age:23 CHA: 5 Prereq:✗ Cooldown:OK → Age 23 < 40
+         ❌ Appius · Papirius ·  (?       ) Age:46 CHA: 6 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+   Electing PRAETOR (2 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=5y, Prerequisite=Quaestor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Gaius Marius         (平民派     ) Age:35 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Lucius Sulla         (元老院派    ) Age:45 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Marcus · Smith       (?       ) Age:23 MAN: 2 Prereq:✗ Cooldown:OK → Age 23 < 35
+         ❌ Appius · Papirius ·  (?       ) Age:46 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+      ⚠️  No eligible candidates for praetor!
+      ⚠️  No eligible candidate for praetor
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=5y, Prerequisite=Quaestor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Gaius Marius         (平民派     ) Age:35 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Lucius Sulla         (元老院派    ) Age:45 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Marcus · Smith       (?       ) Age:23 MAN: 2 Prereq:✗ Cooldown:OK → Age 23 < 35
+         ❌ Appius · Papirius ·  (?       ) Age:46 MAN: 4 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+      ⚠️  No eligible candidates for praetor!
+      ⚠️  No eligible candidate for praetor
+
+   Electing QUQAESTOR (2 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ Marcus Brutus        (元老院派    ) Age:40 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius Marius         (平民派     ) Age:35 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Lucius Sulla         (元老院派    ) Age:45 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Marcus · Smith       (?       ) Age:23 STR: 4 Prereq:✓ Cooldown:OK → Age 23 < 30
+         ✅ Appius · Papirius ·  (?       ) Age:46 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+
+      🏆 TOP 3 CANDIDATES (by STR):
+         1. Appius · Papirius ·  (?)
+            STR: 6 | Pop: 2 | Age:46 | History: None
+         2. Marcus Brutus        (元老院派)
+            STR: 0 | Pop: 3 | Age:40 | History: None
+         3. Gaius Marius         (平民派)
+            STR: 0 | Pop: 5 | Age:35 | History: None
+
+      🗳️  VOTING RESULTS:
+         Marcus Brutus       :    7 ( 58.3%) ███████████
+         Gaius Marius        :    5 ( 41.7%) ████████
+         Appius · Papirius · :    0 (  0.0%) 
+
+      ✓ WINNER: Marcus Brutus (元老院派)
+        Power bonus: +2
+      💰 Marcus Brutus elected as quqaestor
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ❌ Marcus Brutus        (元老院派    ) Age:40 STR: 0 Prereq:✓ Cooldown:CD → Already holding this office
+         ✅ Gaius Marius         (平民派     ) Age:35 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Lucius Sulla         (元老院派    ) Age:45 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Marcus · Smith       (?       ) Age:23 STR: 4 Prereq:✓ Cooldown:OK → Age 23 < 30
+         ✅ Appius · Papirius ·  (?       ) Age:46 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+
+      🏆 TOP 3 CANDIDATES (by STR):
+         1. Appius · Papirius ·  (?)
+            STR: 6 | Pop: 2 | Age:46 | History: None
+         2. Gaius Marius         (平民派)
+            STR: 0 | Pop: 5 | Age:35 | History: None
+         3. Lucius Sulla         (元老院派)
+            STR: 0 | Pop: 4 | Age:45 | History: None
+
+      🗳️  VOTING RESULTS:
+         Lucius Sulla        :    7 ( 58.3%) ███████████
+         Gaius Marius        :    5 ( 41.7%) ████████
+         Appius · Papirius · :    0 (  0.0%) 
+      📤 Marcus Brutus steps down as quqaestor (power: 0)
+
+      ✓ WINNER: Lucius Sulla (元老院派)
+        Power bonus: +2
+      💰 Lucius Sulla elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      元老院派: Lucius Sulla (Power: 8)
+      平民派: Gaius Marius (Power: 4)
+
+   🎤 Presiding Officer: Lucius Sulla
+
+   📋 Processing 2 pending contract(s)...
+
+   📊 Voting: 撒丁尼亚包税权
+      Cost: 40 | Expected: 16
+      ⚠️  No eligible Equites candidates
+
+   🏗️ Assigning: 港口扩建工程
+      Budget: 46 | Profit: 9
+      ⏳ Awaiting Consul election...
+> c
+
+--- Combat Phase (Year 264 BC) ---
+   ☮️  No war system - phase skipped
+> x
+
+--- Revolution Phase (Year 264 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: 元老院派 (8 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟡 元老院派: MODERATE risk (avg Loyalty: 5.0)
+      🟡 平民派: MODERATE risk (avg Loyalty: 5.0)
+
+==================================================
+   📜 ANNUAL REPORT - Year 264 BC
+==================================================
+
+   💰 Treasury: 200 Talents
+
+   📊 Faction Standings:
+      1. 👑 元老院派: 8 Influence
+      2. 👑 平民派: 4 Influence
+
+   ☮️  Peace prevails
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   📉 Annual Decay:
+      Marcus Brutus: pop-0(-50%), age 41
+      Gaius Marius: pop-1(-50%), age 36
+      Lucius Sulla: pop-1(-50%), age 46
+      Appius · Papirius · Caesar: pop-0(-50%), age 47
+> x
+⚠️ 决议阶段在本回合已执行过
+> sts
+
+==================================================
+   📊 游戏状态摘要
+==================================================
+   回合: 第 1 年 (264 BC)
+   国库: 200 塔兰特
+   存活人物: 5 人
+   派系数: 2 个
+==================================================
+> exit
+感谢游玩 Eagle of Rome！再见！
+
+Process finished with exit code 0

@@ -1,0 +1,152 @@
+############################################################
+ UI-04-0 回合 1 (282 BC) - 人口阶段 [4/7]
+############################################################
+--- 阶段预览 ---
+决定罗马的未来领袖！各派系为候选人举办庆典、拉拢人心，你的影响力将在此刻化
+为选票。谁能当选执政官？谁将掌控元老院？每一步决策都在重塑权力格局。胜利者
+获得无上荣耀，失败者只能等待明年再来。你的影响力，即是罗马的力量。现在就行
+动，让你的派系站在权力之巅！
+
+==========================================================
+   🏛️  Legions Return Rome from Battlefield
+==========================================================
+
+      🏛️ Appius · Claudius · Bibulus 的军团举行凯旋式！
+
+      🔄 战场指挥官 Sextus · Cornelius · Longus 转为 proconsul，继续指挥战争。
+	  
+	  解散 6 个参与 皮洛士战争 的军团
+	  
+	  ⚓ 舰队 [1, 2] 已解散（无需要海战的战争） 
+
+      🗑️ 4 名未被招募的人物已从罗马消失，不知去向。	  
+	
+🔧 本阶段可操作(ANYONE)：
+	
+	1. next/n → 进入裁员环节
+	
+> 请输入操作(ANYONE)： next/n
+
+[clear screen]
+
+############################################################
+ UI_04-1 回合 1 (282 BC) - 广场阶段 [3/7]
+############################################################
+
+==========================================================
+   🏛️  ELECTIONS Campaign
+==========================================================
+   📊 各派系影响力：		当前		
+      Optimates:		105		
+      Populares:		115		
+      Equites:			116		
+
+
+   📋 公职候选人名单：
+      🏛️ CONSUL: 
+			ID01 Manius · Papirius · Gracchus (Optimates)
+			ID07 Lucius · Julius · Gracchus (Populares)
+      📜 CENSOR: 
+			ID03 Spurius · Aemilius · Sulla (Optimates)
+			ID04 Numerius · Antonius (Optimates)	
+      ⚖ PRAETOR: 
+			ID08 Numerius · Antonius (Equites)
+			ID13 Quintus · Papirius · Naso(Populares)
+      💰 QUAESTOR: 
+			ID05 Gnaeus · Aemilius · Africanus(Equites), 
+			ID10 Quintus · Papirius · Naso(Optimates)
+      🛡️ TRIBUNE: 
+			ID12 Vibius (Equites)
+			ID06 Caius (Optimates)
+	
+🔧 本阶段可操作 (PLAYER X)：
+   1. investigate → 查看人物私库余额
+   2. campaign → 候选人举办竞选庆典和集会
+   3. vote → 给候选人投票
+   4. next → 下一个玩家 
+   
+
+> 请输入操作(PLAYER X)：investigate 01
+==================================================
+   🟢🏛️ 人物详细信息 (ID:01)
+==================================================
+姓名: Manius · Papirius · Gracchus
+派系: 无
+阶层: nobile
+家族: Junius (声望: 1)
+年龄: 38
+影响力: 13 = 私地0 + 老兵0 + 人气3 + 家族10 + 公职0
+官职等级: 0
+热忱: 2
+魅力: 8
+军略: 6
+智略: 7
+财富: 16
+人气: 3
+私地: 0 C
+老兵: 0
+担任公职: 无
+公职历史: 无
+持有合同: 无
+是否派系领袖: 否
+是否死亡: 否
+是否在罗马: 是
+==================================================
+
+> 请输入操作(PLAYER X)：campaign 01 10
+
+ID01 Manius · Papirius · Gracchus 花费 10T 举办了竞选庆典，收获了 10点 人气！
+
+> 请输入操作(PLAYER X)： vote CONSUL 01
+
+Optimates 派选举 ID01 Manius · Papirius · Gracchus 作为执政官！
+
+> 请输入操作(PLAYER X)： vote CENSOR 03
+
+Optimates 派选举 ID03 Spurius · Aemilius · Sulla 作为监察官！
+
+> 请输入操作(PLAYER X)： vote PRAETOR 13
+
+Optimates 派选举 ID13 Quintus · Papirius · Naso 作为大法官！
+
+> 请输入操作(PLAYER X)： vote QUAESTOR 10
+
+Optimates 派选举 ID10 Quintus · Papirius · Naso 作为财务官！
+
+> 请输入操作(PLAYER X)： vote TRIBUNE 10
+
+Optimates 派选举 ID06 Caius (Optimates) 作为平民官！
+
+> 请输入操作(PLAYER X)： next
+
+
+[clear screen] --- 重复所有玩家，最后一个玩家结束后，清屏进入选举结果公示环节
+
+############################################################
+ UI_04-2 回合 1 (282 BC) - 广场阶段 [3/7]
+############################################################
+
+==========================================================
+   🏛️  ELECTIONS Result
+==========================================================
+
+   📊 各派系影响力：		选举后		庆典后
+      Optimates:		147
+      Populares:		162
+      Equites:			131
+	  
+      总计花费T：			104
+	  
+   📋 选举结果：
+      🏛️ CONSUL: 	Marcus · Fabius · Buteo (Optimates)
+      📜 CENSOR: 	Appius · Sulpicius · Scipio (Optimates)
+      ⚖ PRAETOR: 	Publius · Plautius · Maximus (Optimates)
+      💰 QUAESTOR: 	Aulus · Valerius · Naso(Populares)
+      🛡️ TRIBUNE: 	Nonius (Optimates)
+      
+🔧 本阶段可操作(ANYONE)：
+	
+	1. next/n → 进入元老院阶段
+
+Progress: [▓▓▓▓░░░] 4/7
+> 已推进至元老院阶段，输入`next`继续...

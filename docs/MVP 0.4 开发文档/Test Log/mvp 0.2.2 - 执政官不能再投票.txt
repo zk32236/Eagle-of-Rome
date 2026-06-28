@@ -1,0 +1,125 @@
+"C:\Users\Kerl\PycharmProjects\Eagle of Rome\Scripts\python.exe" "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+🏛️  Eagle of Rome - MVP 0.2 Debug CLI
+Type 'help' for commands, 'exit' to quit
+
+> help
+
+Available Commands:
+  load          - Load MVP test scenario
+  status        - Show current game state
+  revenue       - Execute Revenue Phase
+  mortality (m) - Execute Mortality Phase
+  senate (s)    - Execute Senate Phase
+  next (n)      - Advance to next turn
+  turn          - Execute full turn cycle (Mortality->Senate->Revenue)
+  exit          - Quit game
+        
+
+> load
+✅ Scenario loaded: MVP 0.2 Test - Three Factions
+   Active Senators: 9/300
+   Death bag contains 300 numbers (few hits expected per turn)
+
+Game loaded successfully!
+
+> status
+
+==================================================
+Year: 264 BC (Turn 1)
+Phase: init
+State Treasury: 100 T
+Death Bag: 300 senators remaining
+
+--------------------------------------------------
+FACTIONS & SENATORS:
+
+Optimates (faction_1) - Treasury: 50T
+  [PLAYER CONTROLLED]
+  🟢 Caesar(ID:101)[军5演6影5]
+  🟢 Cicero(ID:102)[军2演9影6]
+  🟢 Pompey(ID:103)[军8演4影7]
+
+Populares (faction_2) - Treasury: 40T
+  🟢 Cato(ID:201)[军3演7影4]
+  🟢 Marius(ID:202)[军9演3影6]
+  🟢 Crassus(ID:203)[军4演5影8]
+
+Equites (faction_3) - Treasury: 45T
+  🟢 Brutus(ID:42)[军4演6影5]
+  🟢 Antony(ID:169)[军7演5影6]
+  🟢 Sulla(ID:195)[军9演3影7]
+
+==================================================
+
+> s
+
+--- Senate Phase (Year 264 BC) ---
+🏛️  Presiding Officer: Crassus (faction_2)
+
+========================================
+[Electing Consul #1]
+
+   Nominations (3 candidates):
+     Optimates: Pompey
+     Populares: Crassus
+     Equites: Sulla
+
+   --- Voting ---
+      Optimates: 37 votes → Pompey (support_own)
+      Populares: 33 votes → Crassus (support_own)
+      Equites: 32 votes → Sulla (support_own)
+     Winner: Pompey with 37 votes
+   👑 Elected: Pompey (faction_1)
+Consul elected: Pompey
+
+========================================
+[Electing Consul #2]
+
+   Nominations (3 candidates):
+     Optimates: Cicero
+     Populares: Crassus
+     Equites: Sulla
+
+   --- Voting ---
+      Optimates: 26 votes → Cicero (support_own)
+      Populares: 33 votes → Crassus (support_own)
+      Equites: 32 votes → Sulla (support_own)
+     Winner: Crassus with 33 votes
+   👑 Elected: Crassus (faction_2)
+Consul elected: Crassus
+
+> status
+
+==================================================
+Year: 264 BC (Turn 1)
+Phase: init
+State Treasury: 100 T
+Death Bag: 300 senators remaining
+
+--------------------------------------------------
+FACTIONS & SENATORS:
+
+Optimates (faction_1) - Treasury: 50T
+  [PLAYER CONTROLLED]
+  🟢 Caesar(ID:101)[军5演6影5]
+  🟢 Cicero(ID:102)[军2演9影6]
+  👑 Pompey(ID:103)[军8演4影12] 👑
+
+Populares (faction_2) - Treasury: 40T
+  🟢 Cato(ID:201)[军3演7影4]
+  🟢 Marius(ID:202)[军9演3影6]
+  👑 Crassus(ID:203)[军4演5影13] 👑
+
+Equites (faction_3) - Treasury: 45T
+  🟢 Brutus(ID:42)[军4演6影5]
+  🟢 Antony(ID:169)[军7演5影6]
+  🟢 Sulla(ID:195)[军9演3影7]
+
+==================================================
+
+> exit
+
+Process finished with exit code 0
+
+请修改投票机制，只挑选influence最高的两名元老竞选；
+没有候选人的派系的票数，现阶段随机投给其中一位，模拟竞选形式的不可预测性。未来这些决策都是玩家做，或者AI基于特定规则计算。

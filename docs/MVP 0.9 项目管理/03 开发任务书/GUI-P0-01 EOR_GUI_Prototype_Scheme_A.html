@@ -1,0 +1,1425 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eagle of Rome - 方案 A 共和国议事厅</title>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --bg: #121512;
+      --surface-0: #181b18;
+      --surface-1: #20241f;
+      --surface-2: #282d27;
+      --surface-3: #30362f;
+      --line: #3c443c;
+      --line-strong: #5a6558;
+      --text: #eeeae1;
+      --muted: #a9aea5;
+      --faint: #757c74;
+      --oxblood: #8f3438;
+      --oxblood-dark: #68272b;
+      --bronze: #b69355;
+      --bronze-bright: #d0b170;
+      --sage: #66766b;
+      --blue: #668394;
+      --success: #70a17c;
+      --warning: #c4933d;
+      --danger: #c45151;
+      --info: #6c8fa1;
+      --shadow: rgba(0, 0, 0, .35);
+      --top-h: 64px;
+      --bottom-h: 106px;
+      --left-w: 176px;
+      --right-w: 320px;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei UI", "Noto Sans SC", "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    button, input, select { font: inherit; letter-spacing: 0; }
+    button { color: inherit; }
+
+    .app {
+      width: 100%;
+      height: 100%;
+      display: grid;
+      grid-template:
+        "top top top" var(--top-h)
+        "rail stage context" minmax(0, 1fr)
+        "rail log context" var(--bottom-h)
+        / var(--left-w) minmax(640px, 1fr) var(--right-w);
+      background:
+        linear-gradient(rgba(18, 21, 18, .94), rgba(18, 21, 18, .97)),
+        url("https://commons.wikimedia.org/wiki/Special:FilePath/Cicero%20Denounces%20Catiline%20in%20the%20Roman%20Senate%20by%20Cesare%20Maccari%2C%201888.jpg");
+      background-size: cover;
+      background-position: center;
+    }
+
+    .topbar {
+      grid-area: top;
+      display: grid;
+      grid-template-columns: 300px minmax(360px, 1fr) auto;
+      align-items: center;
+      border-bottom: 1px solid var(--line-strong);
+      background: rgba(24, 27, 24, .98);
+      box-shadow: 0 5px 18px var(--shadow);
+      z-index: 20;
+    }
+
+    .brand {
+      align-self: stretch;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 18px;
+      border-right: 1px solid var(--line);
+    }
+
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--bronze);
+      background: var(--oxblood-dark);
+      color: var(--bronze-bright);
+      font-family: Georgia, serif;
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .brand-name {
+      font-family: "Noto Serif SC", "SimSun", serif;
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 1.1;
+    }
+
+    .brand-sub {
+      margin-top: 4px;
+      color: var(--bronze);
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .turn-strip {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 26px;
+      padding: 0 18px;
+    }
+
+    .turn-metric {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      white-space: nowrap;
+    }
+
+    .turn-metric svg { width: 16px; color: var(--bronze); }
+    .turn-metric .label { color: var(--faint); font-size: 11px; }
+    .turn-metric .value { color: var(--text); font-size: 13px; font-weight: 700; }
+
+    .player-block {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      border-left: 1px solid var(--line);
+      background: rgba(143, 52, 56, .1);
+    }
+
+    .player-sigil {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--oxblood);
+      background: var(--surface-2);
+      color: var(--bronze-bright);
+      font-family: Georgia, serif;
+      font-weight: 700;
+    }
+
+    .player-copy { min-width: 122px; }
+    .player-name { font-size: 13px; font-weight: 700; }
+    .player-faction { color: var(--muted); font-size: 11px; margin-top: 3px; }
+
+    .icon-btn {
+      width: 34px;
+      height: 34px;
+      display: inline-grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+      cursor: pointer;
+      border-radius: 4px;
+    }
+
+    .icon-btn:hover { border-color: var(--bronze); background: var(--surface-3); }
+    .icon-btn svg { width: 16px; height: 16px; }
+
+    .phase-rail {
+      grid-area: rail;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      background: rgba(24, 27, 24, .98);
+      border-right: 1px solid var(--line);
+      z-index: 10;
+    }
+
+    .rail-title {
+      padding: 18px 16px 10px;
+      color: var(--faint);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .phase-list { display: flex; flex-direction: column; gap: 2px; padding: 0 8px; }
+
+    .phase-item {
+      position: relative;
+      min-height: 48px;
+      display: grid;
+      grid-template-columns: 30px 1fr 16px;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+      padding: 0 8px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      text-align: left;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+
+    .phase-item svg { width: 17px; height: 17px; }
+    .phase-item .phase-name { font-size: 12px; font-weight: 700; }
+    .phase-item .phase-index { color: var(--faint); font-size: 10px; text-align: right; }
+    .phase-item.done { color: var(--sage); }
+    .phase-item.active {
+      color: var(--text);
+      border-color: var(--oxblood);
+      background: rgba(143, 52, 56, .16);
+    }
+
+    .phase-item.active::before {
+      content: "";
+      position: absolute;
+      top: 8px;
+      bottom: 8px;
+      left: -9px;
+      width: 3px;
+      background: var(--oxblood);
+    }
+
+    .phase-item:hover { background: var(--surface-2); color: var(--text); }
+
+    .rail-spacer { flex: 1; }
+
+    .rail-foot {
+      padding: 12px 10px 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .rail-action {
+      width: 100%;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 10px;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      border-radius: 4px;
+      text-align: left;
+      font-size: 11px;
+    }
+
+    .rail-action:hover { color: var(--text); background: var(--surface-2); }
+    .rail-action svg { width: 15px; }
+
+    .stage {
+      grid-area: stage;
+      min-width: 0;
+      min-height: 0;
+      padding: 18px 20px 14px;
+      overflow: auto;
+      background: rgba(18, 21, 18, .78);
+    }
+
+    .stage-heading {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 14px;
+    }
+
+    .eyebrow {
+      color: var(--bronze);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 4px 0 0;
+      font-family: "Noto Serif SC", "SimSun", serif;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .stage-hint {
+      max-width: 510px;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .progress-box { min-width: 190px; }
+    .progress-copy {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .progress-track { height: 5px; background: var(--surface-3); overflow: hidden; }
+    .progress-fill { width: 42%; height: 100%; background: var(--bronze); }
+
+    .stage-tabs {
+      display: flex;
+      gap: 2px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 12px;
+    }
+
+    .stage-tab {
+      min-width: 126px;
+      height: 38px;
+      padding: 0 14px;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .stage-tab:hover { color: var(--text); background: rgba(40, 45, 39, .6); }
+    .stage-tab.active { color: var(--text); border-bottom-color: var(--oxblood); }
+
+    .workspace { display: none; }
+    .workspace.active { display: block; animation: appear .18s ease; }
+    @keyframes appear { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+    .section-grid {
+      display: grid;
+      grid-template-columns: minmax(480px, 1.4fr) minmax(260px, .7fr);
+      gap: 12px;
+      align-items: start;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      background: rgba(32, 36, 31, .96);
+      box-shadow: 0 8px 22px rgba(0, 0, 0, .16);
+      border-radius: 6px;
+    }
+
+    .panel-head {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-title { font-size: 12px; font-weight: 700; }
+    .panel-meta { color: var(--faint); font-size: 10px; }
+
+    .filter {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 28px;
+      padding: 0 8px;
+      border: 1px solid var(--line);
+      background: var(--surface-1);
+      color: var(--muted);
+      border-radius: 4px;
+    }
+
+    .filter svg { width: 13px; }
+    .filter input {
+      width: 110px;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--text);
+      font-size: 11px;
+    }
+
+    .roster-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .roster-table th {
+      height: 34px;
+      padding: 0 10px;
+      border-bottom: 1px solid var(--line);
+      color: var(--faint);
+      font-size: 9px;
+      font-weight: 700;
+      text-align: right;
+      text-transform: uppercase;
+    }
+
+    .roster-table th:first-child { width: 42%; text-align: left; }
+    .roster-table th:last-child { width: 54px; }
+    .roster-table td {
+      height: 52px;
+      padding: 0 10px;
+      border-bottom: 1px solid rgba(60, 68, 60, .7);
+      color: var(--muted);
+      font-size: 11px;
+      text-align: right;
+    }
+
+    .roster-table tr { cursor: pointer; }
+    .roster-table tbody tr:hover { background: var(--surface-2); }
+    .roster-table tbody tr.selected {
+      background: rgba(143, 52, 56, .14);
+      box-shadow: inset 3px 0 0 var(--oxblood);
+    }
+
+    .roster-table td:first-child { text-align: left; color: var(--text); }
+    .roster-table td:last-child { color: var(--bronze); }
+
+    .person {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .portrait {
+      width: 32px;
+      height: 32px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line-strong);
+      background: var(--surface-3);
+      color: var(--bronze-bright);
+      font-family: Georgia, serif;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .person-main { min-width: 0; }
+    .person-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 700; }
+    .person-role { margin-top: 4px; color: var(--faint); font-size: 9px; }
+
+    .status-dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-right: 5px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+
+    .detail-body { padding: 14px; }
+    .selection-empty {
+      min-height: 240px;
+      display: grid;
+      place-items: center;
+      color: var(--faint);
+      font-size: 11px;
+      text-align: center;
+      line-height: 1.7;
+    }
+
+    .selection-view { display: none; }
+    .selection-view.active { display: block; }
+
+    .selected-person {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .selected-person .portrait { width: 42px; height: 42px; }
+    .selected-name { font-family: "Noto Serif SC", serif; font-size: 15px; font-weight: 700; }
+    .selected-sub { margin-top: 4px; color: var(--muted); font-size: 10px; }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1px;
+      margin: 12px 0;
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+
+    .stat-cell { padding: 10px; background: var(--surface-1); }
+    .stat-cell .label { color: var(--faint); font-size: 9px; }
+    .stat-cell .value { margin-top: 5px; color: var(--text); font-size: 14px; font-weight: 700; }
+    .stat-cell .delta { color: var(--success); font-size: 9px; }
+
+    .field-label { display: block; margin: 12px 0 6px; color: var(--muted); font-size: 10px; }
+
+    .stepper {
+      display: grid;
+      grid-template-columns: 34px 1fr 34px;
+      height: 36px;
+      border: 1px solid var(--line-strong);
+      background: var(--surface-1);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .stepper button {
+      border: 0;
+      background: var(--surface-3);
+      cursor: pointer;
+    }
+
+    .stepper button:hover { background: var(--sage); }
+    .stepper input {
+      min-width: 0;
+      border: 0;
+      border-left: 1px solid var(--line);
+      border-right: 1px solid var(--line);
+      outline: 0;
+      background: transparent;
+      color: var(--text);
+      text-align: center;
+      font-weight: 700;
+    }
+
+    .cost-line {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .action-row { display: flex; gap: 8px; margin-top: 14px; }
+
+    .btn {
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 0 13px;
+      border: 1px solid var(--line-strong);
+      background: var(--surface-3);
+      color: var(--text);
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .btn:hover { border-color: var(--bronze); background: #394039; }
+    .btn svg { width: 14px; height: 14px; }
+    .btn.primary { border-color: var(--oxblood); background: var(--oxblood); }
+    .btn.primary:hover { background: #a34044; }
+    .btn.ghost { background: transparent; }
+    .btn.full { flex: 1; }
+    .btn:disabled { opacity: .38; cursor: not-allowed; }
+
+    .office-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .office-tab {
+      height: 28px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      background: var(--surface-1);
+      color: var(--muted);
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 10px;
+    }
+
+    .office-tab.active { border-color: var(--bronze); color: var(--text); background: rgba(182, 147, 85, .12); }
+
+    .candidate-list { padding: 8px; }
+    .candidate {
+      display: grid;
+      grid-template-columns: 38px minmax(150px, 1fr) repeat(4, 48px) 72px;
+      align-items: center;
+      gap: 8px;
+      min-height: 58px;
+      padding: 7px 9px;
+      border: 1px solid transparent;
+      border-bottom-color: var(--line);
+      cursor: pointer;
+    }
+
+    .candidate:hover { background: var(--surface-2); }
+    .candidate.selected { border-color: var(--bronze); background: rgba(182, 147, 85, .08); }
+    .candidate .metric { text-align: center; color: var(--muted); font-size: 10px; }
+    .candidate .metric strong { display: block; margin-top: 3px; color: var(--text); font-size: 12px; }
+    .faction-tag { justify-self: end; padding: 4px 6px; border: 1px solid var(--oxblood); color: #d9898c; font-size: 9px; border-radius: 3px; }
+
+    .vote-summary { padding: 14px; }
+    .ballot-line {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      min-height: 36px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .ballot-line strong { color: var(--text); }
+
+    .result-board { padding: 14px; }
+    .result-row {
+      display: grid;
+      grid-template-columns: 120px 1fr 96px;
+      align-items: center;
+      min-height: 46px;
+      border-bottom: 1px solid var(--line);
+      font-size: 11px;
+    }
+    .result-row .office { color: var(--bronze); font-weight: 700; }
+    .result-row .score { text-align: right; color: var(--muted); }
+
+    .context-panel {
+      grid-area: context;
+      min-height: 0;
+      overflow: auto;
+      border-left: 1px solid var(--line);
+      background: rgba(24, 27, 24, .98);
+      z-index: 10;
+    }
+
+    .context-section { border-bottom: 1px solid var(--line); }
+    .context-head {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 14px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .context-head svg { width: 14px; color: var(--bronze); }
+    .context-body { padding: 0 14px 14px; }
+
+    .resource-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .resource {
+      padding: 9px;
+      border: 1px solid var(--line);
+      background: var(--surface-1);
+    }
+    .resource .label { color: var(--faint); font-size: 9px; }
+    .resource .value { margin-top: 5px; font-size: 15px; font-weight: 700; }
+    .resource .unit { color: var(--bronze); font-size: 9px; }
+
+    .rule-list { margin: 0; padding: 0; list-style: none; }
+    .rule-list li {
+      position: relative;
+      padding: 0 0 9px 13px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.55;
+    }
+    .rule-list li::before {
+      content: "";
+      position: absolute;
+      top: 6px;
+      left: 0;
+      width: 5px;
+      height: 5px;
+      background: var(--bronze);
+    }
+
+    .permission-box {
+      padding: 10px;
+      border: 1px solid rgba(112, 161, 124, .45);
+      background: rgba(112, 161, 124, .07);
+      color: #a9cdb2;
+      font-size: 10px;
+      line-height: 1.5;
+    }
+
+    .primary-next {
+      width: 100%;
+      min-height: 42px;
+      margin-top: 10px;
+      border-color: var(--oxblood);
+      background: var(--oxblood);
+    }
+
+    .event-log {
+      grid-area: log;
+      min-width: 0;
+      border-top: 1px solid var(--line);
+      background: rgba(24, 27, 24, .98);
+    }
+
+    .log-top {
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .log-title { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+    .log-controls { display: flex; gap: 5px; }
+    .tiny-btn {
+      height: 22px;
+      padding: 0 7px;
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--faint);
+      cursor: pointer;
+      border-radius: 3px;
+      font-size: 9px;
+    }
+    .tiny-btn:hover { color: var(--text); border-color: var(--bronze); }
+
+    .log-stream {
+      height: 75px;
+      overflow: auto;
+      padding: 7px 14px;
+      font-family: Consolas, "Microsoft YaHei UI", monospace;
+      font-size: 10px;
+      line-height: 1.7;
+    }
+
+    .log-entry { display: grid; grid-template-columns: 62px 72px 1fr; gap: 8px; }
+    .log-time { color: var(--faint); }
+    .log-kind { color: var(--bronze); }
+    .log-entry.success .log-text { color: #a9cdb2; }
+    .log-entry.error .log-text { color: #e17d7d; }
+    .log-entry.warning .log-text { color: #d9b263; }
+
+    .toast-stack {
+      position: fixed;
+      right: 336px;
+      bottom: 120px;
+      z-index: 120;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .toast {
+      width: 330px;
+      min-height: 54px;
+      display: grid;
+      grid-template-columns: 24px 1fr;
+      gap: 10px;
+      align-items: start;
+      padding: 11px 12px;
+      border: 1px solid var(--line-strong);
+      background: #252a25;
+      box-shadow: 0 12px 26px rgba(0, 0, 0, .38);
+      border-radius: 5px;
+      animation: toastIn .18s ease;
+    }
+    @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    .toast svg { width: 18px; }
+    .toast.success { border-left: 3px solid var(--success); }
+    .toast.error { border-left: 3px solid var(--danger); }
+    .toast.warning { border-left: 3px solid var(--warning); }
+    .toast.success svg { color: var(--success); }
+    .toast.error svg { color: var(--danger); }
+    .toast.warning svg { color: var(--warning); }
+    .toast-title { font-size: 11px; font-weight: 700; }
+    .toast-message { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      display: none;
+      place-items: center;
+      background: rgba(9, 11, 9, .88);
+      backdrop-filter: blur(12px);
+    }
+    .overlay.active { display: grid; }
+
+    .handoff {
+      width: min(480px, calc(100vw - 40px));
+      padding: 28px;
+      border: 1px solid var(--bronze);
+      background: var(--surface-1);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, .55);
+      text-align: center;
+      border-radius: 6px;
+    }
+
+    .handoff-seal {
+      width: 64px;
+      height: 64px;
+      display: grid;
+      place-items: center;
+      margin: 0 auto 16px;
+      border: 1px solid var(--bronze);
+      background: var(--oxblood-dark);
+      color: var(--bronze-bright);
+      font-family: Georgia, serif;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .handoff h2 { margin: 0; font-family: "Noto Serif SC", serif; font-size: 21px; }
+    .handoff p { margin: 10px auto 18px; max-width: 380px; color: var(--muted); font-size: 11px; line-height: 1.7; }
+    .handoff-next { color: var(--bronze); font-size: 13px; font-weight: 700; }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      z-index: 190;
+      display: none;
+      place-items: center;
+      background: rgba(8, 10, 8, .72);
+    }
+    .modal.active { display: grid; }
+    .dialog {
+      width: min(430px, calc(100vw - 40px));
+      border: 1px solid var(--line-strong);
+      background: var(--surface-1);
+      box-shadow: 0 18px 44px rgba(0, 0, 0, .48);
+      border-radius: 6px;
+    }
+    .dialog-head { padding: 16px; border-bottom: 1px solid var(--line); font-family: "Noto Serif SC", serif; font-weight: 700; }
+    .dialog-body { padding: 16px; color: var(--muted); font-size: 11px; line-height: 1.65; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 0 16px 16px; }
+
+    @media (max-width: 1280px) {
+      :root { --left-w: 154px; --right-w: 286px; }
+      .topbar { grid-template-columns: 250px 1fr auto; }
+      .turn-strip { gap: 12px; }
+      .turn-metric:nth-child(3) { display: none; }
+      .stage { padding-left: 14px; padding-right: 14px; }
+      .candidate { grid-template-columns: 34px minmax(120px, 1fr) repeat(4, 42px) 58px; gap: 4px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">SPQR</div>
+        <div>
+          <div class="brand-name">Eagle of Rome</div>
+          <div class="brand-sub">Res Publica · Interactive Prototype</div>
+        </div>
+      </div>
+      <div class="turn-strip">
+        <div class="turn-metric"><i data-lucide="calendar-days"></i><span class="label">年度</span><span class="value">282 BC</span></div>
+        <div class="turn-metric"><i data-lucide="rotate-cw"></i><span class="label">回合</span><span class="value">I</span></div>
+        <div class="turn-metric"><i data-lucide="landmark"></i><span class="label">阶段</span><span class="value">人口阶段 · 公民大会</span></div>
+        <div class="turn-metric"><i data-lucide="shield"></i><span class="label">共和国状态</span><span class="value">稳定</span></div>
+      </div>
+      <div class="player-block">
+        <div class="player-sigil" id="playerSigil">OP</div>
+        <div class="player-copy">
+          <div class="player-name" id="playerName">Player Optimates</div>
+          <div class="player-faction" id="playerFaction">Optimates · 人类玩家</div>
+        </div>
+        <button class="icon-btn" title="切换玩家" onclick="openHandoff()"><i data-lucide="users-round"></i></button>
+        <button class="icon-btn" title="设置" onclick="showToast('warning','原型功能','设置将在产品化阶段补齐。')"><i data-lucide="settings"></i></button>
+      </div>
+    </header>
+
+    <nav class="phase-rail">
+      <div class="rail-title">年度阶段</div>
+      <div class="phase-list">
+        <button class="phase-item done" onclick="phaseNotice('天命阶段')"><i data-lucide="sparkles"></i><span class="phase-name">天命</span><span class="phase-index">1</span></button>
+        <button class="phase-item done" onclick="phaseNotice('收入阶段')"><i data-lucide="coins"></i><span class="phase-name">收入</span><span class="phase-index">2</span></button>
+        <button class="phase-item done" onclick="phaseNotice('广场阶段')"><i data-lucide="store"></i><span class="phase-name">广场</span><span class="phase-index">3</span></button>
+        <button class="phase-item active"><i data-lucide="vote"></i><span class="phase-name">人口</span><span class="phase-index">4</span></button>
+        <button class="phase-item" onclick="phaseNotice('元老院阶段')"><i data-lucide="columns-3"></i><span class="phase-name">元老院</span><span class="phase-index">5</span></button>
+        <button class="phase-item" onclick="phaseNotice('战斗阶段')"><i data-lucide="swords"></i><span class="phase-name">战斗</span><span class="phase-index">6</span></button>
+        <button class="phase-item" onclick="phaseNotice('决算阶段')"><i data-lucide="scale"></i><span class="phase-name">决算</span><span class="phase-index">7</span></button>
+      </div>
+      <div class="rail-spacer"></div>
+      <div class="rail-foot">
+        <button class="rail-action" onclick="showToast('warning','原型边界','GUI-P0-01 暂不包含完整存档管理。')"><i data-lucide="save"></i>保存进度</button>
+        <button class="rail-action" onclick="showToast('success','规则提示','庆典增加人气并更新影响力；每名玩家每个官职只能投票一次。')"><i data-lucide="circle-help"></i>规则帮助</button>
+        <button class="rail-action" onclick="showToast('warning','原型说明','当前页面用于确认方案 A 的布局和视觉语言。')"><i data-lucide="info"></i>原型说明</button>
+      </div>
+    </nav>
+
+    <main class="stage">
+      <div class="stage-heading">
+        <div>
+          <div class="eyebrow">Phase IV · Comitia Populi</div>
+          <h1>人口阶段</h1>
+          <div class="stage-hint">为候选人物举办庆典，并代表派系为共和国公职投票。所有操作通过 Population API 提交，完成后从权威游戏状态刷新。</div>
+        </div>
+        <div class="progress-box">
+          <div class="progress-copy"><span>当前阶段进度</span><span id="progressLabel">庆典与拉票 · 2/5</span></div>
+          <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+        </div>
+      </div>
+
+      <div class="stage-tabs">
+        <button class="stage-tab active" data-view="festival" onclick="switchView('festival')">庆典与拉票</button>
+        <button class="stage-tab" data-view="vote" onclick="switchView('vote')">公职投票</button>
+        <button class="stage-tab" data-view="result" onclick="switchView('result')">选举结果</button>
+      </div>
+
+      <section class="workspace active" id="view-festival">
+        <div class="section-grid">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">本派系人物</div>
+                <div class="panel-meta">仅显示当前玩家有权操作的人物</div>
+              </div>
+              <label class="filter"><i data-lucide="search"></i><input id="rosterSearch" placeholder="搜索人物" oninput="filterRoster()"></label>
+            </div>
+            <table class="roster-table">
+              <thead>
+                <tr><th>人物</th><th>财富</th><th>人气</th><th>影响力</th><th>资格</th></tr>
+              </thead>
+              <tbody id="rosterBody"></tbody>
+            </table>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <div class="panel-title">庆典决策</div>
+              <div class="panel-meta">API: population_api.campaign</div>
+            </div>
+            <div class="detail-body">
+              <div class="selection-empty" id="selectionEmpty">
+                <div><i data-lucide="user-round-search"></i><br>从人物列表中选择一名人物<br>查看成本和预期变化</div>
+              </div>
+              <div class="selection-view" id="selectionView">
+                <div class="selected-person">
+                  <div class="portrait" id="selectedInitials">SS</div>
+                  <div><div class="selected-name" id="selectedName">Servius Sulpicius</div><div class="selected-sub" id="selectedRole">派系领袖 · 执政官候选人</div></div>
+                </div>
+                <div class="stat-grid">
+                  <div class="stat-cell"><div class="label">当前财富</div><div class="value"><span id="selectedWealth">28</span> T</div></div>
+                  <div class="stat-cell"><div class="label">当前人气</div><div class="value"><span id="selectedPopularity">7</span> <span class="delta" id="popDelta">+0</span></div></div>
+                  <div class="stat-cell"><div class="label">当前影响力</div><div class="value"><span id="selectedInfluence">45</span> <span class="delta" id="infDelta">+0</span></div></div>
+                  <div class="stat-cell"><div class="label">公职资格</div><div class="value" id="selectedOffice">执政官</div></div>
+                </div>
+                <label class="field-label">庆典投入（塔兰特）</label>
+                <div class="stepper">
+                  <button title="减少" onclick="changeAmount(-5)"><i data-lucide="minus"></i></button>
+                  <input id="campaignAmount" type="number" value="10" min="1" oninput="previewCampaign()">
+                  <button title="增加" onclick="changeAmount(5)"><i data-lucide="plus"></i></button>
+                </div>
+                <div class="cost-line"><span>可用财富：<strong id="availableWealth">28 T</strong></span><span>预计人气：<strong id="previewPopularity">+10</strong></span></div>
+                <div class="action-row">
+                  <button class="btn ghost full" onclick="clearSelection()"><i data-lucide="x"></i>取消</button>
+                  <button class="btn primary full" onclick="confirmCampaign()"><i data-lucide="megaphone"></i>举办庆典</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace" id="view-vote">
+        <div class="section-grid">
+          <div class="panel">
+            <div class="panel-head">
+              <div><div class="panel-title">公职候选人</div><div class="panel-meta">候选资格来自 population_api.get_candidates</div></div>
+              <div class="panel-meta" id="candidateCount">2 名候选人</div>
+            </div>
+            <div class="office-tabs" id="officeTabs"></div>
+            <div class="candidate-list" id="candidateList"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <div class="panel-title">派系选票</div>
+              <div class="panel-meta">每个官职限投一次</div>
+            </div>
+            <div class="vote-summary">
+              <div class="ballot-line"><span>当前玩家</span><strong id="ballotPlayer">Player Optimates</strong></div>
+              <div class="ballot-line"><span>当前官职</span><strong id="ballotOffice">执政官</strong></div>
+              <div class="ballot-line"><span>选择候选人</span><strong id="ballotCandidate">尚未选择</strong></div>
+              <div class="ballot-line"><span>派系票权</span><strong>104 影响力</strong></div>
+              <div class="permission-box" style="margin-top:12px;">权限校验启用。非当前玩家提交、重复投票或无效候选人将被 API 拒绝，失败不会污染游戏状态。</div>
+              <div class="action-row">
+                <button class="btn ghost full" onclick="clearCandidate()"><i data-lucide="x"></i>取消选择</button>
+                <button class="btn primary full" id="voteButton" onclick="confirmVote()" disabled><i data-lucide="check"></i>确认投票</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace" id="view-result">
+        <div class="panel">
+          <div class="panel-head">
+            <div><div class="panel-title">选举公示</div><div class="panel-meta">真实结算结构示意 · population_api.resolve_election</div></div>
+            <button class="btn" onclick="simulateElection()"><i data-lucide="refresh-cw"></i>执行结算演示</button>
+          </div>
+          <div class="result-board" id="resultBoard">
+            <div class="selection-empty"><div><i data-lucide="scroll-text"></i><br>各玩家完成投票后<br>在此公布共和国新任官员</div></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="context-panel">
+      <div class="context-section">
+        <div class="context-head"><i data-lucide="wallet-cards"></i>派系资源</div>
+        <div class="context-body">
+          <div class="resource-list">
+            <div class="resource"><div class="label">派系金库</div><div class="value"><span id="factionTreasury">64</span> <span class="unit">T</span></div></div>
+            <div class="resource"><div class="label">总影响力</div><div class="value"><span id="factionInfluence">104</span></div></div>
+            <div class="resource"><div class="label">派系人物</div><div class="value">5 <span class="unit">/ 6</span></div></div>
+            <div class="resource"><div class="label">已投官职</div><div class="value"><span id="voteCount">0</span> <span class="unit">/ 5</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="context-section">
+        <div class="context-head"><i data-lucide="list-checks"></i>当前目标</div>
+        <div class="context-body">
+          <ul class="rule-list">
+            <li>选择本派系候选人物举办庆典。</li>
+            <li>投入不得超过人物当前财富。</li>
+            <li>为每个共和国公职投出一票。</li>
+            <li>完成后切换玩家，隐藏上一派系信息。</li>
+          </ul>
+          <div class="permission-box"><strong>当前权限：</strong>可操作 Optimates 派系人物；其他派系人物和金库详情不可见。</div>
+        </div>
+      </div>
+
+      <div class="context-section">
+        <div class="context-head"><i data-lucide="gavel"></i>阶段规则摘要</div>
+        <div class="context-body">
+          <ul class="rule-list">
+            <li>庆典投入转化为等量人气，并重新计算影响力。</li>
+            <li>候选资格由年龄、公职历史和人物状态决定。</li>
+            <li>选票权重由玩家所属派系总影响力计算。</li>
+            <li>同票时由核心规则执行随机裁决。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="context-section">
+        <div class="context-head"><i data-lucide="arrow-right-circle"></i>流程控制</div>
+        <div class="context-body">
+          <button class="btn primary-next" onclick="openHandoff()"><i data-lucide="user-round-check"></i>完成当前玩家操作</button>
+          <button class="btn ghost full" style="width:100%;margin-top:8px;" onclick="showToast('warning','阶段尚未完成','请先完成必要投票，或确认跳过剩余操作。')"><i data-lucide="skip-forward"></i>跳过剩余操作</button>
+        </div>
+      </div>
+    </aside>
+
+    <section class="event-log">
+      <div class="log-top">
+        <div class="log-title">结构化反馈与最近事件</div>
+        <div class="log-controls">
+          <button class="tiny-btn" onclick="addLog('info','STATE','已从权威 GameState 刷新当前玩家快照。')">模拟刷新</button>
+          <button class="tiny-btn" onclick="clearLogs()">清空</button>
+        </div>
+      </div>
+      <div class="log-stream" id="logStream">
+        <div class="log-entry"><span class="log-time">08:41:02</span><span class="log-kind">SESSION</span><span class="log-text">Player Optimates 已进入人口阶段。</span></div>
+        <div class="log-entry success"><span class="log-time">08:41:03</span><span class="log-kind">SNAPSHOT</span><span class="log-text">已加载当前玩家可见人物、派系资源与阶段权限。</span></div>
+        <div class="log-entry"><span class="log-time">08:41:04</span><span class="log-kind">API</span><span class="log-text">population_api.get_candidates 返回 10 名候选人。</span></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="toast-stack" id="toastStack"></div>
+
+  <div class="modal" id="confirmModal">
+    <div class="dialog">
+      <div class="dialog-head" id="dialogTitle">确认操作</div>
+      <div class="dialog-body" id="dialogBody">操作说明</div>
+      <div class="dialog-actions">
+        <button class="btn ghost" onclick="closeDialog()">取消</button>
+        <button class="btn primary" id="dialogConfirm">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="handoffOverlay">
+    <div class="handoff">
+      <div class="handoff-seal">SPQR</div>
+      <div class="eyebrow">Player Handoff · Privacy Gate</div>
+      <h2>请将设备交给下一位玩家</h2>
+      <p>上一玩家的派系人物、金库和决策信息已经从界面模型中清除。下一位玩家确认身份后，系统将重新从权威状态加载其可见信息。</p>
+      <div class="handoff-next" id="handoffNext">下一位：Player Populares</div>
+      <div class="action-row" style="justify-content:center;margin-top:20px;">
+        <button class="btn primary" onclick="completeHandoff()"><i data-lucide="unlock-keyhole"></i>确认并进入</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const players = [
+      { name: "Player Optimates", faction: "Optimates · 人类玩家", sigil: "OP", treasury: 64, influence: 104 },
+      { name: "Player Populares", faction: "Populares · 人类玩家", sigil: "PO", treasury: 58, influence: 96 },
+      { name: "Player Equites", faction: "Equites · AI 玩家", sigil: "EQ", treasury: 71, influence: 88 }
+    ];
+
+    const rosters = {
+      OP: [
+        { id: 1, initials: "SS", name: "Servius Sulpicius Gracchus", role: "派系领袖 · 执政官候选人", wealth: 28, popularity: 7, influence: 45, office: "执政官" },
+        { id: 2, initials: "SF", name: "Spurius Furius Naso", role: "贵族 · 监察官候选人", wealth: 15, popularity: 2, influence: 22, office: "监察官" },
+        { id: 3, initials: "AP", name: "Appius Plautius Africanus", role: "贵族 · 大法官候选人", wealth: 16, popularity: 4, influence: 34, office: "大法官" },
+        { id: 4, initials: "GC", name: "Gnaeus Calpurnius", role: "骑士 · 财务官候选人", wealth: 23, popularity: 3, influence: 3, office: "财务官" },
+        { id: 5, initials: "NA", name: "Numerius Antonius Gracchus", role: "平民 · 保民官候选人", wealth: 28, popularity: 1, influence: 1, office: "保民官" }
+      ],
+      PO: [
+        { id: 7, initials: "LJ", name: "Lucius Julius Libo", role: "派系领袖 · 执政官候选人", wealth: 21, popularity: 9, influence: 41, office: "执政官" },
+        { id: 8, initials: "MA", name: "Marcus Atilius Regulus", role: "贵族 · 大法官候选人", wealth: 17, popularity: 6, influence: 29, office: "大法官" },
+        { id: 9, initials: "QT", name: "Quintus Terentius", role: "骑士 · 财务官候选人", wealth: 25, popularity: 3, influence: 14, office: "财务官" }
+      ],
+      EQ: [
+        { id: 11, initials: "GA", name: "Gaius Aurelius Cotta", role: "骑士领袖 · 财务官候选人", wealth: 33, popularity: 5, influence: 31, office: "财务官" },
+        { id: 12, initials: "VT", name: "Vibius Terentius", role: "平民 · 保民官候选人", wealth: 12, popularity: 8, influence: 22, office: "保民官" }
+      ]
+    };
+
+    const offices = [
+      { id: "consul", label: "执政官" },
+      { id: "censor", label: "监察官" },
+      { id: "praetor", label: "大法官" },
+      { id: "quaestor", label: "财务官" },
+      { id: "tribune", label: "保民官" }
+    ];
+
+    const candidateData = {
+      consul: [
+        { id: 1, initials: "SS", name: "Servius Sulpicius Gracchus", faction: "Optimates", martial: 4, intelligence: 6, charisma: 8, zeal: 5 },
+        { id: 7, initials: "LJ", name: "Lucius Julius Libo", faction: "Populares", martial: 6, intelligence: 5, charisma: 7, zeal: 4 }
+      ],
+      censor: [
+        { id: 2, initials: "SF", name: "Spurius Furius Naso", faction: "Optimates", martial: 3, intelligence: 7, charisma: 6, zeal: 7 },
+        { id: 14, initials: "MP", name: "Marcus Porcius", faction: "Populares", martial: 4, intelligence: 8, charisma: 5, zeal: 8 }
+      ],
+      praetor: [
+        { id: 3, initials: "AP", name: "Appius Plautius Africanus", faction: "Optimates", martial: 4, intelligence: 7, charisma: 5, zeal: 6 },
+        { id: 8, initials: "MA", name: "Marcus Atilius Regulus", faction: "Populares", martial: 6, intelligence: 6, charisma: 6, zeal: 4 }
+      ],
+      quaestor: [
+        { id: 4, initials: "GC", name: "Gnaeus Calpurnius", faction: "Optimates", martial: 2, intelligence: 8, charisma: 4, zeal: 3 },
+        { id: 11, initials: "GA", name: "Gaius Aurelius Cotta", faction: "Equites", martial: 3, intelligence: 9, charisma: 5, zeal: 4 }
+      ],
+      tribune: [
+        { id: 5, initials: "NA", name: "Numerius Antonius Gracchus", faction: "Optimates", martial: 2, intelligence: 5, charisma: 7, zeal: 8 },
+        { id: 12, initials: "VT", name: "Vibius Terentius", faction: "Equites", martial: 3, intelligence: 4, charisma: 8, zeal: 9 }
+      ]
+    };
+
+    let currentPlayerIndex = 0;
+    let currentRoster = rosters.OP;
+    let selectedPersonId = null;
+    let activeOffice = "consul";
+    let selectedCandidate = null;
+    let votes = {};
+
+    function init() {
+      renderRoster();
+      renderOfficeTabs();
+      renderCandidates();
+      lucide.createIcons();
+    }
+
+    function renderRoster(filter = "") {
+      const body = document.getElementById("rosterBody");
+      body.innerHTML = "";
+      currentRoster
+        .filter(p => p.name.toLowerCase().includes(filter.toLowerCase()))
+        .forEach(p => {
+          const tr = document.createElement("tr");
+          tr.dataset.personId = p.id;
+          if (p.id === selectedPersonId) tr.classList.add("selected");
+          tr.onclick = () => selectPerson(p.id);
+          tr.innerHTML = `
+            <td><div class="person"><div class="portrait">${p.initials}</div><div class="person-main"><div class="person-name">${p.name}</div><div class="person-role"><span class="status-dot"></span>${p.role}</div></div></div></td>
+            <td>${p.wealth} T</td><td>${p.popularity}</td><td>${p.influence}</td><td>${p.office}</td>`;
+          body.appendChild(tr);
+        });
+    }
+
+    function filterRoster() { renderRoster(document.getElementById("rosterSearch").value); }
+
+    function selectPerson(id) {
+      selectedPersonId = id;
+      const p = currentRoster.find(x => x.id === id);
+      renderRoster(document.getElementById("rosterSearch").value);
+      document.getElementById("selectionEmpty").style.display = "none";
+      document.getElementById("selectionView").classList.add("active");
+      document.getElementById("selectedInitials").textContent = p.initials;
+      document.getElementById("selectedName").textContent = p.name;
+      document.getElementById("selectedRole").textContent = p.role;
+      document.getElementById("selectedWealth").textContent = p.wealth;
+      document.getElementById("availableWealth").textContent = p.wealth + " T";
+      document.getElementById("selectedPopularity").textContent = p.popularity;
+      document.getElementById("selectedInfluence").textContent = p.influence;
+      document.getElementById("selectedOffice").textContent = p.office;
+      document.getElementById("campaignAmount").value = Math.min(10, p.wealth);
+      previewCampaign();
+    }
+
+    function clearSelection() {
+      selectedPersonId = null;
+      document.getElementById("selectionEmpty").style.display = "grid";
+      document.getElementById("selectionView").classList.remove("active");
+      renderRoster(document.getElementById("rosterSearch").value);
+    }
+
+    function changeAmount(delta) {
+      const input = document.getElementById("campaignAmount");
+      input.value = Math.max(1, Number(input.value || 0) + delta);
+      previewCampaign();
+    }
+
+    function previewCampaign() {
+      const amount = Math.max(0, Number(document.getElementById("campaignAmount").value || 0));
+      document.getElementById("previewPopularity").textContent = "+" + amount;
+      document.getElementById("popDelta").textContent = "+" + amount;
+      document.getElementById("infDelta").textContent = "+" + amount;
+    }
+
+    function confirmCampaign() {
+      if (!selectedPersonId) return;
+      const p = currentRoster.find(x => x.id === selectedPersonId);
+      const amount = Number(document.getElementById("campaignAmount").value || 0);
+      if (amount <= 0) {
+        showToast("error", "庆典提交失败", "投入金额必须大于 0。");
+        addLog("error", "API", "population_api.campaign 拒绝无效金额。");
+        return;
+      }
+      if (amount > p.wealth) {
+        showToast("error", "财富不足", `${p.name} 当前只有 ${p.wealth} T，无法投入 ${amount} T。`);
+        addLog("error", "API", `campaign 返回 error_insufficient_wealth，状态未改变。`);
+        return;
+      }
+      openDialog(
+        "确认举办庆典",
+        `将由 ${p.name} 投入 <strong>${amount} T</strong> 举办庆典。成功后人物财富减少，人气与影响力将从权威状态重新刷新。`,
+        () => applyCampaign(p, amount)
+      );
+    }
+
+    function applyCampaign(p, amount) {
+      p.wealth -= amount;
+      p.popularity += amount;
+      p.influence += amount;
+      closeDialog();
+      selectPerson(p.id);
+      document.getElementById("factionInfluence").textContent = Number(document.getElementById("factionInfluence").textContent) + amount;
+      showToast("success", "庆典举办成功", `${p.name} 花费 ${amount} T，人气与影响力已刷新。`);
+      addLog("success", "API", `campaign success · figure_id=${p.id} · amount=${amount}`);
+      document.getElementById("progressFill").style.width = "58%";
+      document.getElementById("progressLabel").textContent = "庆典完成 · 3/5";
+    }
+
+    function renderOfficeTabs() {
+      const root = document.getElementById("officeTabs");
+      root.innerHTML = offices.map(o => `<button class="office-tab ${o.id === activeOffice ? "active" : ""}" onclick="setOffice('${o.id}')">${o.label}${votes[o.id] ? " · 已投" : ""}</button>`).join("");
+    }
+
+    function setOffice(id) {
+      activeOffice = id;
+      selectedCandidate = null;
+      renderOfficeTabs();
+      renderCandidates();
+      updateBallot();
+    }
+
+    function renderCandidates() {
+      const root = document.getElementById("candidateList");
+      const rows = candidateData[activeOffice];
+      document.getElementById("candidateCount").textContent = rows.length + " 名候选人";
+      root.innerHTML = rows.map(c => `
+        <div class="candidate ${selectedCandidate === c.id ? "selected" : ""}" onclick="selectCandidate(${c.id})">
+          <div class="portrait">${c.initials}</div>
+          <div class="person-main"><div class="person-name">${c.name}</div><div class="person-role">ID ${c.id} · 合法候选人</div></div>
+          <div class="metric">军略<strong>${c.martial}</strong></div>
+          <div class="metric">智略<strong>${c.intelligence}</strong></div>
+          <div class="metric">魅力<strong>${c.charisma}</strong></div>
+          <div class="metric">热忱<strong>${c.zeal}</strong></div>
+          <div class="faction-tag">${c.faction}</div>
+        </div>`).join("");
+      lucide.createIcons();
+    }
+
+    function selectCandidate(id) {
+      selectedCandidate = id;
+      renderCandidates();
+      updateBallot();
+    }
+
+    function clearCandidate() { selectedCandidate = null; renderCandidates(); updateBallot(); }
+
+    function updateBallot() {
+      const office = offices.find(o => o.id === activeOffice);
+      const candidate = candidateData[activeOffice].find(c => c.id === selectedCandidate);
+      document.getElementById("ballotPlayer").textContent = players[currentPlayerIndex].name;
+      document.getElementById("ballotOffice").textContent = office.label;
+      document.getElementById("ballotCandidate").textContent = candidate ? candidate.name : "尚未选择";
+      document.getElementById("voteButton").disabled = !candidate;
+    }
+
+    function confirmVote() {
+      if (!selectedCandidate) return;
+      const office = offices.find(o => o.id === activeOffice);
+      const candidate = candidateData[activeOffice].find(c => c.id === selectedCandidate);
+      if (votes[activeOffice]) {
+        showToast("error", "重复投票被拒绝", `当前玩家已经为${office.label}投过票。游戏状态未改变。`);
+        addLog("error", "API", `vote rejected · error_already_voted · office=${activeOffice}`);
+        return;
+      }
+      openDialog(
+        "确认派系选票",
+        `确认代表 <strong>${players[currentPlayerIndex].faction.split(" · ")[0]}</strong>，将${office.label}选票投给 <strong>${candidate.name}</strong>？`,
+        () => applyVote(office, candidate)
+      );
+    }
+
+    function applyVote(office, candidate) {
+      votes[office.id] = candidate.id;
+      closeDialog();
+      renderOfficeTabs();
+      document.getElementById("voteCount").textContent = Object.keys(votes).length;
+      showToast("success", "投票已记录", `${office.label}选票已投给 ${candidate.name}。`);
+      addLog("success", "API", `vote success · office=${office.id} · figure_id=${candidate.id}`);
+      document.getElementById("progressFill").style.width = Math.min(92, 58 + Object.keys(votes).length * 7) + "%";
+      document.getElementById("progressLabel").textContent = `已完成 ${Object.keys(votes).length} 项公职投票`;
+    }
+
+    function switchView(view) {
+      document.querySelectorAll(".stage-tab").forEach(btn => btn.classList.toggle("active", btn.dataset.view === view));
+      document.querySelectorAll(".workspace").forEach(el => el.classList.toggle("active", el.id === "view-" + view));
+      if (view === "vote") updateBallot();
+      lucide.createIcons();
+    }
+
+    function simulateElection() {
+      const winners = [
+        ["执政官", "Servius Sulpicius Gracchus", "104 票权"],
+        ["监察官", "Marcus Porcius", "96 票权"],
+        ["大法官", "Appius Plautius Africanus", "104 票权"],
+        ["财务官", "Gaius Aurelius Cotta", "88 票权"],
+        ["保民官", "Vibius Terentius", "88 票权"]
+      ];
+      document.getElementById("resultBoard").innerHTML = winners.map(w => `<div class="result-row"><div class="office">${w[0]}</div><div>${w[1]}</div><div class="score">${w[2]}</div></div>`).join("");
+      showToast("success", "选举结算完成", "共和国新任官员已经公布，相关人物与派系状态已刷新。");
+      addLog("success", "RESOLVE", "resolve_election success · 5 offices assigned");
+    }
+
+    function openDialog(title, body, confirm) {
+      document.getElementById("dialogTitle").textContent = title;
+      document.getElementById("dialogBody").innerHTML = body;
+      document.getElementById("dialogConfirm").onclick = confirm;
+      document.getElementById("confirmModal").classList.add("active");
+    }
+
+    function closeDialog() { document.getElementById("confirmModal").classList.remove("active"); }
+
+    function showToast(type, title, message) {
+      const stack = document.getElementById("toastStack");
+      const icon = type === "success" ? "circle-check" : type === "error" ? "circle-x" : "triangle-alert";
+      const toast = document.createElement("div");
+      toast.className = `toast ${type}`;
+      toast.innerHTML = `<i data-lucide="${icon}"></i><div><div class="toast-title">${title}</div><div class="toast-message">${message}</div></div>`;
+      stack.appendChild(toast);
+      lucide.createIcons();
+      setTimeout(() => toast.remove(), 4200);
+    }
+
+    function addLog(type, kind, text) {
+      const root = document.getElementById("logStream");
+      const now = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+      const row = document.createElement("div");
+      row.className = `log-entry ${type}`;
+      row.innerHTML = `<span class="log-time">${now}</span><span class="log-kind">${kind}</span><span class="log-text">${text}</span>`;
+      root.appendChild(row);
+      root.scrollTop = root.scrollHeight;
+    }
+
+    function clearLogs() { document.getElementById("logStream").innerHTML = ""; }
+
+    function phaseNotice(name) {
+      showToast("warning", `${name}未纳入当前切片`, "GUI-P0-01 只验证人口阶段真实闭环；其余阶段保留导航与扩展位置。");
+    }
+
+    function openHandoff() {
+      const next = players[(currentPlayerIndex + 1) % players.length];
+      document.getElementById("handoffNext").textContent = "下一位：" + next.name;
+      document.getElementById("app").style.visibility = "hidden";
+      document.getElementById("handoffOverlay").classList.add("active");
+    }
+
+    function completeHandoff() {
+      currentPlayerIndex = (currentPlayerIndex + 1) % players.length;
+      const p = players[currentPlayerIndex];
+      currentRoster = rosters[p.sigil];
+      selectedPersonId = null;
+      selectedCandidate = null;
+      votes = {};
+      document.getElementById("playerSigil").textContent = p.sigil;
+      document.getElementById("playerName").textContent = p.name;
+      document.getElementById("playerFaction").textContent = p.faction;
+      document.getElementById("factionTreasury").textContent = p.treasury;
+      document.getElementById("factionInfluence").textContent = p.influence;
+      document.getElementById("voteCount").textContent = 0;
+      document.getElementById("ballotPlayer").textContent = p.name;
+      document.getElementById("rosterSearch").value = "";
+      clearSelection();
+      renderOfficeTabs();
+      renderCandidates();
+      updateBallot();
+      document.getElementById("handoffOverlay").classList.remove("active");
+      document.getElementById("app").style.visibility = "visible";
+      showToast("success", "玩家信息已加载", `${p.name} 的可见状态已从权威快照载入。`);
+      addLog("success", "SESSION", `${p.name} 已通过玩家交接门禁。`);
+    }
+
+    document.addEventListener("DOMContentLoaded", init);
+  </script>
+</body>
+</html>

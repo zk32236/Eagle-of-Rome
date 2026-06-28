@@ -1,0 +1,97 @@
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_core/test_game_state.py
+E.EEEEEE
+======================================================================
+ERROR: test_create_for_testing (src.tests.test_core.test_game_state.TestGameStateMultiInstance)
+验证测试工厂方法正确注入配置并创建独立实例
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_core\test_game_state.py", line 96, in test_create_for_testing
+    normal_state = GameState()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\game_state.py", line 52, in __init__
+    self.reset()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\game_state.py", line 59, in reset
+    from core.entities import GameTurn
+ModuleNotFoundError: No module named 'core'
+
+======================================================================
+ERROR: test_initial_state_after_creation (src.tests.test_core.test_game_state.TestGameStateMultiInstance)
+验证普通构造后状态正确初始化
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_core\test_game_state.py", line 118, in test_initial_state_after_creation
+    state = GameState()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\game_state.py", line 52, in __init__
+    self.reset()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\game_state.py", line 59, in reset
+    from core.entities import GameTurn
+ModuleNotFoundError: No module named 'core'
+
+======================================================================
+ERROR: test_multi_instance_creation (src.tests.test_core.test_game_state.TestGameStateMultiInstance)
+验证可以创建多个独立实例
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_core\test_game_state.py", line 28, in test_multi_instance_creation
+    state_a = GameState()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\game_state.py", line 52, in __init__
+    self.reset()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\game_state.py", line 59, in reset
+    from core.entities import GameTurn
+ModuleNotFoundError: No module named 'core'
+
+======================================================================
+ERROR: test_public_methods_exist (src.tests.test_core.test_game_state.TestGameStateMultiInstance)
+验证所有公共方法均保留（仅检查存在性，不测试逻辑）
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_core\test_game_state.py", line 128, in test_public_methods_exist
+    state = GameState()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\game_state.py", line 52, in __init__
+    self.reset()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\game_state.py", line 59, in reset
+    from core.entities import GameTurn
+ModuleNotFoundError: No module named 'core'
+
+======================================================================
+ERROR: test_reset (src.tests.test_core.test_game_state.TestGameStateMultiInstance)
+验证 reset 方法仅重置当前实例
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_core\test_game_state.py", line 54, in test_reset
+    state = GameState()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\game_state.py", line 52, in __init__
+    self.reset()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\game_state.py", line 59, in reset
+    from core.entities import GameTurn
+ModuleNotFoundError: No module named 'core'
+
+======================================================================
+ERROR: test_reset_does_not_affect_other_instances (src.tests.test_core.test_game_state.TestGameStateMultiInstance)
+验证重置一个实例不影响其他实例
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_core\test_game_state.py", line 71, in test_reset_does_not_affect_other_instances
+    state_a = GameState()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\game_state.py", line 52, in __init__
+    self.reset()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\game_state.py", line 59, in reset
+    from core.entities import GameTurn
+ModuleNotFoundError: No module named 'core'
+
+======================================================================
+ERROR: test_state_isolation (src.tests.test_core.test_game_state.TestGameStateMultiInstance)
+验证修改一个实例不影响另一个实例
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_core\test_game_state.py", line 39, in test_state_isolation
+    state_a = GameState()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\game_state.py", line 52, in __init__
+    self.reset()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\game_state.py", line 59, in reset
+    from core.entities import GameTurn
+ModuleNotFoundError: No module named 'core'
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.005s
+
+FAILED (errors=7)

@@ -1,0 +1,434 @@
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：迁移系统配置组功能命令至新框架（指令10）
+
+核心输入：
+
+《EOR Command命令体系架构设计细化文档_V1.2》
+
+《EOR_开发指南.docx》
+
+已迁移的命令参考：sys_help.py、sys_exit.py、func_load.py、func_status.py
+
+基线代码：原 src/ui/debug_cli.py 中关于 terms 和 reload 命令的处理逻辑（约第130-140行、第400-410行）
+
+已完善的 GameState 类及 Config 类（包含 config.reload() 方法和术语服务）
+
+核心任务：
+
+创建系统配置命令文件：
+
+路径：src/ui/commands/sys_config.py
+
+该文件应包含两个命令类：TermsCommand 和 ReloadCommand，均继承 Command。
+
+元数据定义：
+
+TermsCommand：
+
+name = "terms"
+
+aliases = []（原基线无别名，也可考虑添加 ["term"] 但非必须）
+
+description = "切换术语预设，用法: terms [preset] (预设: original/historical_roman/generic_latin/chinese_historical)"
+
+ReloadCommand：
+
+name = "reload"
+
+aliases = []
+
+description = "重新加载配置文件"
+
+移植业务逻辑：
+
+TermsCommand：
+
+从原 _switch_terms 方法移植逻辑。
+
+命令接收可选参数 args，若 args 为空，则显示当前术语预设并列出可用预设（可调用 TerminologyService.get() 并打印当前预设，可用预设可通过 TerminologyService.PRESETS.keys() 获取）。
+
+若 args 非空，取第一个参数作为预设名，调用 TerminologyService.set_preset(preset)，根据返回值打印成功或失败信息。
+
+注意：TerminologyService 是全局服务，无需依赖 GameState，但可通过 self.state 获取（虽然不用）。
+
+示例输出：📝 Terminology: historical_roman 或 ❌ Unknown preset: xxx。
+
+ReloadCommand：
+
+从原 _reload_config 方法移植逻辑。
+
+调用 self.state.config.reload()，根据返回值打印成功或失败信息。
+
+若重载成功，可显示更新后的配置项（可选，原基线仅打印成功信息）。
+
+需处理 self.state.config 为 None 的情况（但通常不会）。
+
+两个命令均不需要检查阶段执行状态，因为它们是系统命令，不涉及回合。
+
+按需补充辅助方法：
+
+若需要获取当前术语预设，可直接调用 TerminologyService.get() 并查看其属性，但 TerminologyService 没有直接返回预设名的接口。可考虑在 TerminologyService 中添加一个类方法 get_current_preset_name()，但为避免修改现有模块，可在命令中通过比较 _current 与 PRESETS 来确定当前预设名。建议在命令内部实现，不修改 TerminologyService。
+
+实现方式：遍历 TerminologyService.PRESETS.items()，若 current == preset 则返回预设名。
+
+编写单元测试：
+
+路径：src/tests/test_commands/test_sys_config.py
+
+使用 pytest 框架，模拟 GameState 和 TerminologyService。
+
+测试用例至少覆盖：
+
+test_terms_no_args：无参数时显示当前预设和可用列表。
+
+test_terms_valid_preset：传入有效预设名，切换成功，打印确认信息。
+
+test_terms_invalid_preset：传入无效预设名，打印错误信息，切换不成功。
+
+test_reload_success：模拟 config.reload() 返回 True，验证打印成功信息。
+
+test_reload_failure：模拟 config.reload() 返回 False，验证打印失败信息。
+
+test_reload_no_config：若 self.state.config 为 None，应妥善处理（可选，可忽略）。
+
+注意：TerminologyService 是全局单例，测试时可能需要重置状态，或使用 mock 隔离。
+
+手动验证：
+
+运行 python main.py，进入 CLI。
+
+输入 terms 查看当前预设和可用列表。
+
+输入 terms chinese_historical 切换，观察输出。
+
+输入 terms invalid 验证错误处理。
+
+修改 data/config/game_config.json 中的某个值（如 base_tax），然后输入 reload，验证配置重载成功（可通过 status 或后续阶段验证）。
+
+确保命令无异常崩溃。
+
+交付物：
+
+src/ui/commands/sys_config.py
+
+src/tests/test_commands/test_sys_config.py
+
+验收标准：
+
+单元测试通过率 100%。
+
+在 CLI 中执行 terms 和 reload 命令，输出和行为与原基线完全一致。
+
+代码通过《EOR MVP 0.4.5代码审查Checklist》中 Command 模块的相关检查项。
+
+命令注册正确，help 中能显示这两个命令的描述。
+
+请在 feature/refactor-0.4.5 分支上操作，完成后提交代码并附上测试结果。如有问题，随时沟通。
+
+豆包（项目经理）
+
+
+单元测试通过率
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m pytest src/tests/test_commands/test_sys_config.py -v
+================================================================================================================================================= test session starts =================================================================================================================================================
+platform win32 -- Python 3.10.6, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+collected 6 items
+
+src/tests/test_commands/test_sys_config.py::test_terms_no_args PASSED                                                                                                                                                                                                                                            [ 16%] 
+src/tests/test_commands/test_sys_config.py::test_terms_valid_preset PASSED                                                                                                                                                                                                                                       [ 33%] 
+src/tests/test_commands/test_sys_config.py::test_terms_invalid_preset PASSED                                                                                                                                                                                                                                     [ 50%] 
+src/tests/test_commands/test_sys_config.py::test_reload_success PASSED                                                                                                                                                                                                                                           [ 66%] 
+src/tests/test_commands/test_sys_config.py::test_reload_failure PASSED                                                                                                                                                                                                                                           [ 83%] 
+src/tests/test_commands/test_sys_config.py::test_reload_no_config PASSED                                                                                                                                                                                                                                         [100%] 
+
+================================================================================================================================================== 6 passed in 0.12s ================================================================================================================================================== 
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> 
+
+
+系统测试
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+
+============================================================
+   Eagle of Rome - MVP 0.4.5 (整改后版本)
+============================================================
+项目根目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+Python路径: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src
+============================================================
+[DEBUG] 命令目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands
+[DEBUG] 发现的命令: ['load', 'l', 'status', 'sts', 'combat', 'c', 'forum', 'f', 'mortality', 'm', 'population', 'p', 'resolution', 'x', 'revenue', 'r', 'senate', 's', 'reload', 'terms', 'exit', 'quit', 'help', 'h']
+
+============================================================
+   Eagle of Rome - Debug CLI (整改后版本)
+============================================================
+输入 'help' 查看可用命令，'exit' 退出游戏
+
+> load
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+> reload
+✅ 配置重载成功
+> reload
+✅ 配置重载成功
+> status
+
+==================================================
+   📊 游戏状态摘要
+==================================================
+   回合: 第 1 年 (264 BC)
+   国库: 100 塔兰特
+   存活人物: 3 人
+   派系数: 2 个
+==================================================
+> load
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+> help
+
+============================================================
+   Eagle of Rome - 可用命令列表
+============================================================
+  combat      (别名: c)          执行战斗阶段 (Combat Phase)
+  exit        (别名: quit)       退出游戏
+  forum       (别名: f)          执行广场阶段 (Forum Phase)
+  help        (别名: h)          显示所有可用命令的帮助信息
+  load        (别名: l)          加载场景 (默认: mvp_test.json)
+  mortality   (别名: m)          执行天命阶段 (Mortality Phase)
+  population  (别名: p)          执行人口阶段 (Population Phase)
+  reload                       重新加载配置文件 (data/config/game_config.json)
+  resolution  (别名: x)          执行决议阶段 (Resolution Phase)
+  revenue     (别名: r)          执行税收阶段 (Revenue Phase)
+  senate      (别名: s)          执行元老院阶段 (Senate Phase)
+  status      (别名: sts)        显示当前游戏状态摘要（国库、人物数等）
+  terms                        切换术语预设，用法: terms [preset] (预设: original/historical_roman/generic_latin/chinese_historical)
+============================================================
+输入 'exit' 或 'quit' 退出游戏
+> reload
+✅ 配置重载成功
+> status
+
+==================================================
+   📊 游戏状态摘要
+==================================================
+   回合: 第 1 年 (264 BC)
+   国库: 100 塔兰特
+   存活人物: 3 人
+   派系数: 2 个
+==================================================
+> reload
+✅ 配置重载成功
+> status
+
+==================================================
+   📊 游戏状态摘要
+==================================================
+   回合: 第 1 年 (264 BC)
+   国库: 100 塔兰特
+   存活人物: 3 人
+   派系数: 2 个
+==================================================
+> reload
+✅ 配置重载成功
+> turn
+未知命令: turn
+输入 'help' 查看可用命令
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 3
+  [Draw 1] Number 85...
+     -> No member assigned (safe)
+> r
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   元老院派: +10 Talents
+   平民派: +10 Talents
+
+   📊 State Treasury: 200 Talents
+> f
+
+--- Forum Phase (Year 264 BC) ---
+
+   📢 2 new figure(s) arrive in the Senate:
+      🏛️ Appius · Licinius · Scipio (nobile)
+      👤 Sextilis (plebeian)
+
+   🏛️  Figures in Senate:
+
+      🏛️ NOBILE (1):
+         ID:4 Appius · Licinius · Scipio
+            [权6财18人4] 家族:Licinius
+
+      👤 PLEBEIAN (1):
+         ID:5 Sextilis
+            [权1财7人1]
+
+   📜 2 new contract(s) announced:
+      包税: 山南高卢包税权
+      工程: 水道桥工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 山南高卢包税权
+            预付:36 年收益:10 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 水道桥工程
+            预算:58 预期利润:11
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+> p
+
+--- Population Phase (Year 264 BC) ---
+   🟢 Treasury: 200 Talents
+
+   🏛️  State of the Republic: Calm
+
+   👥 Population Events:
+      No significant events
+> s
+
+--- Senate Phase (Year 264 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (2 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Appius · Licinius ·  (?       ) Age:40 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Sextilis             (?       ) Age:27 CHA: 3 Prereq:✗ Cooldown:OK → Age 27 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Appius · Licinius ·  (?       ) Age:40 CHA: 8 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Sextilis             (?       ) Age:27 CHA: 3 Prereq:✗ Cooldown:OK → Age 27 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+   Electing PRAETOR (1 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=2y, Prerequisite=Quaestor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Gaius Marius         (平民派     ) Age:35 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Lucius Sulla         (元老院派    ) Age:45 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Appius · Licinius ·  (?       ) Age:40 MAN: 3 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Sextilis             (?       ) Age:27 MAN: 3 Prereq:✗ Cooldown:OK → Age 27 < 35
+      ⚠️  No eligible candidates for praetor!
+      ⚠️  No eligible candidate for praetor
+
+   Electing QUQAESTOR (1 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ Marcus Brutus        (元老院派    ) Age:40 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius Marius         (平民派     ) Age:35 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Lucius Sulla         (元老院派    ) Age:45 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Appius · Licinius ·  (?       ) Age:40 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Sextilis             (?       ) Age:27 STR: 3 Prereq:✓ Cooldown:OK → Age 27 < 30
+
+      🏆 TOP 2 CANDIDATES (by STR):
+         1. Appius · Licinius ·  (?)
+            STR: 4 | Pop: 4 | Age:40 | History: None
+         2. Marcus Brutus        (元老院派)
+            STR: 0 | Pop: 3 | Age:40 | History: None
+
+      🗳️  VOTING RESULTS:
+         Marcus Brutus       :   12 (100.0%) ████████████████████
+         Appius · Licinius · :    0 (  0.0%) 
+
+      ✓ WINNER: Marcus Brutus (元老院派)
+        Power bonus: +2
+      💰 Marcus Brutus elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      元老院派: Marcus Brutus (Power: 7)
+      平民派: Gaius Marius (Power: 4)
+
+   🎤 Presiding Officer: Marcus Brutus
+
+   📋 Processing 2 pending contract(s)...
+
+   📊 Voting: 山南高卢包税权
+      Cost: 36 | Expected: 10
+      ⚠️  No eligible Equites candidates
+
+   🏗️ Assigning: 水道桥工程
+      Budget: 58 | Profit: 11
+      ⏳ Awaiting Consul election...
+> c
+
+--- Combat Phase (Year 264 BC) ---
+   ☮️  No war system - phase skipped
+> x
+
+--- Revolution Phase (Year 264 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: 元老院派 (13 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟡 元老院派: MODERATE risk (avg Loyalty: 5.0)
+      🟡 平民派: MODERATE risk (avg Loyalty: 5.0)
+
+==================================================
+   📜 ANNUAL REPORT - Year 264 BC
+==================================================
+
+   💰 Treasury: 200 Talents
+
+   📊 Faction Standings:
+      1. 👑 元老院派: 13 Influence
+      2. 👑 平民派: 4 Influence
+
+   ☮️  Peace prevails
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   📉 Annual Decay:
+      Marcus Brutus: pop-0(-50%), age 41
+      Gaius Marius: pop-1(-50%), age 36
+      Lucius Sulla: pop-1(-50%), age 46
+      Appius · Licinius · Scipio: pop-1(-50%), age 41
+> reload
+✅ 配置重载成功
+> x
+⚠️ 决议阶段在本回合已执行过
+> n
+未知命令: n
+输入 'help' 查看可用命令
+> exit
+感谢游玩 Eagle of Rome！再见！
+
+Process finished with exit code 0
+
+git commit -m "feat: 迁移系统配置组功能命令至新框架（指令10）"
+git tag -a v0.4.5-010 -m "MVP0.4.5-010 基线版本 - 迁移系统配置组功能命令至新框架（指令10）"

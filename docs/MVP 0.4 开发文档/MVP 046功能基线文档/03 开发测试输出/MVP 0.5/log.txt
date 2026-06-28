@@ -1,0 +1,203 @@
+2026-03-03 23:13:34,331 - EOR-1672175828800 - INFO - 天降猛男
+2026-03-03 23:13:34,332 - EOR-1672175828800 - INFO - Ellipsis
+2026-03-03 23:13:34,332 - EOR-1672175828800 - INFO - Ellipsis
+2026-03-03 23:13:34,332 - EOR-1672175828800 - INFO - type=faction_stipend faction_id=optimates amount=10 - 派系津贴: Optimates +10
+2026-03-03 23:13:34,332 - EOR-1672175828800 - INFO - type=faction_stipend faction_id=populares amount=10 - 派系津贴: Populares +10
+2026-03-03 23:13:34,332 - EOR-1672175828800 - INFO - type=faction_stipend faction_id=equites amount=10 - 派系津贴: Equites +10
+2026-03-03 23:13:34,333 - EOR-1672175828800 - INFO - Ellipsis
+2026-03-03 23:13:34,334 - EOR-1672175828800 - DEBUG - seller_id=1 buyer_id=5 amount=1 - LandTradeDecider: 选择交易 卖家 Manius · Plautius · Bibulus(ID:1) 买家 Sextus · Julius · Crassus(ID:5) 数量 1
+2026-03-03 23:13:34,334 - EOR-1672175828800 - INFO - type=land_trade seller_id=1 buyer_id=5 amount=1 - 土地交易成功: 卖家 1 买家 5 数量 1
+2026-03-03 23:13:34,335 - EOR-1672175828800 - DEBUG - faction_id=optimates candidate_count=4 min_age=30 - FestivalDecider: 派系 Optimates 候选人 4 人，最低年龄 30
+2026-03-03 23:13:34,335 - EOR-1672175828800 - DEBUG - faction_id=optimates decisions_count=4 total_spent=41 - FestivalDecider: 派系 Optimates 决定举办庆典 4 人，总花费 41
+2026-03-03 23:13:34,335 - EOR-1672175828800 - DEBUG - faction_id=populares candidate_count=2 min_age=30 - FestivalDecider: 派系 Populares 候选人 2 人，最低年龄 30
+2026-03-03 23:13:34,335 - EOR-1672175828800 - DEBUG - faction_id=populares decisions_count=2 total_spent=7 - FestivalDecider: 派系 Populares 决定举办庆典 2 人，总花费 7
+2026-03-03 23:13:34,335 - EOR-1672175828800 - DEBUG - faction_id=equites candidate_count=1 min_age=30 - FestivalDecider: 派系 Equites 候选人 1 人，最低年龄 30
+2026-03-03 23:13:34,336 - EOR-1672175828800 - DEBUG - faction_id=equites decisions_count=1 total_spent=7 - FestivalDecider: 派系 Equites 决定举办庆典 1 人，总花费 7
+2026-03-03 23:13:34,336 - EOR-1672175828800 - INFO - type=election office=consul figure_id=2 - 选举结果: consul 当选者 Aulus · Domitius · Gracchus (派系 Optimates)
+2026-03-03 23:13:34,336 - EOR-1672175828800 - INFO - type=election office=censor figure_id=3 - 选举结果: censor 当选者 Servius · Sulpicius · Crassus (派系 Optimates)
+2026-03-03 23:13:34,336 - EOR-1672175828800 - INFO - type=election office=praetor figure_id=13 - 选举结果: praetor 当选者 Aulus · Veturius · Naso (派系 Equites)
+2026-03-03 23:13:34,337 - EOR-1672175828800 - INFO - type=election office=quaestor figure_id=9 - 选举结果: quaestor 当选者 Aulus · Antonius · Marius (派系 Populares)
+2026-03-03 23:13:34,337 - EOR-1672175828800 - INFO - type=election office=quaestor figure_id=1 - 选举结果: quaestor 当选者 Manius · Plautius · Bibulus (派系 Optimates)
+2026-03-03 23:13:34,337 - EOR-1672175828800 - INFO - type=election office=tribune figure_id=6 - 选举结果: tribune 当选者 Salvius (派系 Optimates)
+2026-03-03 23:13:34,337 - EOR-1672175828800 - DEBUG - proposals=[] - 总督任命提案收集完成，共 0 项
+2026-03-03 23:13:34,338 - EOR-1672175828800 - DEBUG - pending_count=7 filtered_count=7 - BudgetDecider: 待决合同 7 个，过滤后 7 个
+2026-03-03 23:13:34,338 - EOR-1672175828800 - DEBUG - selected_count=1 contract_ids=[6] - BudgetDecider: 随机选择 1 个合同提交表决
+2026-03-03 23:13:34,338 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=optimates vote=True - SenateVoteDecider: 议题 Contract ID 6 派系 Optimates 投票 True
+2026-03-03 23:13:34,338 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=populares vote=False - SenateVoteDecider: 议题 Contract ID 6 派系 Populares 投票 False
+2026-03-03 23:13:34,338 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=equites vote=True - SenateVoteDecider: 议题 Contract ID 6 派系 Equites 投票 True
+2026-03-03 23:13:34,339 - EOR-1672175828800 - DEBUG - faction_id=optimates proposal_type=sale chance=0.3 - LandProposalDecider: 派系 optimates 类型 sale 概率 0.3
+2026-03-03 23:13:34,339 - EOR-1672175828800 - DEBUG - faction_id=optimates proposal_type=sale - LandProposalDecider: 未触发提案
+2026-03-03 23:13:34,339 - EOR-1672175828800 - DEBUG - faction_id=populares proposal_type=distribution chance=0.3 - LandProposalDecider: 派系 populares 类型 distribution 概率 0.3
+2026-03-03 23:13:34,339 - EOR-1672175828800 - DEBUG - faction_id=populares proposal_type=distribution - LandProposalDecider: 未触发提案
+2026-03-03 23:13:34,339 - EOR-1672175828800 - DEBUG - issue_type=Contract tribune_id=6 chance=0.2 random=0.0723492893751484 result=True - 保民官否决决策: 议题 Contract ID 6 概率 0.2 随机值 0.072 结果 True
+2026-03-03 23:13:34,340 - EOR-1672175828800 - INFO - 保民官否决合同: 科西嘉包税权 (280 BC) (ID:6)
+2026-03-03 23:13:36,163 - EOR-1672175828800 - INFO - 天降猛男
+2026-03-03 23:13:36,164 - EOR-1672175828800 - INFO - Ellipsis
+2026-03-03 23:13:36,164 - EOR-1672175828800 - INFO - Ellipsis
+2026-03-03 23:13:36,164 - EOR-1672175828800 - INFO - type=faction_stipend faction_id=optimates amount=10 - 派系津贴: Optimates +10
+2026-03-03 23:13:36,164 - EOR-1672175828800 - INFO - type=faction_stipend faction_id=populares amount=10 - 派系津贴: Populares +10
+2026-03-03 23:13:36,164 - EOR-1672175828800 - INFO - type=faction_stipend faction_id=equites amount=10 - 派系津贴: Equites +10
+2026-03-03 23:13:36,165 - EOR-1672175828800 - INFO - Ellipsis
+2026-03-03 23:13:36,165 - EOR-1672175828800 - DEBUG - faction_id=optimates member_count=6 eligible_count=2 - RetirementDecider: 派系 Optimates 成员 6 人，符合淘汰条件 2 人
+2026-03-03 23:13:36,165 - EOR-1672175828800 - DEBUG - faction_id=optimates figure_id=5 - RetirementDecider: 派系 Optimates 淘汰人物 Sextus · Julius · Crassus(ID:5)
+2026-03-03 23:13:36,165 - EOR-1672175828800 - DEBUG - faction_id=populares member_count=6 eligible_count=3 - RetirementDecider: 派系 Populares 成员 6 人，符合淘汰条件 3 人
+2026-03-03 23:13:36,166 - EOR-1672175828800 - DEBUG - faction_id=populares figure_id=10 - RetirementDecider: 派系 Populares 淘汰人物 Titus · Papirius · Macedonicus(ID:10)
+2026-03-03 23:13:36,166 - EOR-1672175828800 - DEBUG - faction_id=optimates available=5 eligible=4 vacancies=1 - RecruitmentDecider: 派系 Optimates 广场可用 5 人，排除后 4 人，空缺 1
+2026-03-03 23:13:36,166 - EOR-1672175828800 - DEBUG - faction_id=optimates bid_count=1 total_bid=20 - RecruitmentDecider: 派系 Optimates 决定出价 1 人，总预算 20
+2026-03-03 23:13:36,166 - EOR-1672175828800 - DEBUG - faction_id=populares available=5 eligible=4 vacancies=1 - RecruitmentDecider: 派系 Populares 广场可用 5 人，排除后 4 人，空缺 1
+2026-03-03 23:13:36,166 - EOR-1672175828800 - DEBUG - faction_id=populares bid_count=1 total_bid=12 - RecruitmentDecider: 派系 Populares 决定出价 1 人，总预算 12
+2026-03-03 23:13:36,167 - EOR-1672175828800 - DEBUG - seller_id=19 - LandTradeDecider: 卖家 Aulus · Papirius · Brutus 无私地
+2026-03-03 23:13:36,168 - EOR-1672175828800 - DEBUG - faction_id=optimates candidate_count=2 min_age=30 - FestivalDecider: 派系 Optimates 候选人 2 人，最低年龄 30
+2026-03-03 23:13:36,168 - EOR-1672175828800 - DEBUG - faction_id=optimates decisions_count=2 total_spent=3 - FestivalDecider: 派系 Optimates 决定举办庆典 2 人，总花费 3
+2026-03-03 23:13:36,168 - EOR-1672175828800 - DEBUG - faction_id=populares candidate_count=3 min_age=30 - FestivalDecider: 派系 Populares 候选人 3 人，最低年龄 30
+2026-03-03 23:13:36,169 - EOR-1672175828800 - DEBUG - faction_id=populares decisions_count=3 total_spent=33 - FestivalDecider: 派系 Populares 决定举办庆典 3 人，总花费 33
+2026-03-03 23:13:36,169 - EOR-1672175828800 - DEBUG - faction_id=equites candidate_count=2 min_age=30 - FestivalDecider: 派系 Equites 候选人 2 人，最低年龄 30
+2026-03-03 23:13:36,169 - EOR-1672175828800 - DEBUG - faction_id=equites decisions_count=2 total_spent=12 - FestivalDecider: 派系 Equites 决定举办庆典 2 人，总花费 12
+2026-03-03 23:13:36,169 - EOR-1672175828800 - INFO - type=election office=consul figure_id=3 - 选举结果: consul 当选者 Servius · Sulpicius · Crassus (派系 Optimates)
+2026-03-03 23:13:36,169 - EOR-1672175828800 - INFO - type=election office=censor figure_id=2 - 选举结果: censor 当选者 Aulus · Domitius · Gracchus (派系 Optimates)
+2026-03-03 23:13:36,170 - EOR-1672175828800 - INFO - type=election office=praetor figure_id=14 - 选举结果: praetor 当选者 Sextus · Domitius · Cicero (派系 Equites)
+2026-03-03 23:13:36,170 - EOR-1672175828800 - INFO - type=election office=quaestor figure_id=12 - 选举结果: quaestor 当选者 Gaius · Stone (派系 Populares)
+2026-03-03 23:13:36,170 - EOR-1672175828800 - INFO - type=election office=quaestor figure_id=18 - 选举结果: quaestor 当选者 Appius · Smith (派系 Equites)
+2026-03-03 23:13:36,170 - EOR-1672175828800 - INFO - type=election office=tribune figure_id=11 - 选举结果: tribune 当选者 Sextus · Furius · Asiaticus (派系 Populares)
+2026-03-03 23:13:36,171 - EOR-1672175828800 - DEBUG - proposals=[3] - 总督任命提案收集完成，共 1 项
+2026-03-03 23:13:36,171 - EOR-1672175828800 - DEBUG - pending_count=7 filtered_count=7 - BudgetDecider: 待决合同 7 个，过滤后 7 个
+2026-03-03 23:13:36,171 - EOR-1672175828800 - DEBUG - selected_count=6 contract_ids=[5, 6, 7, 4, 2, 3] - BudgetDecider: 随机选择 6 个合同提交表决
+2026-03-03 23:13:36,171 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=optimates vote=True - SenateVoteDecider: 议题 Contract ID 5 派系 Optimates 投票 True
+2026-03-03 23:13:36,172 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=populares vote=False - SenateVoteDecider: 议题 Contract ID 5 派系 Populares 投票 False
+2026-03-03 23:13:36,172 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=equites vote=False - SenateVoteDecider: 议题 Contract ID 5 派系 Equites 投票 False
+2026-03-03 23:13:36,172 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=optimates vote=False - SenateVoteDecider: 议题 Contract ID 6 派系 Optimates 投票 False
+2026-03-03 23:13:36,172 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=populares vote=False - SenateVoteDecider: 议题 Contract ID 6 派系 Populares 投票 False
+2026-03-03 23:13:36,172 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=equites vote=True - SenateVoteDecider: 议题 Contract ID 6 派系 Equites 投票 True
+2026-03-03 23:13:36,173 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=optimates vote=True - SenateVoteDecider: 议题 Contract ID 7 派系 Optimates 投票 True
+2026-03-03 23:13:36,173 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=populares vote=False - SenateVoteDecider: 议题 Contract ID 7 派系 Populares 投票 False
+2026-03-03 23:13:36,173 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=equites vote=True - SenateVoteDecider: 议题 Contract ID 7 派系 Equites 投票 True
+2026-03-03 23:13:36,173 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=optimates vote=True - SenateVoteDecider: 议题 Contract ID 4 派系 Optimates 投票 True
+2026-03-03 23:13:36,173 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=populares vote=False - SenateVoteDecider: 议题 Contract ID 4 派系 Populares 投票 False
+2026-03-03 23:13:36,174 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=equites vote=False - SenateVoteDecider: 议题 Contract ID 4 派系 Equites 投票 False
+2026-03-03 23:13:36,174 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=optimates vote=True - SenateVoteDecider: 议题 Contract ID 2 派系 Optimates 投票 True
+2026-03-03 23:13:36,174 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=populares vote=True - SenateVoteDecider: 议题 Contract ID 2 派系 Populares 投票 True
+2026-03-03 23:13:36,174 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=equites vote=False - SenateVoteDecider: 议题 Contract ID 2 派系 Equites 投票 False
+2026-03-03 23:13:36,174 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=optimates vote=False - SenateVoteDecider: 议题 Contract ID 3 派系 Optimates 投票 False
+2026-03-03 23:13:36,175 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=populares vote=False - SenateVoteDecider: 议题 Contract ID 3 派系 Populares 投票 False
+2026-03-03 23:13:36,175 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=equites vote=False - SenateVoteDecider: 议题 Contract ID 3 派系 Equites 投票 False
+2026-03-03 23:13:36,175 - EOR-1672175828800 - DEBUG - faction_id=optimates proposal_type=sale chance=0.3 - LandProposalDecider: 派系 optimates 类型 sale 概率 0.3
+2026-03-03 23:13:36,175 - EOR-1672175828800 - DEBUG - faction_id=optimates proposal_type=sale - LandProposalDecider: 未触发提案
+2026-03-03 23:13:36,175 - EOR-1672175828800 - DEBUG - faction_id=populares proposal_type=distribution chance=0.3 - LandProposalDecider: 派系 populares 类型 distribution 概率 0.3
+2026-03-03 23:13:36,176 - EOR-1672175828800 - DEBUG - faction_id=populares proposal_type=distribution - LandProposalDecider: 未触发提案
+2026-03-03 23:13:36,176 - EOR-1672175828800 - DEBUG - issue_type=dict tribune_id=11 chance=0.2 random=0.751915089253256 result=False - 保民官否决决策: 议题 dict ID ? 概率 0.2 随机值 0.752 结果 False
+2026-03-03 23:13:36,176 - EOR-1672175828800 - DEBUG - issue_type=Contract tribune_id=11 chance=0.2 random=0.5058816777612909 result=False - 保民官否决决策: 议题 Contract ID 5 概率 0.2 随机值 0.506 结果 False
+2026-03-03 23:13:36,176 - EOR-1672175828800 - DEBUG - issue_type=Contract tribune_id=11 chance=0.2 random=0.5283424540082757 result=False - 保民官否决决策: 议题 Contract ID 7 概率 0.2 随机值 0.528 结果 False
+2026-03-03 23:13:36,176 - EOR-1672175828800 - DEBUG - issue_type=Contract tribune_id=11 chance=0.2 random=0.08626586960372096 result=True - 保民官否决决策: 议题 Contract ID 4 概率 0.2 随机值 0.086 结果 True
+2026-03-03 23:13:36,177 - EOR-1672175828800 - INFO - 保民官否决合同: 撒丁尼亚包税权 (280 BC) (ID:4)
+2026-03-03 23:13:36,177 - EOR-1672175828800 - DEBUG - issue_type=Contract tribune_id=11 chance=0.2 random=0.8760028362399219 result=False - 保民官否决决策: 议题 Contract ID 2 概率 0.2 随机值 0.876 结果 False
+2026-03-03 23:13:36,177 - EOR-1672175828800 - INFO - type=governor_appointed_designate province_id=3 new_governor=13 old_governor=15 - 行省 科西嘉 任命候任总督 Aulus · Veturius · Naso
+2026-03-03 23:13:36,177 - EOR-1672175828800 - INFO - 合同预算通过：撒丁尼亚工程 (280 BC)
+2026-03-03 23:13:36,177 - EOR-1672175828800 - INFO - 合同预算通过：科西嘉工程 (280 BC)
+2026-03-03 23:13:36,177 - EOR-1672175828800 - INFO - 合同预算通过：西西里包税权 (280 BC)
+2026-03-03 23:13:36,178 - EOR-1672175828800 - INFO - 旧总督 Gnaeus · Julius · Hispanus 返回罗马
+2026-03-03 23:13:36,178 - EOR-1672175828800 - INFO - 新总督 Aulus · Veturius · Naso 正式上任 科西嘉
+2026-03-03 23:13:38,387 - EOR-1672175828800 - INFO - 天降猛男
+2026-03-03 23:13:38,388 - EOR-1672175828800 - INFO - Ellipsis
+2026-03-03 23:13:38,388 - EOR-1672175828800 - INFO - Ellipsis
+2026-03-03 23:13:38,388 - EOR-1672175828800 - INFO - type=faction_stipend faction_id=optimates amount=10 - 派系津贴: Optimates +10
+2026-03-03 23:13:38,388 - EOR-1672175828800 - INFO - type=faction_stipend faction_id=populares amount=10 - 派系津贴: Populares +10
+2026-03-03 23:13:38,388 - EOR-1672175828800 - INFO - type=faction_stipend faction_id=equites amount=10 - 派系津贴: Equites +10
+2026-03-03 23:13:38,389 - EOR-1672175828800 - INFO - Ellipsis
+2026-03-03 23:13:38,389 - EOR-1672175828800 - DEBUG - faction_id=populares member_count=5 eligible_count=1 - RetirementDecider: 派系 Populares 成员 5 人，符合淘汰条件 1 人
+2026-03-03 23:13:38,389 - EOR-1672175828800 - DEBUG - faction_id=populares figure_id=9 - RetirementDecider: 派系 Populares 淘汰人物 Aulus · Antonius · Marius(ID:9)
+2026-03-03 23:13:38,389 - EOR-1672175828800 - DEBUG - faction_id=equites member_count=6 eligible_count=2 - RetirementDecider: 派系 Equites 成员 6 人，符合淘汰条件 2 人
+2026-03-03 23:13:38,390 - EOR-1672175828800 - DEBUG - faction_id=equites figure_id=16 - RetirementDecider: 派系 Equites 淘汰人物 Decimus · Tullius(ID:16)
+2026-03-03 23:13:38,390 - EOR-1672175828800 - DEBUG - faction_id=populares available=5 eligible=4 vacancies=2 - RecruitmentDecider: 派系 Populares 广场可用 5 人，排除后 4 人，空缺 2
+2026-03-03 23:13:38,390 - EOR-1672175828800 - DEBUG - faction_id=populares bid_count=2 total_bid=54 - RecruitmentDecider: 派系 Populares 决定出价 2 人，总预算 54
+2026-03-03 23:13:38,390 - EOR-1672175828800 - DEBUG - faction_id=equites available=5 eligible=4 vacancies=1 - RecruitmentDecider: 派系 Equites 广场可用 5 人，排除后 4 人，空缺 1
+2026-03-03 23:13:38,391 - EOR-1672175828800 - DEBUG - faction_id=equites bid_count=1 total_bid=35 - RecruitmentDecider: 派系 Equites 决定出价 1 人，总预算 35
+2026-03-03 23:13:38,391 - EOR-1672175828800 - INFO - type=works_contract_award contract_id=5 winner_id=17 amount=46 - 工程合同中标: 撒丁尼亚工程 (280 BC) 中标者 Servius · Antonius · Asiaticus 价格 46
+2026-03-03 23:13:38,391 - EOR-1672175828800 - INFO - type=works_contract_award contract_id=7 winner_id=4 amount=35 - 工程合同中标: 科西嘉工程 (280 BC) 中标者 Titus · Aemilius 价格 35
+2026-03-03 23:13:38,391 - EOR-1672175828800 - DEBUG - seller_id=9 buyer_id=16 amount=1 - LandTradeDecider: 选择交易 卖家 Aulus · Antonius · Marius(ID:9) 买家 Decimus · Tullius(ID:16) 数量 1
+2026-03-03 23:13:38,392 - EOR-1672175828800 - INFO - type=land_trade seller_id=9 buyer_id=16 amount=1 - 土地交易成功: 卖家 9 买家 16 数量 1
+2026-03-03 23:13:38,392 - EOR-1672175828800 - DEBUG - faction_id=optimates candidate_count=5 min_age=30 - FestivalDecider: 派系 Optimates 候选人 5 人，最低年龄 30
+2026-03-03 23:13:38,392 - EOR-1672175828800 - DEBUG - faction_id=optimates decisions_count=5 total_spent=23 - FestivalDecider: 派系 Optimates 决定举办庆典 5 人，总花费 23
+2026-03-03 23:13:38,392 - EOR-1672175828800 - DEBUG - faction_id=equites candidate_count=2 min_age=30 - FestivalDecider: 派系 Equites 候选人 2 人，最低年龄 30
+2026-03-03 23:13:38,393 - EOR-1672175828800 - DEBUG - faction_id=equites decisions_count=2 total_spent=48 - FestivalDecider: 派系 Equites 决定举办庆典 2 人，总花费 48
+2026-03-03 23:13:38,393 - EOR-1672175828800 - INFO - type=election office=consul figure_id=2 - 选举结果: consul 当选者 Aulus · Domitius · Gracchus (派系 Optimates)
+2026-03-03 23:13:38,393 - EOR-1672175828800 - INFO - type=election office=censor figure_id=3 - 选举结果: censor 当选者 Servius · Sulpicius · Crassus (派系 Optimates)
+2026-03-03 23:13:38,393 - EOR-1672175828800 - INFO - type=election office=praetor figure_id=1 - 选举结果: praetor 当选者 Manius · Plautius · Bibulus (派系 Optimates)
+2026-03-03 23:13:38,394 - EOR-1672175828800 - INFO - type=election office=quaestor figure_id=22 - 选举结果: quaestor 当选者 Aulus · Tullius · Naso (派系 Equites)
+2026-03-03 23:13:38,394 - EOR-1672175828800 - INFO - type=election office=quaestor figure_id=21 - 选举结果: quaestor 当选者 Gnaeus · Young (派系 Optimates)
+2026-03-03 23:13:38,394 - EOR-1672175828800 - INFO - type=election office=tribune figure_id=6 - 选举结果: tribune 当选者 Salvius (派系 Optimates)
+2026-03-03 23:13:38,395 - EOR-1672175828800 - DEBUG - issue_type=War faction_id=equites vote=True - SenateVoteDecider: 议题 War ID pyrrhic_war 派系 Equites 投票 True
+2026-03-03 23:13:38,395 - EOR-1672175828800 - INFO - type=war_declaration_passed war_id=pyrrhic_war legions=6 - 宣战通过 (待否决): 皮洛士战争，批准军团 6
+2026-03-03 23:13:38,395 - EOR-1672175828800 - DEBUG - proposals=[1, 2] - 总督任命提案收集完成，共 2 项
+2026-03-03 23:13:38,395 - EOR-1672175828800 - DEBUG - pending_count=4 filtered_count=4 - BudgetDecider: 待决合同 4 个，过滤后 4 个
+2026-03-03 23:13:38,395 - EOR-1672175828800 - DEBUG - selected_count=4 contract_ids=[3, 6, 1, 4] - BudgetDecider: 随机选择 4 个合同提交表决
+2026-03-03 23:13:38,396 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=optimates vote=False - SenateVoteDecider: 议题 Contract ID 3 派系 Optimates 投票 False
+2026-03-03 23:13:38,396 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=equites vote=False - SenateVoteDecider: 议题 Contract ID 3 派系 Equites 投票 False
+2026-03-03 23:13:38,396 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=optimates vote=False - SenateVoteDecider: 议题 Contract ID 6 派系 Optimates 投票 False
+2026-03-03 23:13:38,396 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=equites vote=True - SenateVoteDecider: 议题 Contract ID 6 派系 Equites 投票 True
+2026-03-03 23:13:38,396 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=optimates vote=False - SenateVoteDecider: 议题 Contract ID 1 派系 Optimates 投票 False
+2026-03-03 23:13:38,397 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=equites vote=False - SenateVoteDecider: 议题 Contract ID 1 派系 Equites 投票 False
+2026-03-03 23:13:38,397 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=optimates vote=False - SenateVoteDecider: 议题 Contract ID 4 派系 Optimates 投票 False
+2026-03-03 23:13:38,397 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=equites vote=False - SenateVoteDecider: 议题 Contract ID 4 派系 Equites 投票 False
+2026-03-03 23:13:38,397 - EOR-1672175828800 - DEBUG - faction_id=optimates proposal_type=sale chance=0.3 - LandProposalDecider: 派系 optimates 类型 sale 概率 0.3
+2026-03-03 23:13:38,397 - EOR-1672175828800 - DEBUG - faction_id=optimates proposal_type=sale - LandProposalDecider: 未触发提案
+2026-03-03 23:13:38,397 - EOR-1672175828800 - DEBUG - faction_id=populares proposal_type=distribution chance=0.3 - LandProposalDecider: 派系 populares 类型 distribution 概率 0.3
+2026-03-03 23:13:38,398 - EOR-1672175828800 - DEBUG - faction_id=populares proposal_type=distribution percent=0.08454412323929125 - LandProposalDecider: 提出法案 distribution 比例 8.45%
+2026-03-03 23:13:38,398 - EOR-1672175828800 - DEBUG - issue_type=War tribune_id=6 chance=0.2 random=0.5930318015191169 result=False - 保民官否决决策: 议题 War ID pyrrhic_war 概率 0.2 随机值 0.593 结果 False
+2026-03-03 23:13:38,398 - EOR-1672175828800 - DEBUG - issue_type=dict tribune_id=6 chance=0.2 random=0.16600803422677812 result=True - 保民官否决决策: 议题 dict ID ? 概率 0.2 随机值 0.166 结果 True
+2026-03-03 23:13:38,398 - EOR-1672175828800 - INFO - 保民官否决行省 西西里 总督任命
+2026-03-03 23:13:38,398 - EOR-1672175828800 - DEBUG - issue_type=dict tribune_id=6 chance=0.2 random=0.029088260356313844 result=True - 保民官否决决策: 议题 dict ID ? 概率 0.2 随机值 0.029 结果 True
+2026-03-03 23:13:38,399 - EOR-1672175828800 - INFO - 保民官否决行省 撒丁尼亚 总督任命
+2026-03-03 23:13:38,399 - EOR-1672175828800 - INFO - 宣战 皮洛士战争，征召 6 军团
+2026-03-03 23:13:38,399 - EOR-1672175828800 - INFO - 宣战通过：皮洛士战争，执政官 Aulus · Domitius · Gracchus 出征，批准军团 6
+2026-03-03 23:13:38,399 - EOR-1672175828800 - INFO - type=peace_treaty_generated war_id=pyrrhic_war result=VICTORY indemnity=160 duration=5 generated_turn=3 - 战争 皮洛士战争 生成停战草案，赔款 160，有效期 5 回合
+2026-03-03 23:13:43,460 - EOR-1672175828800 - INFO - 天降猛男
+2026-03-03 23:13:44,235 - EOR-1672175828800 - INFO - Ellipsis
+2026-03-03 23:13:44,236 - EOR-1672175828800 - INFO - Ellipsis
+2026-03-03 23:13:44,236 - EOR-1672175828800 - INFO - type=works_contract_revenue contract_id=5 figure_id=17 net_profit=2 treasury_cost=11 - 工程合同收益: Servius · Antonius · Asiaticus 净得 2，国库 -11
+2026-03-03 23:13:44,236 - EOR-1672175828800 - INFO - type=works_contract_revenue contract_id=7 figure_id=4 net_profit=1 treasury_cost=11 - 工程合同收益: Titus · Aemilius 净得 1，国库 -11
+2026-03-03 23:13:44,236 - EOR-1672175828800 - INFO - type=faction_stipend faction_id=optimates amount=10 - 派系津贴: Optimates +10
+2026-03-03 23:13:44,236 - EOR-1672175828800 - INFO - type=faction_stipend faction_id=populares amount=10 - 派系津贴: Populares +10
+2026-03-03 23:13:44,237 - EOR-1672175828800 - INFO - type=faction_stipend faction_id=equites amount=10 - 派系津贴: Equites +10
+2026-03-03 23:13:44,237 - EOR-1672175828800 - INFO - Ellipsis
+2026-03-03 23:13:45,219 - EOR-1672175828800 - DEBUG - faction_id=optimates member_count=6 eligible_count=0 - RetirementDecider: 派系 Optimates 成员 6 人，符合淘汰条件 0 人
+2026-03-03 23:13:45,220 - EOR-1672175828800 - DEBUG - faction_id=equites member_count=6 eligible_count=2 - RetirementDecider: 派系 Equites 成员 6 人，符合淘汰条件 2 人
+2026-03-03 23:13:45,220 - EOR-1672175828800 - DEBUG - faction_id=equites figure_id=14 - RetirementDecider: 派系 Equites 淘汰人物 Sextus · Domitius · Cicero(ID:14)
+2026-03-03 23:13:45,220 - EOR-1672175828800 - DEBUG - faction_id=populares available=4 eligible=4 vacancies=2 - RecruitmentDecider: 派系 Populares 广场可用 4 人，排除后 4 人，空缺 2
+2026-03-03 23:13:45,220 - EOR-1672175828800 - DEBUG - faction_id=populares bid_count=2 total_bid=53 - RecruitmentDecider: 派系 Populares 决定出价 2 人，总预算 53
+2026-03-03 23:13:45,221 - EOR-1672175828800 - DEBUG - faction_id=equites available=4 eligible=3 vacancies=1 - RecruitmentDecider: 派系 Equites 广场可用 4 人，排除后 3 人，空缺 1
+2026-03-03 23:13:45,221 - EOR-1672175828800 - DEBUG - faction_id=equites bid_count=1 total_bid=12 - RecruitmentDecider: 派系 Equites 决定出价 1 人，总预算 12
+2026-03-03 23:13:45,221 - EOR-1672175828800 - INFO - type=tax_contract_award contract_id=2 winner_id=23 amount=27 - 包税合同中标: 西西里包税权 (280 BC) 中标者 Gnaeus · Claudius 价格 27
+2026-03-03 23:13:45,221 - EOR-1672175828800 - DEBUG - seller_id=13 buyer_id=24 amount=1 - LandTradeDecider: 选择交易 卖家 Aulus · Veturius · Naso(ID:13) 买家 Manius · Sulpicius(ID:24) 数量 1
+2026-03-03 23:13:45,222 - EOR-1672175828800 - INFO - type=land_trade seller_id=13 buyer_id=24 amount=1 - 土地交易成功: 卖家 13 买家 24 数量 1
+2026-03-03 23:13:54,195 - EOR-1672175828800 - WARNING - type=truce_conversion_warning figure_id=2 - 警告：战场指挥官 Aulus · Domitius · Gracchus 找不到指挥的战争，使用默认上任回合
+2026-03-03 23:13:54,196 - EOR-1672175828800 - INFO - type=commander_conversion figure_id=2 old_office=consul new_office=proconsul assigned_turn=3 - 战场指挥官 Aulus · Domitius · Gracchus 转为 proconsul
+2026-03-03 23:13:54,196 - EOR-1672175828800 - DEBUG - faction_id=optimates candidate_count=3 min_age=30 - FestivalDecider: 派系 Optimates 候选人 3 人，最低年龄 30
+2026-03-03 23:13:54,196 - EOR-1672175828800 - DEBUG - faction_id=optimates decisions_count=3 total_spent=15 - FestivalDecider: 派系 Optimates 决定举办庆典 3 人，总花费 15
+2026-03-03 23:13:54,197 - EOR-1672175828800 - DEBUG - faction_id=populares candidate_count=2 min_age=30 - FestivalDecider: 派系 Populares 候选人 2 人，最低年龄 30
+2026-03-03 23:13:54,197 - EOR-1672175828800 - DEBUG - faction_id=populares decisions_count=1 total_spent=1 - FestivalDecider: 派系 Populares 决定举办庆典 1 人，总花费 1
+2026-03-03 23:13:54,197 - EOR-1672175828800 - DEBUG - faction_id=equites candidate_count=3 min_age=30 - FestivalDecider: 派系 Equites 候选人 3 人，最低年龄 30
+2026-03-03 23:13:54,197 - EOR-1672175828800 - DEBUG - faction_id=equites decisions_count=3 total_spent=20 - FestivalDecider: 派系 Equites 决定举办庆典 3 人，总花费 20
+2026-03-03 23:13:54,197 - EOR-1672175828800 - INFO - type=election office=consul figure_id=3 - 选举结果: consul 当选者 Servius · Sulpicius · Crassus (派系 Optimates)
+2026-03-03 23:13:54,198 - EOR-1672175828800 - INFO - type=election office=censor figure_id=15 - 选举结果: censor 当选者 Gnaeus · Julius · Hispanus (派系 Equites)
+2026-03-03 23:13:54,198 - EOR-1672175828800 - INFO - type=election office=praetor figure_id=21 - 选举结果: praetor 当选者 Gnaeus · Young (派系 Optimates)
+2026-03-03 23:13:54,198 - EOR-1672175828800 - INFO - type=election office=quaestor figure_id=17 - 选举结果: quaestor 当选者 Servius · Antonius · Asiaticus (派系 Equites)
+2026-03-03 23:13:54,198 - EOR-1672175828800 - INFO - type=election office=quaestor figure_id=18 - 选举结果: quaestor 当选者 Appius · Smith (派系 Equites)
+2026-03-03 23:13:54,199 - EOR-1672175828800 - INFO - type=election office=tribune figure_id=11 - 选举结果: tribune 当选者 Sextus · Furius · Asiaticus (派系 Populares)
+2026-03-03 23:14:31,939 - EOR-1672175828800 - DEBUG - proposals=[2] - 总督任命提案收集完成，共 1 项
+2026-03-03 23:14:31,940 - EOR-1672175828800 - DEBUG - pending_count=4 filtered_count=4 - BudgetDecider: 待决合同 4 个，过滤后 4 个
+2026-03-03 23:14:31,940 - EOR-1672175828800 - DEBUG - selected_count=1 contract_ids=[6] - BudgetDecider: 随机选择 1 个合同提交表决
+2026-03-03 23:14:31,940 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=optimates vote=True - SenateVoteDecider: 议题 Contract ID 6 派系 Optimates 投票 True
+2026-03-03 23:14:31,940 - EOR-1672175828800 - DEBUG - issue_type=Contract faction_id=equites vote=False - SenateVoteDecider: 议题 Contract ID 6 派系 Equites 投票 False
+2026-03-03 23:14:31,940 - EOR-1672175828800 - DEBUG - faction_id=optimates proposal_type=sale chance=0.3 - LandProposalDecider: 派系 optimates 类型 sale 概率 0.3
+2026-03-03 23:14:31,941 - EOR-1672175828800 - DEBUG - faction_id=optimates proposal_type=sale - LandProposalDecider: 未触发提案
+2026-03-03 23:14:31,941 - EOR-1672175828800 - DEBUG - faction_id=populares proposal_type=distribution chance=0.3 - LandProposalDecider: 派系 populares 类型 distribution 概率 0.3
+2026-03-03 23:14:31,941 - EOR-1672175828800 - DEBUG - faction_id=populares proposal_type=distribution - LandProposalDecider: 未触发提案
+2026-03-03 23:14:31,941 - EOR-1672175828800 - DEBUG - issue_type=land_act faction_id=optimates vote=False - SenateVoteDecider: 土地法案 peace 派系 Optimates 投票 False
+2026-03-03 23:14:31,941 - EOR-1672175828800 - DEBUG - issue_type=land_act faction_id=equites vote=True - SenateVoteDecider: 土地法案 peace 派系 Equites 投票 True
+2026-03-03 23:14:31,942 - EOR-1672175828800 - ERROR - context=回合 4 年份 277 BC cmd=s exception=name 'result' is not defined traceback=Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\debug_cli.py", line 134, in run
+    result = cmd_instance.execute(args)
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands\phase_senate.py", line 133, in execute
+    print(f"DEBUG: 保民官对 {war.name} 的投票结果: {result}")
+NameError: name 'result' is not defined
+ - 未捕获异常: 命令 's' - name 'result' is not defined

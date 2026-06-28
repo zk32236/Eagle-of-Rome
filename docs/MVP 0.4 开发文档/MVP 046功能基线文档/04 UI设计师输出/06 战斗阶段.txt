@@ -1,0 +1,68 @@
+############################################################
+ UI_06 回合 1 (282 BC) - 战斗阶段 [6/7]
+############################################################
+                      --- 阶段预览---
+是征服还是溃败，全在你一念之间！指派军团、挑选指挥官，在战场
+上与敌国一决高下。大胜将带来丰厚战利品和无上荣耀；僵持则考验
+你的战略耐心；失败可能让多年经营毁于一旦。  在这里，勇气与智
+慧缺一不可。带领你的军团，为罗马开疆拓土，或是在和谈桌上赢得
+体面！
+
+==========================================================
+   ⚔️  Battle Fields
+==========================================================
+
+	⚔️ 正在进行的战争:
+	1. 第一次布匿战争
+	2. 西西里行省 平民起义
+   
+
+🔧 本阶段可操作（COMMANDER）：			
+	1. sout → 侦查敌情（预留）
+	2. defence → 扎营防御（预留）
+	3. attack → 主动进攻（缺省）
+	2. next/n → 进入决算阶段
+
+> 请输入操作(COMMANDER1): attack 1
+
+第一次布匿战争的指挥官决心和敌人决一死战！
+
+--- 第一次布匿战争 (Year 264 BC) ---
+
+   ⚔️  Resolving 1 active conflict(s)...
+
+      ⚓ 进行海战...
+      海战结果: VICTORY, 罗马损失 0 艘战舰
+
+   ⚔️  Resolving 第一次布匿战争:
+      🎖️  Roma Commander: Cornelius · Maximus (Mil: 7)
+      🛡️  Roma Forces: 5 Legion(s) (+10)
+
+      ⚔️  Total Force: 17 vs Enemy 15
+
+      🎲 Dice roll: 10
+      📊 Combat Total: 10 + 17 - 15 = 12
+
+      🏆 RESULT: TRIUMPH (0 losses)
+      🎉 Triumph! Cornelius · Maximus returns in glory!
+
+      📦 战利品分配 (第一次布匿战争):
+        总额: 3200 塔兰特
+        国库: +1600
+        指挥官 Cornelius · Maximus 私库: +480
+        派系 Populares 金库: +800
+        士兵份额: 320 (将转换为老兵支持)
+   ✅ 第一次布匿战争 resolved! Victory!
+   🎁 Rewards: {'treasury': 3200, 'influence': 40, 'land': 0, 'family_prestige': 2}
+      🔄 指挥官 Cornelius · Maximus 返回罗马
+
+
+> 请输入操作(COMMANDER2): defence 2
+
+西西里行省战争的指挥官决定高挂免战牌！
+
+> 请输入操作(ANYONE): next
+
+   Progress: [▓▓▓▓▓▓░] 6/7
+
+> 已推进至决算阶段，输入`next`继续...

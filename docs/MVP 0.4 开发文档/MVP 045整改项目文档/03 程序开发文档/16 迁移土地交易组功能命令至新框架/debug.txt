@@ -1,0 +1,67 @@
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m pytest src/tests/test_commands/test_func_land.py -v
+================================================================================================================================================= test session starts =================================================================================================================================================
+platform win32 -- Python 3.10.6, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+collected 13 items
+
+src/tests/test_commands/test_func_land.py::test_trade_success PASSED                                                                                                                                                                                                                                             [  7%] 
+src/tests/test_commands/test_func_land.py::test_trade_invalid_args_count PASSED                                                                                                                                                                                                                                  [ 15%] 
+src/tests/test_commands/test_func_land.py::test_trade_wrong_subcommand PASSED                                                                                                                                                                                                                                    [ 23%] 
+src/tests/test_commands/test_func_land.py::test_trade_invalid_ids PASSED                                                                                                                                                                                                                                         [ 30%] 
+src/tests/test_commands/test_func_land.py::test_trade_non_positive_amount PASSED                                                                                                                                                                                                                                 [ 38%] 
+src/tests/test_commands/test_func_land.py::test_trade_failure PASSED                                                                                                                                                                                                                                             [ 46%] 
+src/tests/test_commands/test_func_land.py::test_land_price_success PASSED                                                                                                                                                                                                                                        [ 53%]
+src/tests/test_commands/test_func_land.py::test_land_price_invalid_args_count FAILED                                                                                                                                                                                                                             [ 61%]
+src/tests/test_commands/test_func_land.py::test_land_price_wrong_subcommand PASSED                                                                                                                                                                                                                               [ 69%] 
+src/tests/test_commands/test_func_land.py::test_land_price_invalid_ids PASSED                                                                                                                                                                                                                                    [ 76%] 
+src/tests/test_commands/test_func_land.py::test_land_price_preview_none PASSED                                                                                                                                                                                                                                   [ 84%] 
+src/tests/test_commands/test_func_land.py::test_seats_with_assets PASSED                                                                                                                                                                                                                                         [ 92%] 
+src/tests/test_commands/test_func_land.py::test_seats_no_assets PASSED                                                                                                                                                                                                                                           [100%] 
+
+====================================================================================================================================================== FAILURES ======================================================================================================================================================= 
+_________________________________________________________________________________________________________________________________________ test_land_price_invalid_args_count __________________________________________________________________________________________________________________________________________ 
+
+mock_state = <MagicMock spec='GameState' id='2097751234048'>
+
+    def test_land_price_invalid_args_count(mock_state):
+        cmd = LandCommand(mock_state)
+        result = cmd.execute([])
+        assert result is False
+        result = cmd.execute(["price", "1"])
+        assert result is False
+>       result = cmd.execute(["price", "1", "2", "extra"])
+
+src\tests\test_commands\test_func_land.py:112:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src\ui\commands\func_land.py:86: in execute
+    preview = service.get_trade_preview(seller_id, buyer_id, 1)  # 预览1单位价格
+src\core\service\land_trading_service.py:163: in get_trade_preview
+    price_per_unit = self.calculate_land_price(seller, buyer)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <src.core.service.land_trading_service.LandTradingService object at 0x000001E86BB6C670>, seller = <MagicMock name='mock.get_member()' id='2097751175568'>, buyer = <MagicMock name='mock.get_member()' id='2097751175568'>
+
+    def calculate_land_price(self, seller: Figure, buyer: Figure) -> int:
+        """
+        计算土地交易价格 - 基于双方属性浮动
+
+        价格公式：基础价格 × (1 + 卖方溢价 - 买方折扣)
+        """
+        terms = TerminologyService.get()
+
+        base = self.BASE_LAND_PRICE
+        modifier = 1.0
+
+        # 卖方溢价因素
+>       if seller.popularity >= 10:
+E       TypeError: '>=' not supported between instances of 'MagicMock' and 'int'
+
+src\core\service\land_trading_service.py:36: TypeError
+------------------------------------------------------------------------------------------------------------------------------------------------ Captured stdout call ------------------------------------------------------------------------------------------------------------------------------------------------- 
+❌ 用法: land price <卖家ID> <买家ID>
+❌ 用法: land price <卖家ID> <买家ID>
+=============================================================================================================================================== short test summary info =============================================================================================================================================== 
+FAILED src/tests/test_commands/test_func_land.py::test_land_price_invalid_args_count - TypeError: '>=' not supported between instances of 'MagicMock' and 'int'
+============================================================================================================================================ 1 failed, 12 passed in 0.22s ============================================================================================================================================= 
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> 

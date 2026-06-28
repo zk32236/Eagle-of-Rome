@@ -1,0 +1,9 @@
+﻿Layer,Components,Role
+**Entry**,`main.py`,Application bootstrap
+**UI Layer**,"`DebugCLI`, `CommandRegistry`, 7 Phase Commands, Function Commands, `AutoPlayerProcessor`","Input parsing, output formatting, player flow control"
+**API Layer**,"`forum_api`, `senate_api`, `population_api`, `game_api`","Permission checks, parameter validation, standard `{success, message, data, errors}` responses"
+**Systems & Services**,"`PoliticalSystem`, `EconomicService`, `WarSystem`, `MilitarySystem`, `NavalSystem`, `LandTradingService`",Core business rules
+**Deciders (AI)**,"`FestivalDecider`, `SenateVoteDecider`, `BudgetDecider`, `LandProposalDecider`, `CombatDecider`, etc.",AI decision-making for auto mode
+**Core State**,`GameState`,"Central state container holding all entity registries, treasury, turn data, phase tracking"
+**Entities**,"`Figure`, `Faction`, `Province`, `Contract`, `War`, `Legion`, `Curia`, `Fleet`, `Player`, `GameTurn`","Domain objects with local behavior, no UI/API dependencies"
+**Infrastructure**,"`Config`, `ScenarioLoader`, `Localization`, `Logging` + JSON data files","Configuration, persistence, i18n, observability"

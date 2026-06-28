@@ -1,0 +1,488 @@
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：迁移军事组功能命令至新框架（指令14）
+
+核心输入：
+
+《EOR Command命令体系架构设计细化文档_V1.2》
+
+《EOR_开发指南.docx》
+
+已迁移的命令参考：func_turn_control.py、func_forum.py、func_population.py
+
+基线代码：原 src/ui/debug_cli.py 中关于 wars、assign、legions、recruit、disband 命令的处理逻辑（分别对应 _show_wars、_assign_commander_interactive、_show_legions、_recruit_legion_interactive、_disband_legion_interactive 方法）
+
+已完善的 GameState 类及战争/军事系统：war_system.py、military_system.py、legion.py、war.py
+
+核心任务：
+
+创建军事功能命令文件：
+
+路径：src/ui/commands/func_military.py
+
+该文件应包含五个命令类：WarsCommand、AssignCommand、LegionsCommand、RecruitCommand、DisbandCommand，均继承 Command。
+
+元数据定义：
+
+WarsCommand：
+
+name = "wars"
+
+aliases = []（原基线无别名）
+
+description = "显示战争状态（牌堆、活跃、弃牌）"
+
+AssignCommand：
+
+name = "assign"
+
+aliases = []
+
+description = "交互式指派指挥官和军团到战争"
+
+LegionsCommand：
+
+name = "legions"
+
+aliases = []
+
+description = "显示军团状态"
+
+RecruitCommand：
+
+name = "recruit"
+
+aliases = []
+
+description = "交互式征召军团"
+
+DisbandCommand：
+
+name = "disband"
+
+aliases = []
+
+description = "交互式解散军团"
+
+移植业务逻辑：
+
+WarsCommand：
+
+从原 _show_wars 方法移植逻辑。
+
+使用 self.state.get_war_system() 获取战争系统，若不存在则打印信息并返回 False。
+
+调用战争系统的相关方法（如 get_active_wars、_war_deck、_war_discard 等）获取数据，并按照原格式打印输出。
+
+注意显示指挥官伤亡状态、军团数量等细节。
+
+AssignCommand：
+
+从原 _assign_commander_interactive 方法移植逻辑。
+
+该方法包含多步交互：选择战争、选择指挥官、选择军团、指派海军等。
+
+使用 input() 获取用户输入，需要处理输入转换和验证。
+
+调用 war_system.assign_commander() 和 military_system.assign_to_war() 执行指派。
+
+注意处理指挥官已存在时的替换/增援选项。
+
+打印适当的成功/失败信息。
+
+LegionsCommand：
+
+从原 _show_legions 方法移植逻辑。
+
+使用 self.state.get_military_system() 获取军事系统，调用其 get_military_summary() 和 display_legion_status() 输出军团状态。
+
+RecruitCommand：
+
+从原 _recruit_legion_interactive 方法移植逻辑。
+
+支持单军团和批量征召两种模式（通过用户选择）。
+
+检查国库资金，调用 military_system.recruit_legion() 或 recruit_multiple()。
+
+输出征召结果。
+
+DisbandCommand：
+
+从原 _disband_legion_interactive 方法移植逻辑。
+
+列出未指派的军团，支持批量输入（逗号分隔或 all）。
+
+调用 military_system.disband_legion() 执行解散。
+
+输出解散结果。
+
+辅助方法：
+
+可在文件内定义辅助函数，用于处理交互式输入、显示列表、输入验证等，避免重复代码。
+
+对于需要多次获取的战争系统、军事系统，可在每个命令的 execute 中获取并检查是否为 None。
+
+编写单元测试：
+
+路径：src/tests/test_commands/test_func_military.py
+
+由于这些命令多为交互式且依赖系统状态，建议使用 unittest.mock.patch 模拟 input 和系统方法。
+
+测试用例至少覆盖：
+
+WarsCommand：
+
+有战争系统、无战争系统、有活跃战争等多种情况，验证输出包含关键信息。
+
+AssignCommand：
+
+模拟用户输入，测试指派流程（选择战争、指挥官、军团、海军），验证系统方法被正确调用。
+
+测试指挥官已存在时的替换/增援选项。
+
+测试用户取消操作。
+
+LegionsCommand：
+
+验证输出包含军团摘要和状态。
+
+RecruitCommand：
+
+测试单军团征召（成功/资金不足）。
+
+测试批量征召。
+
+测试用户取消。
+
+DisbandCommand：
+
+测试单军团解散、批量解散、无效输入。
+
+注意模拟 war_system 和 military_system 的方法，避免真实操作。
+
+手动验证：
+
+运行 python main.py，进入 CLI。
+
+执行 wars 查看战争状态（初始应为无战争）。
+
+执行 legions 查看军团状态。
+
+执行 recruit 征召几个军团，验证国库减少。
+
+执行 assign 按照交互提示指派指挥官和军团到某个战争（需要先有活跃战争，可手动创建或等待游戏生成，但初始场景可能无战争，可考虑修改测试或先使用 load 加载特定场景，但基线中战争系统可能尚未完全集成。若无法手动验证完整流程，可先依赖单元测试，但尽量模拟实际）。
+
+执行 disband 解散部分军团。
+
+确保所有命令无崩溃，输出合理。
+
+交付物：
+
+src/ui/commands/func_military.py
+
+src/tests/test_commands/test_func_military.py
+
+验收标准：
+
+单元测试通过率 100%。
+
+在 CLI 中执行 wars、assign、legions、recruit、disband 命令，输出和行为与原基线基本一致（由于战争系统可能未完全激活，交互流程应保持一致）。
+
+代码通过《EOR MVP 0.4.5代码审查Checklist》中 Command 模块的相关检查项。
+
+命令注册正确，help 中能显示这些命令的描述。
+
+特别提示：
+
+由于战争系统可能在当前整改阶段尚未完全就绪（例如 war_system 在 GameState 中可能为 None），命令中需妥善处理 get_war_system() 返回 None 的情况，打印友好提示并返回 False，避免崩溃。
+
+交互式命令的测试需要使用 patch 模拟 input，请参考 test_func_turn_control.py 中的 test_step_execute_with_input 示例。
+
+请在 feature/refactor-0.4.5 分支上操作，完成后提交代码并附上测试结果。如有问题，随时沟通。
+
+豆包（项目经理）
+
+
+
+单元测试
+
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m pytest src/tests/test_commands/test_func_military.py -v
+================================================================================================================================================= test session starts =================================================================================================================================================
+platform win32 -- Python 3.10.6, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+collected 13 items
+
+src/tests/test_commands/test_func_military.py::test_wars_no_system PASSED                                                                                                                                                                                                                                        [  7%] 
+src/tests/test_commands/test_func_military.py::test_wars_active PASSED                                                                                                                                                                                                                                           [ 15%]
+src/tests/test_commands/test_func_military.py::test_assign_no_system PASSED                                                                                                                                                                                                                                      [ 23%] 
+src/tests/test_commands/test_func_military.py::test_assign_success PASSED                                                                                                                                                                                                                                        [ 30%] 
+src/tests/test_commands/test_func_military.py::test_assign_cancel PASSED                                                                                                                                                                                                                                         [ 38%]
+src/tests/test_commands/test_func_military.py::test_legions_no_system PASSED                                                                                                                                                                                                                                     [ 46%] 
+src/tests/test_commands/test_func_military.py::test_legions_success PASSED                                                                                                                                                                                                                                       [ 53%] 
+src/tests/test_commands/test_func_military.py::test_recruit_no_system PASSED                                                                                                                                                                                                                                     [ 61%] 
+src/tests/test_commands/test_func_military.py::test_recruit_single_success PASSED                                                                                                                                                                                                                                [ 69%]
+src/tests/test_commands/test_func_military.py::test_recruit_batch_success PASSED                                                                                                                                                                                                                                 [ 76%] 
+src/tests/test_commands/test_func_military.py::test_disband_no_system PASSED                                                                                                                                                                                                                                     [ 84%] 
+src/tests/test_commands/test_func_military.py::test_disband_single PASSED                                                                                                                                                                                                                                        [ 92%]
+src/tests/test_commands/test_func_military.py::test_disband_all PASSED                                                                                                                                                                                                                                           [100%] 
+
+================================================================================================================================================= 13 passed in 0.14s ================================================================================================================================================== 
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> 
+
+
+系统测试
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+
+============================================================
+   Eagle of Rome - MVP 0.4.5 (整改后版本)
+============================================================
+项目根目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+Python路径: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src
+============================================================
+[DEBUG] 命令目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands
+[DEBUG] 发现的命令: ['persuade', 'load', 'l', 'assign', 'disband', 'legions', 'recruit', 'wars', 'festival', 'status', 'sts', 'combat', 'c', 'forum', 'f', 'mortality', 'm', 'next', 'n', 'population', 'p', 'resolution', 'x', 'revenue', 'r', 'senate', 's', 'step', 'turn', 'reload', 'terms', 'exit', 'quit', 'help', 'h']
+
+============================================================
+   Eagle of Rome - Debug CLI (整改后版本)
+============================================================
+输入 'help' 查看可用命令，'exit' 退出游戏
+
+> load
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 3
+  [Draw 1] Number 142...
+     -> No member assigned (safe)
+> r
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   元老院派: +10 Talents
+   平民派: +10 Talents
+
+   📊 State Treasury: 200 Talents
+> f
+
+--- Forum Phase (Year 264 BC) ---
+
+   📢 2 new figure(s) arrive in the Senate:
+      💰 Spurius · Domitius · Longus (eques)
+      👤 Quartus (plebeian)
+
+   🏛️  Figures in Senate:
+
+      💰 EQUES (1):
+         ID:4 Spurius · Domitius · Longus
+            [权2财26人2]
+
+      👤 PLEBEIAN (1):
+         ID:5 Quartus
+            [权2财3人1]
+
+   📜 2 new contract(s) announced:
+      包税: 科西嘉包税权
+      工程: 公共浴场工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 科西嘉包税权
+            预付:25 年收益:16 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 公共浴场工程
+            预算:45 预期利润:9
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+> contracts
+未知命令: contracts
+输入 'help' 查看可用命令
+> p
+
+--- Population Phase (Year 264 BC) ---
+   🟢 Treasury: 200 Talents
+
+   🏛️  State of the Republic: Calm
+
+   👥 Population Events:
+      No significant events
+> s
+
+--- Senate Phase (Year 264 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (2 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Spurius · Domitius · (?       ) Age:34 CHA: 4 Prereq:✗ Cooldown:OK → Age 34 < 40
+         ❌ Quartus              (?       ) Age:31 CHA: 3 Prereq:✗ Cooldown:OK → Age 31 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Spurius · Domitius · (?       ) Age:34 CHA: 4 Prereq:✗ Cooldown:OK → Age 34 < 40
+         ❌ Quartus              (?       ) Age:31 CHA: 3 Prereq:✗ Cooldown:OK → Age 31 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+   Electing PRAETOR (1 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=2y, Prerequisite=Quaestor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Gaius Marius         (平民派     ) Age:35 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Lucius Sulla         (元老院派    ) Age:45 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Spurius · Domitius · (?       ) Age:34 MAN: 5 Prereq:✗ Cooldown:OK → Age 34 < 35
+         ❌ Quartus              (?       ) Age:31 MAN: 1 Prereq:✗ Cooldown:OK → Age 31 < 35
+      ⚠️  No eligible candidates for praetor!
+      ⚠️  No eligible candidate for praetor
+
+   Electing QUQAESTOR (1 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ Marcus Brutus        (元老院派    ) Age:40 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius Marius         (平民派     ) Age:35 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Lucius Sulla         (元老院派    ) Age:45 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Spurius · Domitius · (?       ) Age:34 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Quartus              (?       ) Age:31 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+
+      🏆 TOP 2 CANDIDATES (by STR):
+         1. Quartus              (?)
+            STR: 3 | Pop: 1 | Age:31 | History: None
+         2. Spurius · Domitius · (?)
+            STR: 2 | Pop: 2 | Age:34 | History: None
+
+      🗳️  VOTING RESULTS:
+         Quartus             :   12 (100.0%) ████████████████████
+         Spurius · Domitius ·:    0 (  0.0%) 
+
+      ✓ WINNER: Quartus (?)
+        Power bonus: +2
+      💰 Quartus elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      元老院派: Lucius Sulla (Power: 6)
+      平民派: Gaius Marius (Power: 4)
+
+   🎤 Presiding Officer: Lucius Sulla
+
+   📋 Processing 2 pending contract(s)...
+
+   📊 Voting: 科西嘉包税权
+      Cost: 25 | Expected: 16
+      ⚠️  No eligible Equites candidates
+
+   🏗️ Assigning: 公共浴场工程
+      Budget: 45 | Profit: 9
+      ⏳ Awaiting Consul election...
+> wars
+战争系统未就绪
+> assign
+战争系统或军事系统未就绪
+> legions
+军事系统未就绪
+> recruit
+军事系统未就绪
+> disband
+军事系统未就绪
+> c
+
+--- Combat Phase (Year 264 BC) ---
+   ☮️  No war system - phase skipped
+> x
+
+--- Revolution Phase (Year 264 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: 元老院派 (11 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟡 元老院派: MODERATE risk (avg Loyalty: 5.0)
+      🟡 平民派: MODERATE risk (avg Loyalty: 5.0)
+
+==================================================
+   📜 ANNUAL REPORT - Year 264 BC
+==================================================
+
+   💰 Treasury: 200 Talents
+
+   📊 Faction Standings:
+      1. 👑 元老院派: 11 Influence
+      2. 👑 平民派: 4 Influence
+
+   ☮️  Peace prevails
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   📉 Annual Decay:
+      Marcus Brutus: pop-0(-50%), age 41
+      Gaius Marius: pop-1(-50%), age 36
+      Lucius Sulla: pop-1(-50%), age 46
+      Spurius · Domitius · Longus: pop-0(-50%), age 35
+> exit
+感谢游玩 Eagle of Rome！再见！
+
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git status
+On branch feature/refactor-0.4.5
+Your branch is up to date with 'origin/feature/refactor-0.4.5'.
+  (use "git restore --staged <file>..." to unstage)
+        new file:   src/tests/test_commands/test_func_military.py
+        new file:   src/ui/commands/func_military.py
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+        modified:   src/tests/test_commands/test_func_military.py
+        modified:   src/ui/commands/func_military.py
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git add .
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git commit -m "feat: 迁移军事组功能命令至新框架（指令14）"
+[feature/refactor-0.4.5 c9cf50c] feat: 迁移军事组功能命令至新框架（指令14）
+ 2 files changed, 692 insertions(+)
+ create mode 100644 src/tests/test_commands/test_func_military.py
+ create mode 100644 src/ui/commands/func_military.py
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git tag -a v0.4.5-014 -m "MVP0.4.5-014 基线版本 - 迁移军事组功能命令至新框架（指令14）"
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git push origin feature/refactor-0.4.5
+Enumerating objects: 15, done.
+Counting objects: 100% (15/15), done.
+Delta compression using up to 12 threads
+Compressing objects: 100% (9/9), done.
+Writing objects: 100% (9/9), 6.44 KiB | 3.22 MiB/s, done.
+Total 9 (delta 4), reused 0 (delta 0), pack-reused 0 (from 0)
+remote: Resolving deltas: 100% (4/4), completed with 4 local objects.
+To https://github.com/zk32236/Eagle-of-Rome.git
+   7377c2c..c9cf50c  feature/refactor-0.4.5 -> feature/refactor-0.4.5
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> git push origin v0.4.5-014
+Enumerating objects: 1, done.
+Counting objects: 100% (1/1), done.
+Writing objects: 100% (1/1), 248 bytes | 248.00 KiB/s, done.
+Total 1 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
+To https://github.com/zk32236/Eagle-of-Rome.git
+ * [new tag]         v0.4.5-014 -> v0.4.5-014
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome>
+

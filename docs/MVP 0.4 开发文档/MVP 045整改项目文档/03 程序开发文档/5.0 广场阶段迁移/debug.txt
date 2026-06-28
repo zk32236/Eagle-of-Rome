@@ -1,0 +1,62 @@
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_commands/test_phase_forum.py
+
+--- Forum Phase (Year 264 BC) ---
+
+   📢 2 new figure(s) arrive in the Senate:
+      💰 Publius · Domitius (eques)
+      👤 Salvius (plebeian)
+
+   🏛️  Figures in Senate:
+
+      💰 EQUES (1):
+         ID:1 Publius · Domitius
+            [权1财16人3]
+
+      👤 PLEBEIAN (1):
+         ID:2 Salvius
+            [财8人1]
+
+   📜 2 new contract(s) announced:
+      包税: 西西里包税权
+      工程: 罗马大道工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 西西里包税权
+            预付:27 年收益:25 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 罗马大道工程
+            预算:39 预期利润:7
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+.....E
+======================================================================
+ERROR: test_generate_figures (src.tests.test_commands.test_phase_forum.TestForumCommand)
+测试新人物生成逻辑
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\AppData\Local\Programs\Python\Python310\lib\unittest\mock.py", line 1369, in patched
+    return func(*newargs, **newkeywargs)
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_commands\test_phase_forum.py", line 81, in test_generate_figures
+    new_figures = cmd._generate_new_figures()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands\phase_forum.py", line 105, in _generate_new_figures
+    figure = Figure.create_plebeian(figure_id, None, age=random.randint(20, 35))
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\entities\figure.py", line 393, in create_plebeian
+    management=random.randint(1, 4),
+  File "C:\Users\Kerl\AppData\Local\Programs\Python\Python310\lib\unittest\mock.py", line 1104, in __call__
+    return self._mock_call(*args, **kwargs)
+  File "C:\Users\Kerl\AppData\Local\Programs\Python\Python310\lib\unittest\mock.py", line 1108, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+  File "C:\Users\Kerl\AppData\Local\Programs\Python\Python310\lib\unittest\mock.py", line 1165, in _execute_mock_call
+    result = next(effect)
+StopIteration
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.007s
+
+FAILED (errors=1)

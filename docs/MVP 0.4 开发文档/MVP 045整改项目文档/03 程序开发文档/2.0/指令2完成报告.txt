@@ -1,0 +1,151 @@
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：实现 Config 配置管理完整可运行代码
+
+核心输入：
+
+《EOR Config配置管理架构设计细化文档_V1.2》
+
+基线代码：src/core/config.py（需新建，原配置代码在 game_state.py 的 _load_config 中，需抽取出来）
+
+参考：《EOR_开发指南.docx》《EOR_测试验收标准.docx》
+
+核心任务：
+
+创建独立的 Config 类：
+
+文件路径：src/core/config.py
+
+定义 Config 类，包含：
+
+DEFAULTS 静态字典（完整复制原 game_state.py 中的默认配置结构）
+
+__init__(self, config_path: Optional[str] = None)：设置 self._config 并调用 _load_from_file(config_path)
+
+_load_from_file(self, config_path: Optional[str])：尝试加载 JSON，若失败则回退到 DEFAULTS（打印警告），成功则深合并
+
+get(self, key: str, default=None)：实现点号路径解析（如 get("economic.base_tax")）
+
+reload(self)：重新加载配置文件，失败则保持原配置，打印警告
+
+to_dict(self)：返回 copy.deepcopy(self._config) 防止外部篡改
+
+异常处理与回退：
+
+捕获 FileNotFoundError、json.JSONDecodeError、PermissionError、TypeError
+
+首次加载失败时 self._config = self.DEFAULTS
+
+重载失败时保持 self._config 不变，仅打印警告
+
+GameState 适配：
+
+修改 src/core/game_state.py：
+
+在 __init__ 中创建 self._config = Config(config_path) 实例
+
+移除原来的 _load_config 方法（或重构为调用 Config）
+
+所有配置访问方法（如 get_cooldown_years）改为通过 self._config.get() 实现，并移除硬编码默认值
+
+单元测试：
+
+文件路径：src/tests/test_core/test_config.py
+
+测试用例：
+
+test_default_fallback：传入不存在的配置文件，验证使用 DEFAULTS
+
+test_dot_path_access：测试多层点号路径获取值
+
+test_deep_merge：测试配置文件与默认配置的递归合并
+
+test_reload：修改配置文件后调用 reload()，验证新值生效
+
+test_to_dict_deepcopy：验证返回的字典修改不影响内部
+
+交付物：
+
+src/core/config.py
+
+src/tests/test_core/test_config.py
+
+修改后的 src/core/game_state.py
+
+验收标准：
+
+单元测试通过率 100%
+
+配置文件不存在时自动使用默认配置，无崩溃
+
+支持点号路径访问（如 config.get("political.min_ages.consul")）
+
+运行时重载后配置实时生效
+
+代码通过《EOR MVP 0.4.5代码审查Checklist》中 Config 模块的检查项
+
+
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_core/test_config.py
+.......⚠️ 配置文件JSON解析错误，使用默认配置: Expecting value: line 1 column 1 (char 0)
+.⚠️ 配置文件不存在，使用默认配置: 配置文件不存在: nonexistent.json
+.⚠️ 配置文件格式错误，使用默认配置: 配置文件内容应为字典，实际为 list
+.....⚠️ 配置文件不存在，使用默认配置: 配置文件不存在: test/path.json
+.⚠️ 配置文件不存在，使用默认配置: 配置文件不存在: c:/windows/system32/config.json
+.⚠️ 配置文件不存在，使用默认配置: 配置文件不存在: C:\Users\Kerl\AppData\Local\Temp\tmphdf2d7_9\test_config.json
+⚠️ 配置重载失败，保持原配置
+.⚠️ 未指定配置文件路径，无法重载
+.✅ 配置重载成功
+..
+----------------------------------------------------------------------
+Ran 20 tests in 0.022s
+
+OK
+
+
+已完成交付物：
+✅ src/core/config.py - 完整的配置管理类
+
+内置默认配置 DEFAULTS
+
+点号路径访问 get(key, default)
+
+运行时重载 reload()
+
+深拷贝保护 to_dict()
+
+完善的异常处理与回退机制
+
+✅ src/tests/test_core/test_config.py - 20个单元测试
+
+默认值回退测试
+
+点号路径访问测试
+
+深合并测试
+
+重载成功/失败测试
+
+深拷贝保护测试
+
+边界情况测试
+
+✅ src/core/game_state.py - 修改后集成 Config
+
+移除原有的 _load_config 方法
+
+所有配置访问通过 self._config.get() 实现
+
+保持原有公共方法签名不变
+
+核心功能验证：
+功能	验证结果
+配置文件不存在时使用默认配置	✅ 通过
+配置文件格式错误时使用默认配置	✅ 通过
+点号路径访问多层嵌套	✅ 通过
+深合并覆盖部分配置	✅ 通过
+重载成功时更新配置	✅ 通过
+重载失败时保持原配置	✅ 通过
+返回深拷贝防止外部篡改	✅ 通过
+
+
+git commit -m "feat: 完成指令2（实现 Config 配置管理完整可运行代码）"

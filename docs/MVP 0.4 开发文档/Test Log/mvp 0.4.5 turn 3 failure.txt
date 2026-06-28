@@ -1,0 +1,40 @@
+> turn
+
+############################################################
+ TURN 3 (262 BC)
+ Terms: Senate/Senators/Talents
+############################################################
+
+[1/7] 💀 Mortality...
+
+--- Mortality Phase (Year 262 BC) ---
+Drawing 3 number(s) from pool (1-300)...
+Current living: 18
+  [Draw 1] Number 104...
+     -> No member assigned (safe)
+  [Draw 2] Number 239...
+     -> No member assigned (safe)
+  [Draw 3] Number 15...
+
+============================================================
+❌ ERROR OCCURRED - Full Traceback:
+============================================================
+============================================================
+Error type: AttributeError
+Error message: 'Figure' object has no attribute 'is_leader'
+============================================================
+
+> Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\ui\debug_cli.py", line 51, in run
+    self._handle_command(cmd)
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\ui\debug_cli.py", line 110, in _handle_command
+    self._do_full_turn(auto=True)
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\ui\debug_cli.py", line 459, in _do_full_turn
+    self._do_phase(name)
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\ui\debug_cli.py", line 334, in _do_phase
+    success = phase.execute(self.state)
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\phases\mortality_phase.py", line 39, in execute
+    self._process_death(state, member, terms)
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\phases\mortality_phase.py", line 57, in _process_death
+    if member.is_leader:
+AttributeError: 'Figure' object has no attribute 'is_leader'

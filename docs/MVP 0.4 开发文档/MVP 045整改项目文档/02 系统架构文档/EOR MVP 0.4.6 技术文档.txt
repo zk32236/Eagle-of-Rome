@@ -1,0 +1,534 @@
+【一级标题】EOR MVP 0.4.6 技术文档
+
+【正文】
+　　本文档详细描述EOR项目MVP 0.4.6版本的技术实现，涵盖代码架构、核心功能、数据结构、关键流程及异常处理机制。文档面向开发人员及技术管理人员，旨在提供完整的系统实现参考。
+
+【二级标题】目录
+
+【正文】
+　　一、代码架构
+　　二、核心功能实现
+　　三、数据结构定义
+　　四、关键业务流程
+　　五、异常处理机制
+
+【分页符】
+
+【一级标题】一、代码架构
+
+【二级标题】1.1 模块划分
+
+【正文】
+　　系统采用分层架构设计，各模块职责如下：
+
+【表格开始】
+| 模块路径 | 职责定位 | 核心文件 |
+|---------|---------|---------|
+| 【代码】src/core/ | 核心业务逻辑 | 【重点】<u>game_state.py</u>、config.py、scenario_loader.py |
+| 【代码】src/core/entities/ | 实体定义 | 【重点】<u>figure.py</u>、entities.py、contract.py、war.py、legion.py、curia.py |
+| 【代码】src/core/systems/ | 业务系统 | war_system.py、military_system.py |
+| 【代码】src/core/service/ | 业务服务 | 【重点】<u>land_trading_service.py</u> |
+| 【代码】src/core/localization/ | 术语本地化 | term_mapping.py |
+| 【代码】src/ui/commands/ | 命令实现 | phase_*.py、func_*.py、sys_*.py |
+| 【代码】src/ui/ | CLI界面 | debug_cli.py |
+| 【代码】src/tests/ | 单元测试 | test_*.py |
+【表格结束】
+
+【二级标题】1.2 模块调用关系
+
+【正文】
+　　系统调用遵循"界面层→命令层→状态层→实体层"的单向依赖原则，具体调用链如下：
+
+【无序列表】
+• 入口：【代码】main.py
+• 界面层：【代码】debug_cli.py（DebugCLI类）
+• 注册中心：【代码】CommandRegistry（sys_registry.py）动态扫描【代码】commands/*.py
+• 命令实例：调用【重点】<u>GameState</u>方法
+• 状态核心：【代码】game_state.py持有Config、Curia及实体容器
+• 实体操作：通过【重点】<u>GameState</u>公共方法统一进行
+
+【三级标题】1.2.1 天命阶段调用链示例
+
+【正文】
+　　以"天命阶段（mortality）"为例，展示完整调用流程：
+
+【有序列表】
+1、用户输入"mortality"指令
+2、【代码】DebugCLI.run()分割命令
+3、【代码】CommandRegistry.execute("mortality", state, [])定位命令
+4、实例化【代码】MortalityCommand(state)
+5、执行【代码】MortalityCommand.execute([])
+6、调用【重点】<u>state.is_phase_executed("mortality")</u>检查阶段状态
+7、调用【代码】state.get_living_members()获取存活人物
+8、调用【代码】state.draw_mortality_number()抽取天命数字
+9、调用【代码】state.get_living_member()匹配目标人物
+10、调用【代码】state.mark_member_dead()标记死亡
+11、调用【代码】state.get_faction()获取所属派系
+12、调用【代码】state.log_event()记录事件
+13、调用【代码】state.mark_phase_executed("mortality")标记阶段完成
+
+【二级标题】1.3 核心类说明
+
+【三级标题】1.3.1 GameState类（状态管理中心）
+
+【代码】路径：src/core/game_state.py
+
+【正文】
+　　【重点】<u>GameState</u>是系统的核心状态容器，负责管理所有游戏实体、回合状态及全局配置。以下为关键方法说明：
+
+【表格开始】
+| 方法名 | 功能概述 | 输入参数 | 返回值 |
+|-------|---------|---------|--------|
+| 【重点】<u>reset()</u> | 清空所有状态容器，重新初始化天命池 | 无 | 无 |
+| 【重点】<u>add_member(member)</u> | 将人物添加到注册表，记录已用ID | member: Figure | 无 |
+| 【重点】<u>get_member(member_id)</u> | 从注册表获取指定人物 | member_id: int | Optional[Figure] |
+| 【重点】<u>get_living_members()</u> | 过滤获取所有存活人物 | 无 | List[Figure] |
+| 【重点】<u>mark_member_dead(member_id)</u> | 标记人物死亡，清除派系领袖标记 | member_id: int | bool |
+| 【重点】<u>draw_mortality_number()</u> | 从天命池弹出数字，空池则重置 | 无 | int |
+| 【重点】<u>is_phase_executed(phase_name)</u> | 检查阶段是否已执行 | phase_name: str | bool |
+| 【重点】<u>mark_phase_executed(phase_name)</u> | 标记阶段已完成 | phase_name: str | 无 |
+| 【重点】<u>advance_year()</u> | 推进年份，清空已执行阶段记录 | 无 | 无 |
+| 【重点】<u>get_presiding_officer()</u> | 从存活人物中选择权力最高者 | 无 | Optional[Figure] |
+| 【重点】<u>log_event(message)</u> | 添加事件到日志列表 | message: str | 无 |
+【表格结束】
+
+【三级标题】1.3.2 Config类（配置管理中心）
+
+【代码】路径：src/core/config.py
+
+【正文】
+　　【重点】<u>Config</u>类负责加载和管理游戏配置，支持JSON文件热加载及默认值回退。
+
+【表格开始】
+| 方法名 | 功能概述 | 输入参数 | 返回值 |
+|-------|---------|---------|--------|
+| 【重点】<u>_load_from_file(config_path)</u> | 从JSON文件加载配置 | config_path: Optional[str] | bool |
+| 【重点】<u>_deep_merge(base, override)</u> | 递归合并两个字典 | base: Dict, override: Dict | Dict |
+| 【重点】<u>get(key, default)</u> | 点路径访问配置值 | key: str, default=None | Any |
+| 【重点】<u>reload()</u> | 重新加载配置文件 | 无 | bool |
+| 【重点】<u>to_dict()</u> | 返回配置的深拷贝 | 无 | Dict |
+【表格结束】
+
+【三级标题】1.3.3 Command基类与注册中心
+
+【代码】路径：src/ui/commands/sys_base.py、sys_registry.py
+
+【正文】
+　　所有命令类继承自【重点】<u>Command</u>抽象基类，通过【重点】<u>CommandRegistry</u>实现动态注册。
+
+【表格开始】
+| 类/方法 | 功能概述 | 关键参数 |
+|--------|---------|---------|
+| 【重点】<u>Command.execute(args)</u> | 抽象方法，子类必须实现命令逻辑 | args: List[str] |
+| 【重点】<u>CommandRegistry._scan_and_register(directory)</u> | 扫描目录下所有.py文件并注册命令 | directory: str |
+| 【重点】<u>CommandRegistry.execute(cmd_name, state, args)</u> | 查找命令类，实例化并执行 | cmd_name: str, state: GameState, args: List[str] |
+| 【重点】<u>CommandRegistry.get_command_names()</u> | 返回所有注册的命令名 | 无 |
+【表格结束】
+
+【三级标题】1.3.4 Figure类（人物实体）
+
+【代码】路径：src/core/entities/figure.py
+
+【正文】
+　　【重点】<u>Figure</u>类代表游戏中的贵族人物，包含属性计算、资格检查及土地交易能力。
+
+【表格开始】
+| 方法名 | 功能概述 | 计算公式/返回值 |
+|-------|---------|---------------|
+| 【重点】<u>get_seat_share()</u> | 计算席位占比 | 土地 + 效忠老兵（land + veterans） |
+| 【重点】<u>get_voting_power()</u> | 计算投票权 | 席位占比 + 公职权力加成 |
+| 【重点】<u>get_office_power_bonus()</u> | 获取公职权力加成 | 执政官+5、裁判官+3、监察官+4、财务官+2、市政官+2 |
+| 【重点】<u>can_hold_office(office_type, current_turn, config)</u> | 检查任职资格 | 返回Tuple[bool, str] |
+| 【重点】<u>can_sell_land(amount)</u> | 检查土地出售可行性 | bool |
+| 【重点】<u>can_buy_land(amount, price_per_unit)</u> | 检查土地购买可行性 | bool |
+| 【重点】<u>sell_land(amount, price_per_unit)</u> | 执行土地出售 | 返回int（收益金额） |
+| 【重点】<u>buy_land(amount, price_per_unit)</u> | 执行土地购买 | bool |
+【表格结束】
+
+【三级标题】1.3.5 其他核心类
+
+【正文】
+　　【重点】<u>Faction</u>类（派系实体）：管理派系成员、计算总影响力、维护领袖状态。
+　　【重点】<u>LandTradingService</u>类（土地交易服务）：封装土地交易业务逻辑，计算交易价格，执行交易流程。
+　　【重点】<u>WarSystem</u>类（战争系统）：管理战争状态、指派指挥官、结算战争结果。
+　　【重点】<u>MilitarySystem</u>类（军事系统）：管理军团招募、维护、调遣及解散。
+
+【分页符】
+
+【一级标题】二、核心功能实现
+
+【二级标题】2.1 土地交易循环
+
+【正文】
+　　土地交易核心逻辑封装于【重点】<u>LandTradingService</u>类，涉及【重点】<u>Figure</u>对象的【代码】land和【代码】wealth属性变更。
+
+【三级标题】2.1.1 土地价格计算机制
+
+【代码】位置：src/core/service/land_trading_service.py:36-64
+
+【正文】
+　　基础价格公式如下：
+
+【重点】<u>基础价格 = 10 × (1 + 卖方溢价 - 买方折扣)</u>
+
+【正文】
+　　价格修正系数范围：【重点】<u>[0.5, 2.0]</u>，最终价格区间：【重点】<u>5-20塔兰特/单位</u>。
+
+【无序列表】
+• 卖方溢价因素：
+  - 人气≥10：+20%
+  - 权力≥8：+10%
+• 买方折扣因素：
+  - 人气≥10：-10%
+  - 同派系交易：-20%
+  - 派系关系敌对：+30%
+
+【三级标题】2.1.2 交易执行流程
+
+【代码】位置：src/core/service/land_trading_service.py:66-150
+
+【正文】
+　　交易执行遵循以下步骤：
+
+【有序列表】
+1、验证双方存在性：检查卖方、买方是否为有效人物
+2、验证存活状态：死亡人物禁止交易
+3、验证交易对象：禁止自我交易
+4、验证数量有效性：交易数量必须为正数
+5、验证卖方土地：卖方土地储量必须≥交易数量
+6、计算单价：调用【代码】calculate_land_price()获取当前单价
+7、计算总价：总价 = 数量 × 单价
+8、验证买方资金：买方财富必须≥总价
+9、记录交易前状态：保存交易前土地持有量及席位占比
+10、执行资产转移：卖方土地减少、财富增加；买方土地增加、财富减少
+11、计算席位变化：根据新土地持有量重新计算双方席位占比
+12、记录交易日志：调用【代码】_record_trade()存档
+13、返回交易结果：包含土地变动及席位变化信息
+
+【二级标题】2.2 金钱收支循环
+
+【三级标题】2.2.1 国库收支
+
+【表格开始】
+| 收支类型 | 代码位置 | 金额 | 触发时机 |
+|---------|---------|------|---------|
+| 基础税收 | phase_revenue.py:55-57 | base_tax（默认100） | 税收阶段 |
+| 军团维护费 | phase_revenue.py:68-71 | ms.apply_maintenance()计算 | 税收阶段 |
+| 合同预付款 | func_contracts.py:179 | contract.base_cost | 投票授予合同 |
+| 合同年度支付 | phase_revenue.py:109-111 | -annual_budget | 税收阶段 |
+【表格结束】
+
+【三级标题】2.2.2 派系资金收支
+
+【表格开始】
+| 收支类型 | 代码位置 | 金额 | 触发时机 |
+|---------|---------|------|---------|
+| 年度津贴 | phase_revenue.py:60-64 | stipend（默认10） | 税收阶段 |
+【表格结束】
+
+【三级标题】2.2.3 人物财富收支
+
+【表格开始】
+| 收支类型 | 代码位置 | 金额 | 触发时机 |
+|---------|---------|------|---------|
+| 庆典花费 | func_population.py:67 | -amount | 用户输入 |
+| 庆典人气 | func_population.py:68 | +amount（人气） | 用户输入 |
+| 包税收益 | phase_revenue.py:96-99 | profit | 税收阶段 |
+| 工程利润 | phase_revenue.py:107-111 | profit | 税收阶段 |
+| 合同预付 | func_contracts.py:177-178 | -contract.base_cost | 投票授予合同 |
+【表格结束】
+
+【二级标题】2.3 影响力循环
+
+【正文】
+　　影响力在代码中体现为【重点】<u>Figure.power</u>属性，由席位占比和公职加成两部分构成。
+
+【三级标题】2.3.1 影响力计算公式
+
+【代码】位置：src/core/entities/figure.py:78-83
+
+【重点】<u>投票权 = 席位占比 + 公职权力加成</u>
+
+【正文】
+　　其中，席位占比 = 土地 + 效忠老兵（【代码】land + veterans）。
+
+【三级标题】2.3.2 公职权力加成表
+
+【表格开始】
+| 公职 | 加成值 |
+|-----|-------|
+| 执政官（consul） | +5 |
+| 裁判官（praetor） | +3 |
+| 监察官（censor） | +4 |
+| 财务官（quqaestor） | +2 |
+| 市政官（aedile） | +2 |
+【表格结束】
+
+【三级标题】2.3.3 影响力变化来源
+
+【表格开始】
+| 来源 | 代码位置 | 变化量 | 触发时机 |
+|-----|---------|-------|---------|
+| 当选公职 | phase_senate.py:204-205 | 公职加成值 | 元老院选举 |
+| 战斗胜利 | phase_combat.py:234,244 | +10（大胜）、+5（胜利） | 战斗阶段 |
+| 土地交易 | 间接影响 | 通过席位占比变化 | 土地交易 |
+【表格结束】
+
+【分页符】
+
+【一级标题】三、数据结构定义
+
+【二级标题】3.1 GameState核心数据结构
+
+【正文】
+　　【重点】<u>GameState</u>类维护以下核心字段：
+
+【表格开始】
+| 字段名 | 类型 | 作用 | 初始化位置 |
+|-------|------|------|-----------|
+| 【代码】_members | Dict[int, Figure] | 人物注册表，ID为键 | __init__ |
+| 【代码】_factions | Dict[str, Faction] | 派系注册表，ID为键 | __init__ |
+| 【代码】_treasury | int | 国库金额 | __init__ |
+| 【代码】_turn | GameTurn | 回合信息（回合数、年份、领袖ID） | reset() |
+| 【代码】_event_log | List[str] | 事件日志 | __init__ |
+| 【代码】_used_ids | Set[int] | 已使用的人物ID | __init__ |
+| 【代码】_mortality_pool | List[int] | 天命抽取池（1-300随机排列） | _initialize_mortality_pool() |
+| 【代码】_war_system | Optional[WarSystem] | 战争系统实例 | __init__ |
+| 【代码】_military_system | Optional[MilitarySystem] | 军事系统实例 | __init__ |
+| 【代码】_curia | Curia | 广场等待区 | reset() |
+| 【代码】_contracts | List[Contract] | 合同列表 | __init__ |
+| 【代码】_executed_phases | Set[str] | 本回合已执行阶段 | __init__ |
+| 【代码】_config | Config | 配置实例 | __init__ |
+【表格结束】
+
+【二级标题】3.2 Config配置数据结构
+
+【正文】
+　　【重点】<u>Config</u>类维护以下字段：
+
+【表格开始】
+| 字段名 | 类型 | 默认值 | 作用 |
+|-------|------|-------|------|
+| 【代码】_config_path | Optional[str] | None | 配置文件路径 |
+| 【代码】_config | Dict[str, Any] | DEFAULTS | 当前配置字典 |
+【表格结束】
+
+【三级标题】3.2.1 默认配置项（DEFAULTS）
+
+【代码】位置：src/core/config.py:15-91
+
+【正文】
+　　系统预设默认配置如下：
+
+【无序列表】
+• 政治规则（political_rules）：
+  - 领袖冷却期：10年
+  - 每次选举领袖数：2人
+  - 公职冷却期：执政官10年、裁判官5年、财务官2年、监察官8年、市政官4年
+  - 每次选举职数：执政官2、裁判官2、财务官2、监察官1、市政官2
+  - 最低年龄：执政官40、裁判官35、财务官30、监察官42、市政官36
+  - 候选人数：执政官3、裁判官3、财务官3
+• 天命规则（mortality_rules）：
+  - 基础抽取数：1
+  - 每几人抽1次：5
+  - 最大抽取数：3
+• 经济规则（economic_rules）：
+  - 基础税收：100
+  - 派系津贴：10
+  - 军团招募成本：10
+  - 军团基础维护费：2
+  - 老兵维护加成：1
+• 战斗规则（combat_rules）：
+  - 凯旋阈值：12
+  - 胜利阈值：6
+  - 失败阈值：-3
+  - 灾难骰子：[2, 3, 4]
+  - 僵持骰子：[5, 6, 7, 8, 9]
+• 术语预设（terminology_preset）：original
+
+【二级标题】3.3 Command命令框架数据结构
+
+【正文】
+　　命令框架包含基类与注册中心两类核心结构：
+
+【表格开始】
+| 类 | 属性 | 类型 | 作用 |
+|---|------|------|------|
+| 【重点】<u>Command</u>（基类） | 【代码】name | ClassVar[str] | 主命令名 |
+| | 【代码】aliases | ClassVar[List[str]] | 别名列表 |
+| | 【代码】description | ClassVar[str] | 帮助描述 |
+| | 【代码】state | GameState | 实例属性，游戏状态 |
+| 【重点】<u>CommandRegistry</u> | 【代码】_commands | Dict[str, Type[Command]] | 命令名到类的映射 |
+| | 【代码】_registered_classes | Set[int] | 已注册类ID集合 |
+【表格结束】
+
+【分页符】
+
+【一级标题】四、关键业务流程
+
+【二级标题】4.1 每回合执行流程
+
+【代码】位置：src/ui/commands/func_turn_control.py:90-129
+
+【正文】
+　　每回合包含七个固定阶段，按顺序执行：
+
+【有序列表】
+1、天命阶段（mortality）：抽取死亡数字，处理人物死亡
+2、税收阶段（revenue）：结算国库收支、派系津贴、军团维护
+3、广场阶段（forum）：处理随机事件、人物晋升
+4、人口阶段（population）：处理人口增长、军团补充
+5、元老院阶段（senate）：选举公职、投票表决
+6、战斗阶段（combat）：执行战争结算
+7、结算阶段（resolution）：年度衰减、状态重置
+
+【正文】
+　　执行逻辑：系统遍历【代码】PHASE_SEQUENCE列表，跳过已执行阶段，直至全部完成。若所有阶段已执行，提示使用"next"指令推进回合。
+
+【二级标题】4.2 天命阶段执行流程
+
+【代码】位置：src/ui/commands/phase_mortality.py:40-84
+
+【正文】
+　　天命阶段处理人物死亡事件，流程如下：
+
+【有序列表】
+1、阶段状态检查：调用【代码】is_phase_executed("mortality")，若已执行则跳过
+2、计算抽取数量：
+   - 获取存活人物数
+   - 读取配置：基础抽取数（默认1）、每几人抽1次（默认5）、最大抽取数（默认3）
+   - 公式：抽取数 = max(1, min(最大抽取数, 存活人数 // 每几人抽1次))
+3、循环抽取：
+   - 调用【代码】draw_mortality_number()获取天命数字
+   - 调用【代码】get_living_member()匹配对应人物
+   - 若匹配成功，调用【代码】_process_death()处理死亡
+4、事件记录：若有死亡发生，调用【代码】log_event()记录死亡名单
+5、阶段标记：调用【代码】mark_phase_executed("mortality")标记完成
+
+【二级标题】4.3 土地分配流程
+
+【代码】位置：src/ui/commands/func_land.py:99-164
+
+【正文】
+　　土地分配（席位分配）计算流程如下：
+
+【有序列表】
+1、计算全国总资产：
+   - 遍历所有存活人物
+   - 总土地 = 所有人物土地之和
+   - 总老兵 = 所有人物效忠老兵之和
+   - 总资产 = 总土地 + 总老兵
+2、按个人资产排序：
+   - 调用【代码】get_seat_share()获取个人资产（土地+老兵）
+   - 降序排列，取前15名显示
+3、计算个人席位：
+   - 公式：席位数 = int((个人资产 / 总资产) × 300)
+   - 计算占比百分比
+4、计算派系总计：
+   - 遍历各派系成员
+   - 派系资产 = 成员土地之和 + 成员老兵之和
+   - 派系席位 = int((派系资产 / 总资产) × 300)
+
+【二级标题】4.4 金钱收支流程
+
+【代码】位置：src/ui/commands/phase_revenue.py:49-90
+
+【正文】
+　　税收阶段完整收支流程：
+
+【有序列表】
+1、基础税收：读取配置【代码】base_tax（默认100），增加国库
+2、派系津贴：读取配置【代码】faction_stipend（默认10），为每个派系增加资金
+3、军团维护费：调用【代码】MilitarySystem.apply_maintenance()，内部扣除国库
+4、合同收益结算：调用【代码】_process_contract_revenues()处理合同收入
+
+【分页符】
+
+【一级标题】五、异常处理机制
+
+【二级标题】5.1 破产判定
+
+【代码】位置：src/core/systems/military_system.py:183-195
+
+【正文】
+　　破产判定通过【代码】MilitarySystem.apply_maintenance()实现：
+
+【有序列表】
+1、计算总维护费：调用【代码】calculate_maintenance()获取总额及明细
+2、资金检查：
+   - 若维护费为0，返回无需维护
+   - 若国库 < 维护费，进入强制解散流程
+   - 若国库 ≥ 维护费，扣除费用并返回成功
+3、强制解散逻辑（资金不足时）：
+   - 计算缺口金额 = 维护费 - 国库
+   - 优先解散未指派的老兵军团
+   - 每解散一个军团节省2点维护费
+   - 持续解散直至节省金额 ≥ 缺口金额
+
+【二级标题】5.2 事件触发
+
+【三级标题】5.2.1 人口事件
+
+【代码】位置：src/ui/commands/phase_population.py:125-138
+
+【正文】
+　　人口事件触发概率为20%，随机选择以下事件之一：
+
+【无序列表】
+• 人口增长（Population growth）
+• 城市动乱（Urban unrest）
+• 其他预设事件
+
+【三级标题】5.2.2 战斗结果
+
+【代码】位置：src/ui/commands/phase_combat.py:190-271
+
+【正文】
+　　战斗结果通过【代码】_simplified_crt()判定，分为五级：
+
+【表格开始】
+| 结果 | 判定条件 | 后续处理 |
+|-----|---------|---------|
+| 凯旋（TRIUMPH） | 极高战果 | 军团晋升、指挥官获得影响力 |
+| 胜利（VICTORY） | 高战果 | 军团正常、指挥官获得影响力 |
+| 僵持（STALEMATE） | 中等战果 | 无特殊处理 |
+| 失败（DEFEAT） | 低战果 | 可能的损失 |
+| 灾难（DISASTER） | 极低战果 | 军团损失、指挥官可能死亡 |
+【表格结束】
+
+【二级标题】5.3 人物死亡处理
+
+【三级标题】5.3.1 天命死亡
+
+【代码】位置：src/ui/commands/phase_mortality.py:87-104
+
+【正文】
+　　天命死亡处理流程：
+
+【有序列表】
+1、标记死亡：调用【代码】mark_member_dead()设置死亡状态
+2、派系领袖处理：若死者为派系领袖，清除领袖标记
+3、执政官列表移除：若死者在执政官列表中，移除其ID
+
+【三级标题】5.3.2 战斗死亡
+
+【代码】位置：src/ui/commands/phase_combat.py:259-271
+
+【正文】
+　　战斗死亡判定：
+
+【无序列表】
+• 灾难结果：指挥官【代码】is_dead = True
+• 失败结果：指挥官可能逃跑、被俘或受伤（状态记录在【代码】war.commander_status）
+
+【三级标题】5.3.3 死亡影响
+
+【正文】
+　　人物死亡后的系统影响：
+
+【无序列表】
+• 从【代码】get_living_members()中排除
+• 失去所有公职及派系领袖资格
+• 不再参与后续阶段（选举、战斗等）
+
+【文档结束】
