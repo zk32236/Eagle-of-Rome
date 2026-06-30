@@ -1,24 +1,15 @@
 # src/api/forum_api.py
 import logging
 import random
-from typing import Any, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
+from src.api import api_response
 from src.core.game_state import GameState
 from src.core.i18n import i18n
 from src.core.entities.contract import ContractType, ContractStatus
 from src.core.entities.war import WarStatus
 from src.core.service.land_trading_service import LandTradingService
 from src.core.entities.figure import ClassTier
-
-
-def api_response(success: bool, message: str = "", data: Any = None, errors: List[str] = None) -> dict:
-    """统一 API 返回格式"""
-    return {
-        "success": success,
-        "message": message,
-        "data": data or {},
-        "errors": errors or []
-    }
 
 
 def _check_player_permission(state: GameState, player_id: str) -> Tuple[bool, dict]:

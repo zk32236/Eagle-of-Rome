@@ -1,0 +1,169 @@
+--- a/src/api/forum_api.py
++++ b/src/api/forum_api.py
+@@ -1,7 +1,7 @@
+ # src/api/forum_api.py
+ import logging
+ import random
+-from typing import Any, List, Optional, Tuple
++from typing import List, Optional, Tuple
+ 
+ from src.core.game_state import GameState
+ from src.core.i18n import i18n
+--- a/src/api/senate_api.py
++++ b/src/api/senate_api.py
+@@ -5,7 +5,7 @@
+ """
+ 
+ import logging
+-from typing import Any, List, Optional
++from typing import List, Optional
+ 
+ from src.core.deciders.impl.auto_war_takeover_decider import AutoWarTakeoverDecider
+ from src.core.deciders.senate_vote_decider import SenateVoteDecider
+@@ -42,7 +42,13 @@
+     if not state:
+         return api_response(False, "无效的游戏状态")
+     try:
+-        return _wrap_result(_political_system(state).build_initial_info())
++        result = _political_system(state).build_initial_info()
++        return api_response(
++            success=result.get("success", False),
++            message=result.get("message", ""),
++            data=result.get("data", {}),
++            errors=result.get("errors", []),
++        )
+     except Exception as exc:
+         return api_response(False, f"获取信息失败: {exc}", errors=[str(exc)])
+ 
+@@ -51,13 +57,17 @@
+     """记录元老院提案。"""
+     if not state:
+         return api_response(False, "无效的游戏状态")
+-    return _wrap_result(
+-        _political_system(state).create_proposal(
+-            player_id,
+-            proposal_type,
+-            bypass_turn_check=bypass_turn_check,
+-            **kwargs,
+-        )
++    result = _political_system(state).create_proposal(
++        player_id,
++        proposal_type,
++        bypass_turn_check=bypass_turn_check,
++        **kwargs,
++    )
++    return api_response(
++        success=result.get("success", False),
++        message=result.get("message", ""),
++        data=result.get("data", {}),
++        errors=result.get("errors", []),
+     )
+ 
+ 
+@@ -65,14 +75,26 @@
+     """记录玩家对多个提案的投票。"""
+     if not state:
+         return api_response(False, "无效的游戏状态")
+-    return _wrap_result(_political_system(state).record_vote(player_id, proposal_ids, votes))
++    result = _political_system(state).record_vote(player_id, proposal_ids, votes)
++    return api_response(
++        success=result.get("success", False),
++        message=result.get("message", ""),
++        data=result.get("data", {}),
++        errors=result.get("errors", []),
++    )
+ 
+ 
+ def veto(state: GameState, player_id: str, proposal_ids: List[int]) -> dict:
+     """记录保民官对已通过提案的否决。"""
+     if not state:
+         return api_response(False, "无效的游戏状态")
+-    return _wrap_result(_political_system(state).record_veto(player_id, proposal_ids))
++    result = _political_system(state).record_veto(player_id, proposal_ids)
++    return api_response(
++        success=result.get("success", False),
++        message=result.get("message", ""),
++        data=result.get("data", {}),
++        errors=result.get("errors", []),
++    )
+ 
+ 
+ def resolve_senate(
+@@ -83,7 +105,13 @@
+     """执行元老院阶段最终结算。"""
+     if not state:
+         return api_response(False, "无效的游戏状态")
+-    return _wrap_result(_political_system(state).resolve_senate(vote_decider, takeover_decider))
++    result = _political_system(state).resolve_senate(vote_decider, takeover_decider)
++    return api_response(
++        success=result.get("success", False),
++        message=result.get("message", ""),
++        data=result.get("data", {}),
++        errors=result.get("errors", []),
++    )
+ 
+ 
+ # ==================== 兼容辅助函数 ====================
+--- /dev/null
++++ b/src/tests/test_api/test_api_response_unification.py
+@@ -0,0 +1,60 @@
++"""Focused tests for AS-P1-01 API response unification."""
++
++from unittest.mock import MagicMock
++
++from src.api import api_response
++from src.api import forum_api, senate_api
++
++
++RESPONSE_KEYS = {"success", "message", "data", "errors"}
++
++
++def assert_api_response_shape(response):
++    assert set(response.keys()) == RESPONSE_KEYS
++    assert isinstance(response["success"], bool)
++    assert isinstance(response["message"], str)
++    assert isinstance(response["errors"], list)
++
++
++def test_unified_api_response_factory_allows_none_data():
++    response = api_response(True, "ok")
++
++    assert_api_response_shape(response)
++    assert response["data"] is None
++
++
++def test_forum_api_permission_error_uses_unified_response_shape():
++    state = MagicMock()
++    state.config = {"testing.bypass_player_check": False}
++    state.is_current_player.return_value = False
++
++    response = forum_api.retire_figure(state, "player_optimates", 1)
++
++    assert_api_response_shape(response)
++    assert response["success"] is False
++
++
++def test_forum_api_invalid_recruit_amount_uses_unified_response_shape():
++    state = MagicMock()
++    state.config = {"testing.bypass_player_check": False}
++    state.is_current_player.return_value = True
++    state.get_player.return_value = MagicMock(faction_id="optimates")
++
++    response = forum_api.recruit_figure(state, "player_optimates", 1, 0)
++
++    assert_api_response_shape(response)
++    assert response["success"] is False
++
++
++def test_senate_api_none_state_errors_use_unified_response_shape():
++    responses = [
++        senate_api.get_senate_initial_info(None),
++        senate_api.propose(None, "player_optimates", "war"),
++        senate_api.vote(None, "player_optimates", [1], [True]),
++        senate_api.veto(None, "player_optimates", [1]),
++        senate_api.resolve_senate(None),
++    ]
++
++    for response in responses:
++        assert_api_response_shape(response)
++        assert response["success"] is False

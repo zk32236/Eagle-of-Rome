@@ -5,32 +5,14 @@
 """
 
 import logging
-from typing import Any, List, Optional
+from typing import List, Optional
 
+from src.api import api_response
 from src.core.deciders.impl.auto_war_takeover_decider import AutoWarTakeoverDecider
 from src.core.deciders.senate_vote_decider import SenateVoteDecider
 from src.core.entities.figure import Figure
 from src.core.game_state import GameState
 from src.core.systems.political_system import PoliticalSystem
-
-
-def api_response(success: bool, message: str = "", data: Any = None, errors: List[str] = None) -> dict:
-    """生成标准 API 返回格式"""
-    return {
-        "success": success,
-        "message": message,
-        "data": data or {},
-        "errors": errors or [],
-    }
-
-
-def _wrap_result(result: dict) -> dict:
-    return api_response(
-        result.get("success", False),
-        result.get("message", ""),
-        result.get("data", {}),
-        result.get("errors", []),
-    )
 
 
 def _political_system(state: GameState) -> PoliticalSystem:
@@ -42,7 +24,13 @@ def get_senate_initial_info(state: GameState) -> dict:
     if not state:
         return api_response(False, "无效的游戏状态")
     try:
-        return _wrap_result(_political_system(state).build_initial_info())
+        result = _political_system(state).build_initial_info()
+        return api_response(
+            success=result.get("success", False),
+            message=result.get("message", ""),
+            data=result.get("data", {}),
+            errors=result.get("errors", []),
+        )
     except Exception as exc:
         return api_response(False, f"获取信息失败: {exc}", errors=[str(exc)])
 
@@ -51,13 +39,17 @@ def propose(state: GameState, player_id: str, proposal_type: str, bypass_turn_ch
     """记录元老院提案。"""
     if not state:
         return api_response(False, "无效的游戏状态")
-    return _wrap_result(
-        _political_system(state).create_proposal(
-            player_id,
-            proposal_type,
-            bypass_turn_check=bypass_turn_check,
-            **kwargs,
-        )
+    result = _political_system(state).create_proposal(
+        player_id,
+        proposal_type,
+        bypass_turn_check=bypass_turn_check,
+        **kwargs,
+    )
+    return api_response(
+        success=result.get("success", False),
+        message=result.get("message", ""),
+        data=result.get("data", {}),
+        errors=result.get("errors", []),
     )
 
 
@@ -65,14 +57,26 @@ def vote(state: GameState, player_id: str, proposal_ids: List[int], votes: List[
     """记录玩家对多个提案的投票。"""
     if not state:
         return api_response(False, "无效的游戏状态")
-    return _wrap_result(_political_system(state).record_vote(player_id, proposal_ids, votes))
+    result = _political_system(state).record_vote(player_id, proposal_ids, votes)
+    return api_response(
+        success=result.get("success", False),
+        message=result.get("message", ""),
+        data=result.get("data", {}),
+        errors=result.get("errors", []),
+    )
 
 
 def veto(state: GameState, player_id: str, proposal_ids: List[int]) -> dict:
     """记录保民官对已通过提案的否决。"""
     if not state:
         return api_response(False, "无效的游戏状态")
-    return _wrap_result(_political_system(state).record_veto(player_id, proposal_ids))
+    result = _political_system(state).record_veto(player_id, proposal_ids)
+    return api_response(
+        success=result.get("success", False),
+        message=result.get("message", ""),
+        data=result.get("data", {}),
+        errors=result.get("errors", []),
+    )
 
 
 def resolve_senate(
@@ -83,7 +87,13 @@ def resolve_senate(
     """执行元老院阶段最终结算。"""
     if not state:
         return api_response(False, "无效的游戏状态")
-    return _wrap_result(_political_system(state).resolve_senate(vote_decider, takeover_decider))
+    result = _political_system(state).resolve_senate(vote_decider, takeover_decider)
+    return api_response(
+        success=result.get("success", False),
+        message=result.get("message", ""),
+        data=result.get("data", {}),
+        errors=result.get("errors", []),
+    )
 
 
 # ==================== 兼容辅助函数 ====================
