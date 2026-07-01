@@ -3,6 +3,7 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
 import "../components"
+import "../i18n"
 
 Rectangle {
     id: root
@@ -17,7 +18,7 @@ Rectangle {
 
         // 标题
         Text {
-            text: "📋 派系资源"
+            text: GuiText.factionResources
             color: theme.textMuted
             font.pixelSize: 11
             font.bold: true
@@ -50,9 +51,9 @@ Rectangle {
             }
             StatusTile {
                 Layout.fillWidth: true
-                label: "已投官职"
+                label: GuiText.votedOffices
                 value: Object.keys(sessionStore.myVotes || {}).length + " / 5"
-                icon: "🗳️"
+                icon: "V"
             }
         }
 
@@ -65,7 +66,7 @@ Rectangle {
 
         // 当前目标
         Text {
-            text: "🎯 当前目标"
+            text: GuiText.currentPhase
             color: theme.textMuted
             font.pixelSize: 11
             font.bold: true
@@ -74,29 +75,29 @@ Rectangle {
         ColumnLayout {
             spacing: 6
             Text {
-                text: "• 选择本派系候选人物举办庆典"
+                text: sessionStore.selectedPhaseName || GuiText.populationFallbackName
+                color: theme.textPrimary
+                font.pixelSize: 14
+                font.bold: true
+                Layout.fillWidth: true
+            }
+            Text {
+                text: (sessionStore.selectedPhaseSummary.subtitle || "")
+                color: theme.accentBronze
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+            Text {
+                text: (sessionStore.selectedPhaseSummary.description || "")
                 color: theme.textSecondary
                 font.pixelSize: 11
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
             }
             Text {
-                text: "• 投入不得超过人物当前财富"
-                color: theme.textSecondary
-                font.pixelSize: 11
-                wrapMode: Text.Wrap
-                Layout.fillWidth: true
-            }
-            Text {
-                text: "• 为每个共和国公职投出一票"
-                color: theme.textSecondary
-                font.pixelSize: 11
-                wrapMode: Text.Wrap
-                Layout.fillWidth: true
-            }
-            Text {
-                text: "• 完成后切换玩家，隐藏上一派系信息"
-                color: theme.textSecondary
+                text: sessionStore.selectedPhaseSummary.implemented ? GuiText.statusActionable : GuiText.statusPlaceholder
+                color: sessionStore.selectedPhaseSummary.implemented ? theme.statusSuccess : theme.statusWarning
                 font.pixelSize: 11
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
@@ -115,11 +116,32 @@ Rectangle {
             Text {
                 anchors.fill: parent
                 anchors.margins: 8
-                text: "当前权限：可操作 " + (sessionStore.viewerFactionId || "Optimates") + " 派系人物；其他派系人物和金库详情不可见。"
+                text: GuiText.playerScope(sessionStore.viewerFactionName, sessionStore.viewerFactionId)
                 color: theme.textMuted
                 font.pixelSize: 10
                 wrapMode: Text.Wrap
                 verticalAlignment: Text.AlignVCenter
+            }
+        }
+
+        Repeater {
+            model: sessionStore.globalWarnings || []
+            delegate: Rectangle {
+                Layout.fillWidth: true
+                height: warningText.implicitHeight + 16
+                color: theme.bgSurface2
+                radius: theme.radius
+                border.color: modelData.type === "warning" ? theme.statusWarning : theme.borderNormal
+                border.width: 1
+                Text {
+                    id: warningText
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    text: modelData.message
+                    color: modelData.type === "warning" ? theme.statusWarning : theme.textMuted
+                    font.pixelSize: 10
+                    wrapMode: Text.Wrap
+                }
             }
         }
 
@@ -132,9 +154,9 @@ Rectangle {
 
             AppButton {
                 Layout.fillWidth: true
-                text: "✅ 完成当前玩家操作"
+                text: GuiText.completeCurrentPlayer
                 type: "primary"
-                enabled: sessionStore.isCurrentPlayer && sessionStore.canComplete
+                enabled: sessionStore.selectedPhaseId === "population" && sessionStore.isCurrentPlayer && sessionStore.canComplete
                 onClicked: {
                     var result = sessionStore.doCompletePlayer()
                     if (!result.success) {
@@ -144,9 +166,9 @@ Rectangle {
             }
             AppButton {
                 Layout.fillWidth: true
-                text: "⏭ 跳过剩余操作"
+                text: GuiText.refreshAuthoritativeState
                 type: "secondary"
-                onClicked: sessionStore.logUiEvent("Skip requested")
+                onClicked: sessionStore.refreshSnapshot()
             }
         }
     }

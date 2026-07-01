@@ -64,14 +64,14 @@ Rectangle {
             id: populationStage
             objectName: "populationStage"
             anchors.fill: parent
-            visible: true
+            visible: sessionStore.selectedPhaseId === "population"
         }
 
         LockedStagePlaceholder {
             id: lockedPlaceholder
             objectName: "lockedStagePlaceholder"
             anchors.fill: parent
-            visible: false
+            visible: sessionStore.selectedPhaseId !== "population"
         }
     }
 

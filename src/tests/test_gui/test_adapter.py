@@ -9,6 +9,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
 
 from src.ui.gui.api_adapter import GuiApiAdapter
+from src.ui.gui.session_store import GuiSessionStore
 from src.api import session_api
 
 
@@ -68,3 +69,34 @@ class TestGuiApiAdapter:
         feedback = adapter.next_player(players[1])
         assert not feedback["success"]
         assert feedback["feedback_type"] == "error"
+
+    def test_session_store_selects_placeholder_phase_without_business_execution(self):
+        result = session_api.create_gui_prototype_session()
+        assert result["success"]
+        state = result["data"]["state"]
+        store = GuiSessionStore(state)
+        store.initialize(result["data"]["human_players"][0])
+
+        messages = []
+        store.feedbackRaised.connect(lambda ftype, message: messages.append((ftype, message)))
+        feedback = store.selectPhase("senate")
+
+        assert feedback["success"]
+        assert store.selectedPhaseId == "senate"
+        assert store.selectedPhaseSummary["implemented"] is False
+        assert store.selectedPhaseSummary["handoff_task"] == "GUI-P0-02C"
+        assert messages[-1][0] == "warning"
+
+    def test_session_store_can_return_to_population_after_placeholder_phase(self):
+        result = session_api.create_gui_prototype_session()
+        state = result["data"]["state"]
+        store = GuiSessionStore(state)
+        store.initialize(result["data"]["human_players"][0])
+
+        store.selectPhase("combat")
+        feedback = store.selectPhase("population")
+
+        assert feedback["success"]
+        assert store.selectedPhaseId == "population"
+        assert store.selectedPhaseSummary["implemented"] is True
+        assert isinstance(store.myFigures, list)

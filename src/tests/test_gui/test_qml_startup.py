@@ -89,10 +89,43 @@ def test_main_qml_exposes_core_gui_regions():
     root = engine.rootObjects()[0]
     expected_objects = [
         "gameShell",
+        "topStatusBar",
         "phaseRail",
+        "contextPanel",
         "populationStage",
+        "lockedStagePlaceholder",
         "feedbackPanel",
         "playerHandoffOverlay",
     ]
     for object_name in expected_objects:
         assert root.findChild(QObject, object_name) is not None, object_name
+
+
+def test_shell_store_exposes_seven_phase_navigation_items():
+    engine, qml_dir = _create_engine()
+    store = engine._test_refs[0]
+
+    assert len(store.phaseNavigation) == 7
+    assert store.phaseNavigation[0]["name"] == "天命"
+    assert [phase["id"] for phase in store.phaseNavigation] == [
+        "mortality",
+        "revenue",
+        "forum",
+        "population",
+        "senate",
+        "combat",
+        "resolution",
+    ]
+    assert store.phaseNavigation[5]["name"] == "战争"
+    assert store.phaseNavigation[-1]["name"] == "决算"
+
+
+def test_shell_text_catalog_labels_treasury():
+    qml_dir = os.path.join(PROJECT_ROOT, "src", "ui", "gui", "qml")
+    gui_text_path = os.path.join(qml_dir, "i18n", "GuiText.qml")
+
+    with open(gui_text_path, "r", encoding="utf-8") as fh:
+        gui_text = fh.read()
+
+    assert 'treasuryPrefix: "国库 "' in gui_text
+    assert 'factionTreasuryPrefix: "派系金库 "' in gui_text

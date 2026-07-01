@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Signal, Property, Slot, QAbstractListModel, 
 
 from src.core.game_state import GameState
 from src.ui.gui.api_adapter import GuiApiAdapter
+from src.ui.gui.localization import gui_text
 
 logger = logging.getLogger("EOR-GUI")
 
@@ -39,6 +40,8 @@ class GuiSessionStore(QObject):
         self._population_view: Dict[str, Any] = {}
         self._current_player_id: str = ""
         self._viewer_id: str = ""
+        self._selected_phase_id: str = "population"
+        self._selected_phase_summary: Dict[str, Any] = {}
         self._feedback_queue: List[Dict[str, str]] = []
 
     # -----------------------------------------------------------------------
@@ -102,6 +105,38 @@ class GuiSessionStore(QObject):
     @Property(list, notify=snapshotChanged)
     def phaseNavigation(self) -> List[Dict[str, Any]]:
         return self._snapshot.get("phase_navigation", [])
+
+    @Property(str, notify=phaseChanged)
+    def selectedPhaseId(self) -> str:
+        return self._selected_phase_id
+
+    @Property(str, notify=phaseChanged)
+    def selectedPhaseName(self) -> str:
+        return self._selected_phase_summary.get("name", "")
+
+    @Property(dict, notify=phaseChanged)
+    def selectedPhaseSummary(self) -> Dict[str, Any]:
+        return self._selected_phase_summary
+
+    @Property(str, notify=snapshotChanged)
+    def currentPhaseId(self) -> str:
+        return self._snapshot.get("current_phase_id", "population")
+
+    @Property(str, notify=snapshotChanged)
+    def currentPhaseName(self) -> str:
+        for phase in self.phaseNavigation:
+            if phase.get("id") == self.currentPhaseId:
+                return phase.get("name", "")
+        return "人口"
+
+    @Property(str, notify=snapshotChanged)
+    def viewerFactionName(self) -> str:
+        fr = self._snapshot.get("faction_resources", {})
+        return fr.get("name", "") if fr else self.viewerFactionId
+
+    @Property(list, notify=snapshotChanged)
+    def globalWarnings(self) -> List[Dict[str, str]]:
+        return self._snapshot.get("global_warnings", [])
 
     @Property(list, notify=snapshotChanged)
     def myFigures(self) -> List[Dict[str, Any]]:
@@ -193,6 +228,61 @@ class GuiSessionStore(QObject):
         self._refresh_population_view()
         return feedback
 
+    @Slot(str, result=dict)
+    def selectPhase(self, phase_id: str) -> dict:
+        """Select a shell phase without executing phase business."""
+        phase = self._phase_by_id(phase_id)
+        if not phase:
+            feedback = self._feedback(False, gui_text("feedback.phase.unknown", phase_id=phase_id), "error")
+            self._raise_feedback(feedback)
+            return feedback
+
+        self._selected_phase_id = phase_id
+        self._selected_phase_summary = self._summary_from_phase(phase)
+        self.phaseChanged.emit()
+        logger.info(
+            "GUI phase selected",
+            extra={
+                "phase_id": phase_id,
+                "viewer_player_id": self._viewer_id,
+                "current_player_id": self.currentPlayerId,
+                "implemented": phase.get("implemented", False),
+            },
+        )
+
+        if not phase.get("implemented", False):
+            feedback = self._feedback(
+                True,
+                gui_text(
+                    "feedback.phase.placeholder",
+                    name=phase.get("name", phase_id),
+                    handoff_task=phase.get("handoff_task", "后续任务"),
+                ),
+                "warning",
+                data={"phase_id": phase_id},
+            )
+            self._raise_feedback(feedback)
+            return feedback
+
+        feedback = self._feedback(
+            True,
+            gui_text("feedback.phase.selected", name=phase.get("name", phase_id)),
+            "info",
+            data={"phase_id": phase_id},
+        )
+        self._raise_feedback(feedback)
+        self._refresh_population_view()
+        return feedback
+
+    @Slot(result=dict)
+    def refreshSnapshot(self) -> dict:
+        """Refresh the shell snapshot from authoritative API DTO."""
+        self._refresh_snapshot()
+        self._refresh_population_view()
+        feedback = self._feedback(True, gui_text("feedback.snapshot.refreshed"), "success")
+        self._raise_feedback(feedback)
+        return feedback
+
     @Slot(result=bool)
     def switchViewer(self, new_viewer_id: str) -> bool:
         """切换 viewer（用于玩家交接遮罩确认后）"""
@@ -217,7 +307,13 @@ class GuiSessionStore(QObject):
 
     def _refresh_snapshot(self):
         self._snapshot = self._adapter.get_snapshot(self._viewer_id)
+        if not self._selected_phase_id:
+            self._selected_phase_id = self._snapshot.get("selected_phase_id", "population")
+        self._selected_phase_summary = self._summary_from_phase(
+            self._phase_by_id(self._selected_phase_id)
+        )
         self.snapshotChanged.emit()
+        self.phaseChanged.emit()
         self.currentPlayerChanged.emit()
 
     def _refresh_population_view(self):
@@ -229,3 +325,48 @@ class GuiSessionStore(QObject):
         fmsg = feedback.get("feedback_message", "")
         if fmsg:
             self.feedbackRaised.emit(ftype, fmsg)
+
+    def _phase_by_id(self, phase_id: str) -> Dict[str, Any]:
+        for phase in self.phaseNavigation:
+            if phase.get("id") == phase_id:
+                return phase
+        return {}
+
+    def _summary_from_phase(self, phase: Dict[str, Any]) -> Dict[str, Any]:
+        if not phase:
+            return self._snapshot.get("selected_phase_summary", {})
+        implemented = phase.get("implemented", False)
+        return {
+            "id": phase.get("id", ""),
+            "name": phase.get("name", ""),
+            "subtitle": phase.get("subtitle", ""),
+            "description": phase.get("description", ""),
+            "implemented": implemented,
+            "actionable": phase.get("actionable", False),
+            "handoff_task": phase.get("handoff_task", ""),
+            "name_key": phase.get("name_key", ""),
+            "subtitle_key": phase.get("subtitle_key", ""),
+            "description_key": phase.get("description_key", ""),
+            "status_key": phase.get("status_key", ""),
+            "status_text": gui_text("phase.status.actionable") if implemented else gui_text("phase.status.placeholder"),
+            "disabled_reason": phase.get("disabled_reason") or gui_text(
+                "phase.disabled.placeholder",
+                handoff_task=phase.get("handoff_task", "后续任务"),
+            ),
+        }
+
+    def _feedback(
+        self,
+        success: bool,
+        message: str,
+        feedback_type: str,
+        data: Any = None,
+    ) -> Dict[str, Any]:
+        return {
+            "success": success,
+            "message": message,
+            "data": data,
+            "errors": [] if success else [message],
+            "feedback_type": feedback_type,
+            "feedback_message": message,
+        }

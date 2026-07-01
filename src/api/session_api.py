@@ -112,18 +112,10 @@ def get_session_snapshot(state: GameState, viewer_player_id: str) -> dict:
                 "total_influence": sum(m.influence for m in members),
             }
 
-        # 七阶段导航状态
-        phase_order = ["mortality", "revenue", "forum", "population", "senate", "combat", "resolution"]
-        phase_nav = []
-        for i, ph in enumerate(phase_order):
-            phase_nav.append({
-                "id": ph,
-                "index": i + 1,
-                "name": _phase_name(ph),
-                "executed": state.is_phase_executed(ph),
-                "current": (ph == "population"),  # 本轮固定为人口阶段
-                "locked": False if ph == "population" else not state.is_phase_executed(ph) and ph != "population",
-            })
+        current_phase_id = "population"
+        phase_nav = _build_phase_navigation(state, current_phase_id)
+        selected_phase_summary = _build_phase_summary("population")
+        global_warnings = _build_global_warnings(state, viewer_player_id)
 
         # 当前可执行动作
         actions = _build_available_actions(state, viewer_player_id)
@@ -136,10 +128,14 @@ def get_session_snapshot(state: GameState, viewer_player_id: str) -> dict:
             "viewer_player_id": viewer_player_id,
             "viewer_faction_id": viewer.faction_id,
             "is_current_player": state.is_current_player(viewer_player_id),
+            "current_phase_id": current_phase_id,
+            "selected_phase_id": "population",
             "public_resources": public_resources,
             "faction_resources": faction_resources,
             "my_figures": my_figures,
             "phase_navigation": phase_nav,
+            "selected_phase_summary": selected_phase_summary,
+            "global_warnings": global_warnings,
             "available_actions": actions,
             "population_progress": population_progress,
         }
@@ -314,16 +310,153 @@ def _format_year(year: int) -> str:
 
 
 def _phase_name(phase_id: str) -> str:
-    names = {
-        "mortality": "天命",
-        "revenue": "收入",
-        "forum": "广场",
-        "population": "人口",
-        "senate": "元老院",
-        "combat": "战斗",
-        "resolution": "决算",
+    return _phase_definition_map().get(phase_id, {}).get("name", phase_id)
+
+
+def _phase_definitions() -> List[Dict[str, Any]]:
+    return [
+        {
+            "id": "mortality",
+            "name_key": "phase.mortality.name",
+            "subtitle_key": "phase.mortality.subtitle",
+            "description_key": "phase.mortality.description",
+            "name": "天命",
+            "subtitle": "死亡、继承与年度开端",
+            "description": "天命阶段将在 GUI-P0-02B 承接。本轮仅提供阶段入口和状态摘要。",
+            "handoff_task": "GUI-P0-02B",
+        },
+        {
+            "id": "revenue",
+            "name_key": "phase.revenue.name",
+            "subtitle_key": "phase.revenue.subtitle",
+            "description_key": "phase.revenue.description",
+            "name": "收入",
+            "subtitle": "国家收入、维护费与派系分配",
+            "description": "收入阶段将在 GUI-P0-02D 承接。本轮不执行经济结算。",
+            "handoff_task": "GUI-P0-02D",
+        },
+        {
+            "id": "forum",
+            "name_key": "phase.forum.name",
+            "subtitle_key": "phase.forum.subtitle",
+            "description_key": "phase.forum.description",
+            "name": "广场",
+            "subtitle": "招募、裁员、土地与公共行动",
+            "description": "广场阶段将在 GUI-P0-02D 承接。本轮不执行广场业务操作。",
+            "handoff_task": "GUI-P0-02D",
+        },
+        {
+            "id": "population",
+            "name_key": "phase.population.name",
+            "subtitle_key": "phase.population.subtitle",
+            "description_key": "phase.population.description",
+            "name": "人口",
+            "subtitle": "庆典、公职投票与选举",
+            "description": "GUI-P0-01 已实现的人口阶段真实切片，可继续举办庆典、投票并完成玩家操作。",
+            "handoff_task": "GUI-P0-02B",
+        },
+        {
+            "id": "senate",
+            "name_key": "phase.senate.name",
+            "subtitle_key": "phase.senate.subtitle",
+            "description_key": "phase.senate.description",
+            "name": "元老院",
+            "subtitle": "提案、表决与国家决议",
+            "description": "元老院阶段将在 GUI-P0-02C 承接。本轮不执行提案或表决业务。",
+            "handoff_task": "GUI-P0-02C",
+        },
+        {
+            "id": "combat",
+            "name_key": "phase.combat.name",
+            "subtitle_key": "phase.combat.subtitle",
+            "description_key": "phase.combat.description",
+            "name": "战争",
+            "subtitle": "陆战、海战与战役结果",
+            "description": "战争阶段将在 GUI-P0-02E 承接。海战信息将在该阶段后续切片中呈现，本轮不执行战争结算。",
+            "handoff_task": "GUI-P0-02E",
+        },
+        {
+            "id": "resolution",
+            "name_key": "phase.resolution.name",
+            "subtitle_key": "phase.resolution.subtitle",
+            "description_key": "phase.resolution.description",
+            "name": "决算",
+            "subtitle": "革命检查、年度决算与回合推进",
+            "description": "决算阶段将在 GUI-P0-02F 承接。革命检查保留为后续决算切片内容，本轮不推进回合。",
+            "handoff_task": "GUI-P0-02F",
+        },
+    ]
+
+
+def _phase_definition_map() -> Dict[str, Dict[str, Any]]:
+    return {item["id"]: item for item in _phase_definitions()}
+
+
+def _build_phase_navigation(state: GameState, current_phase_id: str) -> List[Dict[str, Any]]:
+    phase_nav = []
+    for index, definition in enumerate(_phase_definitions(), start=1):
+        phase_id = definition["id"]
+        implemented = phase_id == "population"
+        current = phase_id == current_phase_id
+        phase_nav.append({
+            "id": phase_id,
+            "index": index,
+            "name_key": definition["name_key"],
+            "subtitle_key": definition["subtitle_key"],
+            "description_key": definition["description_key"],
+            "status_key": "phase.status.current" if current else ("phase.status.completed" if state.is_phase_executed(phase_id) else "phase.status.placeholder"),
+            "name": definition["name"],
+            "subtitle": definition["subtitle"],
+            "description": definition["description"],
+            "status": "current" if current else ("completed" if state.is_phase_executed(phase_id) else "placeholder"),
+            "implemented": implemented,
+            "enabled": True,
+            "actionable": implemented and current,
+            "handoff_task": definition["handoff_task"],
+            "disabled_reason_key": "" if implemented else "phase.disabled.placeholder",
+            "disabled_reason": "" if implemented else f"{definition['handoff_task']} 后续任务承接，当前暂不可操作",
+            "locked_reason": "" if implemented else f"{definition['name']}阶段尚未迁移到 GUI",
+            "executed": state.is_phase_executed(phase_id),
+            "current": current,
+            "locked": False,
+        })
+    return phase_nav
+
+
+def _build_phase_summary(phase_id: str) -> Dict[str, Any]:
+    definition = _phase_definition_map().get(phase_id, {})
+    implemented = phase_id == "population"
+    return {
+            "id": phase_id,
+            "name_key": definition.get("name_key", ""),
+            "subtitle_key": definition.get("subtitle_key", ""),
+            "description_key": definition.get("description_key", ""),
+            "status_key": "phase.status.actionable" if implemented else "phase.status.placeholder",
+            "disabled_reason_key": "" if implemented else "phase.disabled.placeholder",
+            "name": definition.get("name", phase_id),
+            "subtitle": definition.get("subtitle", ""),
+            "description": definition.get("description", ""),
+        "implemented": implemented,
+        "actionable": implemented,
+        "handoff_task": definition.get("handoff_task", ""),
+        "status_text": "可操作真实切片" if implemented else "后续任务承接 / 暂不可操作",
+        "disabled_reason": "" if implemented else f"{definition.get('handoff_task', '后续任务')} 承接，本轮不会改变游戏状态",
     }
-    return names.get(phase_id, phase_id)
+
+
+def _build_global_warnings(state: GameState, viewer_player_id: str) -> List[Dict[str, str]]:
+    warnings: List[Dict[str, str]] = [{
+        "type": "info",
+        "key": "warning.gui_p0_02a.shell_only",
+        "message": "GUI-P0-02A 仅扩展主壳与阶段导航；未迁移阶段为只读占位。",
+    }]
+    if not state.is_current_player(viewer_player_id):
+        warnings.append({
+            "type": "warning",
+            "key": "warning.viewer.not_current_player",
+            "message": "当前 viewer 不是行动玩家，操作入口将保持受限。",
+        })
+    return warnings
 
 
 def _build_available_actions(state: GameState, viewer_player_id: str) -> List[str]:

@@ -2,6 +2,7 @@ import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
+import "../i18n"
 
 Rectangle {
     id: root
@@ -48,7 +49,7 @@ Rectangle {
                 font.pixelSize: 12
             }
             Text {
-                text: "⚔️ 阶段：人口"
+                text: GuiText.phaseLabelPrefix + (sessionStore.selectedPhaseName || sessionStore.currentPhaseName || "人口")
                 color: theme.accentPrimary
                 font.pixelSize: 12
                 font.bold: true
@@ -66,10 +67,15 @@ Rectangle {
                 font.pixelSize: 12
             }
             Text {
-                text: (sessionStore.treasury || 0) + " T"
+                text: GuiText.treasuryPrefix + (sessionStore.treasury || 0) + " T"
                 color: theme.accentBronzeHighlight
                 font.pixelSize: 13
                 font.bold: true
+            }
+            Text {
+                text: GuiText.factionTreasuryPrefix + (sessionStore.factionTreasury || 0) + " T"
+                color: theme.textSecondary
+                font.pixelSize: 12
             }
         }
 
@@ -90,9 +96,10 @@ Rectangle {
                 }
             }
             Text {
-                text: "Player " + (sessionStore.viewerFactionId || "Optimates")
+                text: (sessionStore.currentPlayerId || "player") + " / " + (sessionStore.viewerFactionName || sessionStore.viewerFactionId || "Optimates")
                 color: theme.textPrimary
                 font.pixelSize: 12
+                elide: Text.ElideRight
             }
         }
     }

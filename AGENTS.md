@@ -111,6 +111,13 @@ Architecture risks:
 Required DeepSeek changes:
 ```
 
+## SA Test Reuse Policy
+
+When CGT-01 or another implementation Agent has already run full regression tests, Codex/SA does not rerun the full suite by default. SA should instead verify that the implementation matches the approved task/design, inspect the changed files or diff, and confirm that the Agent's acceptance report satisfies the task's required test scope.
+
+SA may rely on the Agent's full-test result only when the report includes the exact command, environment assumptions, pass/fail count, and no unresolved failure. In the SA response, state that the full regression was accepted from the Agent report and was not rerun by SA.
+
+SA should still run targeted tests, smoke checks, or the full suite when evidence is missing or stale, the reported result conflicts with the local diff, the change touches test infrastructure, dependency/bootstrap code, persistence, global state, or other high-risk shared paths, or the user explicitly requests an independent rerun.
 ## DeepSeek Task Publication Mechanism
 
 Task publication responsibility is split between PM and SA:

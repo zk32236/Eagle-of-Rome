@@ -50,7 +50,76 @@ class TestSessionApi:
         assert "faction_resources" in data
         assert "my_figures" in data
         assert "phase_navigation" in data
+        assert "selected_phase_summary" in data
+        assert "global_warnings" in data
+        assert data["current_phase_id"] == "population"
         assert len(data["phase_navigation"]) == 7
+
+    def test_shell_phase_navigation_matches_gui_p0_sprint_order(self):
+        """GUI shell exposes the complete GUI-P0 sprint phase sequence."""
+        result = session_api.create_gui_prototype_session()
+        state = result["data"]["state"]
+        viewer_id = result["data"]["human_players"][0]
+
+        snapshot = session_api.get_session_snapshot(state, viewer_id)
+        assert snapshot["success"]
+        phases = snapshot["data"]["phase_navigation"]
+
+        assert [phase["name"] for phase in phases] == [
+            "天命",
+            "收入",
+            "广场",
+            "人口",
+            "元老院",
+            "战争",
+            "决算",
+        ]
+        assert [phase["id"] for phase in phases] == [
+            "mortality",
+            "revenue",
+            "forum",
+            "population",
+            "senate",
+            "combat",
+            "resolution",
+        ]
+
+    def test_shell_phase_navigation_marks_population_as_only_actionable_slice(self):
+        """Only the GUI-P0-01 population slice is actionable in GUI-P0-02A."""
+        result = session_api.create_gui_prototype_session()
+        state = result["data"]["state"]
+        viewer_id = result["data"]["human_players"][0]
+
+        snapshot = session_api.get_session_snapshot(state, viewer_id)
+        phases = {phase["id"]: phase for phase in snapshot["data"]["phase_navigation"]}
+
+        assert phases["population"]["implemented"] is True
+        assert phases["population"]["actionable"] is True
+        assert phases["population"]["name_key"] == "phase.population.name"
+        for phase_id, phase in phases.items():
+            if phase_id == "population":
+                continue
+            assert phase["implemented"] is False
+            assert phase["actionable"] is False
+            assert phase["handoff_task"].startswith("GUI-P0-02")
+            assert phase["name_key"].startswith("phase.")
+            assert phase["description_key"].startswith("phase.")
+            assert phase["status_key"]
+            assert phase["disabled_reason_key"] == "phase.disabled.placeholder"
+            assert "暂不可操作" in phase["disabled_reason"]
+
+    def test_shell_snapshot_exposes_i18n_keys_for_new_gui_copy(self):
+        result = session_api.create_gui_prototype_session()
+        state = result["data"]["state"]
+        viewer_id = result["data"]["human_players"][0]
+
+        snapshot = session_api.get_session_snapshot(state, viewer_id)
+        data = snapshot["data"]
+
+        summary = data["selected_phase_summary"]
+        assert summary["name_key"] == "phase.population.name"
+        assert summary["status_key"] == "phase.status.actionable"
+        assert data["global_warnings"][0]["key"] == "warning.gui_p0_02a.shell_only"
 
     def test_snapshot_no_other_faction_treasury(self):
         """快照不包含其他派系金库"""

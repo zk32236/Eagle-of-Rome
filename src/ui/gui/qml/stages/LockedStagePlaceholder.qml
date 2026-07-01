@@ -2,6 +2,7 @@ import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
+import "../i18n"
 
 Rectangle {
     id: root
@@ -13,21 +14,35 @@ Rectangle {
 
         Text {
             Layout.alignment: Qt.AlignHCenter
-            text: "🔒"
-            font.pixelSize: 48
+            text: sessionStore.selectedPhaseSummary.handoff_task || GuiText.placeholderFallbackTask
+            color: theme.accentBronze
+            font.pixelSize: 18
+            font.bold: true
         }
         Text {
             Layout.alignment: Qt.AlignHCenter
-            text: "尚未迁移"
+            text: sessionStore.selectedPhaseName || GuiText.placeholderFallbackName
             color: theme.textPrimary
             font.pixelSize: 18
             font.bold: true
         }
         Text {
             Layout.alignment: Qt.AlignHCenter
-            text: "该阶段将在后续 P1 功能开发中逐步接入 GUI。"
+            text: sessionStore.selectedPhaseSummary.description || GuiText.placeholderFallbackDescription
             color: theme.textSecondary
             font.pixelSize: 12
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            Layout.preferredWidth: 420
+        }
+        Text {
+            Layout.alignment: Qt.AlignHCenter
+            text: sessionStore.selectedPhaseSummary.disabled_reason || GuiText.placeholderFallbackReason
+            color: theme.statusWarning
+            font.pixelSize: 12
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            Layout.preferredWidth: 420
         }
     }
 }
