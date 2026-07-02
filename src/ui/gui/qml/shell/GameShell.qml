@@ -60,6 +60,13 @@ Rectangle {
         border.width: 0
 
         // 当前阶段面板
+        MortalityStage {
+            id: mortalityStage
+            objectName: "mortalityStage"
+            anchors.fill: parent
+            visible: sessionStore.selectedPhaseId === "mortality"
+        }
+
         PopulationStage {
             id: populationStage
             objectName: "populationStage"
@@ -71,7 +78,7 @@ Rectangle {
             id: lockedPlaceholder
             objectName: "lockedStagePlaceholder"
             anchors.fill: parent
-            visible: sessionStore.selectedPhaseId !== "population"
+            visible: sessionStore.selectedPhaseId !== "mortality" && sessionStore.selectedPhaseId !== "population"
         }
     }
 

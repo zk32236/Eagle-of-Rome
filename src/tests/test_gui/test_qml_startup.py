@@ -92,6 +92,7 @@ def test_main_qml_exposes_core_gui_regions():
         "topStatusBar",
         "phaseRail",
         "contextPanel",
+        "mortalityStage",
         "populationStage",
         "lockedStagePlaceholder",
         "feedbackPanel",
@@ -106,6 +107,7 @@ def test_shell_store_exposes_seven_phase_navigation_items():
     store = engine._test_refs[0]
 
     assert len(store.phaseNavigation) == 7
+    assert store.currentPhaseId == "mortality"
     assert store.phaseNavigation[0]["name"] == "天命"
     assert [phase["id"] for phase in store.phaseNavigation] == [
         "mortality",
@@ -118,6 +120,9 @@ def test_shell_store_exposes_seven_phase_navigation_items():
     ]
     assert store.phaseNavigation[5]["name"] == "战争"
     assert store.phaseNavigation[-1]["name"] == "决算"
+    assert store.phaseNavigation[0]["actionable"] is True
+    assert store.phaseNavigation[3]["implemented"] is True
+    assert store.phaseNavigation[3]["actionable"] is False
 
 
 def test_shell_text_catalog_labels_treasury():
@@ -129,3 +134,5 @@ def test_shell_text_catalog_labels_treasury():
 
     assert 'treasuryPrefix: "国库 "' in gui_text
     assert 'factionTreasuryPrefix: "派系金库 "' in gui_text
+    assert 'executeMortality: "执行天命"' in gui_text
+    assert 'advanceMortality: "进入收入阶段"' in gui_text

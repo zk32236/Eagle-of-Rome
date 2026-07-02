@@ -105,6 +105,17 @@ class GuiApiAdapter:
         return self.call(population_api.resolve_election, self._state)
 
     # -----------------------------------------------------------------------
+    # 天命阶段专用 API
+    # -----------------------------------------------------------------------
+    def execute_mortality(self, player_id: str) -> Dict[str, Any]:
+        from src.api import mortality_api
+        return self.call(mortality_api.execute_mortality_phase, self._state, player_id)
+
+    def advance_mortality(self, player_id: str) -> Dict[str, Any]:
+        from src.api import mortality_api
+        return self.call(mortality_api.advance_mortality_phase, self._state, player_id)
+
+    # -----------------------------------------------------------------------
     # Session API 包装
     # -----------------------------------------------------------------------
     def get_snapshot(self, viewer_id: str) -> Dict[str, Any]:
@@ -121,6 +132,14 @@ class GuiApiAdapter:
         if result.get("success"):
             return result.get("data", {})
         logger.error(f"Population view failed: {result.get('message')}")
+        return {}
+
+    def get_mortality_view(self, viewer_id: str) -> Dict[str, Any]:
+        from src.api import mortality_api
+        result = mortality_api.get_mortality_view(self._state, viewer_id)
+        if result.get("success"):
+            return result.get("data", {})
+        logger.error(f"Mortality view failed: {result.get('message')}")
         return {}
 
     # -----------------------------------------------------------------------

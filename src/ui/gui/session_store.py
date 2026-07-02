@@ -25,6 +25,7 @@ class GuiSessionStore(QObject):
     # 信号
     snapshotChanged = Signal()
     populationViewChanged = Signal()
+    mortalityViewChanged = Signal()
     currentPlayerChanged = Signal()
     phaseChanged = Signal()
     feedbackRaised = Signal(str, str)  # type, message
@@ -38,9 +39,11 @@ class GuiSessionStore(QObject):
         # 缓存的快照数据（只含 DTO）
         self._snapshot: Dict[str, Any] = {}
         self._population_view: Dict[str, Any] = {}
+        self._mortality_view: Dict[str, Any] = {}
+        self._mortality_result: Dict[str, Any] = {}
         self._current_player_id: str = ""
         self._viewer_id: str = ""
-        self._selected_phase_id: str = "population"
+        self._selected_phase_id: str = ""
         self._selected_phase_summary: Dict[str, Any] = {}
         self._feedback_queue: List[Dict[str, str]] = []
 
@@ -51,6 +54,7 @@ class GuiSessionStore(QObject):
         """初始化，设置 viewer 并加载第一帧快照"""
         self._viewer_id = viewer_id
         self._refresh_snapshot()
+        self._refresh_mortality_view()
         self._refresh_population_view()
 
     # -----------------------------------------------------------------------
@@ -120,14 +124,14 @@ class GuiSessionStore(QObject):
 
     @Property(str, notify=snapshotChanged)
     def currentPhaseId(self) -> str:
-        return self._snapshot.get("current_phase_id", "population")
+        return self._snapshot.get("current_phase_id", "mortality")
 
     @Property(str, notify=snapshotChanged)
     def currentPhaseName(self) -> str:
         for phase in self.phaseNavigation:
             if phase.get("id") == self.currentPhaseId:
                 return phase.get("name", "")
-        return "人口"
+        return "天命"
 
     @Property(str, notify=snapshotChanged)
     def viewerFactionName(self) -> str:
@@ -175,6 +179,22 @@ class GuiSessionStore(QObject):
     def canComplete(self) -> bool:
         return self._population_view.get("can_complete", False)
 
+    @Property(dict, notify=mortalityViewChanged)
+    def mortalityResult(self) -> Dict[str, Any]:
+        return self._mortality_result
+
+    @Property(list, notify=mortalityViewChanged)
+    def mortalityEvents(self) -> List[Dict[str, Any]]:
+        return self._mortality_result.get("events", []) or self._mortality_view.get("events", [])
+
+    @Property(bool, notify=mortalityViewChanged)
+    def canExecuteMortality(self) -> bool:
+        return self._mortality_view.get("can_execute", False)
+
+    @Property(bool, notify=mortalityViewChanged)
+    def canAdvanceMortality(self) -> bool:
+        return self._mortality_view.get("can_advance", False)
+
     # -----------------------------------------------------------------------
     # QML Slot — 操作入口
     # -----------------------------------------------------------------------
@@ -214,6 +234,7 @@ class GuiSessionStore(QObject):
                 self._viewer_id = new_id
                 self.handoffRequired.emit(new_id)
             self._refresh_snapshot()
+            self._refresh_mortality_view()
             self._refresh_population_view()
         return feedback
 
@@ -225,7 +246,42 @@ class GuiSessionStore(QObject):
         feedback = self._adapter.resolve_election()
         self._raise_feedback(feedback)
         self._refresh_snapshot()
+        self._refresh_mortality_view()
         self._refresh_population_view()
+        return feedback
+
+    @Slot(result=dict)
+    def doExecuteMortality(self) -> dict:
+        """执行天命阶段。"""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.execute_mortality(self._viewer_id)
+        if feedback.get("success"):
+            self._mortality_result = feedback.get("data", {}) or {}
+            self._refresh_snapshot()
+            self._refresh_mortality_view()
+            self._refresh_population_view()
+        self._raise_feedback(feedback)
+        self.mortalityViewChanged.emit()
+        return feedback
+
+    @Slot(result=dict)
+    def doAdvanceMortality(self) -> dict:
+        """确认天命结果并进入收入阶段。"""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.advance_mortality(self._viewer_id)
+        if feedback.get("success"):
+            self._refresh_snapshot()
+            self._selected_phase_id = self._snapshot.get("current_phase_id", "revenue")
+            self._selected_phase_summary = self._summary_from_phase(
+                self._phase_by_id(self._selected_phase_id)
+            )
+            self.phaseChanged.emit()
+            self._refresh_mortality_view()
+            self._refresh_population_view()
+        self._raise_feedback(feedback)
+        self.mortalityViewChanged.emit()
         return feedback
 
     @Slot(str, result=dict)
@@ -271,13 +327,17 @@ class GuiSessionStore(QObject):
             data={"phase_id": phase_id},
         )
         self._raise_feedback(feedback)
-        self._refresh_population_view()
+        if phase_id == "population":
+            self._refresh_population_view()
+        elif phase_id == "mortality":
+            self._refresh_mortality_view()
         return feedback
 
     @Slot(result=dict)
     def refreshSnapshot(self) -> dict:
         """Refresh the shell snapshot from authoritative API DTO."""
         self._refresh_snapshot()
+        self._refresh_mortality_view()
         self._refresh_population_view()
         feedback = self._feedback(True, gui_text("feedback.snapshot.refreshed"), "success")
         self._raise_feedback(feedback)
@@ -288,6 +348,7 @@ class GuiSessionStore(QObject):
         """切换 viewer（用于玩家交接遮罩确认后）"""
         self._viewer_id = new_viewer_id
         self._refresh_snapshot()
+        self._refresh_mortality_view()
         self._refresh_population_view()
         self.currentPlayerChanged.emit()
         return True
@@ -303,12 +364,13 @@ class GuiSessionStore(QObject):
     def _on_refresh(self):
         """API 操作成功后自动刷新"""
         self._refresh_snapshot()
+        self._refresh_mortality_view()
         self._refresh_population_view()
 
     def _refresh_snapshot(self):
         self._snapshot = self._adapter.get_snapshot(self._viewer_id)
         if not self._selected_phase_id:
-            self._selected_phase_id = self._snapshot.get("selected_phase_id", "population")
+            self._selected_phase_id = self._snapshot.get("selected_phase_id", "mortality")
         self._selected_phase_summary = self._summary_from_phase(
             self._phase_by_id(self._selected_phase_id)
         )
@@ -319,6 +381,10 @@ class GuiSessionStore(QObject):
     def _refresh_population_view(self):
         self._population_view = self._adapter.get_population_view(self._viewer_id)
         self.populationViewChanged.emit()
+
+    def _refresh_mortality_view(self):
+        self._mortality_view = self._adapter.get_mortality_view(self._viewer_id)
+        self.mortalityViewChanged.emit()
 
     def _raise_feedback(self, feedback: dict):
         ftype = feedback.get("feedback_type", "info")
@@ -348,7 +414,9 @@ class GuiSessionStore(QObject):
             "subtitle_key": phase.get("subtitle_key", ""),
             "description_key": phase.get("description_key", ""),
             "status_key": phase.get("status_key", ""),
-            "status_text": gui_text("phase.status.actionable") if implemented else gui_text("phase.status.placeholder"),
+            "status_text": gui_text("phase.status.actionable") if phase.get("actionable", False) else (
+                gui_text("phase.status.ready") if implemented else gui_text("phase.status.placeholder")
+            ),
             "disabled_reason": phase.get("disabled_reason") or gui_text(
                 "phase.disabled.placeholder",
                 handoff_task=phase.get("handoff_task", "后续任务"),

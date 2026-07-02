@@ -5,6 +5,7 @@
 """
 import logging.handlers
 from datetime import datetime
+import copy
 import random
 import logging
 import logging.handlers
@@ -58,6 +59,7 @@ class GameState:
 
         # 阶段执行跟踪
         self._executed_phases: Set[str] = set()
+        self._phase_results: Dict[str, Any] = {}
 
         # MVP 0.5 新增字段
         self._provinces: Dict[int, Province] = {}
@@ -140,6 +142,7 @@ class GameState:
         self._curia = Curia()
         self._contracts.clear()
         self._executed_phases.clear()
+        self._phase_results.clear()
 
         # MVP 0.5 重置新增字段
         self._provinces.clear()
@@ -477,6 +480,7 @@ class GameState:
             "_national_public_land": self._national_public_land,
             "_turn": self._turn.to_dict() if self._turn else None,
             "_executed_phases": list(self._executed_phases),
+            "_phase_results": self._phase_results.copy(),
             "_contract_id_counter": self._contract_id_counter,
             "_treasury_deficit_turns": self._treasury_deficit_turns,
             "_pending_land_acts": self._pending_land_acts.copy(),
@@ -520,6 +524,7 @@ class GameState:
         if data.get("_turn") and self._turn:
             self._turn.load_from_dict(data["_turn"])
         self._executed_phases = set(data.get("_executed_phases", []))
+        self._phase_results = data.get("_phase_results", {}).copy()
         self._contract_id_counter = data.get("_contract_id_counter", 1)
         self._treasury_deficit_turns = data.get("_treasury_deficit_turns", 0)
         self._pending_land_acts = data.get("_pending_land_acts", []).copy()
@@ -619,6 +624,7 @@ class GameState:
         instance._curia = Curia()
         instance._contracts = []
         instance._executed_phases = set()
+        instance._phase_results = {}
         instance._initialize_mortality_pool()
 
         # MVP 0.5 新增字段
@@ -834,6 +840,7 @@ class GameState:
         if self._turn:
             self._turn.advance_year()
         self._executed_phases.clear()
+        self._phase_results.clear()
 
     def is_phase_executed(self, phase_name: str) -> bool:
         """检查阶段是否已执行"""
@@ -842,6 +849,18 @@ class GameState:
     def mark_phase_executed(self, phase_name: str):
         """标记阶段已执行"""
         self._executed_phases.add(phase_name)
+
+    def record_phase_result(self, phase_id: str, result: Any) -> None:
+        """记录阶段结算结果，供 GUI/API 在阶段推进前后读取。"""
+        self._phase_results[phase_id] = copy.deepcopy(result)
+
+    def get_phase_result(self, phase_id: str) -> Any:
+        """读取阶段结算结果。"""
+        return copy.deepcopy(self._phase_results.get(phase_id))
+
+    def clear_phase_result(self, phase_id: str) -> None:
+        """清除阶段结算结果。"""
+        self._phase_results.pop(phase_id, None)
 
     # ========== 战争/军事系统 ==========
 
@@ -1009,6 +1028,10 @@ class GameState:
     def active_events(self) -> Dict[str, Any]:
         """返回当前生效的事件字典副本"""
         return self._active_events.copy()
+
+    def record_active_event(self, event_key: str, payload: Any) -> None:
+        """记录本回合生效事件，供阶段服务写入权威状态。"""
+        self._active_events[event_key] = payload
 
     def clear_active_events(self):
         """清除本回合生效的事件（在决议阶段调用）"""

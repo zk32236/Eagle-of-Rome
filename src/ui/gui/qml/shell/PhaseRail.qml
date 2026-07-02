@@ -65,7 +65,7 @@ Rectangle {
                             elide: Text.ElideRight
                         }
                         Text {
-                            text: modelData.implemented ? GuiText.actionableShort : modelData.handoff_task
+                            text: modelData.actionable ? GuiText.actionableShort : (modelData.implemented ? GuiText.connectedShort : modelData.handoff_task)
                             color: sessionStore.selectedPhaseId === modelData.id ? theme.textPrimary : theme.textMuted
                             font.pixelSize: 9
                             Layout.fillWidth: true

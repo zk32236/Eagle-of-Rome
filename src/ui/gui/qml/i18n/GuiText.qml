@@ -13,10 +13,21 @@ QtObject {
     readonly property string currentPhase: "当前阶段"
     readonly property string populationFallbackName: "人口"
     readonly property string actionableShort: "可操作"
+    readonly property string connectedShort: "已接入"
     readonly property string statusActionable: "状态：可操作真实切片"
+    readonly property string statusReady: "状态：已接入 / 等待正确阶段或玩家"
     readonly property string statusPlaceholder: "状态：后续任务承接 / 暂不可操作"
     readonly property string completeCurrentPlayer: "完成当前玩家操作"
     readonly property string refreshAuthoritativeState: "刷新权威状态"
+    readonly property string mortalityTitle: "天命阶段"
+    readonly property string mortalityIntro: "抽取年度天命事件，并将结果写入共和国权威状态。"
+    readonly property string mortalityReady: "准备执行天命"
+    readonly property string mortalityResolved: "天命已执行"
+    readonly property string executeMortality: "执行天命"
+    readonly property string advanceMortality: "进入收入阶段"
+    readonly property string mortalityNoResult: "尚未执行天命。"
+    readonly property string mortalityEventsTitle: "天命结果"
+    readonly property string mortalityContinueHint: "天命完成后将进入真实下一阶段：收入。"
     readonly property string phaseHelpRequested: "Phase help requested"
     readonly property string placeholderFallbackTask: "GUI-P0"
     readonly property string placeholderFallbackName: "尚未迁移"
@@ -26,5 +37,28 @@ QtObject {
     function playerScope(viewerName, viewerId) {
         var label = viewerName || viewerId || "当前"
         return "当前权限：仅显示 " + label + " 派系资源和人物；未迁移阶段不会改变游戏状态。"
+    }
+
+    function mortalityImpactText(impact) {
+        if (!impact) return ""
+        if (impact.type === "figure_death") {
+            return "死亡：" + (impact.figure_name || impact.figure_id || "未知人物")
+        }
+        if (impact.type === "active_event") {
+            return "本回合事件：" + (impact.key || "")
+        }
+        if (impact.type === "province_grievance") {
+            return "民怨：" + (impact.province_name || impact.province_id || "") + " " + impact.old + "→" + impact.new
+        }
+        if (impact.type === "war_threat") {
+            return "战争威胁：" + (impact.war_name || impact.war_id || "") + " " + impact.old + "→" + impact.new
+        }
+        if (impact.type === "hero_spawn") {
+            return impact.subtype === "historical" ? "英雄登场：" + impact.name : "英雄登场：随机猛人"
+        }
+        if (impact.type === "disaster") {
+            return "灾害：" + (impact.province_name || impact.province_id || "") + " 损失 " + Math.round((impact.loss_ratio || 0) * 100) + "%"
+        }
+        return impact.type || ""
     }
 }

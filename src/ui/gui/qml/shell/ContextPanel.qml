@@ -96,8 +96,8 @@ Rectangle {
                 Layout.fillWidth: true
             }
             Text {
-                text: sessionStore.selectedPhaseSummary.implemented ? GuiText.statusActionable : GuiText.statusPlaceholder
-                color: sessionStore.selectedPhaseSummary.implemented ? theme.statusSuccess : theme.statusWarning
+                text: sessionStore.selectedPhaseSummary.actionable ? GuiText.statusActionable : (sessionStore.selectedPhaseSummary.implemented ? GuiText.statusReady : GuiText.statusPlaceholder)
+                color: sessionStore.selectedPhaseSummary.actionable ? theme.statusSuccess : theme.statusWarning
                 font.pixelSize: 11
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true

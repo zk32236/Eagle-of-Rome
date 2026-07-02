@@ -23,12 +23,12 @@ class TestSessionApi:
         assert "state" in result["data"]
         assert "human_players" in result["data"]
         state = result["data"]["state"]
-        assert isinstance(state, GameState)
-        # 检查前置阶段已标记
-        assert state.is_phase_executed("mortality")
-        assert state.is_phase_executed("revenue")
-        assert state.is_phase_executed("forum")
-        # 人口阶段未执行
+        assert hasattr(state, "is_phase_executed")
+        assert result["data"]["start_phase"] == "mortality"
+        # 默认 GUI 流程从真实天命阶段开始
+        assert not state.is_phase_executed("mortality")
+        assert not state.is_phase_executed("revenue")
+        assert not state.is_phase_executed("forum")
         assert not state.is_phase_executed("population")
 
     def test_get_session_snapshot(self):
@@ -52,7 +52,8 @@ class TestSessionApi:
         assert "phase_navigation" in data
         assert "selected_phase_summary" in data
         assert "global_warnings" in data
-        assert data["current_phase_id"] == "population"
+        assert data["current_phase_id"] == "mortality"
+        assert data["selected_phase_id"] == "mortality"
         assert len(data["phase_navigation"]) == 7
 
     def test_shell_phase_navigation_matches_gui_p0_sprint_order(self):
@@ -84,8 +85,8 @@ class TestSessionApi:
             "resolution",
         ]
 
-    def test_shell_phase_navigation_marks_population_as_only_actionable_slice(self):
-        """Only the GUI-P0-01 population slice is actionable in GUI-P0-02A."""
+    def test_shell_phase_navigation_marks_current_implemented_slice_actionable(self):
+        """Only current implemented phase for current player is actionable."""
         result = session_api.create_gui_prototype_session()
         state = result["data"]["state"]
         viewer_id = result["data"]["human_players"][0]
@@ -93,11 +94,14 @@ class TestSessionApi:
         snapshot = session_api.get_session_snapshot(state, viewer_id)
         phases = {phase["id"]: phase for phase in snapshot["data"]["phase_navigation"]}
 
+        assert phases["mortality"]["implemented"] is True
+        assert phases["mortality"]["actionable"] is True
+        assert phases["mortality"]["name_key"] == "phase.mortality.name"
         assert phases["population"]["implemented"] is True
-        assert phases["population"]["actionable"] is True
-        assert phases["population"]["name_key"] == "phase.population.name"
+        assert phases["population"]["actionable"] is False
+        assert phases["population"]["disabled_reason_key"] == "phase.disabled.not_current"
         for phase_id, phase in phases.items():
-            if phase_id == "population":
+            if phase_id in {"mortality", "population"}:
                 continue
             assert phase["implemented"] is False
             assert phase["actionable"] is False
@@ -117,13 +121,26 @@ class TestSessionApi:
         data = snapshot["data"]
 
         summary = data["selected_phase_summary"]
-        assert summary["name_key"] == "phase.population.name"
+        assert summary["name_key"] == "phase.mortality.name"
         assert summary["status_key"] == "phase.status.actionable"
-        assert data["global_warnings"][0]["key"] == "warning.gui_p0_02a.shell_only"
+        assert data["global_warnings"][0]["key"] == "warning.gui_p0_02b.partial_loop"
+
+    def test_can_create_population_fixture_explicitly(self):
+        result = session_api.create_gui_prototype_session(start_phase="population")
+        state = result["data"]["state"]
+        viewer_id = result["data"]["human_players"][0]
+
+        snapshot = session_api.get_session_snapshot(state, viewer_id)
+        assert snapshot["data"]["current_phase_id"] == "population"
+        phases = {phase["id"]: phase for phase in snapshot["data"]["phase_navigation"]}
+        assert phases["mortality"]["executed"] is True
+        assert phases["revenue"]["executed"] is True
+        assert phases["forum"]["executed"] is True
+        assert phases["population"]["actionable"] is True
 
     def test_snapshot_no_other_faction_treasury(self):
         """快照不包含其他派系金库"""
-        result = session_api.create_gui_prototype_session()
+        result = session_api.create_gui_prototype_session(start_phase="population")
         state = result["data"]["state"]
         human_players = result["data"]["human_players"]
         viewer_id = human_players[0]
@@ -140,7 +157,7 @@ class TestSessionApi:
 
     def test_get_population_view(self):
         """获取人口阶段视图"""
-        result = session_api.create_gui_prototype_session()
+        result = session_api.create_gui_prototype_session(start_phase="population")
         state = result["data"]["state"]
         human_players = result["data"]["human_players"]
         viewer_id = human_players[0]
@@ -156,7 +173,7 @@ class TestSessionApi:
 
     def test_complete_population_player(self):
         """完成当前玩家操作并切换"""
-        result = session_api.create_gui_prototype_session()
+        result = session_api.create_gui_prototype_session(start_phase="population")
         state = result["data"]["state"]
         human_players = result["data"]["human_players"]
         current = human_players[0]
@@ -170,7 +187,7 @@ class TestSessionApi:
 
     def test_non_current_player_rejected(self):
         """非当前玩家请求被拒绝"""
-        result = session_api.create_gui_prototype_session()
+        result = session_api.create_gui_prototype_session(start_phase="population")
         state = result["data"]["state"]
         human_players = result["data"]["human_players"]
         if len(human_players) < 2:

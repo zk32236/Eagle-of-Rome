@@ -2,5 +2,6 @@
 
 from .land_trading_service import LandTradingService
 from .economic_service import EconomicService
+from .mortality_service import MortalityService
 
-__all__ = ['LandTradingService', 'EconomicService']
+__all__ = ['LandTradingService', 'EconomicService', 'MortalityService']

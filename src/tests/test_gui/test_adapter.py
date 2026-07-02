@@ -16,8 +16,8 @@ from src.api import session_api
 class TestGuiApiAdapter:
     """GUI API Adapter 测试"""
 
-    def setup_adapter(self):
-        result = session_api.create_gui_prototype_session()
+    def setup_adapter(self, start_phase="population"):
+        result = session_api.create_gui_prototype_session(start_phase=start_phase)
         assert result["success"]
         state = result["data"]["state"]
         human_players = result["data"]["human_players"]
@@ -88,7 +88,7 @@ class TestGuiApiAdapter:
         assert messages[-1][0] == "warning"
 
     def test_session_store_can_return_to_population_after_placeholder_phase(self):
-        result = session_api.create_gui_prototype_session()
+        result = session_api.create_gui_prototype_session(start_phase="population")
         state = result["data"]["state"]
         store = GuiSessionStore(state)
         store.initialize(result["data"]["human_players"][0])
@@ -100,3 +100,45 @@ class TestGuiApiAdapter:
         assert store.selectedPhaseId == "population"
         assert store.selectedPhaseSummary["implemented"] is True
         assert isinstance(store.myFigures, list)
+
+    def test_adapter_executes_mortality_and_keeps_current_phase_until_advance(self):
+        result = session_api.create_gui_prototype_session()
+        state = result["data"]["state"]
+        player_id = result["data"]["human_players"][0]
+        adapter = GuiApiAdapter(state)
+
+        feedback = adapter.execute_mortality(player_id)
+
+        assert feedback["success"]
+        assert feedback["data"]["phase_executed"] is False
+        assert feedback["data"]["next_phase_id"] == "revenue"
+        snapshot = adapter.get_snapshot(player_id)
+        assert snapshot["current_phase_id"] == "mortality"
+        assert snapshot["current_phase_id"] != "population"
+
+    def test_session_store_executes_mortality_and_keeps_result_visible(self):
+        result = session_api.create_gui_prototype_session()
+        state = result["data"]["state"]
+        store = GuiSessionStore(state)
+        store.initialize(result["data"]["human_players"][0])
+
+        assert store.selectedPhaseId == "mortality"
+        assert store.canExecuteMortality is True
+        feedback = store.doExecuteMortality()
+
+        assert feedback["success"]
+        assert store.currentPhaseId == "mortality"
+        assert store.currentPhaseId != "population"
+        assert store.selectedPhaseId == "mortality"
+        assert store.canExecuteMortality is False
+        assert store.canAdvanceMortality is True
+        assert len(store.mortalityEvents) >= 1
+
+        advance = store.doAdvanceMortality()
+
+        assert advance["success"]
+        assert store.currentPhaseId == "revenue"
+        assert store.selectedPhaseId == "revenue"
+        assert store.selectedPhaseSummary["implemented"] is False
+        assert store.selectedPhaseSummary["handoff_task"] == "GUI-P0-02D"
+        assert store.canAdvanceMortality is False

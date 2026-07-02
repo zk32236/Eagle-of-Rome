@@ -135,6 +135,7 @@ class TestGameStateMultiInstance(unittest.TestCase):
         state._treasury = 100
         state._members[1] = None
         state._event_log.append("test")
+        state.record_phase_result("mortality", {"events": [{"name": "旧天命"}]})
 
         state.reset()
 
@@ -142,8 +143,19 @@ class TestGameStateMultiInstance(unittest.TestCase):
         self.assertEqual(state._treasury, 0)
         self.assertEqual(len(state._members), 0)
         self.assertEqual(len(state._event_log), 0)
+        self.assertIsNone(state.get_phase_result("mortality"))
         # 确保天命池重新初始化
         self.assertEqual(len(state._mortality_pool), GameState.MAX_MEMBER_ID)
+
+    def test_phase_result_returns_copy(self):
+        """读取阶段结果不应污染内部权威结果"""
+        state = GameState.create_for_testing({})
+        state.record_phase_result("mortality", {"events": [{"name": "天命"}]})
+
+        result = state.get_phase_result("mortality")
+        result["events"][0]["name"] = "被外部修改"
+
+        self.assertEqual(state.get_phase_result("mortality")["events"][0]["name"], "天命")
 
     def test_reset_does_not_affect_other_instances(self):
         """验证重置一个实例不影响其他实例"""

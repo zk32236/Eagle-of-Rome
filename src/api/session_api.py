@@ -21,19 +21,22 @@ logger = logging.getLogger("EOR-GUI")
 # 1. 会话创建
 # ---------------------------------------------------------------------------
 
-def create_gui_prototype_session(config_path: Optional[str] = None) -> dict:
+def create_gui_prototype_session(config_path: Optional[str] = None, start_phase: str = "mortality") -> dict:
     """
     创建 GUI 原型会话。
-    使用 gui_prototype.json 场景，并标记 forum 为已完成，直接进入人口阶段。
+    使用 gui_prototype.json 场景。默认从真实天命阶段开始；测试可显式指定 start_phase。
     """
     try:
         state = GameState(config_path)
         ScenarioLoader.load_scenario(state, "gui_prototype.json")
 
-        # 标记前置阶段已完成，直接进入人口阶段
-        state.mark_phase_executed("mortality")
-        state.mark_phase_executed("revenue")
-        state.mark_phase_executed("forum")
+        phase_order = _phase_order()
+        if start_phase not in phase_order:
+            start_phase = "mortality"
+        for phase_id in phase_order:
+            if phase_id == start_phase:
+                break
+            state.mark_phase_executed(phase_id)
 
         # 设置当前玩家为第一个 HUMAN 玩家
         human_players = [
@@ -44,13 +47,16 @@ def create_gui_prototype_session(config_path: Optional[str] = None) -> dict:
             state.set_current_player(human_players[0])
             state.set_turn_order(human_players)
 
+        current_player = state.get_current_player()
         logger.info("GUI prototype session created", extra={
             "players": human_players,
-            "current_player": state._current_player_id
+            "current_player": current_player.player_id if current_player else None,
+            "start_phase": start_phase,
         })
         return api_response(True, "GUI prototype session created", {
             "state": state,
             "human_players": human_players,
+            "start_phase": start_phase,
         })
     except Exception as e:
         logger.exception("Session creation failed")
@@ -112,9 +118,9 @@ def get_session_snapshot(state: GameState, viewer_player_id: str) -> dict:
                 "total_influence": sum(m.influence for m in members),
             }
 
-        current_phase_id = "population"
-        phase_nav = _build_phase_navigation(state, current_phase_id)
-        selected_phase_summary = _build_phase_summary("population")
+        current_phase_id = _infer_current_phase_id(state)
+        phase_nav = _build_phase_navigation(state, current_phase_id, viewer_player_id)
+        selected_phase_summary = _build_phase_summary(current_phase_id, state, viewer_player_id)
         global_warnings = _build_global_warnings(state, viewer_player_id)
 
         # 当前可执行动作
@@ -129,7 +135,7 @@ def get_session_snapshot(state: GameState, viewer_player_id: str) -> dict:
             "viewer_faction_id": viewer.faction_id,
             "is_current_player": state.is_current_player(viewer_player_id),
             "current_phase_id": current_phase_id,
-            "selected_phase_id": "population",
+            "selected_phase_id": current_phase_id,
             "public_resources": public_resources,
             "faction_resources": faction_resources,
             "my_figures": my_figures,
@@ -194,9 +200,11 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
 
         # 是否允许操作
         is_current = state.is_current_player(viewer_player_id)
-        can_campaign = is_current and len(my_campaigns) < len(my_figures)
-        can_vote = is_current
-        can_complete = is_current
+        current_phase_id = _infer_current_phase_id(state)
+        is_population_phase = current_phase_id == "population"
+        can_campaign = is_current and is_population_phase and len(my_campaigns) < len(my_figures)
+        can_vote = is_current and is_population_phase
+        can_complete = is_current and is_population_phase
 
         # 字段级错误/禁用原因
         field_errors = {}
@@ -209,6 +217,7 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
             "my_votes": my_votes,
             "my_campaigns": my_campaigns,
             "is_current_player": is_current,
+            "current_phase_id": current_phase_id,
             "can_campaign": can_campaign,
             "can_vote": can_vote,
             "can_complete": can_complete,
@@ -313,6 +322,21 @@ def _phase_name(phase_id: str) -> str:
     return _phase_definition_map().get(phase_id, {}).get("name", phase_id)
 
 
+def _phase_order() -> List[str]:
+    return ["mortality", "revenue", "forum", "population", "senate", "combat", "resolution"]
+
+
+def _implemented_phase_ids() -> set:
+    return {"mortality", "population"}
+
+
+def _infer_current_phase_id(state: GameState) -> str:
+    for phase_id in _phase_order():
+        if not state.is_phase_executed(phase_id):
+            return phase_id
+    return "resolution"
+
+
 def _phase_definitions() -> List[Dict[str, Any]]:
     return [
         {
@@ -322,7 +346,7 @@ def _phase_definitions() -> List[Dict[str, Any]]:
             "description_key": "phase.mortality.description",
             "name": "天命",
             "subtitle": "死亡、继承与年度开端",
-            "description": "天命阶段将在 GUI-P0-02B 承接。本轮仅提供阶段入口和状态摘要。",
+            "description": "抽取天命事件并应用死亡、丰收、和平、猛男或灾害等年度影响。",
             "handoff_task": "GUI-P0-02B",
         },
         {
@@ -392,12 +416,24 @@ def _phase_definition_map() -> Dict[str, Dict[str, Any]]:
     return {item["id"]: item for item in _phase_definitions()}
 
 
-def _build_phase_navigation(state: GameState, current_phase_id: str) -> List[Dict[str, Any]]:
+def _build_phase_navigation(state: GameState, current_phase_id: str, viewer_player_id: str) -> List[Dict[str, Any]]:
     phase_nav = []
     for index, definition in enumerate(_phase_definitions(), start=1):
         phase_id = definition["id"]
-        implemented = phase_id == "population"
+        implemented = phase_id in _implemented_phase_ids()
         current = phase_id == current_phase_id
+        actionable = implemented and current and state.is_current_player(viewer_player_id)
+        disabled_reason = ""
+        disabled_reason_key = ""
+        if not implemented:
+            disabled_reason_key = "phase.disabled.placeholder"
+            disabled_reason = f"{definition['handoff_task']} 后续任务承接，当前暂不可操作"
+        elif not current:
+            disabled_reason_key = "phase.disabled.not_current"
+            disabled_reason = "该阶段不是当前阶段，暂不可操作"
+        elif not state.is_current_player(viewer_player_id):
+            disabled_reason_key = "phase.disabled.not_player"
+            disabled_reason = "当前 viewer 不是行动玩家，暂不可操作"
         phase_nav.append({
             "id": phase_id,
             "index": index,
@@ -411,10 +447,10 @@ def _build_phase_navigation(state: GameState, current_phase_id: str) -> List[Dic
             "status": "current" if current else ("completed" if state.is_phase_executed(phase_id) else "placeholder"),
             "implemented": implemented,
             "enabled": True,
-            "actionable": implemented and current,
+            "actionable": actionable,
             "handoff_task": definition["handoff_task"],
-            "disabled_reason_key": "" if implemented else "phase.disabled.placeholder",
-            "disabled_reason": "" if implemented else f"{definition['handoff_task']} 后续任务承接，当前暂不可操作",
+            "disabled_reason_key": disabled_reason_key,
+            "disabled_reason": disabled_reason,
             "locked_reason": "" if implemented else f"{definition['name']}阶段尚未迁移到 GUI",
             "executed": state.is_phase_executed(phase_id),
             "current": current,
@@ -423,32 +459,45 @@ def _build_phase_navigation(state: GameState, current_phase_id: str) -> List[Dic
     return phase_nav
 
 
-def _build_phase_summary(phase_id: str) -> Dict[str, Any]:
+def _build_phase_summary(phase_id: str, state: Optional[GameState] = None, viewer_player_id: str = "") -> Dict[str, Any]:
     definition = _phase_definition_map().get(phase_id, {})
-    implemented = phase_id == "population"
+    implemented = phase_id in _implemented_phase_ids()
+    current = state is not None and phase_id == _infer_current_phase_id(state)
+    actionable = bool(implemented and current and viewer_player_id and state and state.is_current_player(viewer_player_id))
+    disabled_reason = ""
+    disabled_reason_key = ""
+    if not implemented:
+        disabled_reason_key = "phase.disabled.placeholder"
+        disabled_reason = f"{definition.get('handoff_task', '后续任务')} 承接，本轮不会改变游戏状态"
+    elif not current:
+        disabled_reason_key = "phase.disabled.not_current"
+        disabled_reason = "该阶段不是当前阶段，暂不可操作"
+    elif state and viewer_player_id and not state.is_current_player(viewer_player_id):
+        disabled_reason_key = "phase.disabled.not_player"
+        disabled_reason = "当前 viewer 不是行动玩家，暂不可操作"
     return {
             "id": phase_id,
             "name_key": definition.get("name_key", ""),
             "subtitle_key": definition.get("subtitle_key", ""),
             "description_key": definition.get("description_key", ""),
-            "status_key": "phase.status.actionable" if implemented else "phase.status.placeholder",
-            "disabled_reason_key": "" if implemented else "phase.disabled.placeholder",
+            "status_key": "phase.status.actionable" if actionable else ("phase.status.ready" if implemented else "phase.status.placeholder"),
+            "disabled_reason_key": disabled_reason_key,
             "name": definition.get("name", phase_id),
             "subtitle": definition.get("subtitle", ""),
             "description": definition.get("description", ""),
         "implemented": implemented,
-        "actionable": implemented,
+        "actionable": actionable,
         "handoff_task": definition.get("handoff_task", ""),
-        "status_text": "可操作真实切片" if implemented else "后续任务承接 / 暂不可操作",
-        "disabled_reason": "" if implemented else f"{definition.get('handoff_task', '后续任务')} 承接，本轮不会改变游戏状态",
+        "status_text": "可操作真实切片" if actionable else ("已接入 / 等待正确阶段或玩家" if implemented else "后续任务承接 / 暂不可操作"),
+        "disabled_reason": disabled_reason,
     }
 
 
 def _build_global_warnings(state: GameState, viewer_player_id: str) -> List[Dict[str, str]]:
     warnings: List[Dict[str, str]] = [{
         "type": "info",
-        "key": "warning.gui_p0_02a.shell_only",
-        "message": "GUI-P0-02A 仅扩展主壳与阶段导航；未迁移阶段为只读占位。",
+        "key": "warning.gui_p0_02b.partial_loop",
+        "message": "GUI-P0-02B 接入天命与人口；收入、广场、元老院、战争、决算仍为只读占位。",
     }]
     if not state.is_current_player(viewer_player_id):
         warnings.append({
@@ -464,7 +513,10 @@ def _build_available_actions(state: GameState, viewer_player_id: str) -> List[st
     if not state.is_current_player(viewer_player_id):
         return []
     actions = []
-    if not state.is_phase_executed("population"):
+    current_phase_id = _infer_current_phase_id(state)
+    if current_phase_id == "mortality" and not state.is_phase_executed("mortality"):
+        actions.append("execute_mortality")
+    if current_phase_id == "population" and not state.is_phase_executed("population"):
         actions.append("campaign")
         actions.append("vote")
         actions.append("complete_player")
