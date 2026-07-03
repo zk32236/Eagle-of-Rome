@@ -70,12 +70,13 @@ class TestGuiApiAdapter:
         assert not feedback["success"]
         assert feedback["feedback_type"] == "error"
 
-    def test_session_store_selects_placeholder_phase_without_business_execution(self):
+    def test_session_store_selects_senate_readonly_phase_without_business_execution(self):
         result = session_api.create_gui_prototype_session()
         assert result["success"]
         state = result["data"]["state"]
         store = GuiSessionStore(state)
         store.initialize(result["data"]["human_players"][0])
+        proposals_before = list(state.get_senate_proposals())
 
         messages = []
         store.feedbackRaised.connect(lambda ftype, message: messages.append((ftype, message)))
@@ -83,9 +84,17 @@ class TestGuiApiAdapter:
 
         assert feedback["success"]
         assert store.selectedPhaseId == "senate"
-        assert store.selectedPhaseSummary["implemented"] is False
+        assert store.selectedPhaseSummary["implemented"] is True
+        assert store.selectedPhaseSummary["interaction_mode"] == "readonly"
+        assert store.selectedPhaseSummary["actionable"] is False
         assert store.selectedPhaseSummary["handoff_task"] == "GUI-P0-02C"
-        assert messages[-1][0] == "warning"
+        assert store.senateView["interaction_mode"] == "readonly"
+        assert store.senateView["can_create_proposal"] is False
+        assert store.senateView["can_vote"] is False
+        assert store.senateView["can_resolve"] is False
+        assert state.get_senate_proposals() == proposals_before
+        assert state.is_phase_executed("senate") is False
+        assert messages[-1][0] == "info"
 
     def test_session_store_can_return_to_population_after_placeholder_phase(self):
         result = session_api.create_gui_prototype_session(start_phase="population")
@@ -142,3 +151,17 @@ class TestGuiApiAdapter:
         assert store.selectedPhaseSummary["implemented"] is False
         assert store.selectedPhaseSummary["handoff_task"] == "GUI-P0-02D"
         assert store.canAdvanceMortality is False
+
+    def test_adapter_get_senate_view_exposes_readonly_dto(self):
+        adapter, state, players = self.setup_adapter(start_phase="senate")
+        state.set_current_player(players[0])
+
+        view = adapter.get_senate_view(players[0])
+
+        assert view["phase_id"] == "senate"
+        assert view["interaction_mode"] == "readonly"
+        assert view["actionable"] is False
+        assert view["can_create_proposal"] is False
+        assert view["can_vote"] is False
+        assert view["can_resolve"] is False
+        assert "faction_leaders" in view

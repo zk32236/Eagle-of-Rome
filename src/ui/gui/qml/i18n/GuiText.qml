@@ -28,6 +28,27 @@ QtObject {
     readonly property string mortalityNoResult: "尚未执行天命。"
     readonly property string mortalityEventsTitle: "天命结果"
     readonly property string mortalityContinueHint: "天命完成后将进入真实下一阶段：收入。"
+    readonly property string senateTitle: "元老院阶段"
+    readonly property string senateReadonlyBadge: "只读状态"
+    readonly property string senateReadonlyIntro: "展示元老院公开状态；提案、投票与结算由后续任务接入。"
+    readonly property string senatePresidingOfficer: "主持官"
+    readonly property string senateFactionLeaders: "派系领袖"
+    readonly property string senateActiveWars: "进行中的对外战争"
+    readonly property string senateWarThreats: "战争威胁"
+    readonly property string senatePendingPeace: "待审停战草案"
+    readonly property string senateGovernorVacancies: "总督空缺"
+    readonly property string senatePendingContracts: "待处理合同"
+    readonly property string senateNoItems: "暂无记录"
+    readonly property string senateActionsDisabled: "政治行动暂未开放"
+    readonly property string senateFutureTaskHint: "提案创建、表决、否决与结算将在 GUI-P0-02C 后续子任务承接。"
+    readonly property string senateInfluenceLabel: "影响力"
+    readonly property string senateThreatLabel: "威胁"
+    readonly property string senateNavalRequiredLabel: "需要海战"
+    readonly property string senateIndemnityLabel: "赔款"
+    readonly property string senateYearUnit: "年"
+    readonly property string senateCostLabel: "成本"
+    readonly property string senateExpectedProfitLabel: "预期收益"
+    readonly property string senateLeaderCountUnit: "位"
     readonly property string phaseHelpRequested: "Phase help requested"
     readonly property string placeholderFallbackTask: "GUI-P0"
     readonly property string placeholderFallbackName: "尚未迁移"
@@ -60,5 +81,33 @@ QtObject {
             return "灾害：" + (impact.province_name || impact.province_id || "") + " 损失 " + Math.round((impact.loss_ratio || 0) * 100) + "%"
         }
         return impact.type || ""
+    }
+
+    function senateCountLine(view) {
+        if (!view || !view.summary) return ""
+        return "战争 " + (view.summary.active_foreign_war_count || 0)
+            + " / 威胁 " + (view.summary.war_threat_count || 0)
+            + " / 草案 " + (view.summary.pending_peace_treaty_count || 0)
+            + " / 合同 " + (view.summary.pending_contract_count || 0)
+    }
+
+    function senateInfluenceDetail(factionName, influence) {
+        return factionName + " / " + senateInfluenceLabel + " " + (influence || 0)
+    }
+
+    function senateThreatDetail(threatLevel, navalRequired) {
+        return senateThreatLabel + " " + threatLevel + (navalRequired ? " / " + senateNavalRequiredLabel : "")
+    }
+
+    function senatePeaceDetail(indemnity, duration) {
+        return senateIndemnityLabel + " " + indemnity + " T / " + (duration || 0) + " " + senateYearUnit
+    }
+
+    function senateContractDetail(baseCost, expectedProfit) {
+        return senateCostLabel + " " + baseCost + " T / " + senateExpectedProfitLabel + " " + (expectedProfit || 0) + " T"
+    }
+
+    function senateLeaderCount(count) {
+        return count + " " + senateLeaderCountUnit
     }
 }

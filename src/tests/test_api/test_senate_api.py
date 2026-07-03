@@ -76,6 +76,40 @@ class TestSenateAPI(unittest.TestCase):
         self.assertIn("presiding_officer", data)
         self.assertEqual(data["presiding_officer"]["figure_id"], 1)  # 执政官
 
+    def test_get_senate_view_readonly(self):
+        result = senate_api.get_senate_view(self.state, "player1")
+
+        self.assertTrue(result["success"])
+        data = result["data"]
+        self.assertEqual(data["phase_id"], "senate")
+        self.assertEqual(data["viewer_player_id"], "player1")
+        self.assertEqual(data["interaction_mode"], "readonly")
+        self.assertFalse(data["actionable"])
+        self.assertFalse(data["can_create_proposal"])
+        self.assertFalse(data["can_vote"])
+        self.assertFalse(data["can_resolve"])
+        self.assertIn("summary", data)
+        self.assertIn("faction_leaders", data)
+        self.assertIn("presiding_officer", data)
+        self.assertIn("active_foreign_wars", data)
+        self.assertIn("war_threats", data)
+        self.assertIn("pending_peace_treaties", data)
+        self.assertIn("governor_vacancies", data)
+        self.assertIn("pending_contracts", data)
+        self.assertTrue(data["warnings"])
+
+    def test_get_senate_view_rejects_invalid_viewer(self):
+        result = senate_api.get_senate_view(self.state, "missing_player")
+
+        self.assertFalse(result["success"])
+        self.assertIn("Viewer player not found", result["message"])
+
+    def test_get_senate_view_rejects_invalid_state(self):
+        result = senate_api.get_senate_view(None, "player1")
+
+        self.assertFalse(result["success"])
+        self.assertIn("无效的游戏状态", result["message"])
+
     def test_propose_war(self):
         # 创建威胁战争，需要提供 war_type 和 strength
         war = War(id="war1", name="测试战争", war_type=WarType.FOREIGN, strength=5, naval_required=False)

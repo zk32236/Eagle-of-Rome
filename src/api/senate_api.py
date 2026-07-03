@@ -35,6 +35,76 @@ def get_senate_initial_info(state: GameState) -> dict:
         return api_response(False, f"获取信息失败: {exc}", errors=[str(exc)])
 
 
+def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
+    """返回 GUI 元老院只读视图，不执行提案、投票或结算业务。"""
+    if not state:
+        return api_response(False, "无效的游戏状态")
+    try:
+        viewer = state.get_player(viewer_player_id)
+        if not viewer:
+            return api_response(False, "Viewer player not found")
+
+        result = _political_system(state).build_initial_info()
+        if not result.get("success", False):
+            return api_response(
+                False,
+                result.get("message", "获取元老院视图失败"),
+                data={},
+                errors=result.get("errors", []),
+            )
+
+        info = result.get("data", {}) or {}
+        current_phase_id = _infer_current_phase_id(state)
+        current_player = state.get_current_player()
+        active_foreign_wars = info.get("active_foreign_wars", [])
+        war_threats = info.get("war_threats", [])
+        pending_peace_treaties = info.get("pending_peace_treaties", [])
+        governor_vacancies = info.get("governor_vacancies", {})
+        pending_contracts = info.get("pending_contracts", [])
+
+        data = {
+            "phase_id": "senate",
+            "viewer_player_id": viewer_player_id,
+            "current_player_id": current_player.player_id if current_player else None,
+            "is_current_phase": current_phase_id == "senate",
+            "is_current_player": state.is_current_player(viewer_player_id),
+            "current_phase_id": current_phase_id,
+            "interaction_mode": "readonly",
+            "actionable": False,
+            "can_create_proposal": False,
+            "can_vote": False,
+            "can_resolve": False,
+            "summary": {
+                "title": "元老院只读状态",
+                "status": "readonly",
+                "message": "元老院已接入只读状态；提案、投票与结算由后续任务承接。",
+                "faction_leader_count": len(info.get("faction_leaders", [])),
+                "active_foreign_war_count": len(active_foreign_wars),
+                "war_threat_count": len(war_threats),
+                "pending_peace_treaty_count": len(pending_peace_treaties),
+                "pending_contract_count": len(pending_contracts),
+            },
+            "faction_leaders": info.get("faction_leaders", []),
+            "presiding_officer": info.get("presiding_officer"),
+            "active_foreign_wars": active_foreign_wars,
+            "war_threats": war_threats,
+            "pending_peace_treaties": pending_peace_treaties,
+            "governor_vacancies": governor_vacancies,
+            "pending_contracts": pending_contracts,
+            "warnings": [
+                {
+                    "type": "info",
+                    "key": "senate.readonly.no_actions",
+                    "message": "当前 GUI 页面仅展示元老院公开状态，不开放政治行动。",
+                }
+            ],
+            "disabled_reason": "元老院操作将在 GUI-P0-02C 后续子任务接入。",
+        }
+        return api_response(True, "Senate readonly view refreshed", data)
+    except Exception as exc:
+        return api_response(False, f"获取元老院视图失败: {exc}", errors=[str(exc)])
+
+
 def propose(state: GameState, player_id: str, proposal_type: str, bypass_turn_check: bool = False, **kwargs) -> dict:
     """记录元老院提案。"""
     if not state:
@@ -51,6 +121,13 @@ def propose(state: GameState, player_id: str, proposal_type: str, bypass_turn_ch
         data=result.get("data", {}),
         errors=result.get("errors", []),
     )
+
+
+def _infer_current_phase_id(state: GameState) -> str:
+    for phase_id in ["mortality", "revenue", "forum", "population", "senate", "combat", "resolution"]:
+        if not state.is_phase_executed(phase_id):
+            return phase_id
+    return "resolution"
 
 
 def vote(state: GameState, player_id: str, proposal_ids: List[int], votes: List[bool]) -> dict:

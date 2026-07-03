@@ -100,10 +100,15 @@ class TestSessionApi:
         assert phases["population"]["implemented"] is True
         assert phases["population"]["actionable"] is False
         assert phases["population"]["disabled_reason_key"] == "phase.disabled.not_current"
+        assert phases["senate"]["implemented"] is True
+        assert phases["senate"]["interaction_mode"] == "readonly"
+        assert phases["senate"]["actionable"] is False
+        assert phases["senate"]["disabled_reason_key"] == "phase.disabled.readonly"
         for phase_id, phase in phases.items():
-            if phase_id in {"mortality", "population"}:
+            if phase_id in {"mortality", "population", "senate"}:
                 continue
             assert phase["implemented"] is False
+            assert phase["interaction_mode"] == "placeholder"
             assert phase["actionable"] is False
             assert phase["handoff_task"].startswith("GUI-P0-02")
             assert phase["name_key"].startswith("phase.")
@@ -123,7 +128,28 @@ class TestSessionApi:
         summary = data["selected_phase_summary"]
         assert summary["name_key"] == "phase.mortality.name"
         assert summary["status_key"] == "phase.status.actionable"
-        assert data["global_warnings"][0]["key"] == "warning.gui_p0_02b.partial_loop"
+        assert data["global_warnings"][0]["key"] == "warning.gui_p0_02c_1.readonly_senate"
+
+    def test_senate_phase_navigation_is_readonly_when_current(self):
+        result = session_api.create_gui_prototype_session(start_phase="senate")
+        state = result["data"]["state"]
+        viewer_id = result["data"]["human_players"][0]
+
+        snapshot = session_api.get_session_snapshot(state, viewer_id)
+        assert snapshot["success"]
+        data = snapshot["data"]
+        phases = {phase["id"]: phase for phase in data["phase_navigation"]}
+
+        assert data["current_phase_id"] == "senate"
+        assert phases["senate"]["implemented"] is True
+        assert phases["senate"]["interaction_mode"] == "readonly"
+        assert phases["senate"]["actionable"] is False
+        assert phases["senate"]["current"] is True
+        assert phases["senate"]["disabled_reason_key"] == "phase.disabled.readonly"
+        assert "只读" in phases["senate"]["disabled_reason"]
+        assert data["selected_phase_summary"]["interaction_mode"] == "readonly"
+        assert data["selected_phase_summary"]["actionable"] is False
+        assert "只读" in data["selected_phase_summary"]["status_text"]
 
     def test_can_create_population_fixture_explicitly(self):
         result = session_api.create_gui_prototype_session(start_phase="population")

@@ -26,6 +26,7 @@ class GuiSessionStore(QObject):
     snapshotChanged = Signal()
     populationViewChanged = Signal()
     mortalityViewChanged = Signal()
+    senateViewChanged = Signal()
     currentPlayerChanged = Signal()
     phaseChanged = Signal()
     feedbackRaised = Signal(str, str)  # type, message
@@ -40,6 +41,7 @@ class GuiSessionStore(QObject):
         self._snapshot: Dict[str, Any] = {}
         self._population_view: Dict[str, Any] = {}
         self._mortality_view: Dict[str, Any] = {}
+        self._senate_view: Dict[str, Any] = {}
         self._mortality_result: Dict[str, Any] = {}
         self._current_player_id: str = ""
         self._viewer_id: str = ""
@@ -56,6 +58,7 @@ class GuiSessionStore(QObject):
         self._refresh_snapshot()
         self._refresh_mortality_view()
         self._refresh_population_view()
+        self._refresh_senate_view()
 
     # -----------------------------------------------------------------------
     # QML 可访问属性
@@ -195,6 +198,47 @@ class GuiSessionStore(QObject):
     def canAdvanceMortality(self) -> bool:
         return self._mortality_view.get("can_advance", False)
 
+    @Property(dict, notify=senateViewChanged)
+    def senateView(self) -> Dict[str, Any]:
+        return self._senate_view
+
+    @Property(list, notify=senateViewChanged)
+    def senateFactionLeaders(self) -> List[Dict[str, Any]]:
+        return self._senate_view.get("faction_leaders", [])
+
+    @Property(dict, notify=senateViewChanged)
+    def senatePresidingOfficer(self) -> Dict[str, Any]:
+        return self._senate_view.get("presiding_officer") or {}
+
+    @Property(list, notify=senateViewChanged)
+    def senateActiveForeignWars(self) -> List[Dict[str, Any]]:
+        return self._senate_view.get("active_foreign_wars", [])
+
+    @Property(list, notify=senateViewChanged)
+    def senateWarThreats(self) -> List[Dict[str, Any]]:
+        return self._senate_view.get("war_threats", [])
+
+    @Property(list, notify=senateViewChanged)
+    def senatePendingPeaceTreaties(self) -> List[Dict[str, Any]]:
+        return self._senate_view.get("pending_peace_treaties", [])
+
+    @Property(list, notify=senateViewChanged)
+    def senateGovernorVacancies(self) -> List[Dict[str, Any]]:
+        vacancies = self._senate_view.get("governor_vacancies", {}) or {}
+        flat = []
+        type_names = {"proconsul": "行省总督", "propraetor": "副总督"}
+        for governor_type, provinces in vacancies.items():
+            for province in provinces:
+                item = dict(province)
+                item["governor_type"] = governor_type
+                item["governor_type_name"] = type_names.get(governor_type, governor_type)
+                flat.append(item)
+        return flat
+
+    @Property(list, notify=senateViewChanged)
+    def senatePendingContracts(self) -> List[Dict[str, Any]]:
+        return self._senate_view.get("pending_contracts", [])
+
     # -----------------------------------------------------------------------
     # QML Slot — 操作入口
     # -----------------------------------------------------------------------
@@ -236,6 +280,7 @@ class GuiSessionStore(QObject):
             self._refresh_snapshot()
             self._refresh_mortality_view()
             self._refresh_population_view()
+            self._refresh_senate_view()
         return feedback
 
     @Slot(result=dict)
@@ -248,6 +293,7 @@ class GuiSessionStore(QObject):
         self._refresh_snapshot()
         self._refresh_mortality_view()
         self._refresh_population_view()
+        self._refresh_senate_view()
         return feedback
 
     @Slot(result=dict)
@@ -261,6 +307,7 @@ class GuiSessionStore(QObject):
             self._refresh_snapshot()
             self._refresh_mortality_view()
             self._refresh_population_view()
+            self._refresh_senate_view()
         self._raise_feedback(feedback)
         self.mortalityViewChanged.emit()
         return feedback
@@ -280,6 +327,7 @@ class GuiSessionStore(QObject):
             self.phaseChanged.emit()
             self._refresh_mortality_view()
             self._refresh_population_view()
+            self._refresh_senate_view()
         self._raise_feedback(feedback)
         self.mortalityViewChanged.emit()
         return feedback
@@ -331,6 +379,8 @@ class GuiSessionStore(QObject):
             self._refresh_population_view()
         elif phase_id == "mortality":
             self._refresh_mortality_view()
+        elif phase_id == "senate":
+            self._refresh_senate_view()
         return feedback
 
     @Slot(result=dict)
@@ -339,6 +389,7 @@ class GuiSessionStore(QObject):
         self._refresh_snapshot()
         self._refresh_mortality_view()
         self._refresh_population_view()
+        self._refresh_senate_view()
         feedback = self._feedback(True, gui_text("feedback.snapshot.refreshed"), "success")
         self._raise_feedback(feedback)
         return feedback
@@ -350,6 +401,7 @@ class GuiSessionStore(QObject):
         self._refresh_snapshot()
         self._refresh_mortality_view()
         self._refresh_population_view()
+        self._refresh_senate_view()
         self.currentPlayerChanged.emit()
         return True
 
@@ -366,6 +418,7 @@ class GuiSessionStore(QObject):
         self._refresh_snapshot()
         self._refresh_mortality_view()
         self._refresh_population_view()
+        self._refresh_senate_view()
 
     def _refresh_snapshot(self):
         self._snapshot = self._adapter.get_snapshot(self._viewer_id)
@@ -385,6 +438,10 @@ class GuiSessionStore(QObject):
     def _refresh_mortality_view(self):
         self._mortality_view = self._adapter.get_mortality_view(self._viewer_id)
         self.mortalityViewChanged.emit()
+
+    def _refresh_senate_view(self):
+        self._senate_view = self._adapter.get_senate_view(self._viewer_id)
+        self.senateViewChanged.emit()
 
     def _raise_feedback(self, feedback: dict):
         ftype = feedback.get("feedback_type", "info")
@@ -408,6 +465,7 @@ class GuiSessionStore(QObject):
             "subtitle": phase.get("subtitle", ""),
             "description": phase.get("description", ""),
             "implemented": implemented,
+            "interaction_mode": phase.get("interaction_mode", "interactive" if implemented else "placeholder"),
             "actionable": phase.get("actionable", False),
             "handoff_task": phase.get("handoff_task", ""),
             "name_key": phase.get("name_key", ""),
@@ -415,7 +473,9 @@ class GuiSessionStore(QObject):
             "description_key": phase.get("description_key", ""),
             "status_key": phase.get("status_key", ""),
             "status_text": gui_text("phase.status.actionable") if phase.get("actionable", False) else (
-                gui_text("phase.status.ready") if implemented else gui_text("phase.status.placeholder")
+                gui_text("phase.status.readonly") if phase.get("interaction_mode") == "readonly" else (
+                    gui_text("phase.status.ready") if implemented else gui_text("phase.status.placeholder")
+                )
             ),
             "disabled_reason": phase.get("disabled_reason") or gui_text(
                 "phase.disabled.placeholder",

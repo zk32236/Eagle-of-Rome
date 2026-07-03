@@ -327,7 +327,15 @@ def _phase_order() -> List[str]:
 
 
 def _implemented_phase_ids() -> set:
-    return {"mortality", "population"}
+    return {"mortality", "population", "senate"}
+
+
+def _phase_interaction_mode(phase_id: str) -> str:
+    if phase_id == "senate":
+        return "readonly"
+    if phase_id in {"mortality", "population"}:
+        return "interactive"
+    return "placeholder"
 
 
 def _infer_current_phase_id(state: GameState) -> str:
@@ -421,13 +429,17 @@ def _build_phase_navigation(state: GameState, current_phase_id: str, viewer_play
     for index, definition in enumerate(_phase_definitions(), start=1):
         phase_id = definition["id"]
         implemented = phase_id in _implemented_phase_ids()
+        interaction_mode = _phase_interaction_mode(phase_id)
         current = phase_id == current_phase_id
-        actionable = implemented and current and state.is_current_player(viewer_player_id)
+        actionable = interaction_mode == "interactive" and current and state.is_current_player(viewer_player_id)
         disabled_reason = ""
         disabled_reason_key = ""
         if not implemented:
             disabled_reason_key = "phase.disabled.placeholder"
             disabled_reason = f"{definition['handoff_task']} 后续任务承接，当前暂不可操作"
+        elif interaction_mode == "readonly":
+            disabled_reason_key = "phase.disabled.readonly"
+            disabled_reason = "元老院已接入只读；提案、投票与结算由 GUI-P0-02C 后续子任务承接"
         elif not current:
             disabled_reason_key = "phase.disabled.not_current"
             disabled_reason = "该阶段不是当前阶段，暂不可操作"
@@ -446,6 +458,7 @@ def _build_phase_navigation(state: GameState, current_phase_id: str, viewer_play
             "description": definition["description"],
             "status": "current" if current else ("completed" if state.is_phase_executed(phase_id) else "placeholder"),
             "implemented": implemented,
+            "interaction_mode": interaction_mode,
             "enabled": True,
             "actionable": actionable,
             "handoff_task": definition["handoff_task"],
@@ -462,13 +475,23 @@ def _build_phase_navigation(state: GameState, current_phase_id: str, viewer_play
 def _build_phase_summary(phase_id: str, state: Optional[GameState] = None, viewer_player_id: str = "") -> Dict[str, Any]:
     definition = _phase_definition_map().get(phase_id, {})
     implemented = phase_id in _implemented_phase_ids()
+    interaction_mode = _phase_interaction_mode(phase_id)
     current = state is not None and phase_id == _infer_current_phase_id(state)
-    actionable = bool(implemented and current and viewer_player_id and state and state.is_current_player(viewer_player_id))
+    actionable = bool(
+        interaction_mode == "interactive"
+        and current
+        and viewer_player_id
+        and state
+        and state.is_current_player(viewer_player_id)
+    )
     disabled_reason = ""
     disabled_reason_key = ""
     if not implemented:
         disabled_reason_key = "phase.disabled.placeholder"
         disabled_reason = f"{definition.get('handoff_task', '后续任务')} 承接，本轮不会改变游戏状态"
+    elif interaction_mode == "readonly":
+        disabled_reason_key = "phase.disabled.readonly"
+        disabled_reason = "元老院已接入只读；提案、投票与结算由 GUI-P0-02C 后续子任务承接"
     elif not current:
         disabled_reason_key = "phase.disabled.not_current"
         disabled_reason = "该阶段不是当前阶段，暂不可操作"
@@ -480,15 +503,24 @@ def _build_phase_summary(phase_id: str, state: Optional[GameState] = None, viewe
             "name_key": definition.get("name_key", ""),
             "subtitle_key": definition.get("subtitle_key", ""),
             "description_key": definition.get("description_key", ""),
-            "status_key": "phase.status.actionable" if actionable else ("phase.status.ready" if implemented else "phase.status.placeholder"),
+            "status_key": "phase.status.actionable" if actionable else (
+                "phase.status.readonly" if interaction_mode == "readonly" else (
+                    "phase.status.ready" if implemented else "phase.status.placeholder"
+                )
+            ),
             "disabled_reason_key": disabled_reason_key,
             "name": definition.get("name", phase_id),
             "subtitle": definition.get("subtitle", ""),
             "description": definition.get("description", ""),
         "implemented": implemented,
+        "interaction_mode": interaction_mode,
         "actionable": actionable,
         "handoff_task": definition.get("handoff_task", ""),
-        "status_text": "可操作真实切片" if actionable else ("已接入 / 等待正确阶段或玩家" if implemented else "后续任务承接 / 暂不可操作"),
+        "status_text": "可操作真实切片" if actionable else (
+            "已接入只读 / 后续子任务接入操作" if interaction_mode == "readonly" else (
+                "已接入 / 等待正确阶段或玩家" if implemented else "后续任务承接 / 暂不可操作"
+            )
+        ),
         "disabled_reason": disabled_reason,
     }
 
@@ -496,8 +528,8 @@ def _build_phase_summary(phase_id: str, state: Optional[GameState] = None, viewe
 def _build_global_warnings(state: GameState, viewer_player_id: str) -> List[Dict[str, str]]:
     warnings: List[Dict[str, str]] = [{
         "type": "info",
-        "key": "warning.gui_p0_02b.partial_loop",
-        "message": "GUI-P0-02B 接入天命与人口；收入、广场、元老院、战争、决算仍为只读占位。",
+        "key": "warning.gui_p0_02c_1.readonly_senate",
+        "message": "GUI-P0-02C-1 接入元老院只读状态；收入、广场、战争、决算仍为占位。",
     }]
     if not state.is_current_player(viewer_player_id):
         warnings.append({

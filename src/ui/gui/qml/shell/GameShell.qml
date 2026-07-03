@@ -74,11 +74,20 @@ Rectangle {
             visible: sessionStore.selectedPhaseId === "population"
         }
 
+        SenateStage {
+            id: senateStage
+            objectName: "senateStage"
+            anchors.fill: parent
+            visible: sessionStore.selectedPhaseId === "senate"
+        }
+
         LockedStagePlaceholder {
             id: lockedPlaceholder
             objectName: "lockedStagePlaceholder"
             anchors.fill: parent
-            visible: sessionStore.selectedPhaseId !== "mortality" && sessionStore.selectedPhaseId !== "population"
+            visible: sessionStore.selectedPhaseId !== "mortality"
+                && sessionStore.selectedPhaseId !== "population"
+                && sessionStore.selectedPhaseId !== "senate"
         }
     }
 

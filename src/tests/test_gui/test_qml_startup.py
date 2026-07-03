@@ -94,6 +94,7 @@ def test_main_qml_exposes_core_gui_regions():
         "contextPanel",
         "mortalityStage",
         "populationStage",
+        "senateStage",
         "lockedStagePlaceholder",
         "feedbackPanel",
         "playerHandoffOverlay",
@@ -123,6 +124,9 @@ def test_shell_store_exposes_seven_phase_navigation_items():
     assert store.phaseNavigation[0]["actionable"] is True
     assert store.phaseNavigation[3]["implemented"] is True
     assert store.phaseNavigation[3]["actionable"] is False
+    assert store.phaseNavigation[4]["implemented"] is True
+    assert store.phaseNavigation[4]["interaction_mode"] == "readonly"
+    assert store.phaseNavigation[4]["actionable"] is False
 
 
 def test_shell_text_catalog_labels_treasury():
@@ -136,3 +140,29 @@ def test_shell_text_catalog_labels_treasury():
     assert 'factionTreasuryPrefix: "派系金库 "' in gui_text
     assert 'executeMortality: "执行天命"' in gui_text
     assert 'advanceMortality: "进入收入阶段"' in gui_text
+    assert 'senateReadonlyBadge: "只读状态"' in gui_text
+    assert 'senateActionsDisabled: "政治行动暂未开放"' in gui_text
+
+
+def test_senate_stage_detail_copy_uses_gui_text_catalog():
+    qml_dir = os.path.join(PROJECT_ROOT, "src", "ui", "gui", "qml")
+    senate_stage_path = os.path.join(qml_dir, "stages", "SenateStage.qml")
+    gui_text_path = os.path.join(qml_dir, "i18n", "GuiText.qml")
+
+    with open(senate_stage_path, "r", encoding="utf-8") as fh:
+        senate_stage = fh.read()
+    with open(gui_text_path, "r", encoding="utf-8") as fh:
+        gui_text = fh.read()
+
+    scattered_labels = ["影响力", "需要海战", "赔款", "成本", "预期收益", " 位", " 年"]
+    for label in scattered_labels:
+        assert label not in senate_stage
+
+    assert "senateInfluenceDetail" in senate_stage
+    assert "senateThreatDetail" in senate_stage
+    assert "senatePeaceDetail" in senate_stage
+    assert "senateContractDetail" in senate_stage
+    assert "senateLeaderCount" in senate_stage
+    assert 'senateInfluenceLabel: "影响力"' in gui_text
+    assert 'senateNavalRequiredLabel: "需要海战"' in gui_text
+    assert 'senateExpectedProfitLabel: "预期收益"' in gui_text

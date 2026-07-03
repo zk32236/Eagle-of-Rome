@@ -18,8 +18,10 @@ _TEXT: Dict[str, Dict[str, str]] = {
         "feedback.phase.placeholder": "{name}由{handoff_task}承接，当前暂不可操作。",
         "phase.status.actionable": "可操作真实切片",
         "phase.status.ready": "已接入 / 等待正确阶段或玩家",
+        "phase.status.readonly": "已接入只读 / 后续子任务接入操作",
         "phase.status.placeholder": "后续任务承接 / 暂不可操作",
         "phase.disabled.placeholder": "{handoff_task} 承接，本轮不会改变游戏状态",
+        "phase.disabled.readonly": "已接入只读，政治操作由后续子任务承接",
     }
 }
 

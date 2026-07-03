@@ -142,6 +142,14 @@ class GuiApiAdapter:
         logger.error(f"Mortality view failed: {result.get('message')}")
         return {}
 
+    def get_senate_view(self, viewer_id: str) -> Dict[str, Any]:
+        from src.api import senate_api
+        result = senate_api.get_senate_view(self._state, viewer_id)
+        if result.get("success"):
+            return result.get("data", {})
+        logger.error(f"Senate view failed: {result.get('message')}")
+        return {}
+
     # -----------------------------------------------------------------------
     # 内部工具
     # -----------------------------------------------------------------------
