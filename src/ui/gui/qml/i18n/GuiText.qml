@@ -2,6 +2,17 @@ pragma Singleton
 import QtQuick 2.15
 
 QtObject {
+    readonly property string appMark: "SPQR"
+    readonly property string appName: "Eagle of Rome"
+    readonly property string defaultYearDisplay: "282 BC"
+    readonly property string defaultPlayerAvatar: "OP"
+    readonly property string defaultPlayerId: "player"
+    readonly property string defaultFactionName: "Optimates"
+    readonly property string calendarIcon: "📅"
+    readonly property string turnIcon: "🔄"
+    readonly property string treasuryIcon: "💰"
+    readonly property string votedIcon: "V"
+    readonly property string keyValueSeparator: ": "
     readonly property string shellPhaseTitle: "年度阶段"
     readonly property string refreshStatus: "刷新状态"
     readonly property string phaseHelp: "阶段说明"
@@ -9,8 +20,26 @@ QtObject {
     readonly property string treasuryPrefix: "国库 "
     readonly property string factionTreasuryPrefix: "派系金库 "
     readonly property string factionResources: "派系资源"
+    readonly property string factionTreasuryLabel: "派系金库"
+    readonly property string totalInfluenceLabel: "总影响力"
+    readonly property string factionMemberLabel: "派系人物"
+    readonly property string peopleUnit: "人"
     readonly property string votedOffices: "已投官职"
     readonly property string currentPhase: "当前阶段"
+    readonly property string authoritativePhase: "权威阶段"
+    readonly property string selectedPhase: "选中阶段"
+    readonly property string playerPermission: "玩家权限"
+    readonly property string queryResultTitle: "查询结果"
+    readonly property string queryResultEmpty: "点击底部查询按钮查看只读摘要。"
+    readonly property string closeQueryResult: "关闭"
+    readonly property string feedbackLogTitle: "结构化反馈与最近事件"
+    readonly property string clearFeedback: "清空"
+    readonly property string guiSessionStarted: "GUI 会话已启动"
+    readonly property string currentPhaseLogPrefix: "当前阶段："
+    readonly property string stageAnnouncementTitle: "阶段公告"
+    readonly property string stageAnnouncementReadonly: "只读"
+    readonly property string stageAnnouncementPlaceholder: "占位"
+    readonly property string stageAnnouncementInteractive: "可操作"
     readonly property string populationFallbackName: "人口"
     readonly property string actionableShort: "可操作"
     readonly property string connectedShort: "已接入"
@@ -54,6 +83,63 @@ QtObject {
     readonly property string placeholderFallbackName: "尚未迁移"
     readonly property string placeholderFallbackDescription: "该阶段将在后续任务中逐步接入 GUI。"
     readonly property string placeholderFallbackReason: "当前页面只显示承接信息，不执行阶段业务。"
+    readonly property string bottomQueryBarTitle: "全局查询"
+    readonly property string queryStatusConnected: "已接入"
+    readonly property string queryStatusReadonly: "只读"
+    readonly property string queryStatusPlaceholder: "占位"
+    readonly property string queryGameStatus: "游戏状态"
+    readonly property string queryFactionInfo: "派系信息"
+    readonly property string queryWarList: "战争列表"
+    readonly property string queryLegionStatus: "军团状态"
+    readonly property string queryFigureSearch: "人物查询"
+    readonly property string queryFactionTreasury: "派系金库"
+    readonly property string queryPublicLand: "公地信息"
+    readonly property string queryPrivateLand: "私地信息"
+    readonly property string queryContractStatus: "合同状态"
+    readonly property string queryProvinceInfo: "行省信息"
+    readonly property string queryFleetStatus: "舰队状态"
+    readonly property string queryHelp: "帮助"
+
+    function get(key) {
+        if (key === "query.game_status") return queryGameStatus
+        if (key === "query.faction_info") return queryFactionInfo
+        if (key === "query.war_list") return queryWarList
+        if (key === "query.legion_status") return queryLegionStatus
+        if (key === "query.figure_search") return queryFigureSearch
+        if (key === "query.faction_treasury") return queryFactionTreasury
+        if (key === "query.public_land") return queryPublicLand
+        if (key === "query.private_land") return queryPrivateLand
+        if (key === "query.contract_status") return queryContractStatus
+        if (key === "query.province_info") return queryProvinceInfo
+        if (key === "query.fleet_status") return queryFleetStatus
+        if (key === "query.help") return queryHelp
+        return key
+    }
+
+    function turnText(turnNumber) {
+        return "回合 " + (turnNumber || 1)
+    }
+
+    function currentPlayerText(playerId, factionName, factionId) {
+        return (playerId || defaultPlayerId) + " / " + (factionName || factionId || defaultFactionName)
+    }
+
+    function countPeople(count) {
+        return (count || 0) + " " + peopleUnit
+    }
+
+    function stageModeText(summary) {
+        if (!summary) return stageAnnouncementPlaceholder
+        if (summary.actionable) return stageAnnouncementInteractive
+        if (summary.interaction_mode === "readonly") return stageAnnouncementReadonly
+        return stageAnnouncementPlaceholder
+    }
+
+    function queryStatusText(status) {
+        if (status === "connected") return queryStatusConnected
+        if (status === "readonly") return queryStatusReadonly
+        return queryStatusPlaceholder
+    }
 
     function playerScope(viewerName, viewerId) {
         var label = viewerName || viewerId || "当前"

@@ -20,14 +20,14 @@ Rectangle {
             Layout.alignment: Qt.AlignVCenter
             spacing: 8
             Text {
-                text: "SPQR"
+                text: GuiText.appMark
                 color: theme.accentBronze
                 font.family: theme.fontTitle
                 font.pixelSize: 14
                 font.bold: true
             }
             Text {
-                text: "Eagle of Rome"
+                text: GuiText.appName
                 color: theme.textPrimary
                 font.family: theme.fontFamily
                 font.pixelSize: 13
@@ -39,17 +39,17 @@ Rectangle {
             Layout.alignment: Qt.AlignVCenter
             spacing: 16
             Text {
-                text: "📅 " + (sessionStore.yearDisplay || "282 BC")
+                text: GuiText.calendarIcon + " " + (sessionStore.yearDisplay || GuiText.defaultYearDisplay)
                 color: theme.textSecondary
                 font.pixelSize: 12
             }
             Text {
-                text: "🔄 回合 " + (sessionStore.turnNumber || 1)
+                text: GuiText.turnIcon + " " + GuiText.turnText(sessionStore.turnNumber)
                 color: theme.textSecondary
                 font.pixelSize: 12
             }
             Text {
-                text: GuiText.phaseLabelPrefix + (sessionStore.selectedPhaseName || sessionStore.currentPhaseName || "人口")
+                text: GuiText.phaseLabelPrefix + (sessionStore.selectedPhaseName || sessionStore.currentPhaseName || GuiText.populationFallbackName)
                 color: theme.accentPrimary
                 font.pixelSize: 12
                 font.bold: true
@@ -63,7 +63,7 @@ Rectangle {
             Layout.alignment: Qt.AlignVCenter
             spacing: 8
             Text {
-                text: "💰"
+                text: GuiText.treasuryIcon
                 font.pixelSize: 12
             }
             Text {
@@ -89,14 +89,14 @@ Rectangle {
                 color: theme.accentPrimary
                 Text {
                     anchors.centerIn: parent
-                    text: "OP"
+                    text: GuiText.defaultPlayerAvatar
                     color: "white"
                     font.pixelSize: 10
                     font.bold: true
                 }
             }
             Text {
-                text: (sessionStore.currentPlayerId || "player") + " / " + (sessionStore.viewerFactionName || sessionStore.viewerFactionId || "Optimates")
+                text: GuiText.currentPlayerText(sessionStore.currentPlayerId, sessionStore.viewerFactionName, sessionStore.viewerFactionId)
                 color: theme.textPrimary
                 font.pixelSize: 12
                 elide: Text.ElideRight

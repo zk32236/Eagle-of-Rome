@@ -91,7 +91,13 @@ def test_main_qml_exposes_core_gui_regions():
         "gameShell",
         "topStatusBar",
         "phaseRail",
+        "centerPanel",
+        "stageAnnouncement",
+        "stageContainer",
         "contextPanel",
+        "bottomQueryBar",
+        "queryResultOverlay",
+        "queryResultDialog",
         "mortalityStage",
         "populationStage",
         "senateStage",
@@ -101,6 +107,32 @@ def test_main_qml_exposes_core_gui_regions():
     ]
     for object_name in expected_objects:
         assert root.findChild(QObject, object_name) is not None, object_name
+
+
+def test_opc_shell_exposes_twelve_bottom_query_buttons():
+    engine, qml_dir = _create_engine()
+    engine.load(QUrl.fromLocalFile(os.path.join(qml_dir, "Main.qml")))
+    QGuiApplication.processEvents()
+
+    root = engine.rootObjects()[0]
+    bottom_bar = root.findChild(QObject, "bottomQueryBar")
+    assert bottom_bar is not None
+    query_ids = [
+        "game_status",
+        "faction_info",
+        "war_list",
+        "legion_status",
+        "figure_search",
+        "faction_treasury",
+        "public_land",
+        "private_land",
+        "contract_status",
+        "province_info",
+        "fleet_status",
+        "help",
+    ]
+    assert bottom_bar.property("queryButtonCount") == 12
+    assert bottom_bar.property("queryButtonIds").split(",") == query_ids
 
 
 def test_shell_store_exposes_seven_phase_navigation_items():
@@ -142,6 +174,10 @@ def test_shell_text_catalog_labels_treasury():
     assert 'advanceMortality: "进入收入阶段"' in gui_text
     assert 'senateReadonlyBadge: "只读状态"' in gui_text
     assert 'senateActionsDisabled: "政治行动暂未开放"' in gui_text
+    assert 'bottomQueryBarTitle: "全局查询"' in gui_text
+    assert 'queryGameStatus: "游戏状态"' in gui_text
+    assert 'queryLegionStatus: "军团状态"' in gui_text
+    assert 'closeQueryResult: "关闭"' in gui_text
 
 
 def test_senate_stage_detail_copy_uses_gui_text_catalog():
@@ -166,3 +202,61 @@ def test_senate_stage_detail_copy_uses_gui_text_catalog():
     assert 'senateInfluenceLabel: "影响力"' in gui_text
     assert 'senateNavalRequiredLabel: "需要海战"' in gui_text
     assert 'senateExpectedProfitLabel: "预期收益"' in gui_text
+
+
+def test_opc_shell_boundary_and_i18n_scans():
+    qml_dir = os.path.join(PROJECT_ROOT, "src", "ui", "gui", "qml")
+    gui_paths = [
+        os.path.join(PROJECT_ROOT, "src", "ui", "gui", "session_store.py"),
+        os.path.join(PROJECT_ROOT, "src", "ui", "gui", "api_adapter.py"),
+    ]
+    for root_dir, _, files in os.walk(qml_dir):
+        for filename in files:
+            if filename.endswith(".qml"):
+                gui_paths.append(os.path.join(root_dir, filename))
+
+    forbidden_calls = [
+        "game_api.execute_phase",
+        "game_api.execute_turn",
+        "CombatCommand",
+        "phase_senate",
+        "phase_forum",
+        "phase_revenue",
+        "phase_combat",
+    ]
+    for path in gui_paths:
+        with open(path, "r", encoding="utf-8") as fh:
+            content = fh.read()
+        for forbidden in forbidden_calls:
+            assert forbidden not in content, f"{forbidden} found in {path}"
+
+    changed_qml = [
+        os.path.join(qml_dir, "shell", "BottomQueryBar.qml"),
+        os.path.join(qml_dir, "shell", "GameShell.qml"),
+        os.path.join(qml_dir, "shell", "TopStatusBar.qml"),
+        os.path.join(qml_dir, "shell", "ContextPanel.qml"),
+        os.path.join(qml_dir, "shell", "FeedbackPanel.qml"),
+        os.path.join(qml_dir, "shell", "QueryResultOverlay.qml"),
+    ]
+    scattered_new_copy = [
+        "全局查询",
+        "游戏状态",
+        "派系信息",
+        "战争列表",
+        "军团状态",
+        "查询结果",
+        "结构化反馈",
+        "阶段公告",
+        "关闭",
+    ]
+    for path in changed_qml:
+        with open(path, "r", encoding="utf-8") as fh:
+            content = fh.read()
+        for text in scattered_new_copy:
+            assert text not in content, f"{text} found outside GuiText in {path}"
+
+    context_panel_path = os.path.join(qml_dir, "shell", "ContextPanel.qml")
+    with open(context_panel_path, "r", encoding="utf-8") as fh:
+        context_panel = fh.read()
+    assert "queryResultTitle" not in context_panel
+    assert "globalQueryResult.items" not in context_panel

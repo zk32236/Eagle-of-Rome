@@ -150,6 +150,24 @@ class GuiApiAdapter:
         logger.error(f"Senate view failed: {result.get('message')}")
         return {}
 
+    def get_game_status_summary(self) -> Dict[str, Any]:
+        from src.api import game_api
+        result = game_api.get_status_summary(self._state)
+        if result.get("success"):
+            return {
+                "success": True,
+                "message": result.get("message", ""),
+                "data": result.get("data", {}),
+                "errors": result.get("errors", []),
+            }
+        logger.error(f"Game status summary failed: {result.get('message')}")
+        return {
+            "success": False,
+            "message": result.get("message", ""),
+            "data": {},
+            "errors": result.get("errors", []),
+        }
+
     # -----------------------------------------------------------------------
     # 内部工具
     # -----------------------------------------------------------------------

@@ -165,3 +165,32 @@ class TestGuiApiAdapter:
         assert view["can_vote"] is False
         assert view["can_resolve"] is False
         assert "faction_leaders" in view
+
+    def test_opc_global_queries_are_readonly_or_placeholder(self):
+        result = session_api.create_gui_prototype_session()
+        state = result["data"]["state"]
+        store = GuiSessionStore(state)
+        store.initialize(result["data"]["human_players"][0])
+        executed_before = {phase["id"]: state.is_phase_executed(phase["id"]) for phase in store.phaseNavigation}
+
+        game_status = store.doGlobalQuery("game_status")
+        assert game_status["success"]
+        assert store.globalQueryResult["id"] == "game_status"
+        assert store.globalQueryResult["status"] == "connected"
+        assert any(item["label"] for item in store.globalQueryResult["items"])
+
+        faction_info = store.doGlobalQuery("faction_info")
+        assert faction_info["success"]
+        assert store.globalQueryResult["status"] == "readonly"
+        assert store.globalQueryResult["items"][0]["value"] == store.viewerFactionName
+
+        war_list = store.doGlobalQuery("war_list")
+        assert war_list["success"]
+        assert store.globalQueryResult["status"] == "readonly"
+
+        legion_status = store.doGlobalQuery("legion_status")
+        assert legion_status["success"]
+        assert store.globalQueryResult["status"] == "placeholder"
+
+        executed_after = {phase["id"]: state.is_phase_executed(phase["id"]) for phase in store.phaseNavigation}
+        assert executed_after == executed_before

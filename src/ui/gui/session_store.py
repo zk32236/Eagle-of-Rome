@@ -27,6 +27,7 @@ class GuiSessionStore(QObject):
     populationViewChanged = Signal()
     mortalityViewChanged = Signal()
     senateViewChanged = Signal()
+    queryResultChanged = Signal()
     currentPlayerChanged = Signal()
     phaseChanged = Signal()
     feedbackRaised = Signal(str, str)  # type, message
@@ -47,6 +48,7 @@ class GuiSessionStore(QObject):
         self._viewer_id: str = ""
         self._selected_phase_id: str = ""
         self._selected_phase_summary: Dict[str, Any] = {}
+        self._global_query_result: Dict[str, Any] = {}
         self._feedback_queue: List[Dict[str, str]] = []
 
     # -----------------------------------------------------------------------
@@ -239,6 +241,10 @@ class GuiSessionStore(QObject):
     def senatePendingContracts(self) -> List[Dict[str, Any]]:
         return self._senate_view.get("pending_contracts", [])
 
+    @Property(dict, notify=queryResultChanged)
+    def globalQueryResult(self) -> Dict[str, Any]:
+        return self._global_query_result
+
     # -----------------------------------------------------------------------
     # QML Slot — 操作入口
     # -----------------------------------------------------------------------
@@ -383,6 +389,27 @@ class GuiSessionStore(QObject):
             self._refresh_senate_view()
         return feedback
 
+    @Slot(str, result=dict)
+    def doGlobalQuery(self, query_id: str) -> dict:
+        """Run a safe read-only global query for the OPC bottom bar."""
+        if not self._viewer_id:
+            feedback = self._feedback(False, gui_text("feedback.query.not_initialized"), "error")
+            self._raise_feedback(feedback)
+            return feedback
+
+        result = self._build_global_query_result(query_id)
+        self._global_query_result = result
+        self.queryResultChanged.emit()
+        feedback_type = "success" if result.get("status") in {"connected", "readonly"} else "warning"
+        feedback = self._feedback(
+            True,
+            gui_text("feedback.query.selected", title=result.get("title", query_id)),
+            feedback_type,
+            data=result,
+        )
+        self._raise_feedback(feedback)
+        return feedback
+
     @Slot(result=dict)
     def refreshSnapshot(self) -> dict:
         """Refresh the shell snapshot from authoritative API DTO."""
@@ -442,6 +469,64 @@ class GuiSessionStore(QObject):
     def _refresh_senate_view(self):
         self._senate_view = self._adapter.get_senate_view(self._viewer_id)
         self.senateViewChanged.emit()
+
+    def _build_global_query_result(self, query_id: str) -> Dict[str, Any]:
+        title = gui_text(f"query.{query_id}.title")
+        if query_id == "game_status":
+            result = self._adapter.get_game_status_summary()
+            data = result.get("data", {}) if result.get("success") else {}
+            return {
+                "id": query_id,
+                "title": title,
+                "status": "connected" if result.get("success") else "placeholder",
+                "message": result.get("message") or gui_text("query.game_status.empty"),
+                "items": [
+                    {"label": gui_text("query.item.year"), "value": str(data.get("year", ""))},
+                    {"label": gui_text("query.item.turn"), "value": str(data.get("turn", ""))},
+                    {"label": gui_text("query.item.treasury"), "value": f"{data.get('treasury', 0)} T"},
+                    {"label": gui_text("query.item.living_members"), "value": str(data.get("living_count", 0))},
+                    {"label": gui_text("query.item.factions"), "value": str(data.get("faction_count", 0))},
+                ],
+            }
+        if query_id == "faction_info":
+            faction = self._snapshot.get("faction_resources", {}) or {}
+            return {
+                "id": query_id,
+                "title": title,
+                "status": "readonly",
+                "message": gui_text("query.faction_info.message"),
+                "items": [
+                    {"label": gui_text("query.item.faction"), "value": faction.get("name", self.viewerFactionId)},
+                    {"label": gui_text("query.item.treasury"), "value": f"{faction.get('treasury', 0)} T"},
+                    {"label": gui_text("query.item.members"), "value": str(faction.get("member_count", 0))},
+                    {"label": gui_text("query.item.influence"), "value": str(faction.get("total_influence", 0))},
+                ],
+            }
+        if query_id == "war_list":
+            wars = []
+            for war in self._senate_view.get("active_foreign_wars", []):
+                wars.append({"label": gui_text("query.item.active_war"), "value": war.get("name", "")})
+            for war in self._senate_view.get("war_threats", []):
+                wars.append({"label": gui_text("query.item.war_threat"), "value": war.get("name", "")})
+            return {
+                "id": query_id,
+                "title": title,
+                "status": "readonly",
+                "message": gui_text("query.war_list.message"),
+                "items": wars or [{"label": gui_text("query.item.status"), "value": gui_text("query.empty")}],
+            }
+        if query_id == "legion_status":
+            return self._placeholder_query(query_id, title, "GUI-P0-03B")
+        return self._placeholder_query(query_id, title, "GUI-P0-03G")
+
+    def _placeholder_query(self, query_id: str, title: str, handoff_task: str) -> Dict[str, Any]:
+        return {
+            "id": query_id,
+            "title": title,
+            "status": "placeholder",
+            "message": gui_text("query.placeholder.message", handoff_task=handoff_task),
+            "items": [{"label": gui_text("query.item.handoff"), "value": handoff_task}],
+        }
 
     def _raise_feedback(self, feedback: dict):
         ftype = feedback.get("feedback_type", "info")

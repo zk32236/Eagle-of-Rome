@@ -11,12 +11,15 @@ Rectangle {
     border.color: theme.borderNormal
     border.width: 1
 
+    function showFeedback(type, message) {
+        feedbackPanel.show(type, message)
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 16
-        spacing: 12
+        spacing: 10
 
-        // 标题
         Text {
             text: GuiText.factionResources
             color: theme.textMuted
@@ -33,27 +36,27 @@ Rectangle {
 
             StatusTile {
                 Layout.fillWidth: true
-                label: "派系金库"
+                label: GuiText.factionTreasuryLabel
                 value: (sessionStore.factionTreasury || 0) + " T"
-                icon: "💰"
+                icon: GuiText.treasuryIcon
             }
             StatusTile {
                 Layout.fillWidth: true
-                label: "总影响力"
+                label: GuiText.totalInfluenceLabel
                 value: sessionStore.factionInfluence || 0
-                icon: "⚖️"
+                icon: GuiText.senateInfluenceLabel
             }
             StatusTile {
                 Layout.fillWidth: true
-                label: "派系人物"
-                value: (sessionStore.factionMemberCount || 0) + " 人"
-                icon: "👥"
+                label: GuiText.factionMemberLabel
+                value: GuiText.countPeople(sessionStore.factionMemberCount)
+                icon: GuiText.peopleUnit
             }
             StatusTile {
                 Layout.fillWidth: true
                 label: GuiText.votedOffices
                 value: Object.keys(sessionStore.myVotes || {}).length + " / 5"
-                icon: "V"
+                icon: GuiText.votedIcon
             }
         }
 
@@ -66,7 +69,7 @@ Rectangle {
 
         // 当前目标
         Text {
-            text: GuiText.currentPhase
+            text: GuiText.selectedPhase
             color: theme.textMuted
             font.pixelSize: 11
             font.bold: true
@@ -124,28 +127,20 @@ Rectangle {
             }
         }
 
-        Repeater {
-            model: sessionStore.globalWarnings || []
-            delegate: Rectangle {
-                Layout.fillWidth: true
-                height: warningText.implicitHeight + 16
-                color: theme.bgSurface2
-                radius: theme.radius
-                border.color: modelData.type === "warning" ? theme.statusWarning : theme.borderNormal
-                border.width: 1
-                Text {
-                    id: warningText
-                    anchors.fill: parent
-                    anchors.margins: 8
-                    text: modelData.message
-                    color: modelData.type === "warning" ? theme.statusWarning : theme.textMuted
-                    font.pixelSize: 10
-                    wrapMode: Text.Wrap
-                }
-            }
+        Text {
+            text: GuiText.authoritativePhase + GuiText.keyValueSeparator + (sessionStore.currentPhaseName || "")
+            color: theme.textMuted
+            font.pixelSize: 10
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
         }
 
-        Item { Layout.fillHeight: true }
+        FeedbackPanel {
+            id: feedbackPanel
+            objectName: "feedbackPanel"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+        }
 
         // 流程控制
         ColumnLayout {

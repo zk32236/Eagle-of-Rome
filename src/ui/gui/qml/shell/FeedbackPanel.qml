@@ -3,6 +3,7 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
 import "../components"
+import "../i18n"
 
 Rectangle {
     id: root
@@ -24,14 +25,14 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             Text {
-                text: "📢 结构化反馈与最近事件"
+                text: GuiText.feedbackLogTitle
                 color: theme.textMuted
                 font.pixelSize: 11
                 font.bold: true
             }
             Item { Layout.fillWidth: true }
             AppButton {
-                text: "清空"
+                text: GuiText.clearFeedback
                 type: "ghost"
                 fontSize: 10
                 onClicked: feedbackList.clear()
@@ -94,8 +95,8 @@ Rectangle {
 
             // 初始欢迎消息
             Component.onCompleted: {
-                append("info", "GUI 会话已启动")
-                append("info", "当前阶段：人口阶段")
+                append("info", GuiText.guiSessionStarted)
+                append("info", GuiText.currentPhaseLogPrefix + (sessionStore.currentPhaseName || ""))
             }
         }
     }
