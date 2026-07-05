@@ -74,3 +74,6 @@ Thumbs.db
 docs/**/_tmp_xlsx_*/
 docs/**/.git/
 docs/**/.agents/
+
+# Office temporary lock files
+~$*
