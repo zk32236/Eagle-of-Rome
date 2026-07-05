@@ -16,7 +16,7 @@ Rectangle {
         { "id": "game_status", "label": GuiText.queryGameStatus, "status": "connected" },
         { "id": "faction_info", "label": GuiText.queryFactionInfo, "status": "readonly" },
         { "id": "war_list", "label": GuiText.queryWarList, "status": "readonly" },
-        { "id": "legion_status", "label": GuiText.queryLegionStatus, "status": "placeholder" },
+        { "id": "legion_status", "label": GuiText.queryLegionStatus, "status": "readonly" },
         { "id": "figure_search", "label": GuiText.queryFigureSearch, "status": "placeholder" },
         { "id": "faction_treasury", "label": GuiText.queryFactionTreasury, "status": "placeholder" },
         { "id": "public_land", "label": GuiText.queryPublicLand, "status": "placeholder" },

@@ -190,7 +190,18 @@ class TestGuiApiAdapter:
 
         legion_status = store.doGlobalQuery("legion_status")
         assert legion_status["success"]
-        assert store.globalQueryResult["status"] == "placeholder"
+        assert store.globalQueryResult["status"] == "readonly"
+        assert "counts" in store.globalQueryResult["summary"]
 
         executed_after = {phase["id"]: state.is_phase_executed(phase["id"]) for phase in store.phaseNavigation}
         assert executed_after == executed_before
+
+    def test_adapter_global_query_delegates_to_gui_query_api(self):
+        adapter, state, players = self.setup_adapter()
+
+        result = adapter.get_global_query_result(players[0], "game_status")
+
+        assert result["id"] == "game_status"
+        assert result["title_key"] == "query.game_status.title"
+        assert result["status"] == "connected"
+        assert "items" in result

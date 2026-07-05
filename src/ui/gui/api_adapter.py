@@ -150,21 +150,22 @@ class GuiApiAdapter:
         logger.error(f"Senate view failed: {result.get('message')}")
         return {}
 
-    def get_game_status_summary(self) -> Dict[str, Any]:
-        from src.api import game_api
-        result = game_api.get_status_summary(self._state)
+    def get_global_query_result(self, viewer_id: str, query_id: str) -> Dict[str, Any]:
+        from src.api import gui_query_api
+        result = gui_query_api.get_global_query_result(self._state, viewer_id, query_id)
         if result.get("success"):
-            return {
-                "success": True,
-                "message": result.get("message", ""),
-                "data": result.get("data", {}),
-                "errors": result.get("errors", []),
-            }
-        logger.error(f"Game status summary failed: {result.get('message')}")
+            return result.get("data", {})
+        logger.error(f"Global query failed: {result.get('message')}")
         return {
-            "success": False,
+            "id": query_id,
+            "title": query_id,
+            "title_key": query_id,
+            "status": "placeholder",
             "message": result.get("message", ""),
-            "data": {},
+            "message_key": "query.error",
+            "message_params": {},
+            "items": [],
+            "summary": {},
             "errors": result.get("errors", []),
         }
 
