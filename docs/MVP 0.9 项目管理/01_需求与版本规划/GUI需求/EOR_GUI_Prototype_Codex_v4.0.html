@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eagle of Rome - Codex GUI Prototype v4.0</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #15120e;
+  --surface: #241d16;
+  --surface-2: #30261c;
+  --surface-3: #3b2c1d;
+  --line: #7d5a32;
+  --line-soft: rgba(198,151,83,.32);
+  --gold: #d9af63;
+  --gold-2: #f2d590;
+  --red: #7b220e;
+  --red-2: #a43c1b;
+  --green: #4f8b57;
+  --blue: #4f7893;
+  --ink: #f3eadc;
+  --muted: #b9a58c;
+  --dim: #7b6a55;
+  --danger: #d06b58;
+  --warn: #e2a84b;
+  --shadow: 0 18px 50px rgba(0,0,0,.38);
+  --soft-shadow: 0 8px 22px rgba(0,0,0,.24);
+  --radius: 10px;
+}
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 12% 12%, rgba(217,175,99,.16), transparent 30%),
+    radial-gradient(circle at 90% 6%, rgba(123,34,14,.30), transparent 34%),
+    linear-gradient(135deg, #17120d 0%, #24180f 48%, #130f0b 100%);
+  user-select: none;
+}
+button, select, input { font-family: inherit; }
+.app {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: 62px 1fr 58px;
+  grid-template-columns: 86px minmax(620px, 1fr) 340px;
+  grid-template-areas:
+    "top top top"
+    "rail stage side"
+    "query query query";
+  gap: 10px;
+  padding: 10px;
+}
+.topbar {
+  grid-area: top;
+  display: grid;
+  grid-template-columns: 270px 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(116,31,12,.96), rgba(65,20,10,.96));
+  box-shadow: var(--soft-shadow);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.brand-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 2px solid var(--gold);
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle, #3a2415, #120d09);
+  color: var(--gold-2);
+  font-size: 1.15rem;
+  box-shadow: 0 0 0 4px rgba(217,175,99,.08);
+}
+.brand h1 { font-size: 1.05rem; letter-spacing: .06em; white-space: nowrap; }
+.brand small { display: block; margin-top: 2px; color: var(--gold-2); font-size: .64rem; letter-spacing: .18em; opacity: .8; }
+.status-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(86px, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+.status-pill {
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid rgba(242,213,144,.20);
+  border-radius: 8px;
+  background: rgba(255,255,255,.055);
+}
+.status-pill .label { color: var(--muted); font-size: .62rem; white-space: nowrap; }
+.status-pill .value { margin-top: 2px; color: var(--gold-2); font-size: .86rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.turn-badge {
+  padding: 9px 14px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.22);
+  border: 1px solid rgba(242,213,144,.24);
+  color: var(--gold-2);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.phase-rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: rgba(31,24,18,.88);
+  box-shadow: var(--soft-shadow);
+}
+.phase-node {
+  position: relative;
+  height: 62px;
+  border-radius: 10px;
+  border: 1px solid rgba(217,175,99,.18);
+  background: rgba(255,255,255,.045);
+  display: grid;
+  grid-template-columns: 1fr;
+  place-items: center;
+  cursor: pointer;
+  transition: .16s ease;
+}
+.phase-node:hover { transform: translateX(2px); border-color: rgba(217,175,99,.55); }
+.phase-node.active {
+  background: linear-gradient(180deg, rgba(217,175,99,.28), rgba(123,34,14,.24));
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(217,175,99,.08);
+}
+.phase-node.done { border-color: rgba(79,139,87,.48); }
+.phase-node.locked { opacity: .72; }
+.phase-node .icon { font-size: 1.25rem; line-height: 1; }
+.phase-node .short { margin-top: 4px; font-size: .66rem; color: var(--muted); }
+.phase-node.active .short { color: var(--gold-2); font-weight: 700; }
+.phase-node .tip {
+  display: none;
+  position: absolute;
+  left: 72px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 20;
+  padding: 6px 9px;
+  border-radius: 7px;
+  background: #0f0d0b;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  white-space: nowrap;
+  font-size: .72rem;
+  box-shadow: var(--soft-shadow);
+}
+.phase-node:hover .tip { display: block; }
+.stage {
+  grid-area: stage;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 112px 1fr;
+  gap: 10px;
+}
+.announcement {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(90deg, rgba(123,34,14,.46), rgba(36,29,22,.92)),
+    var(--surface);
+  box-shadow: var(--soft-shadow);
+}
+.announcement::after {
+  content: "SPQR";
+  position: absolute;
+  right: 26px;
+  top: 2px;
+  color: rgba(217,175,99,.07);
+  font-family: Georgia, serif;
+  font-size: 5.6rem;
+  font-weight: 700;
+  pointer-events: none;
+}
+.announcement-inner {
+  position: relative;
+  z-index: 2;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 18px;
+  padding: 18px 22px;
+}
+.phase-kicker { color: var(--gold); font-size: .72rem; letter-spacing: .16em; font-weight: 700; }
+.phase-heading { margin-top: 5px; font-size: 1.38rem; line-height: 1.2; }
+.phase-copy { margin-top: 7px; max-width: 760px; color: var(--muted); font-size: .82rem; line-height: 1.55; }
+.phase-state {
+  min-width: 176px;
+  padding: 12px;
+  border: 1px solid rgba(242,213,144,.22);
+  border-radius: 10px;
+  background: rgba(0,0,0,.20);
+}
+.phase-state .slabel { color: var(--muted); font-size: .66rem; }
+.phase-state .svalue { margin-top: 5px; color: var(--gold-2); font-weight: 700; }
+.board {
+  min-height: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: rgba(251,246,237,.94);
+  color: #2e251b;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: 44px 1fr;
+}
+.subnav {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 7px 10px;
+  background: #ead7b8;
+  border-bottom: 1px solid rgba(113,80,43,.34);
+  overflow-x: auto;
+}
+.subtab {
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid rgba(113,80,43,.25);
+  border-radius: 999px;
+  background: rgba(255,255,255,.62);
+  color: #684323;
+  font-size: .72rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.subtab.active { background: #7b220e; color: #f8e4a5; border-color: #7b220e; }
+.subtab.locked { opacity: .48; }
+.content-area {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+.phase-page { display: none; height: 100%; min-height: 0; }
+.phase-page.active { display: block; animation: fade .18s ease; }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.grid-2 { display: grid; grid-template-columns: 1.15fr .85fr; gap: 12px; height: 100%; min-height: 0; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; height: 100%; min-height: 0; }
+.panel {
+  min-height: 0;
+  border: 1px solid rgba(113,80,43,.24);
+  border-radius: 10px;
+  background: #fffaf0;
+  box-shadow: 0 3px 12px rgba(85,52,25,.08);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.panel-head {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 11px;
+  color: #f8e4a5;
+  background: linear-gradient(180deg, #84250a, #671b07);
+  font-weight: 700;
+  font-size: .84rem;
+}
+.panel-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(113,80,43,.20);
+  border-radius: 8px;
+  background: #fff;
+  font-size: .78rem;
+}
+.item:hover { background: #fff7e8; }
+.item strong { color: #6e230f; }
+.meta { color: #796852; font-size: .7rem; margin-top: 2px; line-height: 1.4; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #f1dfbd;
+  color: #6b4420;
+  font-size: .66rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.chip.good { background: rgba(79,139,87,.18); color: #34643a; }
+.chip.warn { background: rgba(226,168,75,.22); color: #7b4a09; }
+.chip.bad { background: rgba(208,107,88,.18); color: #8a3021; }
+.btn {
+  height: 30px;
+  border: 1px solid rgba(113,80,43,.28);
+  border-radius: 7px;
+  padding: 0 10px;
+  background: #d8b374;
+  color: #2d2115;
+  font-size: .72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: .14s ease;
+  white-space: nowrap;
+}
+.btn:hover { background: #b87333; color: #fff; transform: translateY(-1px); }
+.btn.primary { background: #7b220e; color: #f8e4a5; border-color: #7b220e; }
+.btn.good { background: #4f8b57; color: #fff; border-color: #4f8b57; }
+.btn.warn { background: #d6902a; color: #fff; border-color: #d6902a; }
+.btn.ghost { background: transparent; color: #6b4420; }
+.btn:disabled { opacity: .42; cursor: not-allowed; transform: none; }
+.field {
+  height: 30px;
+  border: 1px solid rgba(113,80,43,.28);
+  border-radius: 7px;
+  padding: 0 8px;
+  background: #fff;
+  color: #2d2115;
+}
+.side {
+  grid-area: side;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 10px;
+}
+.side-card {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: rgba(31,24,18,.90);
+  box-shadow: var(--soft-shadow);
+  overflow: hidden;
+}
+.side-title {
+  padding: 10px 12px;
+  background: rgba(217,175,99,.12);
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--gold-2);
+  font-size: .78rem;
+  font-weight: 700;
+}
+.side-body { padding: 11px 12px; }
+.resource-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px dashed rgba(217,175,99,.18);
+  font-size: .78rem;
+}
+.resource-line span:first-child { color: var(--muted); }
+.resource-line span:last-child { color: var(--gold-2); font-weight: 700; }
+.log-list {
+  max-height: 100%;
+  overflow: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: .72rem;
+}
+.log-entry {
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: rgba(255,255,255,.055);
+  border: 1px solid rgba(217,175,99,.12);
+  color: var(--muted);
+  line-height: 1.45;
+}
+.log-entry b { color: var(--gold-2); }
+.side-actions { display: flex; flex-direction: column; gap: 7px; padding: 10px 12px; }
+.querybar {
+  grid-area: query;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(70px, 1fr));
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(69,24,12,.95), rgba(36,22,14,.96));
+  box-shadow: var(--soft-shadow);
+}
+.query-btn {
+  height: 40px;
+  border: 1px solid rgba(217,175,99,.20);
+  border-radius: 8px;
+  background: rgba(255,255,255,.055);
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: .72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: .15s ease;
+  white-space: nowrap;
+}
+.query-btn:hover { background: rgba(217,175,99,.18); border-color: var(--gold); transform: translateY(-1px); }
+.modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6,4,3,.58);
+  backdrop-filter: blur(3px);
+}
+.modal.open { display: flex; }
+.dialog {
+  width: min(660px, calc(100vw - 46px));
+  max-height: min(640px, calc(100vh - 60px));
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff7e8;
+  color: #2e251b;
+  box-shadow: 0 28px 80px rgba(0,0,0,.46);
+}
+.dialog-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  background: #7b220e;
+  color: #f8e4a5;
+}
+.dialog-head h3 { font-size: 1rem; }
+.dialog-body { padding: 16px; font-size: .82rem; line-height: 1.65; }
+.close {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.22);
+  background: rgba(255,255,255,.08);
+  color: #fff;
+  cursor: pointer;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .78rem;
+}
+.table th, .table td {
+  padding: 7px 8px;
+  border: 1px solid rgba(113,80,43,.22);
+  text-align: left;
+}
+.table th { background: #ead7b8; color: #6e230f; }
+.progress {
+  height: 8px;
+  border-radius: 999px;
+  background: #ead7b8;
+  overflow: hidden;
+}
+.progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #7b220e, #d9af63);
+}
+@media (max-width: 1360px) {
+  .app { grid-template-columns: 76px minmax(560px,1fr) 300px; }
+  .status-strip { grid-template-columns: repeat(3, minmax(86px, 1fr)); }
+  .querybar { grid-template-columns: repeat(6, minmax(92px, 1fr)); grid-template-rows: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">SP</div>
+      <div>
+        <h1>EAGLE OF ROME</h1>
+        <small>RES PUBLICA COMMAND</small>
+      </div>
+    </div>
+    <div class="status-strip">
+      <div class="status-pill"><div class="label">国库</div><div class="value" id="topTreasury">142 T</div></div>
+      <div class="status-pill"><div class="label">当前玩家</div><div class="value" id="topPlayer">Equites</div></div>
+      <div class="status-pill"><div class="label">派系金库</div><div class="value" id="topFactionTreasury">29 T</div></div>
+      <div class="status-pill"><div class="label">影响力</div><div class="value" id="topInfluence">68</div></div>
+      <div class="status-pill"><div class="label">战争</div><div class="value" id="topWars">1 威胁</div></div>
+      <div class="status-pill"><div class="label">阶段</div><div class="value" id="topPhase">广场</div></div>
+    </div>
+    <div class="turn-badge">公元前 282 年 · 第 3 回合</div>
+  </header>
+
+  <nav class="phase-rail" id="phaseRail"></nav>
+
+  <main class="stage">
+    <section class="announcement">
+      <div class="announcement-inner">
+        <div>
+          <div class="phase-kicker" id="phaseKicker">PHASE III</div>
+          <h2 class="phase-heading" id="phaseTitle">广场阶段</h2>
+          <p class="phase-copy" id="phaseCopy">处理解雇、招募、合同、土地交易与凯旋投票。所有玩家轮流完成后公开结算。</p>
+        </div>
+        <div class="phase-state">
+          <div class="slabel">当前子流程</div>
+          <div class="svalue" id="phaseState">步骤 1 / 解雇派系成员</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="board">
+      <div class="subnav" id="subnav"></div>
+      <div class="content-area">
+        <section class="phase-page" id="page-mortality"></section>
+        <section class="phase-page" id="page-revenue"></section>
+        <section class="phase-page active" id="page-forum"></section>
+        <section class="phase-page" id="page-population"></section>
+        <section class="phase-page" id="page-senate"></section>
+        <section class="phase-page" id="page-combat"></section>
+        <section class="phase-page" id="page-resolution"></section>
+      </div>
+    </section>
+  </main>
+
+  <aside class="side">
+    <section class="side-card">
+      <div class="side-title">派系与权限</div>
+      <div class="side-body">
+        <div class="resource-line"><span>Viewer</span><span>player_equites</span></div>
+        <div class="resource-line"><span>派系</span><span>Equites</span></div>
+        <div class="resource-line"><span>状态</span><span id="permissionText">当前玩家，可操作</span></div>
+        <div class="resource-line"><span>金库</span><span>29 T</span></div>
+      </div>
+    </section>
+    <section class="side-card" style="min-height:0; display:flex; flex-direction:column;">
+      <div class="side-title">事件日志</div>
+      <div class="log-list" id="logList"></div>
+    </section>
+    <section class="side-card">
+      <div class="side-title">流程控制</div>
+      <div class="side-actions">
+        <button class="btn primary" onclick="completeCurrent()">完成当前玩家操作</button>
+        <button class="btn ghost" onclick="refreshUi()">刷新权威状态</button>
+      </div>
+    </section>
+  </aside>
+
+  <footer class="querybar" id="querybar"></footer>
+</div>
+
+<div class="modal" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="dialog">
+    <div class="dialog-head">
+      <h3 id="modalTitle">查询结果</h3>
+      <button class="close" onclick="closeModal()">×</button>
+    </div>
+    <div class="dialog-body" id="modalBody"></div>
+  </div>
+</div>
+
+<script>
+const phases = [
+  {id:"mortality", icon:"🎴", short:"天命", name:"天命阶段", desc:"抽取天命事件，结算死亡、丰收、灾害或英雄降临。", state:"等待执行天命"},
+  {id:"revenue", icon:"💰", short:"收入", name:"收入阶段", desc:"结算私人收入、公地收入、合同、军团维护、舰队维护、国库运营费与战争赔款。", state:"等待收入确认"},
+  {id:"forum", icon:"🏛️", short:"广场", name:"广场阶段", desc:"处理解雇、招募、合同、土地交易与凯旋投票。所有玩家轮流完成后公开结算。", state:"步骤 1 / 解雇派系成员"},
+  {id:"population", icon:"⚖️", short:"人口", name:"人口阶段", desc:"候选人庆典赞助与官职投票，完成执政官、监察官、大法官、财务官、保民官选举。", state:"等待庆典赞助"},
+  {id:"senate", icon:"🏺", short:"元老院", name:"元老院阶段", desc:"执政官提出议案，各派投票，保民官可否决，随后执行通过的政治法案。", state:"等待议案创建"},
+  {id:"combat", icon:"⚔️", short:"战争", name:"战争阶段", desc:"展示战争威胁、军团与舰队状态，并按战争逐项处理战斗结果。", state:"等待战争处理"},
+  {id:"resolution", icon:"📊", short:"决算", name:"决算阶段", desc:"年度收束、革命检查、状态恢复与下一年度初始化。", state:"等待年度推进"}
+];
+let activePhase = 2;
+let completed = new Set([0,1]);
+
+const queryButtons = [
+  ["📋","派系信息","Optimates：成员 9 / 影响力 42<br>Populares：成员 8 / 影响力 38<br>Equites：成员 7 / 金库 29T / 影响力 31"],
+  ["👤","人物查询","Gaius Manlius：军略 5 / 智略 7 / 魅力 6 / 影响力 3<br>Spurius Aemilius：私人收入 +5T"],
+  ["📊","游戏状态","国库 142T；在世人物 28；军团 6；舰队 3；当前阶段：广场"],
+  ["💰","派系金库","当前派系 Equites：29T<br><span style='color:#7b6a55'>其他派系金库在多人模式下隐藏。</span>"],
+  ["🌾","公地信息","国家公地：6000C；待售：800C；本轮可认购：5C"],
+  ["🏡","私地信息","Gaius Manlius：30C<br>Numerius Antonius：12C"],
+  ["📦","合同状态","待决合同 3；执行中 2；已完成 5；舰队建造合同待竞标"],
+  ["🏛️","行省信息","西西里：空缺；撒丁：空缺；科西嘉：空缺；山南高卢：代理"],
+  ["⚔️","战争列表","威胁：迦太基·西西里<br>停战：伊庇鲁斯，剩余 2 回合"],
+  ["🗡️","军团状态","第 I 军团 4/4 罗马<br>第 II 军团 3/4 罗马<br>第 III 军团 4/4 西西里"],
+  ["⚓","舰队状态","第 1 舰队 战力 8 罗马<br>第 2 舰队 战力 5 塔兰托"],
+  ["❓","帮助","按阶段顺序处理共和国事务。按钮仅为原型交互，不改变真实存档。"]
+];
+
+function renderShell(){
+  const rail = document.getElementById("phaseRail");
+  rail.innerHTML = phases.map((p,i)=>`
+    <div class="phase-node ${i===activePhase?'active':''} ${completed.has(i)?'done':'locked'}" onclick="switchPhase(${i})">
+      <div class="icon">${p.icon}</div><div class="short">${p.short}</div><div class="tip">${p.name}</div>
+    </div>`).join("");
+  document.getElementById("topPhase").textContent = phases[activePhase].short;
+  document.getElementById("phaseKicker").textContent = `PHASE ${activePhase+1}`;
+  document.getElementById("phaseTitle").textContent = phases[activePhase].name;
+  document.getElementById("phaseCopy").textContent = phases[activePhase].desc;
+  document.getElementById("phaseState").textContent = phases[activePhase].state;
+  document.querySelectorAll(".phase-page").forEach(el=>el.classList.remove("active"));
+  document.getElementById(`page-${phases[activePhase].id}`).classList.add("active");
+  renderSubnav();
+}
+function renderSubnav(){
+  const labels = {
+    mortality:["抽取天命","查看结果","进入收入"],
+    revenue:["收入摘要","维护费用","赔款与国库"],
+    forum:["解雇","市场","结果公示"],
+    population:["庆典赞助","投票","选举结果"],
+    senate:["提案","表决","否决","结果"],
+    combat:["战争概览","战斗处理","战果"],
+    resolution:["年度总结","革命检查","下一年"]
+  }[phases[activePhase].id];
+  document.getElementById("subnav").innerHTML = labels.map((l,i)=>`<button class="subtab ${i===0?'active':''}">${i+1}. ${l}</button>`).join("");
+}
+function switchPhase(i){ activePhase=i; renderShell(); log("info",`切换到 ${phases[i].name}`); }
+function log(type,msg){
+  const box=document.getElementById("logList");
+  const time=new Date().toLocaleTimeString("zh-CN",{hour12:false});
+  box.insertAdjacentHTML("afterbegin",`<div class="log-entry"><b>${time}</b> · ${msg}</div>`);
+}
+function modal(title,body){ document.getElementById("modalTitle").textContent=title; document.getElementById("modalBody").innerHTML=body; document.getElementById("modal").classList.add("open"); }
+function closeModal(){ document.getElementById("modal").classList.remove("open"); }
+function refreshUi(){ log("info","已刷新权威状态快照。"); }
+function completeCurrent(){ log("good","当前玩家操作完成，等待下一玩家。"); }
+function act(label){ log("info",label); modal("操作回执",`${label}<br><br><span style="color:#7b6a55">这是静态原型演示；真实实现将通过 API 返回结构化结果。</span>`); }
+
+function initPages(){
+  document.getElementById("page-mortality").innerHTML = `
+    <div class="grid-2">
+      <div class="panel"><div class="panel-head">天命事件</div><div class="panel-body">
+        <div class="item"><div><strong>无妄天灾</strong><div class="meta">随机人物死亡；可能触发继承与空缺。</div></div><button class="btn primary" onclick="act('执行天命：无妄天灾')">执行天命</button></div>
+        <div class="item"><div><strong>国泰民安</strong><div class="meta">国家稳定提升，国库获得临时收入。</div></div><span class="chip good">可能结果</span></div>
+      </div></div>
+      <div class="panel"><div class="panel-head">影响摘要</div><div class="panel-body"><div class="item"><span>死亡检查</span><span class="chip warn">待执行</span></div><div class="item"><span>下一阶段</span><span>收入</span></div></div></div>
+    </div>`;
+  document.getElementById("page-revenue").innerHTML = `
+    <div class="grid-3">
+      <div class="panel"><div class="panel-head">收入</div><div class="panel-body"><div class="item"><span>私地收益</span><strong>+24 T</strong></div><div class="item"><span>公地税</span><strong>+18 T</strong></div><div class="item"><span>合同收益</span><strong>+32 T</strong></div></div></div>
+      <div class="panel"><div class="panel-head">支出</div><div class="panel-body"><div class="item"><span>军团维护</span><strong>-20 T</strong></div><div class="item"><span>舰队维护</span><strong>-9 T</strong></div><div class="item"><span>运营费</span><strong>-12 T</strong></div></div></div>
+      <div class="panel"><div class="panel-head">确认</div><div class="panel-body"><div class="item"><div><strong>预计国库</strong><div class="meta">142 T → 175 T</div></div></div><button class="btn primary" onclick="act('确认收入结算')">确认收入结算</button></div></div>
+    </div>`;
+  document.getElementById("page-forum").innerHTML = `
+    <div class="grid-3">
+      <div class="panel"><div class="panel-head">1. 解雇</div><div class="panel-body">
+        ${["Gaius Manlius","Numerius Antonius"].map(n=>`<div class="item"><div><strong>${n}</strong><div class="meta">Equites · 可解雇</div></div><button class="btn" onclick="act('解雇 ${n}')">解雇</button></div>`).join("")}
+        <button class="btn primary" onclick="act('完成解雇环节')">完成解雇</button>
+      </div></div>
+      <div class="panel"><div class="panel-head">2. 市场</div><div class="panel-body">
+        ${["Gnaeus Junius","Claudius Magnus","Servius Antonius"].map((n,i)=>`<div class="item"><div><strong>${n}</strong><div class="meta">军略 ${5+i} / 智略 ${4+i} / 魅力 ${7+i}</div></div><button class="btn primary" onclick="act('招募 ${n}')">招募</button></div>`).join("")}
+      </div></div>
+      <div class="panel"><div class="panel-head">3. 公开事项</div><div class="panel-body">
+        <div class="item"><div><strong>意大利工程</strong><div class="meta">合同预算 72 T</div></div><button class="btn" onclick="act('竞标合同')">竞标</button></div>
+        <div class="item"><div><strong>出售国家公地</strong><div class="meta">本轮 5C</div></div><button class="btn" onclick="act('认购公地')">认购</button></div>
+        <div class="item"><div><strong>凯旋投票</strong><div class="meta">Cornelius Maximus</div></div><button class="btn good" onclick="act('赞成凯旋')">赞成</button></div>
+      </div></div>
+    </div>`;
+  document.getElementById("page-population").innerHTML = `
+    <div class="grid-2">
+      <div class="panel"><div class="panel-head">庆典赞助</div><div class="panel-body">${["Lucius Cornelius","Marcus Aemilius","Titus Junius"].map(n=>`<div class="item"><div><strong>${n}</strong><div class="meta">候选官职 · 赞助来自个人财富</div></div><button class="btn" onclick="act('赞助 ${n}')">赞助</button></div>`).join("")}</div></div>
+      <div class="panel"><div class="panel-head">官职投票</div><div class="panel-body"><table class="table"><tr><th>官职</th><th>候选</th><th>投票</th></tr><tr><td>执政官</td><td>Cornelius</td><td><button class="btn">支持</button></td></tr><tr><td>监察官</td><td>Aemilius</td><td><button class="btn">支持</button></td></tr><tr><td>保民官</td><td>Junius</td><td><button class="btn">支持</button></td></tr></table><button class="btn primary" onclick="act('确认投票')">确认投票</button></div></div>
+    </div>`;
+  document.getElementById("page-senate").innerHTML = `
+    <div class="grid-3">
+      <div class="panel"><div class="panel-head">提案创建</div><div class="panel-body">${["宣战：迦太基·西西里","停战草案：伊庇鲁斯","任命总督：西西里","预算：舰队建造","出售国家公地"].map(t=>`<div class="item"><div><strong>${t}</strong><div class="meta">可配置参数后提交表决</div></div><button class="btn" onclick="act('添加提案：${t}')">添加</button></div>`).join("")}</div></div>
+      <div class="panel"><div class="panel-head">表决</div><div class="panel-body"><div class="item"><span>宣战案</span><span class="chips"><span class="chip good">赞成 62</span><span class="chip bad">反对 18</span></span></div><div class="item"><span>舰队预算</span><span class="chip warn">待表决</span></div><button class="btn primary" onclick="act('确认元老院表决')">确认表决</button></div></div>
+      <div class="panel"><div class="panel-head">否决与执行</div><div class="panel-body"><div class="item"><span>保民官否决</span><span class="chip">可选</span></div><button class="btn warn" onclick="act('执行元老院结果')">执行通过法案</button></div></div>
+    </div>`;
+  document.getElementById("page-combat").innerHTML = `
+    <div class="grid-3">
+      ${["迦太基·西西里","伊庇鲁斯停战","海盗威胁"].map((w,i)=>`<div class="panel"><div class="panel-head">${w}</div><div class="panel-body"><div class="item"><span>罗马战力</span><strong>${10+i*2}</strong></div><div class="item"><span>敌军战力</span><strong>${8+i*3}</strong></div><div class="progress"><span style="width:${55+i*12}%"></span></div><button class="btn primary" onclick="act('处理战斗：${w}')">发动进攻</button></div></div>`).join("")}
+    </div>`;
+  document.getElementById("page-resolution").innerHTML = `
+    <div class="grid-2">
+      <div class="panel"><div class="panel-head">年度总结</div><div class="panel-body"><div class="item"><span>国库变化</span><strong>+33 T</strong></div><div class="item"><span>新任官员</span><strong>5</strong></div><div class="item"><span>战争状态</span><strong>1 威胁</strong></div></div></div>
+      <div class="panel"><div class="panel-head">进入下一年度</div><div class="panel-body"><div class="item"><div><strong>革命检查</strong><div class="meta">当前稳定度 78%，无立即革命风险。</div></div><span class="chip good">通过</span></div><button class="btn primary" onclick="act('进入下一年度')">进入下一年度</button></div></div>
+    </div>`;
+}
+function initQueries(){
+  document.getElementById("querybar").innerHTML = queryButtons.map((q,i)=>`<button class="query-btn" onclick="openQuery(${i})"><span>${q[0]}</span>${q[1]}</button>`).join("");
+}
+
+function openQuery(index){
+  const q = queryButtons[index];
+  modal(q[1], q[2]);
+}
+function boot(){
+  initPages();
+  initQueries();
+  renderShell();
+  log("info","Codex v4.0 原型启动：7 阶段流程已装载。");
+  log("info","当前玩家 Equites，广场阶段等待操作。");
+}
+boot();
+</script>
+</body>
+</html>

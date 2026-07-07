@@ -98,12 +98,22 @@ def get_session_snapshot(state: GameState, viewer_player_id: str) -> dict:
                 })
 
         # 国家资源（公开）
+        # 公地/军团/舰队/行省数量
+        military_sys = state.get_military_system()
+        all_legions = military_sys.get_all_legions() if military_sys else []
+        all_fleets = state.naval_system.get_all_fleets() if state.naval_system else []
+        all_provinces = list(state._provinces.values()) if hasattr(state, '_provinces') and state._provinces else []
+
         public_resources = {
             "treasury": state.treasury,
             "turn_number": state.turn.turn_number if state.turn else 0,
             "year": state.turn.year if state.turn else 0,
             "year_display": _format_year(state.turn.year if state.turn else 0),
             "living_members": len(state.get_living_members()),
+            "public_land": getattr(state, '_national_public_land', 0),
+            "legion_count": len(all_legions),
+            "fleet_count": len(all_fleets),
+            "province_count": len(all_provinces),
         }
 
         # 派系资源（仅本派系）

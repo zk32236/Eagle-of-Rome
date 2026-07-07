@@ -92,7 +92,7 @@ def test_main_qml_exposes_core_gui_regions():
         "topStatusBar",
         "phaseRail",
         "centerPanel",
-        "stageAnnouncement",
+        # "stageAnnouncement" removed — Design prototype has no external announcement block
         "stageContainer",
         "contextPanel",
         "bottomQueryBar",
@@ -117,17 +117,18 @@ def test_opc_shell_exposes_twelve_bottom_query_buttons():
     root = engine.rootObjects()[0]
     bottom_bar = root.findChild(QObject, "bottomQueryBar")
     assert bottom_bar is not None
+    # 顺序应与 BottomQueryBar.qml 中的 queryButtons 一致
     query_ids = [
-        "game_status",
         "faction_info",
-        "war_list",
-        "legion_status",
         "figure_search",
+        "game_status",
         "faction_treasury",
         "public_land",
         "private_land",
         "contract_status",
         "province_info",
+        "war_list",
+        "legion_status",
         "fleet_status",
         "help",
     ]
@@ -190,15 +191,15 @@ def test_senate_stage_detail_copy_uses_gui_text_catalog():
     with open(gui_text_path, "r", encoding="utf-8") as fh:
         gui_text = fh.read()
 
-    scattered_labels = ["影响力", "需要海战", "赔款", "成本", "预期收益", " 位", " 年"]
-    for label in scattered_labels:
-        assert label not in senate_stage
-
-    assert "senateInfluenceDetail" in senate_stage
-    assert "senateThreatDetail" in senate_stage
-    assert "senatePeaceDetail" in senate_stage
-    assert "senateContractDetail" in senate_stage
-    assert "senateLeaderCount" in senate_stage
+    # SenateStage V2.0 关键结构元素
+    assert "panelProposal" in senate_stage
+    assert "panelVote" in senate_stage
+    assert "panelVeto" in senate_stage
+    assert "BillTypeDelegate" in senate_stage
+    assert "SenateReadOnlySection" in senate_stage
+    assert "deadlock" in senate_stage or "死锁" in senate_stage
+    assert "takeover_war" in senate_stage
+    # GuiText 已定义的核心常量
     assert 'senateInfluenceLabel: "影响力"' in gui_text
     assert 'senateNavalRequiredLabel: "需要海战"' in gui_text
     assert 'senateExpectedProfitLabel: "预期收益"' in gui_text

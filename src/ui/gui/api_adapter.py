@@ -170,6 +170,38 @@ class GuiApiAdapter:
         }
 
     # -----------------------------------------------------------------------
+    # 元老院阶段专用 API
+    # -----------------------------------------------------------------------
+    def senate_propose(self, player_id: str, proposal_type: str,
+                       **kwargs) -> Dict[str, Any]:
+        from src.api import senate_api
+        return self.call(
+            senate_api.propose,
+            self._state, player_id, proposal_type,
+            bypass_turn_check=False, **kwargs
+        )
+
+    def senate_vote(self, player_id: str, proposal_ids: List[int],
+                    votes: List[bool]) -> Dict[str, Any]:
+        from src.api import senate_api
+        return self.call(
+            senate_api.vote,
+            self._state, player_id, proposal_ids, votes
+        )
+
+    def senate_veto(self, player_id: str,
+                    proposal_ids: List[int]) -> Dict[str, Any]:
+        from src.api import senate_api
+        return self.call(
+            senate_api.veto,
+            self._state, player_id, proposal_ids
+        )
+
+    def senate_resolve(self) -> Dict[str, Any]:
+        from src.api import senate_api
+        return self.call(senate_api.resolve_senate, self._state)
+
+    # -----------------------------------------------------------------------
     # 内部工具
     # -----------------------------------------------------------------------
     def _build_feedback(

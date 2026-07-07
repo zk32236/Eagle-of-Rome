@@ -26,7 +26,7 @@ Rectangle {
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        height: 56
+        height: 40
     }
 
     // 左侧阶段导航
@@ -36,7 +36,7 @@ Rectangle {
         anchors.top: topBar.bottom
         anchors.left: parent.left
         anchors.bottom: bottomQueryBar.top
-        width: 176
+        width: 60
     }
 
     // 右侧上下文面板
@@ -46,7 +46,7 @@ Rectangle {
         anchors.top: topBar.bottom
         anchors.right: parent.right
         anchors.bottom: bottomQueryBar.top
-        width: 320
+        width: 260
     }
 
     BottomQueryBar {
@@ -55,7 +55,7 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: 76
+        height: 32
         onQueryRequested: function(queryId) {
             var result = sessionStore.doGlobalQuery(queryId)
             if (result.success) {
@@ -79,59 +79,9 @@ Rectangle {
         border.width: 0
 
         Rectangle {
-            id: stageAnnouncement
-            objectName: "stageAnnouncement"
-            anchors.top: parent.top
-            anchors.left: parent.left
-            anchors.right: parent.right
-            height: 96
-            color: theme.bgSurface1
-            border.color: theme.borderNormal
-            border.width: 1
-
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 14
-                spacing: 6
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    Text {
-                        text: GuiText.stageAnnouncementTitle
-                        color: theme.textMuted
-                        font.pixelSize: 11
-                        font.bold: true
-                    }
-                    Item { Layout.fillWidth: true }
-                    Text {
-                        text: GuiText.stageModeText(sessionStore.selectedPhaseSummary)
-                        color: sessionStore.selectedPhaseSummary.actionable ? theme.statusSuccess : theme.statusWarning
-                        font.pixelSize: 11
-                        font.bold: true
-                    }
-                }
-                Text {
-                    text: sessionStore.selectedPhaseName || sessionStore.currentPhaseName || GuiText.populationFallbackName
-                    color: theme.textPrimary
-                    font.pixelSize: 18
-                    font.family: theme.fontTitle
-                    font.bold: true
-                    Layout.fillWidth: true
-                }
-                Text {
-                    text: sessionStore.selectedPhaseSummary.description || GuiText.placeholderFallbackDescription
-                    color: theme.textSecondary
-                    font.pixelSize: 12
-                    wrapMode: Text.Wrap
-                    Layout.fillWidth: true
-                }
-            }
-        }
-
-        Rectangle {
             id: stageContainer
             objectName: "stageContainer"
-            anchors.top: stageAnnouncement.bottom
+            anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom

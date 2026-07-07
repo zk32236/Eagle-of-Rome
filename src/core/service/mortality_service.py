@@ -135,6 +135,10 @@ class MortalityService:
                 f"(阶级: {victim.class_tier.value})"
             )
 
+            # 捕获资产数值 before mark_member_dead
+            lost_wealth = victim.wealth
+            lost_land = victim._land_private
+
             terminated_contracts = []
             if victim.has_active_contract:
                 for contract_id in victim.contract_ids:
@@ -164,6 +168,8 @@ class MortalityService:
                 "figure_name": victim.name,
                 "faction_id": victim.faction_id,
                 "faction_name": faction_name,
+                "lost_wealth": lost_wealth,
+                "lost_land": lost_land,
                 "terminated_contracts": terminated_contracts,
             })
 

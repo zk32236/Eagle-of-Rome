@@ -97,6 +97,31 @@ class GuiSessionStore(QObject):
         return pr.get("treasury", 0)
 
     @Property(int, notify=snapshotChanged)
+    def publicLand(self) -> int:
+        pr = self._snapshot.get("public_resources", {})
+        return pr.get("public_land", 0)
+
+    @Property(int, notify=snapshotChanged)
+    def legionCount(self) -> int:
+        pr = self._snapshot.get("public_resources", {})
+        return pr.get("legion_count", 0)
+
+    @Property(int, notify=snapshotChanged)
+    def fleetCount(self) -> int:
+        pr = self._snapshot.get("public_resources", {})
+        return pr.get("fleet_count", 0)
+
+    @Property(int, notify=snapshotChanged)
+    def provinceCount(self) -> int:
+        pr = self._snapshot.get("public_resources", {})
+        return pr.get("province_count", 0)
+
+    @Property(int, notify=snapshotChanged)
+    def livingMemberCount(self) -> int:
+        pr = self._snapshot.get("public_resources", {})
+        return pr.get("living_members", 0)
+
+    @Property(int, notify=snapshotChanged)
     def factionTreasury(self) -> int:
         fr = self._snapshot.get("faction_resources", {})
         return fr.get("treasury", 0) if fr else 0
@@ -192,6 +217,15 @@ class GuiSessionStore(QObject):
     def mortalityEvents(self) -> List[Dict[str, Any]]:
         return self._mortality_result.get("events", []) or self._mortality_view.get("events", [])
 
+    @Property(dict, notify=mortalityViewChanged)
+    def mortalityEvent(self) -> Dict[str, Any]:
+        """单事件视图：取 mortalityEvents 数组第一项。"""
+        events = self._mortality_result.get("events", [])
+        if events:
+            return events[0]
+        view_events = self._mortality_view.get("events", [])
+        return view_events[0] if view_events else {}
+
     @Property(bool, notify=mortalityViewChanged)
     def canExecuteMortality(self) -> bool:
         return self._mortality_view.get("can_execute", False)
@@ -240,6 +274,61 @@ class GuiSessionStore(QObject):
     @Property(list, notify=senateViewChanged)
     def senatePendingContracts(self) -> List[Dict[str, Any]]:
         return self._senate_view.get("pending_contracts", [])
+
+    @Property(list, notify=senateViewChanged)
+    def senateProposals(self) -> List[Dict[str, Any]]:
+        return self._senate_view.get("proposals", [])
+
+    @Property(str, notify=senateViewChanged)
+    def senateSubStep(self) -> str:
+        """proposal | vote | veto | completed"""
+        return self._senate_view.get("sub_step", "proposal")
+
+    @Property(list, notify=senateViewChanged)
+    def senateProposalTypes(self) -> List[Dict[str, Any]]:
+        """可用提案类型列表，含各类型所需参数模板"""
+        return self._senate_view.get("available_proposal_types", [])
+
+    @Property(dict, notify=senateViewChanged)
+    def senateAvailableWars(self) -> Dict[str, Any]:
+        """可宣战列表"""
+        return {
+            "threats": self._senate_view.get("war_threats", []),
+            "active": self._senate_view.get("active_foreign_wars", []),
+            "peaces": self._senate_view.get("pending_peace_treaties", []),
+        }
+
+    @Property(list, notify=senateViewChanged)
+    def senateGovernorCandidates(self) -> List[Dict[str, Any]]:
+        return self._senate_view.get("governor_candidates", [])
+
+    @Property(list, notify=senateViewChanged)
+    def senateAvailableContracts(self) -> List[Dict[str, Any]]:
+        return self._senate_view.get("available_contracts", [])
+
+    @Property(dict, notify=senateViewChanged)
+    def senateLandInfo(self) -> Dict[str, Any]:
+        return self._senate_view.get("land_info", {})
+
+    @Property(dict, notify=senateViewChanged)
+    def senateVoteResults(self) -> Dict[str, Any]:
+        return self._senate_view.get("vote_results", {})
+
+    @Property(bool, notify=senateViewChanged)
+    def senateIsDeadlocked(self) -> bool:
+        return self._senate_view.get("deadlocked", False)
+
+    @Property(bool, notify=senateViewChanged)
+    def senateCanPropose(self) -> bool:
+        return self._senate_view.get("can_create_proposal", False)
+
+    @Property(bool, notify=senateViewChanged)
+    def senateCanVote(self) -> bool:
+        return self._senate_view.get("can_vote", False)
+
+    @Property(bool, notify=senateViewChanged)
+    def senateCanVeto(self) -> bool:
+        return self._senate_view.get("can_veto", False)
 
     @Property(dict, notify=queryResultChanged)
     def globalQueryResult(self) -> Dict[str, Any]:
@@ -431,6 +520,70 @@ class GuiSessionStore(QObject):
         self._refresh_senate_view()
         self.currentPlayerChanged.emit()
         return True
+
+    # -----------------------------------------------------------------------
+    # QML Slot — 元老院操作
+    # -----------------------------------------------------------------------
+    @Slot(str, result=dict)
+    def doSenatePropose(self, proposal_type: str, kwargs_json: str = "{}") -> dict:
+        """提交元老院提案。kwargs_json 为 JSON 格式的参数字典。"""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        import json
+        try:
+            kwargs = json.loads(kwargs_json) if kwargs_json else {}
+        except json.JSONDecodeError:
+            return {"success": False, "message": "无效的参数字符串"}
+        feedback = self._adapter.senate_propose(self._viewer_id, proposal_type, **kwargs)
+        self._raise_feedback(feedback)
+        if feedback.get("success"):
+            self._refresh_senate_view()
+        return feedback
+
+    @Slot(str, result=dict)
+    def doSenateVote(self, proposal_ids_json: str) -> dict:
+        """对提案投票。proposal_ids_json: "[1,3,5]" 形式，勾选的提案ID列表"""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        import json
+        try:
+            checked = json.loads(proposal_ids_json) if proposal_ids_json else []
+        except json.JSONDecodeError:
+            return {"success": False, "message": "无效的提案列表"}
+        proposals = self.senateProposals
+        pids = [p.get("proposal_id", p.get("id", 0)) for p in proposals]
+        votes = [pid in checked for pid in pids]
+        feedback = self._adapter.senate_vote(self._viewer_id, pids, votes)
+        self._raise_feedback(feedback)
+        if feedback.get("success"):
+            self._refresh_senate_view()
+        return feedback
+
+    @Slot(str, result=dict)
+    def doSenateVeto(self, proposal_ids_json: str) -> dict:
+        """保民官否决已通过提案。proposal_ids_json: "[1,3]" 形式"""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        import json
+        try:
+            vetoed = json.loads(proposal_ids_json) if proposal_ids_json else []
+        except json.JSONDecodeError:
+            return {"success": False, "message": "无效的提案列表"}
+        feedback = self._adapter.senate_veto(self._viewer_id, vetoed)
+        self._raise_feedback(feedback)
+        if feedback.get("success"):
+            self._refresh_senate_view()
+        return feedback
+
+    @Slot(result=dict)
+    def doSenateResolve(self) -> dict:
+        """结算元老院阶段"""
+        feedback = self._adapter.senate_resolve()
+        self._raise_feedback(feedback)
+        if feedback.get("success"):
+            self._refresh_snapshot()
+            self._refresh_senate_view()
+        return feedback
 
     @Slot(str)
     def logUiEvent(self, message: str):

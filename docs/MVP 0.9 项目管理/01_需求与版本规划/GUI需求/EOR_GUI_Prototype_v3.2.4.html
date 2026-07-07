@@ -1,0 +1,1992 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eagle of Rome - GUI 概念原型 v3.2.4（界面精修版）</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #F5F0E8;
+  --panel-bg: #FAF5EE;
+  --panel-border: #D4A574;
+  --header-bg: #8B2500;
+  --header-text: #FFD700;
+  --accent: #C44A2B;
+  --bronze: #C9A84C;
+  --text: #3A3530;
+  --text-secondary: #8B7355;
+  --text-muted: #B8A080;
+  --btn-bg: #DEB887;
+  --btn-hover: #CD853F;
+  --success: #228B22;
+  --warning: #FF8C00;
+  --error: #C45151;
+  --info: #6C8FA1;
+  --opt: #8B0000;
+  --pop: #006400;
+  --equ: #00008B;
+  --radius: 6px;
+  --dark-red: #6B1C00;
+}
+body { font-family: 'Microsoft YaHei','Segoe UI',sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; flex-direction:column; overflow:hidden; user-select:none; }
+
+/* HEADER */
+.header { height:48px; background:var(--header-bg); display:flex; align-items:center; justify-content:space-between; padding:0 16px; flex-shrink:0; }
+.header .logo { font-size:1rem; color:var(--header-text); font-weight:bold; }
+.header .logo em { font-size:0.6rem; color:rgba(255,215,0,0.5); font-style:normal; margin-left:6px; }
+.top-status { display:flex; align-items:center; gap:14px; font-size:0.78rem; color:#FFEEDD; }
+.top-status .stat-item { display:flex; align-items:center; gap:4px; padding:2px 8px; border-left:1px solid rgba(255,255,255,0.15); }
+.top-status .stat-item:first-child { border-left:none; }
+.top-status .stat-value { font-weight:bold; color:var(--header-text); }
+.top-status .stat-label { font-size:0.62rem; color:rgba(255,255,255,0.55); }
+.round-info { font-size:0.8rem; color:#fff; font-weight:bold; white-space:nowrap; }
+
+/* MAIN */
+.main-wrapper { flex:1; display:flex; padding:8px; gap:8px; overflow:hidden; }
+
+/* Phase Rail */
+.phase-rail { width:44px; min-width:44px; background:var(--panel-bg); border:1px solid var(--panel-border); border-radius:var(--radius); padding:6px 3px; display:flex; flex-direction:column; gap:4px; align-items:center; }
+.rail-step { width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.75rem; cursor:pointer; transition:all .2s; border:2px solid transparent; position:relative; }
+.rail-step.done { background:#CD853F; color:#fff; }
+.rail-step.current { background:#E8B84B; color:var(--text); border-color:var(--bronze); box-shadow:0 0 8px rgba(201,168,76,0.4); }
+.rail-step.todo { background:#E8D5C4; color:#aaa; }
+.rail-step:hover { transform:scale(1.1); }
+.rail-step .rl { display:none; position:absolute; left:40px; background:var(--text); color:#fff; font-size:0.6rem; padding:2px 6px; border-radius:3px; white-space:nowrap; z-index:10; }
+.rail-step:hover .rl { display:block; }
+
+/* Center */
+.panel-center { flex:1; background:var(--panel-bg); border:1px solid var(--panel-border); border-radius:var(--radius); padding:14px; overflow-y:auto; display:flex; flex-direction:column; }
+
+/* Context */
+.context-panel { width:240px; min-width:240px; background:var(--panel-bg); border:1px solid var(--panel-border); border-radius:var(--radius); display:flex; flex-direction:column; }
+.ctx-top { padding:10px 12px 6px; display:flex; flex-direction:column; gap:6px; flex-shrink:0; }
+.ctx-log { flex:1; min-height:60px; padding:6px 12px; border-top:1px solid var(--panel-border); display:flex; flex-direction:column; overflow:hidden; }
+.context-panel h4 { font-size:0.7rem; color:var(--text-muted); letter-spacing:1px; border-bottom:1px solid var(--panel-border); padding-bottom:3px; margin-bottom:2px; }
+
+/* Phase content */
+.phase-content { display:none; flex:1; flex-direction:column; gap:6px; min-height:0; overflow:hidden; }
+.phase-content.active { display:flex; animation:fadeIn .2s ease; }
+@keyframes fadeIn { from {opacity:0;transform:translateY(4px)} to {opacity:1;transform:translateY(0)} }
+.phase-title { font-size:1rem; color:var(--header-bg); font-weight:bold; }
+.phase-desc { font-size:0.72rem; color:var(--text-secondary); font-style:italic; margin-bottom:2px; }
+.phase-badge { display:inline-block; padding:1px 8px; border-radius:8px; font-size:0.6rem; font-weight:bold; background:var(--header-bg); color:var(--header-text); margin-bottom:2px; align-self:flex-start; }
+.phase-subtitle { font-size:0.75rem; color:var(--accent); font-weight:bold; margin-top:4px; margin-bottom:2px; }
+
+/* Step guide */
+.stage-steps { display:flex; gap:4px; align-items:center; flex-wrap:wrap; background:#FFFDF5; border:1px solid var(--bronze); border-radius:var(--radius); padding:6px 10px; font-size:0.68rem; }
+.stage-steps .s { display:flex; align-items:center; gap:4px; }
+.stage-steps .sn { width:18px; height:18px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.55rem; font-weight:bold; flex-shrink:0; }
+.stage-steps .sn.done { background:var(--success); color:#fff; }
+.stage-steps .sn.current { background:var(--phase-current,#E8B84B); color:var(--text); }
+.stage-steps .sn.todo { background:#E8D5C4; color:#999; }
+.stage-steps .arrow { color:var(--text-muted); margin:0 2px; }
+
+/* Common components */
+.list-item { background:#fff; border:1px solid var(--panel-border); border-radius:4px; padding:5px 10px; margin-bottom:3px; display:flex; justify-content:space-between; align-items:center; font-size:0.72rem; transition:background .15s; }
+.list-item:hover { background:#FFFDF5; }
+.list-item .tag { font-size:0.6rem; padding:1px 5px; border-radius:3px; }
+.card-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:6px; }
+.card { background:#fff; border:1px solid var(--panel-border); border-radius:var(--radius); padding:8px; text-align:center; cursor:pointer; transition:all .15s; }
+.card:hover { transform:translateY(-2px); box-shadow:0 2px 8px rgba(0,0,0,.08); }
+.card h5 { font-size:0.7rem; color:var(--header-bg); margin-bottom:3px; }
+.card .attr { font-size:0.62rem; color:var(--text-secondary); line-height:1.4; }
+.btn { display:inline-block; padding:4px 10px; border:1px solid var(--bronze); border-radius:4px; background:var(--btn-bg); color:var(--text); font-size:0.68rem; font-weight:bold; cursor:pointer; transition:all .15s; font-family:inherit; }
+.btn:hover { background:var(--btn-hover); color:#fff; }
+.btn.primary { background:var(--header-bg); color:var(--header-text); border-color:var(--header-bg); }
+.btn.primary:hover { background:#A0522D; }
+.btn.small { padding:2px 6px; font-size:0.6rem; }
+.btn:disabled { opacity:.35; cursor:not-allowed; }
+.ctx-btn { width:100%; padding:5px 8px; margin-bottom:3px; font-size:0.68rem; text-align:left; border:1px solid var(--bronze); border-radius:4px; background:var(--btn-bg); color:var(--text); cursor:pointer; transition:all .15s; font-family:inherit; font-weight:bold; }
+.ctx-btn:hover { background:var(--btn-hover); color:#fff; padding-left:12px; }
+.ctx-btn:disabled { opacity:.35; cursor:not-allowed; }
+.stat-tile { display:flex; justify-content:space-between; padding:2px 0; font-size:0.68rem; border-bottom:1px dashed #E8D5C4; }
+.stat-tile .val { font-weight:bold; color:var(--accent); }
+.vote-table { width:100%; border-collapse:collapse; font-size:0.72rem; }
+.vote-table th,.vote-table td { padding:3px 6px; border:1px solid var(--panel-border); text-align:center; }
+.vote-table th { background:var(--panel-bg); color:var(--header-bg); font-size:0.65rem; }
+.candidate { cursor:pointer; padding:2px 5px; border-radius:3px; transition:all .1s; }
+.candidate:hover { background:rgba(201,168,76,.12); }
+.candidate.sel { background:rgba(201,168,76,.25); font-weight:bold; }
+.bill-row { display:flex; align-items:center; gap:6px; padding:4px 8px; margin-bottom:2px; background:#fff; border:1px solid var(--panel-border); border-radius:4px; font-size:0.72rem; }
+.bill-row input[type=checkbox] { width:14px; height:14px; accent-color:var(--accent); }
+.info-box { background:#FFFDF5; border:1px solid var(--bronze); border-radius:var(--radius); padding:8px 12px; font-size:0.72rem; line-height:1.5; }
+
+/* ============ WAR COMPARISON (V3.23) ============ */
+.war-info-row { font-size:0.72rem; padding:2px 4px; }
+.war-compare { display:flex; align-items:center; gap:6px; padding:4px 8px; background:#FFFDF5; border:2px solid var(--bronze); border-radius:6px; margin:2px 0; }
+.wc-side { flex:1; text-align:center; }
+.wc-label { display:block; font-size:0.58rem; color:var(--text-muted); }
+.wc-val { display:block; font-size:1.1rem; font-weight:bold; line-height:1.2; }
+.wc-ally .wc-val { color:var(--success); }
+.wc-enemy .wc-val { color:var(--error); }
+.wc-vs { font-size:0.65rem; color:var(--text-muted); font-weight:bold; }
+.war-detail { display:flex; justify-content:space-between; font-size:0.6rem; color:var(--text-secondary); padding:2px 4px; }
+.war-result-box { padding:6px 10px; border-radius:4px; font-size:0.72rem; margin-top:4px; }
+.war-result-box.win { background:rgba(34,139,34,0.08); border:1px solid var(--success); }
+.war-result-box.loss { background:rgba(196,81,81,0.06); border:1px solid var(--error); }
+.war-result-box.draw { background:rgba(255,140,0,0.06); border:1px solid var(--warning); }
+
+/* ============ BILL CONFIG (V3.22) ============ */
+.bill-config { margin-bottom:3px; }
+.bc-header { display:flex; align-items:center; gap:4px; padding:4px 8px; background:#fff; border:1px solid var(--panel-border); border-radius:4px; font-size:0.72rem; cursor:pointer; transition:background .15s; }
+.bc-header:hover { background:#FFFDF5; }
+.bc-header input[type=checkbox] { width:14px; height:14px; accent-color:var(--accent); flex-shrink:0; }
+.bc-header label { flex:1; cursor:pointer; }
+.bc-arrow { font-size:0.6rem; color:var(--text-muted); transition:transform .2s; }
+.bc-arrow.open { transform:rotate(180deg); }
+.bc-badge-auto { font-size:0.55rem; padding:1px 5px; border-radius:3px; background:var(--warning); color:#fff; font-weight:bold; flex-shrink:0; }
+.bc-body { display:none; padding:6px 8px 6px 22px; background:#FFFDF5; border:1px solid var(--panel-border); border-top:none; border-radius:0 0 4px 4px; margin-top:-1px; }
+.bc-body.open { display:block; animation:fadeIn .15s ease; }
+.bc-label { display:block; font-size:0.65rem; color:var(--text-secondary); margin-bottom:3px; }
+.bc-select { width:100%; padding:3px 5px; border:1px solid var(--panel-border); border-radius:4px; font-size:0.7rem; font-family:inherit; background:#fff; margin-bottom:4px; }
+.bc-input-group { display:flex; align-items:center; gap:8px; }
+.bc-range { flex:1; height:4px; accent-color:var(--accent); }
+.bc-range-val { font-size:0.75rem; font-weight:bold; color:var(--accent); white-space:nowrap; min-width:50px; text-align:right; }
+.bc-hint { display:block; font-size:0.6rem; color:var(--text-muted); margin-top:2px; }
+.treaty-row { display:flex; justify-content:space-between; padding:2px 0; font-size:0.68rem; border-bottom:1px dashed #E8D5C4; }
+.treaty-row:last-child { border-bottom:none; }
+.warn-box { background:rgba(196,81,81,.06); border:1px solid var(--error); border-radius:6px; padding:8px 12px; font-size:0.72rem; color:var(--error); }
+.modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,.35); z-index:999; justify-content:center; align-items:center; }
+.modal-overlay.active { display:flex; }
+.modal { background:var(--panel-bg); border:2px solid var(--bronze); border-radius:10px; width:380px; max-height:70vh; overflow-y:auto; padding:16px; box-shadow:0 8px 32px rgba(0,0,0,.2); animation:fadeIn .15s ease; }
+.modal .close { float:right; font-size:1.2rem; cursor:pointer; color:var(--text-muted); }
+.modal .close:hover { color:var(--header-bg); }
+.modal h3 { color:var(--header-bg); margin-bottom:8px; border-bottom:2px solid var(--panel-border); padding-bottom:4px; }
+.modal-row { padding:3px 0; font-size:0.75rem; display:flex; justify-content:space-between; border-bottom:1px dashed #E8D5C4; }
+.modal-row .label { color:var(--text-secondary); }
+.modal-row .value { font-weight:bold; }
+.fb-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:2px; }
+.fb-list { flex:1; overflow-y:auto; font-size:0.65rem; line-height:1.5; }
+.fb-entry { padding:1px 0; border-bottom:1px dashed #E8D5C4; }
+.fb-entry .tm { color:var(--text-muted); font-size:0.55rem; font-family:monospace; }
+.fb-success { color:var(--success); }
+.fb-warning { color:var(--warning); }
+.fb-error { color:var(--error); }
+.fb-info { color:var(--text-secondary); }
+::-webkit-scrollbar { width:4px; }
+::-webkit-scrollbar-track { background:var(--bg); }
+::-webkit-scrollbar-thumb { background:var(--panel-border); border-radius:2px; }
+
+/* ============ CANDIDATE TABLE (V3.15) ============ */
+.cand-header, .cand-row { display:flex; align-items:center; padding:3px 8px; font-size:0.72rem; gap:3px; }
+.cand-header { font-size:0.62rem; color:var(--text-muted); margin-bottom:2px; }
+.cand-header .ch-office, .cand-row .cd-office { flex:1.2; }
+.cand-header .ch-name, .cand-row .cd-name { flex:1.5; }
+.cand-header .ch-attr, .cand-row .cd-attr { flex:2; font-size:0.65rem; }
+.cand-header .ch-inf, .cand-row .cd-inf { flex:0.6; text-align:center; }
+.cand-header .ch-a, .cand-row .cd-a { flex:0.45; text-align:center; font-size:0.65rem; color:var(--text-secondary); }
+.cand-header .ch-faction, .cand-row .cd-faction { flex:0.6; text-align:center; }
+.cand-header .ch-result, .cand-row .cd-result { flex:1.2; text-align:center; }
+.cand-row { border:1px solid var(--panel-border); border-radius:4px; margin-bottom:3px; background:#fff; padding:3px 8px; min-height:28px; }
+.cand-row:hover { background:#FFFDF5; }
+.cand-row .cd-attr { color:var(--text-secondary); }
+
+/* ============ FESTIVAL TABLE (V3.15) ============ */
+.fest-header, .fest-row { display:flex; align-items:center; padding:3px 8px; font-size:0.72rem; gap:3px; }
+.fest-header { font-size:0.62rem; color:var(--text-muted); margin-bottom:2px; }
+.fest-header .fh-name, .fest-row .fd-name { flex:2; }
+.fest-header .fh-office, .fest-row .fd-office { flex:1.5; }
+.fest-header .fh-wealth, .fest-row .fd-wealth { flex:1; text-align:center; }
+.fest-header .fh-sponsor, .fest-row .fd-sponsor { flex:1; text-align:center; }
+.fest-row { border:1px solid var(--panel-border); border-radius:4px; margin-bottom:3px; background:#fff; padding:3px 8px; }
+.fest-row:hover { background:#FFFDF5; }
+
+/* ============ MODAL BUTTON ROW ============ */
+.modal-btn-row { display:flex; gap:6px; justify-content:flex-end; margin-top:10px; }
+
+/* ============ TALENT ROW (V3.8) ============ */
+.talent-header, .talent-row { display:flex; align-items:center; padding:3px 10px; font-size:0.72rem; gap:3px; }
+.talent-header { font-size:0.62rem; color:var(--text-muted); margin-bottom:2px; }
+.talent-header .th-name, .talent-row .td-name { flex:2; }
+.talent-header .th-a, .talent-row .td-a { flex:0.6; text-align:center; }
+.talent-header .th-class, .talent-row .td-class { flex:0.6; text-align:center; }
+.talent-header .th-cost, .talent-row .td-cost { flex:1; text-align:right; }
+.talent-row { border:1px solid var(--panel-border); border-radius:4px; margin-bottom:3px; cursor:pointer; transition:background .15s; background:#fff; }
+.talent-row:hover { background:#FFFDF5; }
+.talent-row .td-a { font-size:0.65rem; color:var(--text-secondary); }
+
+/* ============ PANEL LOCK (V3.11) ============ */
+.panel-locked { opacity:.5; pointer-events:none; position:relative; }
+.panel-locked .fp-body { filter:blur(1px); }
+.panel-lock-msg { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:var(--header-bg); color:var(--header-text); padding:6px 14px; border-radius:6px; font-size:0.72rem; z-index:5; white-space:nowrap; }
+.unlock-btn { background:var(--success)!important; color:#fff!important; border-color:var(--success)!important; }
+
+/* ============ FORUM PANEL WRAPPER (V3.4) ============ */
+.forum-panels { display:flex; gap:8px; flex:1; min-height:0; }
+.forum-panel { flex:1; border:1px solid var(--panel-border); border-radius:var(--radius); display:flex; flex-direction:column; overflow:hidden; background:var(--panel-bg); }
+.forum-panel .fp-head { background:var(--header-bg); color:var(--header-text); padding:5px 10px; font-size:0.78rem; font-weight:bold; display:flex; align-items:center; gap:6px; flex-shrink:0; }
+.forum-panel .fp-head .fp-num { background:var(--bronze); color:var(--dark-red); border-radius:50%; width:18px; height:18px; display:flex; align-items:center; justify-content:center; font-size:0.6rem; font-weight:bold; flex-shrink:0; }
+.forum-panel .fp-body { flex:1; padding:6px 10px; overflow-y:auto; }
+
+/* ============ BOTTOM OPERATION BAR (V3.1) ============ */
+.op-bar {
+  height:40px; min-height:40px; background:var(--dark-red);
+  display:flex; align-items:center; gap:2px; padding:0 4px; flex-shrink:0;
+  overflow-x:auto; flex-wrap:nowrap;
+}
+.op-btn {
+  height:28px; padding:0 10px; background:rgba(255,255,255,0.08);
+  border:1px solid rgba(255,255,255,0.12); border-radius:4px;
+  color:rgba(255,255,255,0.8); font-size:0.65rem; cursor:pointer;
+  white-space:nowrap; transition:all .15s; display:flex; align-items:center; gap:3px; flex-shrink:0;
+}
+.op-btn:hover { background:rgba(212,175,55,0.25); border-color:var(--bronze); color:#fff; }
+.op-btn:active { transform:scale(0.96); }
+.op-btn .ico { font-size:0.72rem; }
+
+/* ============ VISUAL POLISH OVERRIDE (V3.2.4) ============ */
+:root {
+  --bg: #F1E7D8;
+  --panel-bg: #FBF6ED;
+  --panel-border: #CFA46D;
+  --header-bg: #7D2108;
+  --header-text: #F7D778;
+  --accent: #A94426;
+  --bronze: #B99145;
+  --text: #2F2A25;
+  --text-secondary: #705F4B;
+  --text-muted: #9B856B;
+  --btn-bg: #DAB77F;
+  --btn-hover: #B87333;
+  --radius: 8px;
+  --shadow-soft: 0 10px 28px rgba(72,42,22,.10);
+  --shadow-card: 0 4px 14px rgba(72,42,22,.08);
+}
+html { font-size: 16px; }
+body {
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.42), rgba(179,126,76,.08)),
+    var(--bg);
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+  letter-spacing: 0;
+}
+.header {
+  height: 56px;
+  padding: 0 20px;
+  background: linear-gradient(180deg, #8B2A0D 0%, #661807 100%);
+  border-bottom: 2px solid rgba(247,215,120,.38);
+  box-shadow: 0 4px 18px rgba(46,22,10,.18);
+}
+.header .logo { font-size: 1.08rem; letter-spacing: .3px; }
+.header .logo em { font-size: .68rem; opacity: .9; }
+.top-status { gap: 12px; font-size: .82rem; }
+.top-status .stat-item {
+  gap: 6px;
+  padding: 4px 10px;
+  border-left: 1px solid rgba(255,255,255,.18);
+}
+.top-status .stat-value { font-size: .9rem; }
+.top-status .stat-label { font-size: .66rem; }
+.round-info { font-size: .86rem; letter-spacing: .2px; }
+
+.main-wrapper { padding: 10px; gap: 10px; }
+.phase-rail {
+  width: 52px;
+  min-width: 52px;
+  padding: 8px 5px;
+  gap: 6px;
+  box-shadow: var(--shadow-soft);
+}
+.rail-step {
+  width: 38px;
+  height: 38px;
+  font-size: .8rem;
+  border-width: 2px;
+}
+.rail-step.current { box-shadow: 0 0 0 3px rgba(185,145,69,.16), 0 4px 12px rgba(130,72,21,.18); }
+.rail-step:hover { transform: translateY(-1px) scale(1.05); }
+.rail-step .rl { left: 46px; font-size: .68rem; padding: 4px 8px; border-radius: 5px; }
+
+.panel-center,
+.context-panel,
+.forum-panel,
+.phase-rail {
+  background: rgba(251,246,237,.98);
+  border-color: rgba(185,145,69,.62);
+}
+.panel-center {
+  padding: 16px;
+  box-shadow: var(--shadow-soft);
+}
+.context-panel {
+  width: 278px;
+  min-width: 278px;
+  box-shadow: var(--shadow-soft);
+}
+.ctx-top { padding: 12px 14px 8px; gap: 8px; }
+.ctx-log { padding: 8px 14px; }
+.context-panel h4 {
+  font-size: .74rem;
+  padding-bottom: 5px;
+  margin-bottom: 4px;
+}
+
+.phase-content { gap: 8px; }
+.phase-title {
+  font-size: 1.12rem;
+  line-height: 1.25;
+  color: #712008;
+}
+.phase-desc {
+  font-size: .78rem;
+  line-height: 1.55;
+  color: #75624E;
+}
+.phase-badge {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: .65rem;
+}
+.phase-subtitle { font-size: .84rem; margin-top: 6px; margin-bottom: 4px; }
+
+.stage-steps {
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: .73rem;
+  border-color: rgba(185,145,69,.78);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.7);
+}
+.stage-steps .sn { width: 20px; height: 20px; font-size: .6rem; }
+
+.list-item,
+.bill-row,
+.cand-row,
+.fest-row,
+.talent-row,
+.card {
+  border-color: rgba(185,145,69,.55);
+  box-shadow: 0 1px 0 rgba(255,255,255,.75);
+}
+.list-item { padding: 7px 11px; font-size: .76rem; margin-bottom: 4px; }
+.card-grid { grid-template-columns: repeat(auto-fill, minmax(158px, 1fr)); gap: 8px; }
+.card { padding: 10px; box-shadow: var(--shadow-card); }
+.card:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(72,42,22,.12); }
+.card h5 { font-size: .78rem; margin-bottom: 5px; }
+.card .attr { font-size: .68rem; line-height: 1.5; }
+
+.btn,
+.ctx-btn,
+.op-btn {
+  border-radius: 6px;
+  font-weight: 700;
+}
+.btn {
+  padding: 6px 12px;
+  font-size: .74rem;
+  box-shadow: 0 1px 0 rgba(255,255,255,.55) inset;
+}
+.btn.small { padding: 3px 8px; font-size: .66rem; }
+.ctx-btn {
+  padding: 7px 10px;
+  margin-bottom: 5px;
+  font-size: .73rem;
+}
+.stat-tile { padding: 4px 0; font-size: .73rem; }
+.vote-table { font-size: .76rem; }
+.vote-table th, .vote-table td { padding: 5px 7px; }
+.vote-table th { font-size: .68rem; }
+.info-box,
+.warn-box {
+  padding: 10px 13px;
+  font-size: .76rem;
+  line-height: 1.6;
+}
+
+.forum-panels { gap: 10px; }
+.forum-panel { box-shadow: var(--shadow-card); }
+.forum-panel .fp-head {
+  padding: 7px 12px;
+  font-size: .84rem;
+  background: linear-gradient(180deg, #84250A 0%, #6B1C00 100%);
+}
+.forum-panel .fp-head .fp-num { width: 20px; height: 20px; font-size: .66rem; }
+.forum-panel .fp-body { padding: 9px 12px; }
+
+.war-compare {
+  gap: 8px;
+  padding: 7px 10px;
+  border-width: 1px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.65);
+}
+.wc-label { font-size: .64rem; }
+.wc-val { font-size: 1.22rem; }
+.war-info-row,
+.war-result-box { font-size: .77rem; }
+.war-detail { font-size: .66rem; }
+
+.bc-header {
+  padding: 6px 9px;
+  font-size: .76rem;
+}
+.bc-body { padding: 8px 10px 8px 26px; }
+.bc-label { font-size: .7rem; }
+.bc-select { padding: 5px 7px; font-size: .74rem; }
+.bc-range-val { font-size: .8rem; }
+.treaty-row { font-size: .72rem; padding: 3px 0; }
+
+.cand-header,
+.fest-header,
+.talent-header { font-size: .68rem; }
+.cand-row,
+.fest-row,
+.talent-row {
+  font-size: .76rem;
+  min-height: 32px;
+  padding: 5px 9px;
+}
+.cand-header .ch-attr,
+.cand-row .cd-attr,
+.cand-header .ch-a,
+.cand-row .cd-a { font-size: .7rem; }
+
+.modal-overlay { background: rgba(28,18,12,.45); backdrop-filter: blur(2px); }
+.modal {
+  width: min(520px, calc(100vw - 48px));
+  max-height: 78vh;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 16px 46px rgba(35,20,10,.28);
+}
+.modal h3 { font-size: 1rem; margin-bottom: 10px; padding-bottom: 7px; }
+.modal-row { padding: 5px 0; font-size: .8rem; }
+.modal .close { font-size: 1.35rem; }
+
+.fb-list { font-size: .7rem; line-height: 1.55; }
+.fb-entry { padding: 2px 0; }
+.fb-entry .tm { font-size: .6rem; }
+
+.op-bar {
+  height: 48px;
+  min-height: 48px;
+  gap: 5px;
+  padding: 0 8px;
+  background: linear-gradient(180deg, #6F1C05 0%, #551404 100%);
+}
+.op-btn {
+  height: 34px;
+  padding: 0 12px;
+  font-size: .72rem;
+  border-color: rgba(247,215,120,.22);
+}
+.op-btn .ico { font-size: .82rem; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: rgba(166,119,66,.68); border-radius: 6px; }
+
+@media (max-width: 1280px) {
+  html { font-size: 15px; }
+  .context-panel { width: 260px; min-width: 260px; }
+  .card-grid { grid-template-columns: repeat(auto-fill, minmax(146px, 1fr)); }
+  .top-status { gap: 8px; }
+  .top-status .stat-item { padding: 3px 7px; }
+}
+
+/* ============ CODEX LAYOUT STANDARD OVERRIDE (V3.2.4-R2) ============ */
+body {
+  min-width: 1180px;
+}
+.header {
+  height: 54px;
+  padding: 0 18px;
+}
+.header .logo {
+  font-size: 1.04rem;
+}
+.top-status {
+  gap: 9px;
+}
+.top-status .stat-item {
+  padding: 3px 8px;
+}
+.round-info {
+  padding: 5px 10px;
+  border: 1px solid rgba(247,215,120,.28);
+  border-radius: 999px;
+  background: rgba(255,255,255,.08);
+}
+.main-wrapper {
+  padding: 12px;
+  gap: 12px;
+}
+.phase-rail {
+  width: 92px;
+  min-width: 92px;
+  padding: 10px 8px;
+  gap: 8px;
+}
+.rail-step {
+  width: 74px;
+  height: 54px;
+  border-radius: 10px;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 1rem;
+}
+.rail-step .rl {
+  display: block;
+  position: static;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font-size: .68rem;
+  line-height: 1;
+  z-index: auto;
+}
+.rail-step.done {
+  background: linear-gradient(180deg, #B77436 0%, #9B5C25 100%);
+}
+.rail-step.current {
+  background: linear-gradient(180deg, #F0CF72 0%, #DDAF3F 100%);
+}
+.rail-step.todo {
+  background: #E8D8C5;
+}
+.rail-step:hover {
+  transform: translateY(-1px);
+}
+.panel-center {
+  padding: 18px;
+  border-radius: 10px;
+}
+.context-panel {
+  width: 286px;
+  min-width: 286px;
+  border-radius: 10px;
+}
+.ctx-top {
+  padding: 14px 14px 10px;
+}
+.ctx-log {
+  padding: 10px 14px;
+}
+.phase-content {
+  gap: 10px;
+}
+.phase-title {
+  font-size: 1.22rem;
+}
+.phase-desc {
+  font-size: .8rem;
+  max-width: 980px;
+}
+.phase-badge {
+  padding: 4px 12px;
+}
+.stage-steps {
+  padding: 9px 12px;
+  gap: 7px;
+}
+.forum-panels {
+  gap: 12px;
+}
+.forum-panel {
+  border-radius: 10px;
+}
+.forum-panel .fp-head {
+  min-height: 36px;
+}
+.forum-panel .fp-body {
+  padding: 10px 12px;
+}
+.list-item,
+.bill-row {
+  min-height: 34px;
+}
+.card-grid {
+  grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+}
+.card {
+  min-height: 78px;
+}
+.btn {
+  min-height: 30px;
+}
+.btn.small {
+  min-height: 24px;
+}
+.ctx-btn {
+  min-height: 32px;
+}
+.stat-tile {
+  min-height: 24px;
+  align-items: center;
+}
+.cand-row,
+.fest-row,
+.talent-row {
+  min-height: 34px;
+}
+.vote-table th,
+.vote-table td {
+  height: 30px;
+}
+.modal {
+  width: min(560px, calc(100vw - 64px));
+}
+.op-bar {
+  height: 54px;
+  min-height: 54px;
+  gap: 6px;
+  padding: 0 10px;
+}
+.op-btn {
+  min-width: 86px;
+  height: 36px;
+  justify-content: center;
+  gap: 5px;
+}
+
+@media (max-width: 1366px) {
+  html { font-size: 15px; }
+  .main-wrapper { padding: 10px; gap: 10px; }
+  .phase-rail { width: 84px; min-width: 84px; padding: 8px 6px; }
+  .rail-step { width: 70px; height: 50px; }
+  .context-panel { width: 270px; min-width: 270px; }
+  .panel-center { padding: 15px; }
+  .card-grid { grid-template-columns: repeat(auto-fill, minmax(154px, 1fr)); }
+  .op-btn { min-width: 78px; padding: 0 9px; }
+}
+
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div><span class="logo">🏛️ EAGLE OF ROME <em>· SPQR</em></span></div>
+  <div class="top-status">
+    <div class="stat-item">💰<span><span class="stat-value" id="hTreasury">142</span> <span class="stat-label">国库</span></span></div>
+    <div class="stat-item">👛<span><span class="stat-value" id="hFaction">12</span> <span class="stat-label">派系</span></span></div>
+    <div class="stat-item">⚖️<span><span class="stat-value" id="hInf">68</span> <span class="stat-label">影响力</span></span></div>
+    <div class="stat-item">🏛️<span><span class="stat-value" id="hStab">78%</span> <span class="stat-label">稳定度</span></span></div>
+    <div class="stat-item">⚔️<span><span class="stat-value" id="hWar">1</span> <span class="stat-label">战争</span></span></div>
+  </div>
+  <div class="round-info" id="roundInfo">282 BC · 回合 1</div>
+</div>
+
+<!-- MAIN -->
+<div class="main-wrapper">
+  <!-- LEFT NAV -->
+  <div class="phase-rail">
+    <div class="rail-step done" data-p="0" onclick="sw(0)">🎴<span class="rl">天命</span></div>
+    <div class="rail-step done" data-p="1" onclick="sw(1)">💰<span class="rl">收入</span></div>
+    <div class="rail-step current" data-p="2" onclick="sw(2)">🏛️<span class="rl">广场</span></div>
+    <div class="rail-step todo" data-p="3" onclick="sw(3)">⚖️<span class="rl">人口</span></div>
+    <div class="rail-step todo" data-p="4" onclick="sw(4)">🏺<span class="rl">元老院</span></div>
+    <div class="rail-step todo" data-p="5" onclick="sw(5)">⚔️<span class="rl">战斗</span></div>
+    <div class="rail-step todo" data-p="6" onclick="sw(6)">📊<span class="rl">决算</span></div>
+  </div>
+
+  <!-- CENTER -->
+  <div class="panel-center" id="centerPanel">
+
+    <!-- ▼ 天命 phase-0 ▼ -->
+    <div class="phase-content" id="p0">
+      <span class="phase-badge">1 / 7</span>
+      <div class="phase-title">🎴 天命阶段</div>
+      <div class="phase-desc">众神降下命运——触发一个随机事件。无玩家操作。</div>
+      <div class="stage-steps">
+        <div class="s"><span class="sn current">1</span>⚡ 执行天命</div>
+        <span class="arrow">→</span>
+        <div class="s"><span class="sn todo">2</span>📜 查看事件结果</div>
+      </div>
+      <div id="mortalityView" style="flex:1">
+        <div class="info-box">🎴 点击下方「执行天命」按钮，触发一个随机事件。<br>事件类型：猝死</div>
+      </div>
+      <div style="margin-top:6px;display:flex;justify-content:center;">
+        <button id="godBtn" class="btn primary" onclick="execMortality()">⚡ 执行天命</button>
+      </div>
+    </div>
+
+    <!-- ▼ 收入 phase-1 ▼ -->
+    <div class="phase-content" id="p1">
+      <span class="phase-badge">2 / 7</span>
+      <div class="phase-title">💰 收入阶段</div>
+      <div class="phase-desc">年度财政结算。国库拨款给各派系，统计私人地主收益。</div>
+      <div class="stage-steps">
+        <div class="s"><span class="sn current">1</span>📊 查看收支明细</div>
+        <span class="arrow">→</span>
+        <div class="s"><span class="sn todo">2</span>✅ 确认收入</div>
+      </div>
+      <div id="revenueView" style="flex:1;display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;gap:12px;">
+          <div style="flex:1">
+            <div class="phase-subtitle">📈 国家收入</div>
+            <div class="list-item"><span>国家公地收益</span><span style="color:var(--success);font-weight:bold;">+60 T</span></div>
+            <div class="list-item"><span>战争赔款收入</span><span style="color:var(--success);font-weight:bold;">+0 T</span></div>
+          </div>
+          <div style="flex:1">
+            <div class="phase-subtitle">📉 国家支出</div>
+            <div class="list-item"><span>军团维护费</span><span style="color:var(--error);font-weight:bold;">-0 T</span></div>
+            <div class="list-item"><span>舰队维护费</span><span style="color:var(--error);font-weight:bold;">-0 T</span></div>
+            <div class="list-item"><span>行省运营费</span><span style="color:var(--error);font-weight:bold;">-18 T</span></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;">
+          <div style="flex:1">
+            <div class="phase-subtitle">🏛️ 派系财政（国库拨款 + 会员贡献）</div>
+            <div class="list-item"><span style="color:var(--opt);font-weight:bold;">Optimates</span><span>拨款 +5 T · 会员 +3 T · 合计 <strong style="color:var(--accent);">+8 T</strong></span></div>
+            <div class="list-item"><span style="color:var(--pop);font-weight:bold;">Populares</span><span>拨款 +5 T · 会员 +4 T · 合计 <strong style="color:var(--accent);">+9 T</strong></span></div>
+            <div class="list-item"><span style="color:var(--equ);font-weight:bold;">Equites</span><span>拨款 +5 T · 会员 +3 T · 合计 <strong style="color:var(--accent);">+8 T</strong></span></div>
+          </div>
+          <div style="flex:1">
+            <div class="phase-subtitle">🌾 地主私人收益（点击人物查看）</div>
+            <div class="list-item" style="cursor:pointer;" onclick="showPerson('Gaius Manlius',{faction:'Equites',income:3})">Gaius · Manlius<span style="color:var(--success);">+3 T</span></div>
+            <div class="list-item" style="cursor:pointer;" onclick="showPerson('Spurius Aemilius',{faction:'Optimates',income:5})">Spurius · Aemilius<span style="color:var(--success);">+5 T</span></div>
+            <div class="list-item" style="cursor:pointer;" onclick="showPerson('Numerius Antonius',{faction:'Equites',income:2})">Numerius · Antonius<span style="color:var(--success);">+2 T</span></div>
+          </div>
+        </div>
+        <div style="margin-top:2px;padding:6px;background:rgba(201,168,76,.1);border:2px solid var(--bronze);border-radius:6px;text-align:center;font-size:0.82rem;font-weight:bold;color:var(--header-bg);">
+          💰 国库净变化: <span style="color:var(--success)">+72 T</span> → 新余额: <span id="revTreasury">142</span> T
+        </div>
+      </div>
+      <div style="margin-top:6px;">
+        <button class="btn primary" onclick="execRevenue()">✅ 确认收入结算</button>
+      </div>
+    </div>
+
+    <!-- ▼ 广场 phase-2 ▼ -->
+    <div class="phase-content active" id="p2">
+      <span class="phase-badge">3 / 7</span>
+      <div class="phase-title">🏛️ 广场阶段</div>
+      <div class="phase-desc">解雇 → 人才市场（招募·竞标·公地·凯旋）→ 公示</div>
+      <div class="stage-steps">
+        <div class="s"><span class="sn done">✓</span>📢 公示区</div><span class="arrow">→</span>
+        <div class="s"><span class="sn current">1</span>⚔️ 解雇成员</div><span class="arrow">→</span>
+        <div class="s"><span class="sn todo">2</span>🏪 人才市场</div>
+      </div>
+      <!-- 公示区（顶部） -->
+      <div class="info-box"><div id="announceArea"><strong>📣 广场阶段开始。</strong>第一布匿战争进行中。西西里包税合同待竞标。<br>
+      <span style="font-size:0.68rem;color:var(--text-secondary);">※ 所有派系操作完毕后将在此公示：招募结果（不公开招募者）· 合同竞标结果 · 土地认购结果 · 凯旋投票结果</span></div></div>
+      <!-- 两个子环节面板并排 -->
+      <div class="forum-panels">
+        <!-- 子环节1: 解雇成员 -->
+        <div class="forum-panel">
+          <div class="fp-head"><span class="fp-num">1</span> 解雇成员</div>
+          <div class="fp-body">
+            <div style="font-size:0.7rem;color:var(--text-secondary);margin-bottom:4px;">勾选要解雇的成员，解雇后进入人才市场。所有派系执行完毕后进入下一环节。</div>
+            <div id="retireList">
+              <div class="list-item" id="dismiss_Gaius"><span>Gaius · Manlius <span style="font-size:0.6rem;color:var(--text-muted);">(Equites · 影响力3)</span></span><button class="btn small" onclick="dismissFig('Gaius Manlius','Equites',5,7,6,3,3,'dismiss_Gaius')">解雇</button></div>
+              <div class="list-item" id="dismiss_Numerius"><span>Numerius · Antonius <span style="font-size:0.6rem;color:var(--text-muted);">(Equites · 影响力2)</span></span><button class="btn small" onclick="dismissFig('Numerius Antonius','Equites',5,7,7,4,4,'dismiss_Numerius')">解雇</button></div>
+            </div>
+            <div style="margin-top:auto;padding-top:6px;border-top:1px solid var(--panel-border);">
+              <button class="btn small" style="width:100%;" onclick="disableBtn(this);unlockPanel2();addLog('success','⭐ 解雇阶段结束，人才市场已开放')">⏭️ 完成解雇</button>
+
+            </div>
+          </div>
+        </div>
+        <!-- 子环节2: 人才市场（V3 原有内容保持不变） -->
+        <div class="forum-panel panel-locked" id="panel2">
+          <div class="fp-head"><span class="fp-num">2</span> 人才市场 · 招募 / 竞标 / 认购 / 否决 / 凯旋</div>
+          <div class="panel-lock-msg" id="panel2Lock">⏳ 等待子环节1完成</div>
+          <div class="fp-body" id="panel2Body">
+            <div class="phase-subtitle">👥 人才市场（列表排列，便于比较）</div>
+            <div class="talent-header">
+              <span class="th-name">姓名</span>
+              <span class="th-a">军略</span>
+              <span class="th-a">智略</span>
+              <span class="th-a">魅力</span>
+              <span class="th-a">热忱</span>
+              <span class="th-class">阶级</span>
+              <span class="th-cost">费用</span>
+            </div>
+            <div id="talentList">
+              <div class="talent-row" onclick="showTalent('Gaius Manlius',{mil:5,itl:7,cha:6,inf:3,cost:3,fact:'Equites'})">
+                <span class="td-name"><strong>Gaius · Manlius</strong></span>
+                <span class="td-a">5</span>
+                <span class="td-a">7</span>
+                <span class="td-a">6</span>
+                <span class="td-a">3</span>
+                <span class="td-class" style="color:var(--equ);font-weight:bold;">骑士</span>
+                <span class="td-cost"><strong style="color:var(--accent);">3 T</strong> <button class="btn small primary" onclick="event.stopPropagation();disableBtn(this);recruitDialog('Gaius Manlius',3)">招募</button></span>
+              </div>
+              <div class="talent-row" onclick="showTalent('Gnaeus Junius',{mil:5,itl:4,cha:7,inf:2,cost:3,fact:'Equites'})">
+                <span class="td-name"><strong>Gnaeus · Junius</strong></span>
+                <span class="td-a">5</span>
+                <span class="td-a">4</span>
+                <span class="td-a">7</span>
+                <span class="td-a">2</span>
+                <span class="td-class" style="color:var(--equ);font-weight:bold;">骑士</span>
+                <span class="td-cost"><strong style="color:var(--accent);">3 T</strong> <button class="btn small primary" onclick="event.stopPropagation();disableBtn(this);recruitDialog('Gnaeus Junius',3)">招募</button></span>
+              </div>
+              <div class="talent-row" onclick="showTalent('Claudius Magnus',{mil:7,itl:9,cha:9,inf:6,cost:8,fact:'Optimates'})">
+                <span class="td-name"><strong>Claudius · Magnus</strong></span>
+                <span class="td-a">7</span>
+                <span class="td-a">9</span>
+                <span class="td-a">9</span>
+                <span class="td-a">6</span>
+                <span class="td-class" style="color:var(--opt);font-weight:bold;">贵族</span>
+                <span class="td-cost"><strong style="color:var(--accent);">8 T</strong> <button class="btn small primary" onclick="event.stopPropagation();disableBtn(this);recruitDialog('Claudius Magnus',8)">招募</button></span>
+              </div>
+              <div class="talent-row" onclick="showTalent('Servius Antonius',{mil:5,itl:7,cha:7,inf:4,cost:4,fact:'Equites'})">
+                <span class="td-name"><strong>Servius · Antonius</strong></span>
+                <span class="td-a">5</span>
+                <span class="td-a">7</span>
+                <span class="td-a">7</span>
+                <span class="td-a">4</span>
+                <span class="td-class" style="color:var(--equ);font-weight:bold;">骑士</span>
+                <span class="td-cost"><strong style="color:var(--accent);">4 T</strong> <button class="btn small primary" onclick="event.stopPropagation();disableBtn(this);recruitDialog('Servius Antonius',4)">招募</button></span>
+              </div>
+            </div>
+            <div class="phase-subtitle">📜 合同竞标</div>
+            <div class="list-item"><span>ID:3 意大利工程 (282 BC)</span><span>预算 <strong>72 T</strong> <button class="btn small" onclick="disableBtn(this);bidDialog(3)">竞标</button></span></div>
+            <div class="list-item"><span>ID:4 舰队建造（第一次布匿战争）</span><span>预算 <strong>80 T</strong> <button class="btn small" onclick="disableBtn(this);bidDialog(4)">竞标</button></span></div>
+            <div class="phase-subtitle">🏞️ 公地认购</div>
+            <div class="list-item"><span>🛒 出售 5C 国家公地</span><span><button class="btn small" onclick="disableBtn(this);landDialog()">认购</button></span></div>
+            <div class="phase-subtitle">🏆 凯旋投票</div>
+            <div class="list-item"><span>⚔️ 第一次布匿战争 — 指挥官: <strong>Cornelius Maximus</strong> (<span style="color:var(--opt);">Optimates</span>)</span><span><button class="btn small" onclick="triumphVote(true,this)">✅ 赞成</button> <button class="btn small" onclick="triumphVote(false,this)">❌ 否决</button></span></div>
+            <div style="margin-top:auto;padding-top:6px;border-top:1px solid var(--panel-border);">
+              <button class="btn small" style="width:100%;" onclick="disableBtn(this);showForumResults();addLog('success','📢 广场阶段完成，结果已公示')">⏭️ 完成广场</button>
+
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- ▼ 人口 phase-3 ▼ -->
+    <div class="phase-content" id="p3">
+      <span class="phase-badge">4 / 7</span>
+      <div class="phase-title">⚖️ 人口阶段 — 选举</div>
+      <div class="phase-desc">庆典赞助 → 投票选举 → 结果公示</div>
+      <div class="stage-steps">
+        <div class="s"><span class="sn done">✓</span>📢 公示区</div><span class="arrow">→</span>
+        <div class="s"><span class="sn current">1</span>🎉 庆典赞助</div><span class="arrow">→</span>
+        <div class="s"><span class="sn todo">2</span>🗳️ 投票选举</div>
+      </div>
+      <!-- 公示区（顶部）- 候选人列表 -->
+      <div id="popAnnounce" style="margin-bottom:6px;">
+        <div class="info-box">
+          📢 今年举行庆典？→ 广场阶段已投票决定：<strong>是</strong><br>
+          📊 选举前派系影响力：
+          <span style="color:var(--opt);font-weight:bold;">Optimates 68</span> ·
+          <span style="color:var(--pop);font-weight:bold;">Populares 45</span> ·
+          <span style="color:var(--equ);font-weight:bold;">Equites 32</span>
+        </div>
+        <div class="phase-subtitle">🏛️ 候选人信息</div>
+        <div id="candidateTable">
+          <div class="cand-header">
+            <span class="ch-office">官职</span>
+            <span class="ch-name">候选人</span>
+            <span class="ch-a">军略</span><span class="ch-a">智略</span><span class="ch-a">魅力</span><span class="ch-a">热忱</span>
+            <span class="ch-inf">影响力</span>
+            <span class="ch-faction">派系</span>
+            <span class="ch-result">选举结果</span>
+          </div>
+          <div class="cand-row">
+            <span class="cd-office"><strong>🛡️ 执政官</strong></span>
+            <span class="cd-name">Manius Papirius<br>Lucius Julius<br>Spurius Aemilius</span>
+            <span class="cd-a">6<br>5<br>4</span><span class="cd-a">7<br>6<br>5</span><span class="cd-a">8<br>7<br>7</span><span class="cd-a">5<br>4<br>3</span>
+            <span class="cd-inf">8<br>6<br>5</span>
+            <span class="cd-faction"><span style="color:var(--opt);font-weight:bold;">Opt</span><br><span style="color:var(--pop);font-weight:bold;">Pop</span><br><span style="color:var(--opt);font-weight:bold;">Opt</span></span>
+            <span class="cd-result" id="result_consul">—</span>
+          </div>
+          <div class="cand-row">
+            <span class="cd-office"><strong>📜 监察官</strong></span>
+            <span class="cd-name">Spurius Aemilius</span>
+            <span class="cd-a">4</span><span class="cd-a">5</span><span class="cd-a">7</span><span class="cd-a">3</span>
+            <span class="cd-inf">5</span>
+            <span class="cd-faction"><span style="color:var(--opt);font-weight:bold;">Opt</span></span>
+            <span class="cd-result" id="result_censor">—</span>
+          </div>
+          <div class="cand-row">
+            <span class="cd-office"><strong>⚖️ 大法官</strong></span>
+            <span class="cd-name">Numerius Antonius</span>
+            <span class="cd-a">3</span><span class="cd-a">6</span><span class="cd-a">6</span><span class="cd-a">4</span>
+            <span class="cd-inf">4</span>
+            <span class="cd-faction"><span style="color:var(--equ);font-weight:bold;">Equ</span></span>
+            <span class="cd-result" id="result_praetor">—</span>
+          </div>
+          <div class="cand-row">
+            <span class="cd-office"><strong>💰 财务官</strong></span>
+            <span class="cd-name">Gnaeus Aemilius</span>
+            <span class="cd-a">2</span><span class="cd-a">8</span><span class="cd-a">4</span><span class="cd-a">3</span>
+            <span class="cd-inf">3</span>
+            <span class="cd-faction"><span style="color:var(--equ);font-weight:bold;">Equ</span></span>
+            <span class="cd-result" id="result_quaestor">—</span>
+          </div>
+          <div class="cand-row">
+            <span class="cd-office"><strong>🛡️ 保民官</strong></span>
+            <span class="cd-name">Vibius</span>
+            <span class="cd-a">2</span><span class="cd-a">4</span><span class="cd-a">6</span><span class="cd-a">3</span>
+            <span class="cd-inf">3</span>
+            <span class="cd-faction"><span style="color:var(--equ);font-weight:bold;">Equ</span></span>
+            <span class="cd-result" id="result_tribune">—</span>
+          </div>
+        </div>
+      </div>
+      <!-- 两个子环节面板并排 -->
+      <div class="forum-panels">
+        <!-- 子环节1: 庆典赞助 -->
+        <div class="forum-panel">
+          <div class="fp-head"><span class="fp-num">1</span> 庆典赞助</div>
+          <div class="fp-body">
+            <div style="font-size:0.7rem;color:var(--text-secondary);margin-bottom:4px;">为本派系候选人提供庆典赞助（赞助费来自其个人财富）。</div>
+            <div style="margin-top:4px;">
+              <div>
+                <div class="fest-header">
+                  <span class="fh-name">候选人</span>
+                  <span class="fh-office">竞选官职</span>
+                  <span class="fh-wealth">个人财富</span>
+                  <span class="fh-sponsor">赞助金额</span>
+                </div>
+                <div class="fest-row">
+                  <span class="fd-name"><strong>Manius Papirius</strong> <span style="color:var(--opt);font-size:0.65rem;">Opt</span></span>
+                  <span class="fd-office">🛡️ 执政官</span>
+                  <span class="fd-wealth"><strong style="color:var(--accent);">22 T</strong></span>
+                  <span class="fd-sponsor"><input type="number" value="5" min="0" max="22" style="width:55px;padding:1px 3px;border:1px solid var(--panel-border);border-radius:3px;font-size:0.7rem;text-align:center;"></span>
+                </div>
+                <div class="fest-row">
+                  <span class="fd-name"><strong>Spurius Aemilius</strong> <span style="color:var(--opt);font-size:0.65rem;">Opt</span></span>
+                  <span class="fd-office">🛡️ 执政官</span>
+                  <span class="fd-wealth"><strong style="color:var(--accent);">18 T</strong></span>
+                  <span class="fd-sponsor"><input type="number" value="3" min="0" max="18" style="width:55px;padding:1px 3px;border:1px solid var(--panel-border);border-radius:3px;font-size:0.7rem;text-align:center;"></span>
+                </div>
+                <div class="fest-row">
+                  <span class="fd-name"><strong>Spurius Aemilius</strong> <span style="color:var(--opt);font-size:0.65rem;">Opt</span></span>
+                  <span class="fd-office">📜 监察官</span>
+                  <span class="fd-wealth"><strong style="color:var(--accent);">18 T</strong></span>
+                  <span class="fd-sponsor"><input type="number" value="3" min="0" max="18" style="width:55px;padding:1px 3px;border:1px solid var(--panel-border);border-radius:3px;font-size:0.7rem;text-align:center;"></span>
+                </div>
+              </div>
+            </div>
+            <div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--panel-border);">
+              <button class="btn small" style="width:100%;" onclick="disableBtn(this);unlockPopPanel2();addLog('success','⬻ 庆典赞助完成，投票环节已开放');mockAction('赞助已提交')">⬻️ 完成庆典</button>
+            </div>
+          </div>
+        </div>
+        <!-- 子环节2: 投票选举 -->
+        <div class="forum-panel panel-locked" id="popPanel2" style="position:relative;">
+          <div class="fp-head"><span class="fp-num">2</span> 投票选举</div>
+          <div class="panel-lock-msg" id="popPanel2Lock">⏳ 等待庆典完成</div>
+          <div class="fp-body" id="popPanel2Body">
+            <div style="font-size:0.7rem;color:var(--text-secondary);margin-bottom:4px;">每个官职投票选一名候选人（不选代表弃权）。</div>
+            <div style="font-size:0.75rem;">
+              <div><strong>🛡️ 执政官</strong><br>
+                <label><input type="radio" name="vote_consul"> Manius Papirius (<span style="color:var(--opt);">Opt</span>)</label><br>
+                <label><input type="radio" name="vote_consul"> Spurius Aemilius (<span style="color:var(--opt);">Opt</span>)</label><br>
+                <label><input type="radio" name="vote_consul"> Lucius Julius (<span style="color:var(--pop);">Pop</span>)</label>
+              </div>
+              <div style="margin-top:4px;"><strong>📜 监察官</strong><br>
+                <label><input type="radio" name="vote_censor"> Spurius Aemilius (<span style="color:var(--opt);">Opt</span>)</label>
+              </div>
+              <div style="margin-top:4px;"><strong>⚖️ 大法官</strong><br>
+                <label><input type="radio" name="vote_praetor"> Numerius Antonius (<span style="color:var(--equ);">Equ</span>)</label>
+              </div>
+              <div style="margin-top:4px;"><strong>💰 财务官</strong><br>
+                <label><input type="radio" name="vote_quaestor"> Gnaeus Aemilius (<span style="color:var(--equ);">Equ</span>)</label>
+              </div>
+              <div style="margin-top:4px;"><strong>🛡️ 保民官</strong><br>
+                <label><input type="radio" name="vote_tribune"> Vibius (<span style="color:var(--equ);">Equ</span>)</label>
+              </div>
+            </div>
+
+            <div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--panel-border);">
+              <button class="btn small" style="width:100%;" onclick="disableBtn(this);execElection();addLog('success','✨ 人口阶段完成')">⬻️ 完成投票</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>    <!-- ▼ 元老院 phase-4 ▼ -->
+    <div class="phase-content" id="p4">
+      <span class="phase-badge">5 / 7</span>
+      <div class="phase-title">🏺 元老院阶段</div>
+      <div class="phase-desc">执政官提案 → 元老院表决 → 保民官否决 → 法案公示与政府运作</div>
+      <div class="stage-steps">
+        <div class="s"><span class="sn done">✓</span>公示</div><span class="arrow">→</span>
+        <div class="s"><span class="sn current">1</span>执政官提案</div><span class="arrow">→</span>
+        <div class="s"><span class="sn todo">2</span>元老表决</div><span class="arrow">→</span>
+        <div class="s"><span class="sn todo">3</span>保民官否决</div>
+      </div>
+      <!-- 公示区（顶部）-->
+      <div id="senateAnnounceArea" style="margin-bottom:6px;flex-shrink:0;">
+        <div class="info-box">
+          <strong>🏛️ 元老院议事</strong><br>
+          🎤 会议主持: <strong>Manius Papirius</strong> (执政官 · <span style="color:var(--opt);font-weight:bold;">Optimates</span>)<br>
+          席位占比: <span style="color:var(--opt);font-weight:bold;">Opt 38%</span> ·
+          <span style="color:var(--pop);font-weight:bold;">Pop 35%</span> ·
+          <span style="color:var(--equ);font-weight:bold;">Equ 27%</span>
+          <span style="font-size:0.68rem;color:var(--text-secondary);display:block;margin-top:4px;">※ 最终通过法案及政府运作结果将在此展示</span>
+        </div>
+        <div id="senateResults" style="margin-top:4px;"></div>
+      </div>
+      <!-- 三个子环节面板并排 -->
+      <div class="forum-panels">
+        <!-- 子环节1: 执政官提案（V3.22: 带参数配置） -->
+        <div class="forum-panel">
+          <div class="fp-head"><span class="fp-num">1</span> 执政官提案 · 配置参数</div>
+          <div class="fp-body">
+            <div style="font-size:0.7rem;color:var(--text-secondary);margin-bottom:4px;">勾选法案 → 展开配置参数 → 全部配置完毕后提交元老院表决。</div>
+            <div id="senateProposals" style="flex:1;overflow-y:auto;">
+              <!-- ⚔️ 宣战 -->
+              <div class="bill-config" data-bill="war">
+                <div class="bc-header" onclick="toggleBillConfig('bc_body_war')">
+                  <input type="checkbox" id="bill_war" checked onclick="event.stopPropagation()">
+                  <label for="bill_war"><strong>⚔️ 宣战</strong> — 对迦太基</label>
+                  <span class="bc-arrow" id="arrow_war">▾</span>
+                </div>
+                <div class="bc-body" id="bc_body_war">
+                  <span class="bc-label">征召军团数量</span>
+                  <select class="bc-select" id="param_war_legions">
+                    <option value="2">2 个军团（最小规模）</option>
+                    <option value="4">4 个军团</option>
+                    <option value="6" selected>6 个军团（推荐）</option>
+                    <option value="8">8 个军团（大规模）</option>
+                    <option value="10">10 个军团（全面战争）</option>
+                  </select>
+                  <span class="bc-hint">每军团维护费 6 T/月，国库当前可支撑 <strong>23</strong> 个军团</span>
+                </div>
+              </div>
+              <!-- ☮️ 停战 -->
+              <div class="bill-config" data-bill="peace">
+                <div class="bc-header" onclick="toggleBillConfig('bc_body_peace')">
+                  <input type="checkbox" id="bill_peace" checked onclick="event.stopPropagation()">
+                  <label for="bill_peace"><strong>☮️ 停战</strong> — 皮洛士战争</label>
+                  <span class="bc-arrow" id="arrow_peace">▾</span>
+                </div>
+                <div class="bc-body" id="bc_body_peace">
+                  <div class="bc-treaty">
+                    <span class="bc-label">条约条款（预设，不可修改）</span>
+                    <div class="treaty-row"><span>💰 赔款</span><span><strong>120 T</strong>（分 4 年支付）</span></div>
+                    <div class="treaty-row"><span>⏳ 停战期</span><span><strong>10 年</strong></span></div>
+                    <div class="treaty-row"><span>🗺️ 领土割让</span><span><strong>塔兰托</strong>及周边地区归罗马</span></div>
+                  </div>
+                </div>
+              </div>
+              <!-- 🏛️ 总督任命 #1 -->
+              <div class="bill-config" data-bill="gov1">
+                <div class="bc-header" onclick="toggleBillConfig('bc_body_gov1')">
+                  <input type="checkbox" id="bill_gov1" onclick="event.stopPropagation()">
+                  <label for="bill_gov1"><strong>🏛️ 总督任命</strong> — 西西里行省</label>
+                  <span class="bc-arrow" id="arrow_gov1">▾</span>
+                </div>
+                <div class="bc-body" id="bc_body_gov1">
+                  <span class="bc-label">提名总督人选</span>
+                  <select class="bc-select" id="param_gov1_nominee">
+                    <option value="">— 请选择 —</option>
+                    <option value="Decimus Sempronius" selected>Decimus Sempronius（贵族 · 军略6 智略7 魅力5 · 影响力4）</option>
+                    <option value="Marcus Fabius">Marcus Fabius（贵族 · 军略8 智略4 魅力6 · 影响力7）</option>
+                    <option value="Lucius Junius">Lucius Junius（骑士 · 军略5 智略6 魅力8 · 影响力3）</option>
+                  </select>
+                  <span class="bc-hint">合格条件：元老院成员，曾任大法官以上官职</span>
+                </div>
+              </div>
+              <!-- 🏛️ 总督任命 #2 -->
+              <div class="bill-config" data-bill="gov2">
+                <div class="bc-header" onclick="toggleBillConfig('bc_body_gov2')">
+                  <input type="checkbox" id="bill_gov2" onclick="event.stopPropagation()">
+                  <label for="bill_gov2"><strong>🏛️ 总督任命</strong> — 撒丁-科西嘉行省</label>
+                  <span class="bc-arrow" id="arrow_gov2">▾</span>
+                </div>
+                <div class="bc-body" id="bc_body_gov2">
+                  <span class="bc-label">提名总督人选</span>
+                  <select class="bc-select" id="param_gov2_nominee">
+                    <option value="">— 请选择 —</option>
+                    <option value="Marcus Aemilius" selected>Marcus Aemilius（贵族 · 军略5 智略6 魅力7 · 影响力5）</option>
+                    <option value="Gaius Cornelius">Gaius Cornelius（贵族 · 军略7 智略5 魅力5 · 影响力6）</option>
+                    <option value="Numerius Antonius">Numerius Antonius（骑士 · 军略3 智略8 魅力7 · 影响力4）</option>
+                  </select>
+                  <span class="bc-hint">合格条件：元老院成员，曾任大法官以上官职</span>
+                </div>
+              </div>
+              <!-- 💰 建造合同 -->
+              <div class="bill-config" data-bill="build">
+                <div class="bc-header" onclick="toggleBillConfig('bc_body_build')">
+                  <input type="checkbox" id="bill_build" checked onclick="event.stopPropagation()">
+                  <label for="bill_build"><strong>💰 建造合同</strong> — 意大利工程</label>
+                  <span class="bc-arrow" id="arrow_build">▾</span>
+                </div>
+                <div class="bc-body" id="bc_body_build">
+                  <span class="bc-label">预算金额</span>
+                  <div class="bc-input-group">
+                    <input type="range" class="bc-range" id="param_build_amt" min="20" max="200" value="80" oninput="document.getElementById('param_build_val').textContent=this.value">
+                    <span class="bc-range-val"><span id="param_build_val">80</span> T</span>
+                  </div>
+                  <span class="bc-hint">国库当前余额：<strong>142 T</strong> · 参考值：60-120 T</span>
+                </div>
+              </div>
+              <!-- 📜 包税合同 -->
+              <div class="bill-config" data-bill="tax">
+                <div class="bc-header" onclick="toggleBillConfig('bc_body_tax')">
+                  <input type="checkbox" id="bill_tax" checked onclick="event.stopPropagation()">
+                  <label for="bill_tax"><strong>📜 包税合同</strong> — 西西里行省</label>
+                  <span class="bc-arrow" id="arrow_tax">▾</span>
+                </div>
+                <div class="bc-body" id="bc_body_tax">
+                  <span class="bc-label">合同金额</span>
+                  <div class="bc-input-group">
+                    <input type="range" class="bc-range" id="param_tax_amt" min="20" max="150" value="60" oninput="document.getElementById('param_tax_val').textContent=this.value">
+                    <span class="bc-range-val"><span id="param_tax_val">60</span> T/年</span>
+                  </div>
+                  <span class="bc-hint">参考值：40-80 T/年 · 行省税收预估 <strong>55 T</strong></span>
+                </div>
+              </div>
+              <!-- 🏡 卖地法案 -->
+              <div class="bill-config" data-bill="sell">
+                <div class="bc-header" onclick="toggleBillConfig('bc_body_sell')">
+                  <input type="checkbox" id="bill_sell" onclick="event.stopPropagation()">
+                  <label for="bill_sell"><strong>🏡 卖地法案</strong> — 出售国家公地</label>
+                  <span class="bc-arrow" id="arrow_sell">▾</span>
+                </div>
+                <div class="bc-body" id="bc_body_sell">
+                  <span class="bc-label">出售土地数量</span>
+                  <div class="bc-input-group">
+                    <input type="range" class="bc-range" id="param_sell_amt" min="100" max="2000" value="500" step="100" oninput="document.getElementById('param_sell_val').textContent=this.value">
+                    <span class="bc-range-val"><span id="param_sell_val">500</span> C</span>
+                  </div>
+                  <span class="bc-hint">国家公地剩余：<strong>6,000 C</strong> · 参考售价：2 T/C</span>
+                </div>
+              </div>
+              <!-- 🌾 分地法案 -->
+              <div class="bill-config" data-bill="dist">
+                <div class="bc-header" onclick="toggleBillConfig('bc_body_dist')">
+                  <input type="checkbox" id="bill_dist" onclick="event.stopPropagation()">
+                  <label for="bill_dist"><strong>🌾 分地法案</strong> — 分配公地给平民</label>
+                  <span class="bc-arrow" id="arrow_dist">▾</span>
+                </div>
+                <div class="bc-body" id="bc_body_dist">
+                  <span class="bc-label">分配土地数量</span>
+                  <div class="bc-input-group">
+                    <input type="range" class="bc-range" id="param_dist_amt" min="100" max="2000" value="800" step="100" oninput="document.getElementById('param_dist_val').textContent=this.value">
+                    <span class="bc-range-val"><span id="param_dist_val">800</span> C</span>
+                  </div>
+                  <span class="bc-hint">国家公地剩余：<strong>6,000 C</strong> · 分地可提升平民派系 support +5%</span>
+                </div>
+              </div>
+              <!-- 🛡️ 接管战争（无需表决和否决） -->
+              <div class="bill-config" data-bill="takeover">
+                <div class="bc-header" onclick="toggleBillConfig('bc_body_takeover')">
+                  <input type="checkbox" id="bill_takeover" onclick="event.stopPropagation()">
+                  <label for="bill_takeover"><strong>🛡️ 接管战争</strong></label>
+                  <span class="bc-arrow" id="arrow_takeover">▾</span>
+                  <span class="bc-badge-auto">⚡ 无需表决</span>
+                </div>
+                <div class="bc-body" id="bc_body_takeover">
+                  <span class="bc-label">选择要接管的战争</span>
+                  <select class="bc-select" id="param_takeover_war">
+                    <option value="">— 请选择 —</option>
+                    <option value="第一次布匿战争" selected>第一次布匿战争（指挥官：Cornelius Maximus · 战力 17）</option>
+                  </select>
+                  <span class="bc-hint">执政官亲自指挥战争，无需元老院表决和保民官否决</span>
+                </div>
+              </div>
+            </div>
+            <div style="padding-top:4px;border-top:1px solid var(--panel-border);flex-shrink:0;">
+              <button class="btn small" style="width:100%;" onclick="senateSubmitProposals(this)">📤 提交选中法案 → 移交表决</button>
+            </div>
+          </div>
+        </div>
+        <!-- 子环节2: 元老院表决 -->
+        <div class="forum-panel panel-locked" id="senatePanel2">
+          <div class="fp-head"><span class="fp-num">2</span> 元老院表决</div>
+          <div class="panel-lock-msg" id="senatePanel2Lock">⏳ 等待执政官提交法案</div>
+          <div class="fp-body" id="senatePanel2Body">
+            <div style="font-size:0.7rem;color:var(--text-secondary);margin-bottom:4px;">勾选同意（多选），未勾选 = 否决。所有派系执行完毕后进入否决环节。</div>
+            <div id="senateVoteList">
+              <div class="bill-row" style="opacity:0.5;font-size:0.62rem;">⏳ 法案列表将在执政官提交后自动同步</div>
+            </div>
+            <div style="margin-top:auto;padding-top:6px;border-top:1px solid var(--panel-border);">
+              <button class="btn small" style="width:100%;" onclick="senateConfirmVote(this)">🗳️ 确认表决 → 移交否决环节</button>
+            </div>
+          </div>
+        </div>
+        <!-- 子环节3: 保民官否决 -->
+        <div class="forum-panel panel-locked" id="senatePanel3">
+          <div class="fp-head"><span class="fp-num">3</span> 保民官否决</div>
+          <div class="panel-lock-msg" id="senatePanel3Lock">⏳ 等待元老院表决完成</div>
+          <div class="fp-body" id="senatePanel3Body">
+            <div style="font-size:0.7rem;color:var(--text-secondary);margin-bottom:4px;">通过法案列表。保民官勾选否决（多选），未勾选 = 同意。</div>
+            <div id="senateVetoList">
+              <div class="bill-row" style="opacity:0.5;font-size:0.62rem;">⏳ 法案列表将在元老表决后自动同步</div>
+            </div>
+            <div style="margin-top:auto;padding-top:6px;border-top:1px solid var(--panel-border);">
+              <button class="btn small" style="width:100%;" onclick="senateConfirmVeto(this)">🛡️ 确认否决 → 公示结果</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ▼ 战斗 phase-5（V3.23: 多战争并排）▼ -->
+    <div class="phase-content" id="p5">
+      <span class="phase-badge">6 / 7</span>
+      <div class="phase-title">⚔️ 战斗阶段</div>
+      <div class="phase-desc">多场战争独立裁定。每场战争每回合仅一次进攻机会。</div>
+      <div class="stage-steps">
+        <div class="s"><span class="sn done">✓</span>📢 公示</div><span class="arrow">→</span>
+        <div class="s"><span class="sn current">1</span>⚔️ 战斗裁定</div><span class="arrow">→</span>
+        <div class="s"><span class="sn todo">2</span>⚖️ 谈判（平局时）</div>
+      </div>
+      <!-- 公示区（顶部）-->
+      <div id="warAnnounceArea" style="margin-bottom:4px;flex-shrink:0;">
+        <div class="info-box" id="warAnnounceContent">
+          <strong>⚔️ 共和国军力总览</strong><br>
+          <div style="display:flex;gap:16px;margin-top:2px;font-size:0.7rem;">
+            <span>🛡️ 激活战争: <strong>2</strong></span>
+            <span>🗡️ 已动员军团: <strong>6</strong> / <span style="color:var(--text-muted);">可动员 12</span></span>
+            <span>⚓ 舰队: <strong>3</strong> / <span style="color:var(--text-muted);">可征召 6</span></span>
+            <span>🏛️ 国库: <strong id="warTreasuryDisplay">142 T</strong></span>
+          </div>
+        </div>
+        <div id="warResults" style="margin-top:4px;"></div>
+      </div>
+      <!-- 三场战争面板并排 -->
+      <div class="forum-panels">
+        <!-- 战争1：第一次布匿战争 -->
+        <div class="forum-panel" id="warPanel0">
+          <div class="fp-head"><span class="fp-num">Ⅰ</span> 第一次布匿战争</div>
+          <div class="fp-body" style="display:flex;flex-direction:column;gap:4px;">
+            <div class="war-info-row">🎖️ 指挥官: <strong>Cornelius Maximus</strong> <span style="color:var(--opt);font-size:0.65rem;">(Opt)</span></div>
+            <div class="war-compare">
+              <div class="wc-side wc-ally">
+                <span class="wc-label">🛡️ 罗马</span>
+                <span class="wc-val">17</span>
+              </div>
+              <div class="wc-vs">VS</div>
+              <div class="wc-side wc-enemy">
+                <span class="wc-label">⚔️ 迦太基</span>
+                <span class="wc-val">15</span>
+              </div>
+            </div>
+            <div class="war-detail">
+              <span>军团: 第Ⅰ·第Ⅲ·第Ⅴ军团</span>
+              <span>舰队: 第1·第2舰队</span>
+            </div>
+            <div style="margin-top:auto;padding-top:4px;border-top:1px solid var(--panel-border);">
+              <button class="btn small" style="width:100%;" id="warBtn0" onclick="execWarBattle(0,this)">⚔️ 发动进攻</button>
+              <div id="warStatus0" style="display:none;text-align:center;padding:6px;font-size:0.7rem;"></div>
+            </div>
+          </div>
+        </div>
+        <!-- 战争2：高卢入侵 -->
+        <div class="forum-panel" id="warPanel1">
+          <div class="fp-head"><span class="fp-num">Ⅱ</span> 山南高卢入侵</div>
+          <div class="fp-body" style="display:flex;flex-direction:column;gap:4px;">
+            <div class="war-info-row">🎖️ 指挥官: <strong>Lucius Junius</strong> <span style="color:var(--pop);font-size:0.65rem;">(Pop)</span></div>
+            <div class="war-compare">
+              <div class="wc-side wc-ally">
+                <span class="wc-label">🛡️ 罗马</span>
+                <span class="wc-val">12</span>
+              </div>
+              <div class="wc-vs">VS</div>
+              <div class="wc-side wc-enemy">
+                <span class="wc-label">⚔️ 高卢</span>
+                <span class="wc-val">18</span>
+              </div>
+            </div>
+            <div class="war-detail">
+              <span>军团: 第Ⅱ军团</span>
+              <span>舰队: —</span>
+            </div>
+            <div style="margin-top:auto;padding-top:4px;border-top:1px solid var(--panel-border);">
+              <button class="btn small" style="width:100%;" id="warBtn1" onclick="execWarBattle(1,this)">⚔️ 发动进攻</button>
+              <div id="warStatus1" style="display:none;text-align:center;padding:6px;font-size:0.7rem;"></div>
+            </div>
+          </div>
+        </div>
+        <!-- 战争3：空位（最多3场） -->
+        <div class="forum-panel" id="warPanel2">
+          <div class="fp-head"><span class="fp-num">Ⅲ</span> <span style="color:var(--text-muted);font-weight:normal;">待定</span></div>
+          <div class="fp-body" style="display:flex;align-items:center;justify-content:center;">
+            <div style="text-align:center;font-size:0.7rem;color:var(--text-muted);">
+              <div style="font-size:1.2rem;margin-bottom:4px;">⚔️</div>
+              <div>目前无第三场激活战争</div>
+              <div style="font-size:0.6rem;">最多同时进行 3 场战争</div>
+              <div style="font-size:0.6rem;margin-top:6px;color:var(--error);">第 4 场 → 游戏结束</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ▼ 决算 phase-6 ▼ -->
+    <div class="phase-content" id="p6">
+      <span class="phase-badge">7 / 7</span>
+      <div class="phase-title">📊 决算阶段</div>
+      <div class="phase-desc">总督轮换 · 合同到期 · 革命检查 · 年度衰减 · 推进下一年</div>
+      <div class="stage-steps">
+        <div class="s"><span class="sn done">✓</span>总督返回</div><span class="arrow">→</span>
+        <div class="s"><span class="sn done">✓</span>合同到期</div><span class="arrow">→</span>
+        <div class="s"><span class="sn current">3</span>革命检查</div><span class="arrow">→</span>
+        <div class="s"><span class="sn todo">4</span>年度衰减</div><span class="arrow">→</span>
+        <div class="s"><span class="sn todo">5</span>推进</div>
+      </div>
+      <div id="resolutionView">
+        <div class="info-box">🏛️ 总督轮换: Marcus Fabius (Cilicia) → Lucius Julius (Syria) — 自动完成<br>📜 合同过期: ID:4 舰队建造 — 质保到期</div>
+        <div class="warn-box">⚠️ 独裁风险! Populares 获得元老院 72.4% 影响力</div>
+        <div class="warn-box">⚠️ 财政预警! 国库连续赤字</div>
+        <div class="phase-subtitle">📈 年度总结</div>
+        <div class="list-item"><span>主导派系</span><span style="color:var(--pop);font-weight:bold;">Populares (39.9%)</span></div>
+        <div class="list-item"><span>国库年度净变化</span><span style="color:var(--success);font-weight:bold;">+72 T</span></div>
+        <div class="list-item"><span>临时影响力衰减</span><span style="color:var(--warning);">处理中</span></div>
+        <div class="list-item"><span>下一年度</span><span style="color:var(--accent);font-weight:bold;">281 BC</span></div>
+        <div style="margin-top:8px;"><button class="btn primary" onclick="advYear()">⏭️ 进入下一年度</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT CONTEXT -->
+  <div class="context-panel">
+    <div class="ctx-top">
+      <div><h4>🎯 当前阶段</h4>
+        <div id="ctxGoal" style="font-size:0.68rem;color:var(--text-secondary);padding:4px 0;">公告 → 裁员 → 市场（招募·竞标·公地·凯旋）→ 公示</div>
+      </div>
+      <div><h4>⚡ 操作</h4><div id="ctxActions"><button class="ctx-btn" onclick="advPhase()">⏭️ 推进到下一阶段</button></div></div>
+      <div><h4>📋 进度</h4>
+        <div class="stat-tile"><span>流程</span><span id="ctxStep" style="color:var(--accent);font-weight:bold;">4 / 4</span></div>
+        <div class="stat-tile"><span>状态</span><span style="color:var(--success);font-weight:bold;" id="ctxStatus">可操作</span></div>
+      </div>
+      <div style="flex:1;min-height:4px;"></div>
+      <div><h4>👤 玩家</h4>
+        <div class="stat-tile"><span>派系</span><span style="color:var(--opt);font-weight:bold;">Optimates</span></div>
+        <div class="stat-tile"><span>人物</span><span id="ctxMembers">5 人</span></div>
+      </div>
+    </div>
+    <div class="ctx-log">
+      <div class="fb-header"><h4>📢 事件日志</h4><button onclick="clrLog()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.6rem;">清空</button></div>
+      <div class="fb-list" id="evtLog"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== BOTTOM OPERATION BAR ========== -->
+<div class="op-bar">
+  <button class="op-btn" onclick="showModal('派系信息','展示各派系国库、影响力、成员数。')"><span class="ico">📋</span>派系信息</button>
+  <button class="op-btn" onclick="showModal('人物查询','输入人物ID查看详情：军略/智略/魅力/热忱/私产/官职')"><span class="ico">👤</span>人物查询</button>
+  <button class="op-btn" onclick="showModal('游戏状态','国库: 142T | 公地: 6,000C | 存活人物: 28 | 军团: 6 | 舰队: 3 | 行省: 4')"><span class="ico">📊</span>游戏状态</button>
+  <button class="op-btn" onclick="showModal('派系金库','Optimates: 38T | Populares: 41T | Equites: 29T')"><span class="ico">💰</span>派系金库</button>
+  <button class="op-btn" onclick="showModal('公地信息','国家公地: 6,000 C | 已分配: 1,200 C | 待售: 800 C | 行省公地: 0 C')"><span class="ico">🌾</span>公地信息</button>
+  <button class="op-btn" onclick="showModal('私地信息','— 私地信息查询 —\n点击人物可查看其私有土地持有情况。')"><span class="ico">🏡</span>私地信息</button>
+  <button class="op-btn" onclick="showModal('合同状态','待决合同: 3 | 执行中: 2 | 已完成: 5')"><span class="ico">📦</span>合同状态</button>
+  <button class="op-btn" onclick="showModal('行省信息','西西里(空缺) | 撒丁(空缺) | 科西嘉(空缺) | 山南高卢(代理)')"><span class="ico">🏛️</span>行省信息</button>
+  <button class="op-btn" onclick="showModal('战争列表','🟡 威胁: 迦太基·西西里\n⚔️ 活跃: 无\n☮️ 停战: 伊庇鲁斯(剩余2回合)')"><span class="ico">⚔️</span>战争列表</button>
+  <button class="op-btn" onclick="showModal('军团状态','第I军团(4/4)─罗马 | 第II军团(3/4)─罗马 | 第III军团(4/4)─西西里')"><span class="ico">🗡️</span>军团状态</button>
+  <button class="op-btn" onclick="showModal('舰队状态','🛶 第1舰队(战力8)─罗马 | 🛶 第2舰队(战力5)─塔兰托 | 🛶 第3舰队(战力6)─叙拉古')"><span class="ico">⚓</span>舰队状态</button>
+  <button class="op-btn" onclick="showModal('游戏帮助','Eagle of Rome 罗马共和国政治策略游戏 V3.2.4')"><span class="ico">❓</span>帮助</button>
+</div>
+
+<!-- MODAL -->
+
+<div class="modal-overlay" id="modal" onclick="if(event.target===this)closeModal()"><div class="modal"><span class="close" onclick="closeModal()">&times;</span><h3 id="mTitle">详情</h3><div id="mBody"></div></div></div>
+
+<script>
+// ===== HELPERS =====
+function disableBtn(el) { el.disabled = true; el.style.opacity = '.35'; el.style.cursor = 'not-allowed'; }
+
+// ===== STATE =====
+let cur = 2, yr = 282, tu = 1, treasury = 142, fGold = 12, infl = 68, stab = 78;
+let wars = 1, pe = [false,false,false,false,false,false,false], logEntries = [];
+const PN = ['天命','收入','广场','人口','元老院','战斗','决算'];
+const GOALS = [
+  '⚡ 一键执行天命，查看众神降下的事件。',
+  '📊 查看财政收入、派系拨款、地主收益。',
+  '公告→裁员→市场(招募/竞标/公地/凯旋)→公示',
+  '公示→庆典→投票→选举结果公示',
+  '公示→执政官提案→元老表决→保民官否决→法案公示与政府运作',
+  '公示→战争1→战争2→战争3 → 战斗结果公示',
+  '总督轮换·合同到期·革命检查·年度衰减·推进'
+];
+const STEPS = ['2/2','2/2','4/4','4/4','4/4','4/4','5/5'];
+
+function api(c, a) { addLog('info','🔷 API: '+c+(a?' '+JSON.stringify(a):'')); return {success:true}; }
+function addLog(t,m) {
+  const el=document.getElementById('evtLog'), d=document.createElement('div');
+  const dt=new Date(), ts=('0'+dt.getHours()).slice(-2)+':'+('0'+dt.getMinutes()).slice(-2)+':'+('0'+dt.getSeconds()).slice(-2);
+  const cls={success:'fb-success',warning:'fb-warning',error:'fb-error',info:'fb-info'};
+  d.className='fb-entry'; d.innerHTML='<span class="tm">['+ts+']</span> <span class="'+(cls[t]||'fb-info')+'">'+m+'</span>';
+  el.insertBefore(d,el.firstChild);
+  while(el.children.length>30) el.lastChild.remove();
+}
+function clrLog(){document.getElementById('evtLog').innerHTML='';}
+function st() {
+  document.getElementById('hTreasury').textContent=treasury;
+  document.getElementById('hFaction').textContent=fGold;
+  document.getElementById('hInf').textContent=infl;
+  document.getElementById('hStab').textContent=stab+'%';
+  document.getElementById('hWar').textContent=wars;
+  document.getElementById('roundInfo').textContent=yr+' BC · 回合 '+tu;
+}
+function closeModal(){document.getElementById('modal').classList.remove('active');}
+function showModal(t,b){document.getElementById('mTitle').textContent=t;document.getElementById('mBody').innerHTML=b;document.getElementById('modal').classList.add('active');}
+function showPerson(n,d){showModal('👤 '+n,`<div class="modal-row"><span class="label">派系</span><span class="value" style="color:var(--${d.faction==='Optimates'?'opt':d.faction==='Populares'?'pop':'equ'})">${d.faction}</span></div><div class="modal-row"><span class="label">私人收入</span><span class="value" style="color:var(--success)">+${d.income} T</span></div>`);}
+function showTalent(n,d){showModal('👤 '+n,`<div class="modal-row"><span class="label">派系</span><span class="value" style="color:var(--${d.fact==='Optimates'?'opt':d.fact==='Populares'?'pop':'equ'})">${d.fact}</span></div><div class="modal-row"><span class="label">军略</span><span class="value">${d.mil}</span></div><div class="modal-row"><span class="label">智略</span><span class="value">${d.itl}</span></div><div class="modal-row"><span class="label">魅力</span><span class="value">${d.cha}</span></div><div class="modal-row"><span class="label">影响力</span><span class="value">${d.inf}</span></div><div class="modal-row"><span class="label">招募费用</span><span class="value">${d.cost} T</span></div>`);}
+
+// ===== PHASE SWITCH =====
+function sw(i) {
+  cur = i;
+  document.querySelectorAll('.rail-step').forEach((e)=>{
+    const p=parseInt(e.dataset.p);
+    e.className='rail-step'+(p<i?' done':p===i?' current':' todo');
+  });
+  document.querySelectorAll('.phase-content').forEach(e=>e.classList.remove('active'));
+  document.getElementById('p'+i).classList.add('active');
+  document.getElementById('ctxGoal').textContent = GOALS[i];
+  document.getElementById('ctxStep').textContent = pe[i] ? '✅ 完成' : STEPS[i];
+  document.getElementById('ctxStatus').textContent = pe[i] ? '已完成' : '可操作';
+  document.getElementById('ctxActions').innerHTML = pe[i]
+    ? '<button class="ctx-btn" style="opacity:.35" disabled>✅ 已完成</button>'
+    : '<button class="ctx-btn" onclick="advPhase()">⏭️ 推进到下一阶段</button>';
+  addLog('info','📌 进入 '+PN[i]+' 阶段');
+}
+
+// ===== PHASE ADVANCE =====
+function advPhase() {
+  pe[cur] = true;
+  if(cur < 6) {
+    addLog('info','⏳ 推进中...');
+    setTimeout(()=>{sw(cur+1);addLog('success','⏭️ 进入 '+PN[cur]+' 阶段');},300);
+  } else {
+    addLog('info','📅 年度结算...');
+    setTimeout(()=>{
+      yr--; tu++; stab = Math.min(100, stab+Math.floor(Math.random()*8)-3);
+      const rb = Math.floor(Math.random()*40)+50;
+      treasury += rb; infl += Math.floor(Math.random()*5)+2;
+      for(let i=0;i<7;i++) pe[i]=false;
+      sw(0); st();
+      addLog('success','📅 '+(yr+1)+' BC → '+yr+' BC！国库 +'+rb+' T');
+    },500);
+  }
+}
+
+// ===== MORTALITY =====
+function execMortality() {
+  api('mortality_api.execute_mortality_phase',{player_id:'player1'});
+  pe[0]=true;
+  // 单次随机事件：猝死
+  const deadName = '盖乌斯·法比乌斯';
+  const deadFaction = 'Populares';
+  const deadLand = 120;
+  const deadWealth = 15;
+  treasury += deadWealth;
+  addLog('info', '💀 ' + deadName + ' (' + deadFaction + '派系)猝死');
+  addLog('info', '💀 损失土地 ' + deadLand + ' C，财富 ' + deadWealth + ' T 收归国库');
+  // 主界面展示结果（V3 风格）
+  let h = '<div class="info-box" style="border-color:var(--success);">✅ 天命已执行</div>';
+  h += '<div class="phase-subtitle">🎴 事件结果</div>';
+  h += '<div class="list-item"><span>💀 <strong>' + deadName + '</strong> (' + deadFaction + '派系)猝死</span><span style="color:var(--error);">损失土地 ' + deadLand + ' C，财富 ' + deadWealth + ' T 收归国库</span></div>';
+  document.getElementById('mortalityView').innerHTML = h;
+  // 灰化按钮
+  document.getElementById('godBtn').disabled = true;
+  document.getElementById('godBtn').textContent = '✅ 已执行';
+  st(); addLog('success','🎴 天命阶段完成');
+}
+
+// ===== REVENUE
+// ===== REVENUE =====
+function execRevenue() {
+  api('EconomicService.settle_revenue_phase',{});
+  pe[1]=true;
+  treasury += 72; fGold += 8; infl += 3;
+  document.getElementById('revTreasury').textContent = treasury;
+  addLog('success','💰 收入结算完成。国库 +72 T，派系 +8 T');
+  document.querySelector('#p1 .btn.primary').disabled = true;
+  document.querySelector('#p1 .btn.primary').textContent = '✅ 已确认';
+  st(); sw(1);
+}
+
+// ===== FORUM =====
+function dismissFig(name,faction,mil,itl,cha,inf,cost,elId) {
+  api('forum_api.retire_figure',{player_id:'player1',figure_id:name});
+  // 从解雇列表中移除
+  var el = document.getElementById(elId);
+  if (el) el.style.display = 'none';
+  // 刷新到人才市场
+  var tl = document.getElementById('talentList');
+  var div = document.createElement('div');
+  div.className = 'list-item';
+  div.style.cursor = 'pointer';
+  div.setAttribute('onclick', "showTalent('"+name+"',{mil:"+mil+",itl:"+itl+",cha:"+cha+",inf:"+inf+",cost:"+cost+",fact:'"+faction+"'})");
+  // Map faction to Roman class
+  var clsName = faction === 'Optimates' ? '贵族' : '平民';
+  var clsColor = faction === 'Optimates' ? 'opt' : 'pop';
+  if (faction === 'Equites') { clsName = '骑士'; clsColor = 'equ'; }
+  div.className = 'talent-row';
+  div.setAttribute("onclick", "showTalent('"+name+"',{mil:"+mil+",itl:"+itl+",cha:"+cha+",inf:"+inf+",cost:"+cost+",fact:'"+faction+"'})");
+  div.innerHTML = "<span class=\"td-name\"><strong>"+name+"</strong></span><span class=\"td-a\">"+mil+"</span><span class=\"td-a\">"+itl+"</span><span class=\"td-a\">"+cha+"</span><span class=\"td-a\">"+inf+"</span><span class=\"td-class\" style=\"color:var(--"+clsColor+");font-weight:bold;\">"+clsName+"</span><span class=\"td-cost\"><strong style=\"color:var(--accent);\">"+cost+" T</strong> <button class=\"btn small primary\" onclick=\"event.stopPropagation();disableBtn(this);recruitDialog('"+name+"',"+cost+")\">招募</button></span>";
+  tl.insertBefore(div, tl.firstChild);
+  addLog('info','⚔️ '+name+' 被解雇，已进入人才市场');
+}
+function recruitDialog(name,cost) {
+  showModal('💰 招募 '+name,
+    '<div class="modal-row"><span class="label">基础费用</span><span class="value">'+cost+' T</span></div>'+
+    '<div style="margin-top:8px;"><label style="font-size:0.7rem;color:var(--text-secondary)">输入招募金额:</label><br>'+
+    '<input id="recAmt" type="number" min="'+cost+'" value="'+cost+'" style="width:100%;padding:4px;border:1px solid var(--panel-border);border-radius:4px;font-size:0.8rem;margin-top:4px;"></div>'+
+    '<div class="modal-btn-row"><button class="btn primary" onclick="doRecruit(\''+name+'\','+cost+')">确认</button><button class="btn" onclick="closeModal()">关闭</button></div>');
+}
+function doRecruit(name,cost) {
+  const amt = parseInt(document.getElementById('recAmt').value) || cost;
+  if(fGold < amt) { addLog('warning','⚠️ 派系资金不足！需要 '+amt+' T'); return; }
+  fGold -= amt; api('forum_api.recruit_figure',{figure_id:name,amount:amt});
+  addLog('success','✅ '+name+' 加入！花费 '+amt+' T'); st(); closeModal();
+}
+function bidDialog(cid) {
+  showModal('📜 竞标合同 ID:'+cid,'<div class="modal-row"><span class="label">预算</span><span class="value">'+(cid===3?'72':'80')+' T</span></div>'+
+    '<div style="margin-top:8px;"><label style="font-size:0.7rem;color:var(--text-secondary)">竞标金额:</label><br>'+
+    '<input id="bidAmt" type="number" min="1" value="'+(cid===3?'30':'40')+'" style="width:100%;padding:4px;border:1px solid var(--panel-border);border-radius:4px;font-size:0.8rem;margin-top:4px;"></div>'+
+    '<div class="modal-btn-row"><button class="btn primary" onclick="doBid('+cid+')">确认</button><button class="btn" onclick="closeModal()">关闭</button></div>');
+}
+function doBid(cid) {
+  const amt = parseInt(document.getElementById('bidAmt').value) || 0;
+  api('forum_api.place_bid',{contract_id:cid,amount:amt});
+  addLog('info','📜 合同 '+cid+' 竞标 '+amt+' T'); closeModal();
+}
+function landDialog() {
+  showModal('🏞️ 认购公地','<div class="modal-row"><span class="label">可认购</span><span class="value">5 C</span></div>'+
+    '<div style="margin-top:8px;"><label style="font-size:0.7rem;color:var(--text-secondary)">认购数量:</label><br>'+
+    '<input id="landAmt" type="number" min="1" max="5" value="5" style="width:100%;padding:4px;border:1px solid var(--panel-border);border-radius:4px;font-size:0.8rem;margin-top:4px;"></div>'+
+    '<div class="modal-btn-row"><button class="btn primary" onclick="doLand()">确认</button><button class="btn" onclick="closeModal()">关闭</button></div>');
+}
+function doLand() {
+  const amt = parseInt(document.getElementById('landAmt').value) || 1;
+  const cost = amt * 2;
+  if(fGold < cost) { addLog('warning','⚠️ 资金不足！需要 '+cost+' T'); return; }
+  fGold -= cost; api('forum_api.buy_land',{amount:amt});
+  addLog('success','🏞️ 认购 '+amt+' C 公地，花费 '+cost+' T'); st(); closeModal();
+}
+function triumphVote(v,btn) {
+  api('forum_api.vote_triumph',{war_id:'1st_punic',vote:v});
+  addLog(v ? 'success':'info', v ? '🏆 赞成凯旋！':'❌ 否决凯旋');
+  var parent = btn.parentElement;
+  var allBtns = parent.querySelectorAll('button');
+  for (var i = 0; i < allBtns.length; i++) { disableBtn(allBtns[i]); }
+  btn.style.borderColor = 'var(--success)';
+}
+
+// ===== POPULATION =====
+function campDialog() {
+  showModal('🎉 竞选庆典（多选候选人 + 输入总金额）',
+    '<p style="font-size:0.7rem;color:var(--text-secondary);margin-bottom:6px;">选择本派系候选人并输入资助总额：</p>'+
+    '<div><label><input type="checkbox" checked> Manius Papirius (Opt)</label></div>'+
+    '<div><label><input type="checkbox"> Spurius Aemilius (Opt)</label></div>'+
+    '<div style="margin-top:6px;"><label style="font-size:0.7rem;color:var(--text-secondary)">资助总额:</label><br>'+
+    '<input id="campAmt" type="number" min="1" value="10" style="width:100%;padding:4px;border:1px solid var(--panel-border);border-radius:4px;font-size:0.8rem;margin-top:4px;"></div>'+
+    '<div class="modal-btn-row"><button class="btn primary" onclick="doCamp()">确认</button><button class="btn" onclick="closeModal()">关闭</button></div>');
+}
+function doCamp() {
+  const amt = parseInt(document.getElementById('campAmt').value) || 0;
+  if(fGold < amt) { addLog('warning','⚠️ 资金不足！需要 '+amt+' T'); return; }
+  fGold -= amt; api('population_api.campaign',{amount:amt});
+  addLog('success','🎉 庆典资助 '+amt+' T，选区内人气 +'+Math.floor(amt/2)); st(); closeModal();
+}
+function voteDialog() {
+  showModal('🗳️ 投票（每官职选择一个候选人，可弃权）',
+    '<p style="font-size:0.7rem;color:var(--text-secondary);margin-bottom:6px;">为每个官职选择支持的候选人（不选 = 弃权）：</p>'+
+    '<div><strong>🛡️ 执政官</strong><br><label><input type="radio" name="v0" checked> Manius Papirius (Opt)</label><br><label><input type="radio" name="v0"> Lucius Julius (Pop)</label></div>'+
+    '<div><strong>📜 监察官</strong><br><label><input type="radio" name="v1" checked> Spurius Aemilius (Opt)</label><br><label><input type="radio" name="v1"> 弃权</label></div>'+
+    '<div class="modal-btn-row"><button class="btn primary" onclick="doVote()">确认</button><button class="btn" onclick="closeModal()">关闭</button></div>');
+}
+function doVote() {
+  api('population_api.vote',{});
+  addLog('success','🗳️ 投票完成！Opt 赢得执政官和监察官');
+  closeModal();
+}
+function execElection() {
+  api('population_api.resolve_election',{});
+  infl += 5;
+  // Update candidate table results
+  var results = {
+    'result_consul': '<span style="color:var(--success);font-weight:bold;">✅ Manius Papirius</span>',
+    'result_censor': '<span style="color:var(--success);font-weight:bold;">✅ Spurius Aemilius</span>',
+    'result_praetor': '<span style="color:var(--success);font-weight:bold;">✅ Numerius Antonius</span>',
+    'result_quaestor': '<span style="color:var(--success);font-weight:bold;">✅ Gnaeus Aemilius</span>',
+    'result_tribune': '<span style="color:var(--success);font-weight:bold;">✅ Vibius</span>'
+  };
+  for (var key in results) {
+    var el = document.getElementById(key);
+    if (el) el.innerHTML = results[key];
+  }
+  // Update announcement info
+  var info = document.querySelector('#popAnnounce .info-box');
+  if (info) {
+    info.innerHTML = '✨ 选举已完成！<br>📊 选举后派系影响力：' +
+      '<span style="color:var(--opt);font-weight:bold;">Opt 73 (+5)</span> · ' +
+      '<span style="color:var(--pop);font-weight:bold;">Pop 45</span> · ' +
+      '<span style="color:var(--equ);font-weight:bold;">Equ 32</span>';
+  }
+  addLog('success','✨ 选举完成！结果已更新到公示区');
+  st();
+}
+
+// ===== SENATE (V3.22: 三栏流程+参数配置) =====
+function toggleBillConfig(bodyId) {
+  var body = document.getElementById(bodyId);
+  if (!body) return;
+  body.classList.toggle('open');
+  var arrowId = 'arrow' + bodyId.replace('bc_body_','');
+  var arrow = document.getElementById(arrowId);
+  if (arrow) arrow.classList.toggle('open');
+}
+
+/* 默认展开已勾选法案的参数区 */
+function expandCheckedBills() {
+  var configs = document.querySelectorAll('.bill-config');
+  configs.forEach(function(div) {
+    var cb = div.querySelector('input[type=checkbox]');
+    var body = div.querySelector('.bc-body');
+    var arrow = div.querySelector('.bc-arrow');
+    if (cb && cb.checked && body) {
+      body.classList.add('open');
+      if (arrow) arrow.classList.add('open');
+    }
+  });
+}
+
+function senateSubmitProposals(btn) {
+  disableBtn(btn);
+  api('senate_api.propose',{player_id:'player1'});
+  var checked = [];
+  var autoBills = [];  // 绕过表决的法案（接管战争）
+  var configs = document.querySelectorAll('#senateProposals .bill-config');
+  configs.forEach(function(cfg) {
+    var cb = cfg.querySelector('input[type=checkbox]');
+    if (!cb || !cb.checked) return;
+    var id = cb.id;
+    var label = cfg.querySelector('label').textContent.trim();
+    if (id === 'bill_takeover') {
+      // 接管战争：无需表决，直接执行
+      var war = document.getElementById('param_takeover_war');
+      var warName = war ? war.value : '未知';
+      autoBills.push('🛡️ 接管「' + warName + '」— 执政官亲自指挥，跳过元老院表决');
+    } else {
+      // 普通法案：收集参数描述
+      var paramDesc = getBillParamDesc(id);
+      checked.push({id:id, label:label, params:paramDesc});
+    }
+  });
+  // 处理接管战争（直接执行）
+  if (autoBills.length > 0) {
+    autoBills.forEach(function(b) {
+      addLog('success', b);
+    });
+  }
+  // 处理需要表决的法案
+  var voteCount = checked.length;
+  if (voteCount > 0) {
+    var items = checked.map(function(c) { return c.label; });
+    addLog('success', '📤 执政官提交 ' + voteCount + ' 项法案：' + items.join(' · '));
+    syncBillsToVotePanel(checked);
+    unlockSenatePanel('senatePanel2','senatePanel2Lock');
+  } else {
+    // 只有接管战争，没有需要表决的法案
+    if (autoBills.length > 0) {
+      addLog('info','🏛️ 无法案需表决，接管战争已生效');
+    } else {
+      addLog('warning','⚠️ 元老院休会：无法案提交');
+    }
+  }
+}
+
+/* 获取法案参数的文字描述 */
+function getBillParamDesc(billId) {
+  var map = {
+    'bill_war': function() {
+      var v = document.getElementById('param_war_legions');
+      return '征召 ' + (v ? v.value : '?') + ' 个军团';
+    },
+    'bill_peace': function() {
+      return '赔款120T · 停战10年 · 塔兰托归罗马';
+    },
+    'bill_gov1': function() {
+      var v = document.getElementById('param_gov1_nominee');
+      return '西西里总督提名: ' + (v ? v.value : '?');
+    },
+    'bill_gov2': function() {
+      var v = document.getElementById('param_gov2_nominee');
+      return '撒丁-科西嘉总督提名: ' + (v ? v.value : '?');
+    },
+    'bill_build': function() {
+      var v = document.getElementById('param_build_val');
+      return '预算 ' + (v ? v.textContent : '?') + ' T';
+    },
+    'bill_tax': function() {
+      var v = document.getElementById('param_tax_val');
+      return '合同金额 ' + (v ? v.textContent : '?') + ' T/年';
+    },
+    'bill_sell': function() {
+      var v = document.getElementById('param_sell_val');
+      return '出售 ' + (v ? v.textContent : '?') + ' C 公地';
+    },
+    'bill_dist': function() {
+      var v = document.getElementById('param_dist_val');
+      return '分配 ' + (v ? v.textContent : '?') + ' C 公地给平民';
+    }
+  };
+  var fn = map[billId];
+  return fn ? fn() : '';
+}
+
+/* 同步到元老表决面板 */
+function syncBillsToVotePanel(bills) {
+  var dst = document.getElementById('senateVoteList');
+  if (!dst) return;
+  dst.innerHTML = '';
+  var voteIdMap = {
+    'bill_war': 'vote_war', 'bill_peace': 'vote_peace',
+    'bill_gov1': 'vote_gov1', 'bill_gov2': 'vote_gov2',
+    'bill_build': 'vote_build', 'bill_tax': 'vote_tax',
+    'bill_sell': 'vote_sell', 'bill_dist': 'vote_dist'
+  };
+  bills.forEach(function(b) {
+    var vid = voteIdMap[b.id];
+    if (!vid) return;
+    var div = document.createElement('div');
+    div.className = 'bill-row';
+    div.innerHTML = '<input type="checkbox" id="'+vid+'"><label for="'+vid+'">' + b.label + ' <span style="font-size:0.6rem;color:var(--text-secondary);">(' + b.params + ')</span></label>';
+    dst.appendChild(div);
+  });
+}
+
+function unlockSenatePanel(panelId, lockId) {
+  var panel = document.getElementById(panelId);
+  if (panel) panel.classList.remove('panel-locked');
+  var lock = document.getElementById(lockId);
+  if (lock) lock.style.display = 'none';
+}
+
+function senateConfirmVote(btn) {
+  disableBtn(btn);
+  api('senate_api.vote',{player_id:'player1'});
+  var agree = [];
+  var checkboxes = document.querySelectorAll('#senateVoteList input[type=checkbox]');
+  checkboxes.forEach(function(cb) {
+    if (cb.checked) {
+      var label = cb.parentElement.textContent.trim().replace(/\s+/g,' ');
+      agree.push(label);
+    }
+  });
+  var r = Math.floor(55 + Math.random() * 30);
+  var passed = r >= 50;
+  var msg = '🗳️ 元老表决完成！支持率 ' + r + '% ' + (passed ? '✅ 通过' : '❌ 被否');
+  addLog(passed ? 'success' : 'warning', msg);
+  if (agree.length > 0) {
+    addLog(passed ? 'success' : 'warning', '🗳️ 同意 ' + agree.length + ' 项：' + agree.join(' · '));
+    syncVoteToVetoPanel();
+    unlockSenatePanel('senatePanel3','senatePanel3Lock');
+    // 解锁子环节3
+    document.getElementById('senatePanel3Lock').textContent = '✅ 元老表决通过，请保民官审查';
+  } else {
+    addLog('info','📜 元老院休会：所有法案被否决');
+    // 逃生出口：跳过否决环节，直接完成
+    var votePanelBody = document.getElementById('senatePanel2Body');
+    if (votePanelBody) {
+      votePanelBody.innerHTML = '' +
+        '<div class="info-box" style="margin:8px;text-align:center;">⚠️ 所有法案均被元老院否决，本会期结束</div>' +
+        '<div style="margin-top:auto;padding:6px;border-top:1px solid var(--panel-border);">' +
+        '<button class="btn small" style="width:100%;" onclick="senateFinishPhase()">⏭️ 结束元老院阶段</button></div>';
+    }
+    // 子环节3标记为无需操作
+    var vetoLock = document.getElementById('senatePanel3Lock');
+    if (vetoLock) vetoLock.textContent = '❌ 无法案通过，无需否决';
+    var vetoBody = document.getElementById('senatePanel3Body');
+    if (vetoBody) vetoBody.innerHTML = '<div style="padding:10px;text-align:center;font-size:0.7rem;color:var(--text-muted);">本会期无法案进入否决环节</div>';
+    unlockSenatePanel('senatePanel3','senatePanel3Lock');
+  }
+}
+
+function syncVoteToVetoPanel() {
+  var dst = document.getElementById('senateVetoList');
+  if (!dst) return;
+  dst.innerHTML = '';
+  var rows = document.querySelectorAll('#senateVoteList .bill-row');
+  var vetoMap = {
+    'vote_war': 'veto_war', 'vote_peace': 'veto_peace',
+    'vote_gov1': 'veto_gov1', 'vote_gov2': 'veto_gov2',
+    'vote_build': 'veto_build', 'vote_tax': 'veto_tax',
+    'vote_sell': 'veto_sell', 'vote_dist': 'veto_dist'
+  };
+  rows.forEach(function(row) {
+    var cb = row.querySelector('input[type=checkbox]');
+    if (!cb || !cb.checked) return;
+    var label = row.querySelector('label');
+    if (!label) return;
+    var vid = vetoMap[cb.id];
+    if (!vid) return;
+    var div = document.createElement('div');
+    div.className = 'bill-row';
+    div.innerHTML = '<input type="checkbox" id="'+vid+'"><label for="'+vid+'">' + label.innerHTML + '</label>';
+    dst.appendChild(div);
+  });
+}
+
+function senateConfirmVeto(btn) {
+  disableBtn(btn);
+  api('senate_api.veto',{player_id:'player1'});
+  var vetoed = [];
+  var alive = [];
+  var checkboxes = document.querySelectorAll('#senateVetoList input[type=checkbox]');
+  checkboxes.forEach(function(cb) {
+    var label = cb.parentElement.textContent.trim().replace(/\s+/g,' ');
+    if (cb.checked) {
+      vetoed.push(label);
+    } else {
+      alive.push(label);
+    }
+  });
+  var area = document.getElementById('senateResults');
+  var html = '';
+  if (vetoed.length > 0) {
+    html += '<div class="warn-box">🛡️ 保民官否决 ' + vetoed.length + ' 项：' + vetoed.join(' · ') + '</div>';
+    addLog('info','🛡️ 保民官否决 ' + vetoed.length + ' 项法案');
+  } else {
+    html += '<div class="info-box" style="border-color:var(--success);margin-top:4px;">🛡️ 保民官未行使否决权，所有通过法案生效</div>';
+    addLog('info','🛡️ 保民官未否决');
+  }
+  if (alive.length > 0) {
+    html += '<div class="list-item" style="border-color:var(--success);">🏛️ <strong>政府运作</strong><br>';
+    html += '📜 生效法案：' + alive.join(' · ') + '<br>';
+    // 动态生成政府运作详情
+    alive.forEach(function(a) {
+      if (a.indexOf('宣战') >= 0) html += '• 宣战令生效，军团征召中<br>';
+      else if (a.indexOf('停战') >= 0) html += '• 停战协议生效，赔款 120 T 分4年支付<br>';
+      else if (a.indexOf('总督') >= 0) html += '• ' + a.replace('🏛️ ','').trim() + ' — 赴任行省<br>';
+      else if (a.indexOf('建造') >= 0) html += '• 建造合同启动，工程发包<br>';
+      else if (a.indexOf('包税') >= 0) html += '• 包税合同生效，承包方收取税款<br>';
+      else if (a.indexOf('卖地') >= 0) html += '• 公地出售，所得入国库<br>';
+      else if (a.indexOf('分地') >= 0) html += '• 公地分配，平民获得土地<br>';
+    });
+    html += '</div>';
+    addLog('success','🏛️ 政府运作完成！法案已生效');
+  } else {
+    html += '<div class="warn-box" style="margin-top:4px;">⚠️ 所有法案均被否决，本会期无任何法案生效</div>';
+    addLog('warning','⚠️ 所有法案均被否决，会期无产出');
+    // 逃生：在否决面板内显示完成按钮
+    var vetoBody = document.getElementById('senatePanel3Body');
+    if (vetoBody) {
+      // 保留当前内容但添加完成按钮
+      var finishBtn = document.createElement('div');
+      finishBtn.style.cssText = 'padding:6px;border-top:1px solid var(--panel-border);margin-top:8px;';
+      finishBtn.innerHTML = '<button class="btn small" style="width:100%;" onclick="senateFinishPhase()">⏭️ 结束元老院阶段</button>';
+      vetoBody.appendChild(finishBtn);
+    }
+  }
+  area.innerHTML += html;
+  addLog('success','🏛️ 元老院阶段完成');
+}
+
+/* 逃生出口：跳过剩余子环节，直接结束元老院阶段 */
+function senateFinishPhase() {
+  addLog('success','🏛️ 元老院阶段结束，进入下一阶段');
+}
+
+// ===== COMBAT (V3.23: 多战争并排) =====
+/* 战争数据 */
+var warData = [
+  {
+    id: '1st_punic', name: '第一次布匿战争',
+    commander: 'Cornelius Maximus', faction: 'Optimates',
+    allyForces: 17, enemyForces: 15, enemyName: '迦太基',
+    legions: '第Ⅰ·第Ⅲ·第Ⅴ', fleets: '第1·第2',
+    attacked: false, done: false, result: ''
+  },
+  {
+    id: 'gaul_invasion', name: '山南高卢入侵',
+    commander: 'Lucius Junius', faction: 'Populares',
+    allyForces: 12, enemyForces: 18, enemyName: '高卢',
+    legions: '第Ⅱ', fleets: '—',
+    attacked: false, done: false, result: ''
+  }
+];
+
+function execWarBattle(idx, btn) {
+  if (!warData[idx]) { addLog('error','❌ 战争索引 '+idx+' 无效'); return; }
+  var w = warData[idx];
+  if (w.attacked) { addLog('warning','⚠️ 本回合已进攻过'); return; }
+  
+  disableBtn(btn);
+  api('combat_api.execute_battle',{war_id:w.id});
+  w.attacked = true;
+  
+  // 裁定战斗
+  var d = Math.floor(Math.random() * 6) + 1;
+  var total = d + w.allyForces;
+  var diff = total - w.enemyForces;
+  var result, resultText, resultClass, treatyHtml;
+  if (diff >= 8) { result = '大胜'; resultClass = 'win'; 
+    var loot = 800 + Math.floor(Math.random() * 500);
+    treasury += loot;
+    resultText = '🏆 大胜！战利品 +' + loot + ' T';
+    addLog('success','🏆 ' + w.name + ' 大胜！战利品 ' + loot + ' T');
+  } else if (diff >= 2) { result = '险胜'; resultClass = 'win';
+    resultText = '⚔️ 险胜。守住阵地';
+    addLog('success','⚔️ ' + w.name + ' 险胜');
+  } else if (diff >= -2) { result = '平局'; resultClass = 'draw';
+    wars++;
+    resultText = '🤝 平局';
+    treatyHtml = '<div class="war-result-box draw" style="margin-top:4px;font-size:0.65rem;">📜 <strong>停战草案</strong>（待下回合元老院表决）<br>💰 赔款: 120 T（分4年） · ⏳ 停战期: 10年 · 🗺️ 无领土变更</div>';
+    addLog('info','🤝 ' + w.name + ' 平局，生成停战条约');
+  } else { result = '败退'; resultClass = 'loss';
+    stab = Math.max(0, stab - 5);
+    resultText = '😤 败退。稳定度 -5%';
+    addLog('warning','😤 ' + w.name + ' 败退，稳定度 -5%');
+  }
+  w.result = result;
+  w.done = true;
+  
+  // 全部结果展示在战争面板内部
+  var statusEl = document.getElementById('warStatus' + idx);
+  if (statusEl) {
+    statusEl.style.display = 'block';
+    var html = '';
+    // 军力对比
+    html += '<div class="war-result-box" style="border-color:var(--bronze);padding:4px 8px;font-size:0.65rem;">';
+    html += '🎲 掷骰: ' + d + ' · 🛡️ <strong>' + w.allyForces + '</strong> + ' + d + ' = <strong>' + total + '</strong> vs ⚔️ <strong>' + w.enemyForces + '</strong></div>';
+    // 战斗结果
+    html += '<div class="war-result-box ' + resultClass + '" style="margin-top:3px;"><strong>' + resultText + '</strong></div>';
+    // 停战草案（平局时）
+    if (treatyHtml) html += treatyHtml;
+    statusEl.innerHTML = html;
+  }
+  
+  st();
+}
+
+// ===== RESOLUTION =====
+function advYear() {
+  pe[6]=true;
+  api('game_api.advance_year',{player_id:'player1'});
+  yr--; tu++; stab = Math.min(100,stab+Math.floor(Math.random()*8)-3);
+  const rb = Math.floor(Math.random()*40)+50;
+  treasury += rb; infl += Math.floor(Math.random()*5)+2;
+  for(let i=0;i<7;i++) pe[i]=false;
+  sw(0); st();
+  addLog('success','📅 '+(yr+1)+' BC → '+yr+' BC！国库 +'+rb+' T');
+}
+
+// ===== FORUM CONTROLS (V3.11) =====
+
+function unlockPopPanel2() {
+  var p2 = document.getElementById('popPanel2');
+  if (p2) { p2.classList.remove('panel-locked'); }
+  var lock = document.getElementById('popPanel2Lock');
+  if (lock) { lock.style.display = 'none'; }
+}
+
+function unlockPanel2() {
+  var panel2 = document.getElementById('panel2');
+  panel2.classList.remove('panel-locked');
+  var lockMsg = document.getElementById('panel2Lock');
+  if (lockMsg) lockMsg.style.display = 'none';
+  addLog('success', '⬻ 所有派系解雇完毕，人才市场已开放');
+}
+
+function showForumResults() {
+  var pa = document.querySelector('#p2 .info-box');
+  if (pa) {
+    pa.innerHTML = '<strong>【公示区】</strong><br>' +
+      '• 招募结果：Claudius·Magnus 被招募（不公开招募者）<br>' +
+      '• 合同竞标：ID:3 意大利工程 → 38 T（中标）<br>' +
+      '• 土地认购：3 C 公地被认购，2 C 退回公地池<br>' +
+      '• 凯旋投票：✔ 通过（人口阶段执行）';
+  }
+  addLog('success', '✨ 广场阶段结束，结果已公示');
+}
+
+// ===== INIT =====
+addLog('info','🏛️ GUI v3.2.4 启动 — 界面精修版');
+addLog('info','📌 当前阶段：广场');
+
+// 默认展开已勾选法案的参数区
+expandCheckedBills();
+</script>
+</body>
+</html>
