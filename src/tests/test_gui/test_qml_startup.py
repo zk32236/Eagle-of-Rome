@@ -109,6 +109,36 @@ def test_main_qml_exposes_core_gui_regions():
         assert root.findChild(QObject, object_name) is not None, object_name
 
 
+def test_mortality_stage_hierarchy_is_attached_to_desktop_slots():
+    engine, qml_dir = _create_engine()
+    engine.load(QUrl.fromLocalFile(os.path.join(qml_dir, "Main.qml")))
+    QGuiApplication.processEvents()
+
+    root = engine.rootObjects()[0]
+    center_panel = root.findChild(QObject, "centerPanel")
+    assert center_panel is not None
+
+    stage_header = root.findChild(QObject, "stageHeaderSlot")
+    stage_instruction = root.findChild(QObject, "stageInstructionSlot")
+    stage_content = root.findChild(QObject, "stageContentSlot")
+    stage_action = root.findChild(QObject, "stageActionSlot")
+
+    stage_announcement = root.findChild(QObject, "stageAnnouncement")
+    stage_container = root.findChild(QObject, "stageContainer")
+    mortality_stage = root.findChild(QObject, "mortalityStage")
+
+    assert stage_header.property("height") >= 70
+    assert stage_instruction.property("height") >= 40
+    assert stage_content.property("height") > 0
+    assert stage_action.property("height") >= 40
+    assert stage_announcement.property("height") == stage_header.property("height")
+    assert stage_container.property("height") == stage_content.property("height")
+    assert stage_announcement.property("width") == stage_header.property("width")
+    assert stage_container.property("width") == stage_content.property("width")
+    assert stage_announcement.property("height") < center_panel.property("height")
+    assert stage_container.property("height") < center_panel.property("height")
+
+
 def test_opc_shell_exposes_twelve_bottom_query_buttons():
     engine, qml_dir = _create_engine()
     engine.load(QUrl.fromLocalFile(os.path.join(qml_dir, "Main.qml")))
@@ -260,3 +290,36 @@ def test_opc_shell_boundary_and_i18n_scans():
         context_panel = fh.read()
     assert "queryResultTitle" not in context_panel
     assert "globalQueryResult.items" not in context_panel
+
+
+def test_revenue_stage_structural_placement():
+    """验证 RevenueStage 正确挂载到 stageContent 容器。"""
+    engine, qml_dir = _create_engine()
+    engine.load(QUrl.fromLocalFile(os.path.join(qml_dir, "Main.qml")))
+    QGuiApplication.processEvents()
+
+    root = engine.rootObjects()[0]
+
+    # SR1: revenueStage exists and parent is stageContainer
+    stage = root.findChild(QObject, "revenueStage")
+    assert stage is not None, "revenueStage not found in QML tree"
+    container = stage.parent()
+    assert container.objectName() == "stageContainer", \
+        f"RevenueStage parent is '{container.objectName()}', expected 'stageContainer'"
+
+    # SR2: RevenueStage width ≈ container width (error < 5px)
+    width_diff = abs(stage.property("width") - container.property("width"))
+    assert width_diff < 5, \
+        f"RevenueStage width {stage.property('width')} != container width {container.property('width')} (diff={width_diff})"
+
+    # SR3: RevenueStage height ≈ container height (error < 5px)
+    height_diff = abs(stage.property("height") - container.property("height"))
+    assert height_diff < 5, \
+        f"RevenueStage height {stage.property('height')} != container height {container.property('height')} (diff={height_diff})"
+
+    # SR4: revenueActionLayer exists
+    action_layer = root.findChild(QObject, "revenueActionLayer")
+    assert action_layer is not None, "revenueActionLayer not found"
+    center_panel = root.findChild(QObject, "centerPanel")
+    assert action_layer.parent().objectName() == "centerPanel", \
+        f"revenueActionLayer parent is '{action_layer.parent().objectName()}', expected 'centerPanel'"

@@ -148,8 +148,8 @@ class TestGuiApiAdapter:
         assert advance["success"]
         assert store.currentPhaseId == "revenue"
         assert store.selectedPhaseId == "revenue"
-        assert store.selectedPhaseSummary["implemented"] is False
-        assert store.selectedPhaseSummary["handoff_task"] == "GUI-P0-02D"
+        assert store.selectedPhaseSummary["implemented"] is True
+        assert store.selectedPhaseSummary["handoff_task"] == "GUI-P0-03"
         assert store.canAdvanceMortality is False
 
     def test_adapter_get_senate_view_exposes_readonly_dto(self):

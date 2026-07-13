@@ -116,6 +116,25 @@ class GuiApiAdapter:
         return self.call(mortality_api.advance_mortality_phase, self._state, player_id)
 
     # -----------------------------------------------------------------------
+    # 收入阶段专用 API
+    # -----------------------------------------------------------------------
+    def get_revenue_view(self, viewer_id: str) -> Dict[str, Any]:
+        from src.api import revenue_api
+        result = revenue_api.get_revenue_view(self._state, viewer_id)
+        if result.get("success"):
+            return result.get("data", {})
+        logger.error(f"Revenue view failed: {result.get('message')}")
+        return {}
+
+    def settle_revenue(self, player_id: str) -> Dict[str, Any]:
+        from src.api import revenue_api
+        return self.call(revenue_api.execute_revenue_phase, self._state, player_id)
+
+    def advance_revenue(self, player_id: str) -> Dict[str, Any]:
+        from src.api import revenue_api
+        return self.call(revenue_api.advance_revenue_phase, self._state, player_id)
+
+    # -----------------------------------------------------------------------
     # Session API 包装
     # -----------------------------------------------------------------------
     def get_snapshot(self, viewer_id: str) -> Dict[str, Any]:

@@ -104,8 +104,12 @@ class TestSessionApi:
         assert phases["senate"]["interaction_mode"] == "readonly"
         assert phases["senate"]["actionable"] is False
         assert phases["senate"]["disabled_reason_key"] == "phase.disabled.readonly"
+        assert phases["revenue"]["implemented"] is True
+        assert phases["revenue"]["actionable"] is False
+        assert phases["revenue"]["disabled_reason_key"] == "phase.disabled.not_current"
+        assert phases["revenue"]["handoff_task"] == "GUI-P0-03"
         for phase_id, phase in phases.items():
-            if phase_id in {"mortality", "population", "senate"}:
+            if phase_id in {"mortality", "revenue", "population", "senate"}:
                 continue
             assert phase["implemented"] is False
             assert phase["interaction_mode"] == "placeholder"

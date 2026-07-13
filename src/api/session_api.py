@@ -327,13 +327,13 @@ def _phase_order() -> List[str]:
 
 
 def _implemented_phase_ids() -> set:
-    return {"mortality", "population", "senate"}
+    return {"mortality", "revenue", "population", "senate"}
 
 
 def _phase_interaction_mode(phase_id: str) -> str:
     if phase_id == "senate":
         return "readonly"
-    if phase_id in {"mortality", "population"}:
+    if phase_id in {"mortality", "revenue", "population"}:
         return "interactive"
     return "placeholder"
 
@@ -364,8 +364,8 @@ def _phase_definitions() -> List[Dict[str, Any]]:
             "description_key": "phase.revenue.description",
             "name": "收入",
             "subtitle": "国家收入、维护费与派系分配",
-            "description": "收入阶段将在 GUI-P0-02D 承接。本轮不执行经济结算。",
-            "handoff_task": "GUI-P0-02D",
+            "description": "GUI-P0-03 已实现收入结算切片。结算国家收入与支出，整理派系财政，确认国库变动。",
+            "handoff_task": "GUI-P0-03",
         },
         {
             "id": "forum",

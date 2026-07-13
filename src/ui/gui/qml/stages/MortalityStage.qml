@@ -5,191 +5,153 @@ import QtQuick.Layouts 1.15
 import "../components"
 import "../i18n"
 
+/*!
+ * \brief MortalityStage — H0 streamlined: event content area only.
+ *
+ * H0 change: removed self-contained parallel slot structure
+ * (header / instruction / action). Header, instruction bar, and
+ * execute button are now distributed to StageDesktop's 4 slots
+ * by GameShell. This component fills only StageDesktop.stageContentSlot.
+ *
+ * Layout contract: GUI_LAYOUT_CONTRACT_Phase1_v3.25.1.md §4
+ *   StageContentSlot: event area with info-box style
+ */
 Rectangle {
     id: root
-    color: theme.bgApp
+    objectName: "mortalityStage"
+    color: "transparent"
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 20
-        spacing: 16
+        spacing: 10
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 16
-            Text {
-                text: GuiText.mortalityTitle
-                color: theme.textPrimary
-                font.pixelSize: 18
-                font.family: theme.fontTitle
-                font.bold: true
-            }
-            Text {
-                text: GuiText.mortalityIntro
-                color: theme.textSecondary
-                font.pixelSize: 12
-                Layout.fillWidth: true
-                wrapMode: Text.Wrap
-            }
-            Text {
-                text: sessionStore.canExecuteMortality ? GuiText.mortalityReady : GuiText.mortalityResolved
-                color: sessionStore.canExecuteMortality ? theme.accentBronze : theme.textMuted
-                font.pixelSize: 12
-                font.bold: true
-            }
-        }
-
+        // Before execution: instruction card.
         Rectangle {
+            visible: (sessionStore.mortalityEvents || []).length === 0
             Layout.fillWidth: true
-            Layout.preferredHeight: 88
-            color: theme.bgSurface1
-            border.color: theme.borderNormal
+            Layout.preferredHeight: promptText.implicitHeight + 26
+            color: "#B8FFF9EC"
+            border.color: "#85A8753B"
             border.width: 1
             radius: theme.radius
 
-            ColumnLayout {
+            Text {
+                id: promptText
                 anchors.fill: parent
-                anchors.margins: 14
-                spacing: 6
+                anchors.margins: 13
+                text: "🎴 点击下方「执行天命」按钮，触发一个随机事件。\n事件类型：猝死"
+                color: "#2E251B"
+                font.pixelSize: theme.bodySize
+                wrapMode: Text.Wrap
+            }
+        }
+
+        // After execution: resolved status strip.
+        Rectangle {
+            visible: (sessionStore.mortalityEvents || []).length > 0
+            Layout.fillWidth: true
+            Layout.preferredHeight: 42
+            color: "#EFFFF2"
+            border.color: "#2FA03A"
+            border.width: 1
+            radius: 5
+
+            Row {
+                anchors.left: parent.left
+                anchors.leftMargin: 14
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 7
+
                 Text {
-                    text: GuiText.currentPhase + "：" + (sessionStore.currentPhaseName || "")
-                    color: theme.accentPrimary
+                    text: "✅"
                     font.pixelSize: 13
-                    font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
                 }
                 Text {
-                    text: GuiText.mortalityContinueHint
-                    color: theme.textSecondary
-                    font.pixelSize: 11
-                    wrapMode: Text.Wrap
-                    Layout.fillWidth: true
+                    text: GuiText.mortalityResolved
+                    color: "#2E251B"
+                    font.pixelSize: theme.bodySize
+                    anchors.verticalCenter: parent.verticalCenter
                 }
             }
         }
 
-        Rectangle {
+        Row {
+            visible: (sessionStore.mortalityEvents || []).length > 0
+            Layout.fillWidth: true
+            spacing: 6
+
+            Text {
+                text: "🎴"
+                font.pixelSize: 13
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Text {
+                text: GuiText.mortalityEventsTitle
+                color: "#681B07"
+                font.pixelSize: 13
+                font.bold: true
+                anchors.verticalCenter: parent.verticalCenter
+            }
+        }
+
+        // Event items.
+        Repeater {
+            model: sessionStore.mortalityEvents || []
+            delegate: Rectangle {
+                Layout.fillWidth: true
+                height: 34
+                color: "#B8FFF9EC"
+                border.color: "#85A8753B"
+                border.width: 1
+                radius: 4
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 12
+                    spacing: 7
+
+                    Text {
+                        text: modelData.effect === "death" ? "💀" : "⚡"
+                        font.pixelSize: 13
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Text {
+                        text: (modelData.name || "") + (modelData.summary ? "  " + modelData.summary : "")
+                        color: "#2E251B"
+                        font.pixelSize: theme.bodySize
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Text {
+                        text: modelData.summary || ""
+                        color: "#C45151"
+                        font.pixelSize: theme.bodySize
+                        visible: !!modelData.summary
+                        elide: Text.ElideRight
+                        Layout.maximumWidth: 360
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                }
+            }
+        }
+
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: theme.bgSurface1
-            border.color: theme.borderNormal
-            border.width: 1
-            radius: theme.radius
-
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 14
-                spacing: 10
-
-                Text {
-                    text: GuiText.mortalityEventsTitle
-                    color: theme.textPrimary
-                    font.pixelSize: 14
-                    font.bold: true
-                }
-
-                Text {
-                    visible: (sessionStore.mortalityEvents || []).length === 0
-                    text: GuiText.mortalityNoResult
-                    color: theme.textMuted
-                    font.pixelSize: 12
-                    wrapMode: Text.Wrap
-                    Layout.fillWidth: true
-                }
-
-                ScrollView {
-                    visible: (sessionStore.mortalityEvents || []).length > 0
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-
-                    ColumnLayout {
-                        width: parent.width
-                        spacing: 8
-                        Repeater {
-                            model: sessionStore.mortalityEvents || []
-                            delegate: Rectangle {
-                                Layout.fillWidth: true
-                                height: eventColumn.implicitHeight + 18
-                                color: theme.bgSurface2
-                                border.color: theme.borderNormal
-                                border.width: 1
-                                radius: theme.radius
-
-                                ColumnLayout {
-                                    id: eventColumn
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    anchors.margins: 9
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    spacing: 5
-
-                                    Text {
-                                        text: modelData.name || ""
-                                        color: theme.accentBronze
-                                        font.pixelSize: 13
-                                        font.bold: true
-                                        Layout.fillWidth: true
-                                    }
-                                    Text {
-                                        text: modelData.summary || ""
-                                        color: theme.textSecondary
-                                        font.pixelSize: 11
-                                        wrapMode: Text.Wrap
-                                        Layout.fillWidth: true
-                                    }
-                                    Repeater {
-                                        model: modelData.impacts || []
-                                        delegate: Text {
-                                            text: GuiText.mortalityImpactText(modelData)
-                                            color: theme.textMuted
-                                            font.pixelSize: 10
-                                            wrapMode: Text.Wrap
-                                            Layout.fillWidth: true
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
+    }
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 10
-            AppButton {
-                Layout.preferredWidth: 180
-                text: GuiText.executeMortality
-                type: "primary"
-                enabled: sessionStore.canExecuteMortality
-                onClicked: {
-                    var result = sessionStore.doExecuteMortality()
-                    if (!result.success) {
-                        showFeedback("error", result.message)
-                    }
-                }
-            }
-            AppButton {
-                Layout.preferredWidth: 180
-                text: GuiText.advanceMortality
-                type: "primary"
-                enabled: sessionStore.canAdvanceMortality
-                onClicked: {
-                    var result = sessionStore.doAdvanceMortality()
-                    if (!result.success) {
-                        showFeedback("error", result.message)
-                    }
-                }
-            }
-            Text {
-                text: sessionStore.selectedPhaseSummary.disabled_reason || ""
-                visible: !sessionStore.canExecuteMortality && !sessionStore.canAdvanceMortality
-                color: theme.textMuted
-                font.pixelSize: 11
-                wrapMode: Text.Wrap
-                Layout.fillWidth: true
-            }
+    // Forward feedback to parent context panel
+    function showFeedback(type, message) {
+        var cp = root.parent
+        while (cp && cp.objectName !== "contextPanel") {
+            cp = cp.parent
+        }
+        if (cp && cp.showFeedback) {
+            cp.showFeedback(type, message)
         }
     }
 }

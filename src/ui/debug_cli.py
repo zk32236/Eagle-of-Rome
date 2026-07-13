@@ -87,7 +87,7 @@ class DebugCLI:
         self._setup_special_commands()
 
     def _get_prompt_prefix(self) -> str:
-        """返回提示符前缀，如 [Player1] """
+        """返回提示符前缀，如 [Player1 贵族派] """
         self._ensure_interactive_player()
         player = self.state.get_current_player()
         if player:

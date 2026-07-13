@@ -196,7 +196,7 @@ class EconomicService:
             self,
             faction_tax_collected: Dict[str, float],
             tax_rate: float
-    ) -> List[Tuple[int, str, int, int]]:
+    ) -> List[Dict[str, Any]]:
         land_price = self.state.get_economic_rule("land_price_per_unit", 10)
         rate = self.state.get_economic_rule("private_land_income_rate", 0.05)
         events = self._active_events()
@@ -220,7 +220,12 @@ class EconomicService:
                     fig.add_wealth(net_income_int)
                     if fig.faction_id and fig.faction_id in faction_tax_collected:
                         faction_tax_collected[fig.faction_id] += tax_float
-                    rows.append((fig.id, fig.get_formal_name(), net_income_int, fig.wealth))
+                    rows.append({
+                        "figure_id": fig.id,
+                        "name": fig.get_formal_name(),
+                        "income": net_income_int,
+                        "wealth": fig.wealth,
+                    })
             except Exception as exc:
                 self.state.log_exception(
                     exc,

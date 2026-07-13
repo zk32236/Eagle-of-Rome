@@ -27,6 +27,7 @@ class GuiSessionStore(QObject):
     populationViewChanged = Signal()
     mortalityViewChanged = Signal()
     senateViewChanged = Signal()
+    revenueViewChanged = Signal()
     queryResultChanged = Signal()
     currentPlayerChanged = Signal()
     phaseChanged = Signal()
@@ -43,6 +44,8 @@ class GuiSessionStore(QObject):
         self._population_view: Dict[str, Any] = {}
         self._mortality_view: Dict[str, Any] = {}
         self._senate_view: Dict[str, Any] = {}
+        self._revenue_view: Dict[str, Any] = {}
+        self._revenue_result: Dict[str, Any] = {}
         self._mortality_result: Dict[str, Any] = {}
         self._current_player_id: str = ""
         self._viewer_id: str = ""
@@ -61,6 +64,7 @@ class GuiSessionStore(QObject):
         self._refresh_mortality_view()
         self._refresh_population_view()
         self._refresh_senate_view()
+        self._refresh_revenue_view()
 
     # -----------------------------------------------------------------------
     # QML 可访问属性
@@ -212,6 +216,10 @@ class GuiSessionStore(QObject):
     def senatePresidingOfficer(self) -> Dict[str, Any]:
         return self._senate_view.get("presiding_officer") or {}
 
+    @Property(int, notify=senateViewChanged)
+    def warCount(self) -> int:
+        return len(self._senate_view.get("active_foreign_wars", []))
+
     @Property(list, notify=senateViewChanged)
     def senateActiveForeignWars(self) -> List[Dict[str, Any]]:
         return self._senate_view.get("active_foreign_wars", [])
@@ -240,6 +248,52 @@ class GuiSessionStore(QObject):
     @Property(list, notify=senateViewChanged)
     def senatePendingContracts(self) -> List[Dict[str, Any]]:
         return self._senate_view.get("pending_contracts", [])
+
+    # -----------------------------------------------------------------------
+    # 收入阶段属性
+    # -----------------------------------------------------------------------
+    @Property(dict, notify=revenueViewChanged)
+    def revenueResult(self) -> Dict[str, Any]:
+        return self._revenue_result
+
+    @Property(dict, notify=revenueViewChanged)
+    def revenueView(self) -> Dict[str, Any]:
+        return self._revenue_view
+
+    @Property(dict, notify=revenueViewChanged)
+    def revenueSettledData(self) -> Dict[str, Any]:
+        settled = self._revenue_view.get("settled_data")
+        if settled:
+            return settled
+        return self._revenue_result or {}
+
+    @Property(bool, notify=revenueViewChanged)
+    def canExecuteRevenue(self) -> bool:
+        return self._revenue_view.get("can_execute", False)
+
+    @Property(bool, notify=revenueViewChanged)
+    def canAdvanceRevenue(self) -> bool:
+        return self._revenue_view.get("can_advance", False)
+
+    @Property(int, notify=revenueViewChanged)
+    def treasuryDelta(self) -> int:
+        result = self._revenue_result
+        data = result.get("data", {}) if isinstance(result, dict) else {}
+        if not data:
+            data = self._revenue_view.get("settled_data", {}) or {}
+            if isinstance(data, dict) and "data" in data:
+                data = data["data"]
+        return data.get("treasury_delta", 0) if isinstance(data, dict) else 0
+
+    @Property(int, notify=revenueViewChanged)
+    def endingTreasury(self) -> int:
+        result = self._revenue_result
+        data = result.get("data", {}) if isinstance(result, dict) else {}
+        if not data:
+            data = self._revenue_view.get("settled_data", {}) or {}
+            if isinstance(data, dict) and "data" in data:
+                data = data["data"]
+        return data.get("ending_treasury", self.treasury) if isinstance(data, dict) else self.treasury
 
     @Property(dict, notify=queryResultChanged)
     def globalQueryResult(self) -> Dict[str, Any]:
@@ -326,16 +380,44 @@ class GuiSessionStore(QObject):
         feedback = self._adapter.advance_mortality(self._viewer_id)
         if feedback.get("success"):
             self._refresh_snapshot()
-            self._selected_phase_id = self._snapshot.get("current_phase_id", "revenue")
-            self._selected_phase_summary = self._summary_from_phase(
-                self._phase_by_id(self._selected_phase_id)
-            )
-            self.phaseChanged.emit()
             self._refresh_mortality_view()
             self._refresh_population_view()
             self._refresh_senate_view()
         self._raise_feedback(feedback)
         self.mortalityViewChanged.emit()
+        return feedback
+
+    @Slot(result=dict)
+    def doExecuteRevenue(self) -> dict:
+        """执行收入结算。"""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.settle_revenue(self._viewer_id)
+        if feedback.get("success"):
+            self._revenue_result = feedback.get("data", {}) or {}
+            self._refresh_snapshot()
+            self._refresh_mortality_view()
+            self._refresh_population_view()
+            self._refresh_senate_view()
+            self._refresh_revenue_view()
+        self._raise_feedback(feedback)
+        self.revenueViewChanged.emit()
+        return feedback
+
+    @Slot(result=dict)
+    def doAdvanceRevenue(self) -> dict:
+        """确认收入结算并推进到广场阶段。"""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.advance_revenue(self._viewer_id)
+        if feedback.get("success"):
+            self._refresh_snapshot()
+            self._refresh_mortality_view()
+            self._refresh_population_view()
+            self._refresh_senate_view()
+            self._refresh_revenue_view()
+        self._raise_feedback(feedback)
+        self.revenueViewChanged.emit()
         return feedback
 
     @Slot(str, result=dict)
@@ -385,6 +467,8 @@ class GuiSessionStore(QObject):
             self._refresh_population_view()
         elif phase_id == "mortality":
             self._refresh_mortality_view()
+        elif phase_id == "revenue":
+            self._refresh_revenue_view()
         elif phase_id == "senate":
             self._refresh_senate_view()
         return feedback
@@ -417,6 +501,7 @@ class GuiSessionStore(QObject):
         self._refresh_mortality_view()
         self._refresh_population_view()
         self._refresh_senate_view()
+        self._refresh_revenue_view()
         feedback = self._feedback(True, gui_text("feedback.snapshot.refreshed"), "success")
         self._raise_feedback(feedback)
         return feedback
@@ -429,6 +514,7 @@ class GuiSessionStore(QObject):
         self._refresh_mortality_view()
         self._refresh_population_view()
         self._refresh_senate_view()
+        self._refresh_revenue_view()
         self.currentPlayerChanged.emit()
         return True
 
@@ -446,11 +532,13 @@ class GuiSessionStore(QObject):
         self._refresh_mortality_view()
         self._refresh_population_view()
         self._refresh_senate_view()
+        self._refresh_revenue_view()
 
     def _refresh_snapshot(self):
         self._snapshot = self._adapter.get_snapshot(self._viewer_id)
-        if not self._selected_phase_id:
-            self._selected_phase_id = self._snapshot.get("selected_phase_id", "mortality")
+        new_current = self._snapshot.get("current_phase_id", "mortality")
+        if not self._selected_phase_id or self._selected_phase_id != new_current:
+            self._selected_phase_id = new_current
         self._selected_phase_summary = self._summary_from_phase(
             self._phase_by_id(self._selected_phase_id)
         )
@@ -469,6 +557,10 @@ class GuiSessionStore(QObject):
     def _refresh_senate_view(self):
         self._senate_view = self._adapter.get_senate_view(self._viewer_id)
         self.senateViewChanged.emit()
+
+    def _refresh_revenue_view(self):
+        self._revenue_view = self._adapter.get_revenue_view(self._viewer_id)
+        self.revenueViewChanged.emit()
 
     def _raise_feedback(self, feedback: dict):
         ftype = feedback.get("feedback_type", "info")

@@ -16,36 +16,37 @@ Rectangle {
         feedbackList.append(type, message)
     }
 
+    // H0.3: EventLog compression — reduced margins and spacing for tighter layout
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 12
-        spacing: 8
+        anchors.margins: 8
+        spacing: 4
 
-        // 标题栏
+        // 标题栏 — compressed
         RowLayout {
             Layout.fillWidth: true
             Text {
                 text: GuiText.feedbackLogTitle
                 color: theme.textMuted
-                font.pixelSize: 11
+                font.pixelSize: 10
                 font.bold: true
             }
             Item { Layout.fillWidth: true }
             AppButton {
                 text: GuiText.clearFeedback
                 type: "ghost"
-                fontSize: 10
+                fontSize: 9
                 onClicked: feedbackList.clear()
             }
         }
 
-        // 事件列表
+        // 事件列表 — compressed
         ListView {
             id: feedbackList
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
-            spacing: 4
+            spacing: 2
 
             function append(type, message) {
                 var color = theme.textSecondary
@@ -64,29 +65,29 @@ Rectangle {
 
             delegate: Rectangle {
                 width: feedbackList.width
-                height: 28
+                height: 22
                 color: "transparent"
                 RowLayout {
                     anchors.fill: parent
-                    spacing: 8
+                    spacing: 4
                     Text {
                         text: timestamp
                         color: theme.textMuted
-                        font.pixelSize: 10
+                        font.pixelSize: 9
                         font.family: "Consolas, monospace"
-                        Layout.preferredWidth: 50
+                        Layout.preferredWidth: 46
                     }
                     Text {
                         text: type.toUpperCase()
                         color: typeColor
-                        font.pixelSize: 10
+                        font.pixelSize: 9
                         font.bold: true
-                        Layout.preferredWidth: 60
+                        Layout.preferredWidth: 48
                     }
                     Text {
                         text: message
                         color: theme.textSecondary
-                        font.pixelSize: 11
+                        font.pixelSize: 10
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                     }

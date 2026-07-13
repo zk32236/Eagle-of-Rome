@@ -2,7 +2,7 @@
 """
 税收阶段命令 - 负责阶段守卫、调用经济服务和展示收入结算结果。
 """
-from typing import Dict, List, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Tuple, TYPE_CHECKING
 
 from src.core.localization import TerminologyService
 from src.core.service.economic_service import EconomicService
@@ -177,7 +177,7 @@ class RevenueCommand(Command):
             row += f"  {final:<10}"
         print(row)
 
-    def _print_private_land_table(self, data: List[Tuple[int, str, int, int]], terms):
+    def _print_private_land_table(self, data: List[Dict[str, Any]], terms):
         if not data:
             print("\n   🌾 无地主私人收益")
             return
@@ -190,10 +190,10 @@ class RevenueCommand(Command):
 
         total_income = 0
         total_wealth = 0
-        for fig_id, name, income, wealth in data:
-            print(f"{fig_id:<5} {name:<40} {income:<10} {wealth:<10}")
-            total_income += income
-            total_wealth += wealth
+        for row in data:
+            print(f"{row['figure_id']:<5} {row['name']:<40} {row['income']:<10} {row['wealth']:<10}")
+            total_income += row['income']
+            total_wealth += row['wealth']
 
         print("-" * 70)
         print(f"{'Total':<5} {'':<40} {total_income:<10} {total_wealth:<10}")
