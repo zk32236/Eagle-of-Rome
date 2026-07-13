@@ -114,36 +114,79 @@ get_mortality_view(state, viewer_player_id):
 
 ### 数据契约
 
-API 已存在但无专用 view API，建议新增 `get_revenue_view()`：
+已实现为独立 `revenue_api.py`（2026-07-12 Phase 2 交付）：
+
+```python
+# src/api/revenue_api.py
+
+def get_revenue_view(state, viewer_player_id) -> dict:
+    """收入阶段只读状态（是否可执行/已结算/可否推进）。"""
+
+def execute_revenue_phase(state, viewer_player_id) -> dict:
+    """执行收入结算：调用 EconomicService.settle_revenue_phase()。"""
+
+def advance_revenue_phase(state, viewer_player_id) -> dict:
+    """推进到广场阶段（mark_phase_executed("revenue") → next: forum）。"""
+```
+
+`EconomicService.settle_revenue_phase()` 完整返回结构：
 
 ```
-EconomicService.settle_revenue_phase() → {
-  indemnities: [{"name": str, "amount": int, "direction": "income"|"expense"}]
-  national_opex: {"provinces": [{"name": str, "land": int, "fee": int}], "total": int}
-  public_land_income: int
-  military_maintenance: {"legions": int, "fleets": int, "total": int}
-  faction_rows: [{"faction_id": int, "name": str, "subsidy": int, "member_contribution": int, "total": int}]
-  private_land_rows: [{"figure_id": int, "name": str, "income": int, "wealth": int}]
-  net_change: int
-  new_balance: int
+{
+  "success": bool,
+  "data": {
+    "starting_treasury": int,
+    "ending_treasury": int,
+    "treasury_delta": int,
+    "indemnities": [{"name": str, "amount": int, "direction": "income"|"expense"}],
+    "national_opex": {"provinces": [...], "total": int},
+    "public_land_income": int,
+    "private_land_rows": [{"figure_id": int, "name": str, "income": int, "wealth": int}],  # ← Dict 格式
+    "contract_rows": [...],
+    "warranty_rows": [...],
+    "maintenance": {"military": {...}, "naval": {...}},
+    "faction_rows": [...],
+    "debug_events": []
+  }
 }
+```
+
+### 数据流（实际实现）
+
+```
+QML RevenueStage.qml
+  ↓ 通过 sessionStore.revenueSettledData / revenueView
+session_store.py (Property: revenueResult, revenueView, canExecuteRevenue, canAdvanceRevenue)
+  ↓ _adapter.settle_revenue() / _adapter.get_revenue_view()
+api_adapter.py (settle_revenue / get_revenue_view / advance_revenue)
+  ↓
+revenue_api.py (execute_revenue_phase / get_revenue_view / advance_revenue_phase)
+  ↓
+EconomicService.settle_revenue_phase()
 ```
 
 ### 操作映射
 
 | UI 元素 | 触发 API | 说明 |
 |---------|---------|------|
-| 国家收入/支出（左右并排） | `get_revenue_view()` 或 `EconomicService.settle_revenue_phase()` | 收入左/支出右 |
-| 派系财政列表 | `faction_rows[]` | 各派系可见本派系金库 |
-| 地主收入列表 | `private_land_rows[]` | 点击人物 → Modal(detail) |
-| 净变化 + 新余额 | `net_change` + `new_balance` | 底部金色框 |
-| 「确认收入结算」按钮 | `game_api.execute_phase(state, "revenue", player_id)` | 灰化 → 推进 |
+| 国家收入/支出（左右并排） | `sessionStore.revenueSettledData` → `private_land_rows` / `national_opex` / `indemnities` | 收入左/支出右 |
+| 派系财政列表 | `sessionStore.revenueSettledData.faction_rows[]` | 各派系可见本派系金库 |
+| 地主收入列表 | `sessionStore.revenueSettledData.private_land_rows[]` | Dict 格式，`modelData.name` 访问 |
+| 净变化 + 新余额 | `sessionStore.revenueSettledData.treasury_delta` + `ending_treasury` | 底部金色框 |
+| 「确认收入结算」按钮 | `sessionStore.doExecuteRevenue()` → `api_adapter.settle_revenue()` → `revenue_api.execute_revenue_phase()` | 按钮在 StageActionSlot（中央桌面底部） |
+| 「推进到广场」按钮 | `sessionStore.doAdvanceRevenue()` → `api_adapter.advance_revenue()` → `revenue_api.advance_revenue_phase()` | 按钮在 ContextPanel.OperationSection（右侧面板） |
 
 ### 多玩家角色
 
 - **操作者：** 任意一名玩家确认即可
 - **AI 模式：** 自动结算
 - 派系金库数据仅本派系可见
+
+### `private_land_rows` 数据格式（v1.1）
+
+2026-07-12 从 `List[Tuple[int, str, int, int]]` 变更为 `List[Dict]`（键名访问）。
+
+**变更原因：** PySide6 QML Repeater 无法可靠索引元组，`modelData[1]` 返回 `undefined`。改为 Dict 后使用 `modelData.name` / `modelData.income` 访问。
 
 ---
 
