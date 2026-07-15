@@ -11,6 +11,10 @@ Rectangle {
     property bool marketUnlocked: sessionStore.forumCurrentStep !== "retirement" || sessionStore.forumResolved
     property int selectedMarketFigureId: sessionStore.forumAvailableFigures.length > 0 ? sessionStore.forumAvailableFigures[0].id : 0
     property int selectedOwnFigureId: sessionStore.forumMyFigures.length > 0 ? sessionStore.forumMyFigures[0].id : 0
+    property int recruitDialogFigureId: 0
+    property string recruitDialogFigureName: ""
+    property int recruitDialogBaseCost: 0
+    property string recruitDialogAmount: ""
 
     function showFeedback(type, message) {
         var cp = root.parent
@@ -28,13 +32,58 @@ Rectangle {
         }
     }
 
+    function openRecruitDialog(figureId, figureName, baseCost) {
+        root.selectedMarketFigureId = figureId
+        root.recruitDialogFigureId = figureId
+        root.recruitDialogFigureName = figureName
+        root.recruitDialogBaseCost = baseCost
+        root.recruitDialogAmount = String(baseCost)
+        recruitDialog.open()
+        recruitAmountField.forceActiveFocus()
+        recruitAmountField.selectAll()
+    }
+
+    function confirmRecruitDialog() {
+        var amount = parseInt(root.recruitDialogAmount, 10)
+        if (isNaN(amount) || amount <= 0) {
+            showFeedback("error", "请输入有效的招募金额。")
+            return
+        }
+        recruitDialog.close()
+        root.callAndReport(sessionStore.doRecruitFigure(root.recruitDialogFigureId, amount))
+    }
+
+    function forumResolutionLines() {
+        var result = sessionStore.forumResult || ({})
+        if (result.data && result.data.results && result.data.results.length > 0) {
+            return result.data.results
+        }
+        var view = sessionStore.forumView || ({})
+        if (view.resolution_results && view.resolution_results.length > 0) {
+            return view.resolution_results
+        }
+        return []
+    }
+
+    function forumPublicResultText() {
+        var lines = forumResolutionLines()
+        if (!lines || lines.length === 0) {
+            return "\u2022 \u672c\u56de\u5408\u65e0\u53ef\u516c\u793a\u7684\u5e02\u573a\u7ed3\u679c\u3002"
+        }
+        var output = []
+        for (var i = 0; i < lines.length; i++) {
+            output.push("\u2022 " + lines[i])
+        }
+        return output.join("\n")
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 10
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 60
+            Layout.preferredHeight: sessionStore.forumResolved ? Math.min(138, 58 + Math.max(1, root.forumResolutionLines().length) * 18) : 60
             color: "#D1FFF9EC"
             border.color: "#85A8753B"
             border.width: 1
@@ -46,7 +95,7 @@ Rectangle {
                 spacing: 4
 
                 Text {
-                    text: "📣 广场阶段开始。第一布匿战争进行中。西西里包税合同待竞标。"
+                    text: sessionStore.forumResolved ? "[\u516c\u793a\u533a] \u5e02\u573a\u7ed3\u7b97\u7ed3\u679c" : "\u5e7f\u573a\u9636\u6bb5\u5f00\u59cb\u3002\u7b2c\u4e00\u5e03\u533f\u6218\u4e89\u8fdb\u884c\u4e2d\u3002\u897f\u897f\u91cc\u5305\u7a0e\u5408\u540c\u5f85\u7ade\u6807\u3002"
                     color: "#2E251B"
                     font.pixelSize: 13
                     font.bold: true
@@ -55,11 +104,12 @@ Rectangle {
                 }
 
                 Text {
-                    text: "※ 所有派系操作完毕后将在此公示：招募结果（不公开招募者）、合同竞标结果、土地认购结果、凯旋投票结果"
-                    color: "#766652"
+                    text: sessionStore.forumResolved ? root.forumPublicResultText() : "\u203b \u6240\u6709\u6d3e\u7cfb\u64cd\u4f5c\u5b8c\u6bd5\u540e\u5c06\u5728\u6b64\u516c\u793a\uff1a\u62db\u52df\u7ed3\u679c\uff08\u4e0d\u516c\u5f00\u62db\u52df\u8005\uff09\u3001\u5408\u540c\u7ade\u6807\u7ed3\u679c\u3001\u571f\u5730\u8ba4\u8d2d\u7ed3\u679c\u3001\u51ef\u65cb\u6295\u7968\u7ed3\u679c"
+                    color: sessionStore.forumResolved ? "#2E251B" : "#766652"
                     font.pixelSize: 12
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
+                    lineHeight: sessionStore.forumResolved ? 1.18 : 1.0
                 }
             }
         }
@@ -322,10 +372,11 @@ Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
+                        contentWidth: availableWidth
                         ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
                         ColumnLayout {
-                            width: parent.width
+                            width: marketScroll.availableWidth
                             spacing: 8
                             opacity: root.marketUnlocked ? 1.0 : 0.33
 
@@ -346,16 +397,16 @@ Rectangle {
                                 Layout.rightMargin: 12
                                 spacing: 8
 
-                                Repeater {
-                                    model: ["姓名", "年龄", "智力", "魅力", "热忱", "阶级", "费用"]
-                                    delegate: Text {
-                                        text: modelData
-                                        color: "#681B07"
-                                        font.pixelSize: 11
-                                        font.bold: true
-                                        Layout.fillWidth: index === 0
-                                    }
-                                }
+                                opacity: root.marketUnlocked ? 1.0 : 0.72
+
+                                MarketColumnHeader { label: "姓名"; Layout.preferredWidth: 158; Layout.minimumWidth: 138; horizontalAlignment: Text.AlignLeft }
+                                MarketColumnHeader { label: "军事"; Layout.preferredWidth: 24 }
+                                MarketColumnHeader { label: "智力"; Layout.preferredWidth: 24 }
+                                MarketColumnHeader { label: "魅力"; Layout.preferredWidth: 24 }
+                                MarketColumnHeader { label: "热忱"; Layout.preferredWidth: 24 }
+                                MarketColumnHeader { label: "阶级"; Layout.preferredWidth: 36 }
+                                MarketColumnHeader { label: "费用"; Layout.preferredWidth: 32 }
+                                Item { Layout.preferredWidth: 48 }
                             }
 
                             Repeater {
@@ -376,19 +427,20 @@ Rectangle {
                                         anchors.margins: 7
                                         spacing: 8
 
-                                        Text { text: modelData.name; color: "#2E251B"; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                        Text { text: modelData.martial; color: "#2E251B"; font.pixelSize: 11; width: 28 }
-                                        Text { text: modelData.intellect; color: "#2E251B"; font.pixelSize: 11; width: 28 }
-                                        Text { text: modelData.charisma; color: "#2E251B"; font.pixelSize: 11; width: 28 }
-                                        Text { text: modelData.zeal; color: "#2E251B"; font.pixelSize: 11; width: 28 }
-                                        Text { text: modelData.class_label; color: "#4E4E9B"; font.pixelSize: 11; width: 42; font.bold: true }
-                                        Text { text: modelData.cost + " T"; color: "#681B07"; font.pixelSize: 11; font.bold: true; width: 34 }
+                                        MarketValueCell { text: modelData.name; font.bold: true; Layout.preferredWidth: 158; Layout.minimumWidth: 138; elide: Text.ElideNone; horizontalAlignment: Text.AlignLeft }
+                                        MarketValueCell { text: modelData.martial; Layout.preferredWidth: 24 }
+                                        MarketValueCell { text: modelData.intellect; Layout.preferredWidth: 24 }
+                                        MarketValueCell { text: modelData.charisma; Layout.preferredWidth: 24 }
+                                        MarketValueCell { text: modelData.zeal; Layout.preferredWidth: 24 }
+                                        MarketValueCell { text: modelData.class_label; color: "#4E4E9B"; font.bold: true; Layout.preferredWidth: 36; elide: Text.ElideRight }
+                                        MarketValueCell { text: modelData.cost + " T"; color: "#681B07"; font.bold: true; Layout.preferredWidth: 32 }
 
                                         Rectangle {
-                                            width: 48
+                                            Layout.preferredWidth: 48
                                             height: 22
                                             radius: 4
-                                            color: "#84250A"
+                                            color: root.marketUnlocked && sessionStore.canExecuteForum ? "#84250A" : "#D6B985"
+                                            opacity: root.marketUnlocked && sessionStore.canExecuteForum ? 1.0 : 0.65
 
                                             Text {
                                                 anchors.centerIn: parent
@@ -402,10 +454,7 @@ Rectangle {
                                                 anchors.fill: parent
                                                 enabled: root.marketUnlocked && sessionStore.canExecuteForum
                                                 cursorShape: Qt.PointingHandCursor
-                                                onClicked: {
-                                                    root.selectedMarketFigureId = modelData.id
-                                                    root.callAndReport(sessionStore.doRecruitFigure(modelData.id, modelData.cost))
-                                                }
+                                                onClicked: root.openRecruitDialog(modelData.id, modelData.name, modelData.cost)
                                             }
                                         }
                                     }
@@ -421,7 +470,7 @@ Rectangle {
                                 font.pixelSize: 11
                             }
 
-                            SectionTitle { title: "📜 合同竞标" }
+                            SectionTitle { title: "📜 Pending Contract / 预算表决合同" }
 
                             Repeater {
                                 model: sessionStore.forumPendingContracts
@@ -547,6 +596,108 @@ Rectangle {
                 }
             }
         }
+    }
+
+    Dialog {
+        id: recruitDialog
+        modal: true
+        focus: true
+        dim: true
+        width: Math.min(root.width - 80, 560)
+        x: Math.max(0, (root.width - width) / 2)
+        y: Math.max(0, (root.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape
+        background: Rectangle {
+            color: "#FFF9EC"
+            border.color: "#BD8F52"
+            border.width: 1
+            radius: 8
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 10
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Text {
+                    text: "招募 " + root.recruitDialogFigureName
+                    color: "#84250A"
+                    font.pixelSize: 15
+                    font.bold: true
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                }
+
+                Button {
+                    text: "X"
+                    flat: true
+                    onClicked: recruitDialog.close()
+                }
+            }
+
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#D9C29B" }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                Text { text: "基础费用"; color: "#766652"; font.pixelSize: 12; Layout.fillWidth: true }
+                Text { text: root.recruitDialogBaseCost + " T"; color: "#2E251B"; font.pixelSize: 12; font.bold: true }
+            }
+
+            Text { text: "输入招募金额:"; color: "#766652"; font.pixelSize: 12 }
+
+            TextField {
+                id: recruitAmountField
+                Layout.fillWidth: true
+                text: root.recruitDialogAmount
+                selectByMouse: true
+                inputMethodHints: Qt.ImhDigitsOnly
+                validator: IntValidator { bottom: 1; top: 999 }
+                onTextChanged: root.recruitDialogAmount = text
+                Keys.onReturnPressed: root.confirmRecruitDialog()
+                Keys.onEnterPressed: root.confirmRecruitDialog()
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 4
+
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    text: "确认"
+                    highlighted: true
+                    enabled: root.recruitDialogAmount.length > 0
+                    onClicked: root.confirmRecruitDialog()
+                }
+
+                Button {
+                    text: "关闭"
+                    onClicked: recruitDialog.close()
+                }
+            }
+        }
+    }
+
+    component MarketColumnHeader: Text {
+        property string label: ""
+        text: label
+        color: "#681B07"
+        font.pixelSize: 11
+        font.bold: true
+        elide: Text.ElideRight
+        horizontalAlignment: Text.AlignHCenter
+        verticalAlignment: Text.AlignVCenter
+    }
+
+    component MarketValueCell: Text {
+        color: "#2E251B"
+        font.pixelSize: 11
+        elide: Text.ElideRight
+        horizontalAlignment: Text.AlignHCenter
+        verticalAlignment: Text.AlignVCenter
     }
 
     component SectionTitle: Text {
