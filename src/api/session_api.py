@@ -327,13 +327,13 @@ def _phase_order() -> List[str]:
 
 
 def _implemented_phase_ids() -> set:
-    return {"mortality", "revenue", "population", "senate"}
+    return {"mortality", "revenue", "forum", "population", "senate"}
 
 
 def _phase_interaction_mode(phase_id: str) -> str:
     if phase_id == "senate":
         return "readonly"
-    if phase_id in {"mortality", "revenue", "population"}:
+    if phase_id in {"mortality", "revenue", "forum", "population"}:
         return "interactive"
     return "placeholder"
 
@@ -375,7 +375,7 @@ def _phase_definitions() -> List[Dict[str, Any]]:
             "name": "广场",
             "subtitle": "招募、裁员、土地与公共行动",
             "description": "广场阶段将在 GUI-P0-02D 承接。本轮不执行广场业务操作。",
-            "handoff_task": "GUI-P0-02D",
+            "handoff_task": "GUI-P0-03",
         },
         {
             "id": "population",
@@ -552,6 +552,13 @@ def _build_available_actions(state: GameState, viewer_player_id: str) -> List[st
         actions.append("campaign")
         actions.append("vote")
         actions.append("complete_player")
+    if current_phase_id == "forum" and not state.is_phase_executed("forum"):
+        actions.append("retire_figure")
+        actions.append("recruit_figure")
+        actions.append("place_bid")
+        actions.append("buy_land")
+        actions.append("vote_triumph")
+        actions.append("resolve_forum")
     return actions
 
 

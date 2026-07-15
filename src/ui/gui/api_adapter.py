@@ -134,6 +134,57 @@ class GuiApiAdapter:
         from src.api import revenue_api
         return self.call(revenue_api.advance_revenue_phase, self._state, player_id)
 
+    def get_forum_view(self, viewer_id: str) -> Dict[str, Any]:
+        from src.api import forum_api
+        result = forum_api.get_forum_view(self._state, viewer_id)
+        if result.get("success"):
+            return result.get("data", {})
+        logger.error(f"Forum view failed: {result.get('message')}")
+        return {}
+
+    def retire_figure(self, player_id: str, figure_id: int) -> Dict[str, Any]:
+        from src.api import forum_api
+        return self.call(forum_api.retire_figure, self._state, player_id, figure_id)
+
+    def recruit_figure(self, player_id: str, figure_id: int, amount: int) -> Dict[str, Any]:
+        from src.api import forum_api
+        return self.call(forum_api.recruit_figure, self._state, player_id, figure_id, amount)
+
+    def place_bid(
+        self,
+        player_id: str,
+        figure_id: int,
+        contract_id: int,
+        amount: int,
+        profit_rate: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        from src.api import forum_api
+        return self.call(
+            forum_api.place_bid,
+            self._state,
+            player_id,
+            figure_id,
+            contract_id,
+            amount,
+            profit_rate,
+        )
+
+    def buy_land(self, player_id: str, figure_id: int, amount: int) -> Dict[str, Any]:
+        from src.api import forum_api
+        return self.call(forum_api.buy_land, self._state, player_id, figure_id, amount)
+
+    def vote_triumph(self, player_id: str, war_id: str, vote: bool) -> Dict[str, Any]:
+        from src.api import forum_api
+        return self.call(forum_api.vote_triumph, self._state, player_id, war_id, vote)
+
+    def resolve_forum(self) -> Dict[str, Any]:
+        from src.api import forum_api
+        return self.call(forum_api.resolve_forum, self._state)
+
+    def advance_forum(self, player_id: str) -> Dict[str, Any]:
+        from src.api import forum_api
+        return self.call(forum_api.advance_forum_phase, self._state, player_id)
+
     # -----------------------------------------------------------------------
     # Session API 包装
     # -----------------------------------------------------------------------

@@ -118,6 +118,7 @@ Rectangle {
 
                         property bool canAdvance: sessionStore.canAdvanceMortality
                             || sessionStore.canAdvanceRevenue
+                            || sessionStore.canAdvanceForum
 
                         // 激活态: 深红底 + 金色字；禁用态: 半透明底 + 灰色字
                         color: canAdvance ? "#84250A" : "#0EFFFFFF"
@@ -157,7 +158,9 @@ Rectangle {
                                 ? "⏭️ 推进到收入阶段"
                                 : (sessionStore.canAdvanceRevenue
                                     ? "⏭️ 推进到广场"
-                                    : "⛔ 暂不可操作")
+                                    : (sessionStore.selectedPhaseId === "forum"
+                                        ? "⏭️ 推进到下一阶段"
+                                        : "⏭️ 推进到下一阶段"))
                             color: canAdvance ? theme.headerText : theme.textMuted
                             font.pixelSize: theme.buttonSize
                             font.bold: true
@@ -188,6 +191,11 @@ Rectangle {
                                     var revResult = sessionStore.doAdvanceRevenue()
                                     if (!revResult.success) {
                                         root.showFeedback("error", revResult.message || "推进失败")
+                                    }
+                                } else if (sessionStore.canAdvanceForum) {
+                                    var forumResult = sessionStore.doAdvanceForum()
+                                    if (!forumResult.success) {
+                                        root.showFeedback("error", forumResult.message || "推进失败")
                                     }
                                 }
                             }

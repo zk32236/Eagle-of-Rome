@@ -1,7 +1,7 @@
 # src/api/forum_api.py
 import logging
 import random
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.api import api_response
 from src.core.game_state import GameState
@@ -10,6 +10,75 @@ from src.core.entities.contract import ContractType, ContractStatus
 from src.core.entities.war import WarStatus
 from src.core.service.land_trading_service import LandTradingService
 from src.core.entities.figure import ClassTier
+
+
+NEXT_PHASE_ID = "population"
+
+
+def get_forum_view(state: GameState, viewer_player_id: str) -> dict:
+    """Return the read-only GUI DTO for the forum stage."""
+    try:
+        viewer = state.get_player(viewer_player_id)
+        if not viewer:
+            return api_response(False, "Viewer player not found")
+
+        current_player = state.get_current_player()
+        current_phase_id = _current_phase_id(state)
+        result = state.get_phase_result("forum")
+        result_data = result.get("data", {}) if isinstance(result, dict) else {}
+        pending = state.get_forum_pending()
+        has_market_actions = any(
+            pending.get(key)
+            for key in ("recruitment_bids", "contract_bids", "land_purchases", "triumph_votes")
+        )
+
+        if state.is_phase_executed("forum") or result:
+            current_step = "resolution"
+        elif has_market_actions:
+            current_step = "market"
+        else:
+            current_step = "retirement"
+
+        data = {
+            "phase_id": "forum",
+            "current_phase_id": current_phase_id,
+            "current_player_id": current_player.player_id if current_player else "",
+            "viewer_player_id": viewer_player_id,
+            "viewer_faction_id": viewer.faction_id,
+            "current_step": current_step,
+            "my_figures": _my_figure_rows(state, viewer.faction_id),
+            "available_figures": _available_figure_rows(state),
+            "pending_contracts": _pending_contract_rows(state),
+            "land_sale_quota": int(getattr(state, "pending_land_sale_quota", 0) or 0),
+            "triumph_wars": _triumph_war_rows(state),
+            "pending_actions": {
+                "retirements": len(pending.get("retirements", [])),
+                "recruitment_bids": len(pending.get("recruitment_bids", [])),
+                "contract_bids": len(pending.get("contract_bids", [])),
+                "land_purchases": len(pending.get("land_purchases", [])),
+                "triumph_votes": len(pending.get("triumph_votes", [])),
+            },
+            "can_execute": (
+                current_phase_id == "forum"
+                and state.is_current_player(viewer_player_id)
+                and not state.is_phase_executed("forum")
+            ),
+            "can_advance": (
+                current_phase_id == "forum"
+                and state.is_current_player(viewer_player_id)
+                and bool(result)
+                and not state.is_phase_executed("forum")
+            ),
+            "step1_complete": current_step in {"market", "resolution"},
+            "step2_complete": current_step == "resolution",
+            "resolved": bool(result),
+            "resolution_results": result_data.get("results", []) if isinstance(result_data, dict) else [],
+            "next_phase_id": NEXT_PHASE_ID,
+        }
+        return api_response(True, "Forum view", data)
+    except Exception as e:
+        logging.exception("Forum view failed")
+        return api_response(False, f"Forum view failed: {e}", errors=[str(e)])
 
 
 def _check_player_permission(state: GameState, player_id: str) -> Tuple[bool, dict]:
@@ -526,7 +595,37 @@ def resolve_forum(state: GameState) -> dict:
     state.clear_forum_pending()
 
     message = "\n".join(results) if results else i18n.get("info_no_forum_actions")
-    return api_response(True, message, data={"results": results})
+    data = {"results": results}
+    state.record_phase_result("forum", {"success": True, "message": message, "data": data})
+    return api_response(True, message, data=data)
+
+
+def advance_forum_phase(state: GameState, viewer_player_id: str) -> dict:
+    """Confirm forum resolution and advance to the population stage."""
+    viewer = state.get_player(viewer_player_id)
+    if not viewer:
+        return api_response(False, "Viewer player not found")
+
+    if state.is_phase_executed("forum"):
+        return api_response(False, "Forum phase already executed")
+
+    current_phase_id = _current_phase_id(state)
+    if current_phase_id != "forum":
+        return api_response(False, f"Current phase is {current_phase_id}, not forum")
+
+    if not state.is_current_player(viewer_player_id):
+        return api_response(False, "Current viewer is not the active player")
+
+    result = state.get_phase_result("forum")
+    if not result:
+        return api_response(False, "Forum phase has not been resolved")
+
+    state.mark_phase_executed("forum")
+    return api_response(True, "Forum phase advanced", {
+        "phase_executed": True,
+        "next_phase_id": NEXT_PHASE_ID,
+        "result": result,
+    })
 
 
 def resolve_land_trades(state: GameState) -> dict:
@@ -553,3 +652,119 @@ def resolve_land_trades(state: GameState) -> dict:
 
     message = "\n".join(results) if results else ""
     return api_response(True, message, data={"results": results})
+
+
+def _current_phase_id(state: GameState) -> str:
+    for phase_id in ["mortality", "revenue", "forum", "population", "senate", "combat", "resolution"]:
+        if not state.is_phase_executed(phase_id):
+            return phase_id
+    return "resolution"
+
+
+def _tier_value(value: Any) -> str:
+    return value.value if hasattr(value, "value") else str(value or "")
+
+
+def _tier_label(value: Any) -> str:
+    labels = {
+        "nobile": "贵族",
+        "eques": "骑士",
+        "plebeian": "平民",
+    }
+    return labels.get(_tier_value(value), _tier_value(value))
+
+
+def _figure_name(figure: Any) -> str:
+    if hasattr(figure, "get_formal_name"):
+        return figure.get_formal_name()
+    return getattr(figure, "name", f"Figure {getattr(figure, 'id', '')}")
+
+
+def _my_figure_rows(state: GameState, faction_id: Optional[str]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    if not faction_id:
+        return rows
+    for figure in state.get_living_members():
+        if figure.faction_id != faction_id:
+            continue
+        rows.append({
+            "id": figure.id,
+            "name": _figure_name(figure),
+            "faction_id": figure.faction_id,
+            "influence": figure.influence,
+            "martial": getattr(figure, "martial", 0),
+            "intellect": getattr(figure, "intellect", 0),
+            "charisma": getattr(figure, "charisma", 0),
+            "zeal": getattr(figure, "zeal", 0),
+            "wealth": getattr(figure, "wealth", 0),
+            "class_tier": _tier_value(figure.class_tier),
+            "class_label": _tier_label(figure.class_tier),
+            "is_leader": bool(getattr(figure, "is_faction_leader", False)),
+            "has_active_contract": bool(getattr(figure, "has_active_contract", False)),
+            "can_retire": (
+                not getattr(figure, "is_faction_leader", False)
+                and not getattr(figure, "has_active_contract", False)
+            ),
+            "can_bid": _tier_value(figure.class_tier) == "eques",
+            "can_buy_land": getattr(figure, "wealth", 0) > 0,
+        })
+    return rows
+
+
+def _available_figure_rows(state: GameState) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for figure in state.curia.get_all_available():
+        rows.append({
+            "id": figure.id,
+            "name": _figure_name(figure),
+            "martial": getattr(figure, "martial", 0),
+            "intellect": getattr(figure, "intellect", 0),
+            "charisma": getattr(figure, "charisma", 0),
+            "zeal": getattr(figure, "zeal", 0),
+            "influence": getattr(figure, "influence", 0),
+            "wealth": getattr(figure, "wealth", 0),
+            "class_tier": _tier_value(figure.class_tier),
+            "class_label": _tier_label(figure.class_tier),
+            "cost": max(10, getattr(figure, "influence", 0)),
+        })
+    return rows
+
+
+def _pending_contract_rows(state: GameState) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for contract in state.get_all_contracts():
+        if contract.status not in {ContractStatus.PENDING, ContractStatus.BUDGETED}:
+            continue
+        is_budgeted = contract.status == ContractStatus.BUDGETED
+        rows.append({
+            "id": contract.id,
+            "name": contract.name,
+            "type": contract.contract_type.value if hasattr(contract.contract_type, "value") else str(contract.contract_type),
+            "type_label": "包税" if contract.contract_type == ContractType.TAX_FARMING else "工程",
+            "base_cost": contract.base_cost,
+            "expected_profit": getattr(contract, "expected_profit", 0),
+            "province_id": str(getattr(contract, "province_id", "")),
+            "status": contract.status.value if hasattr(contract.status, "value") else str(contract.status),
+            "status_label": "待广场竞标" if is_budgeted else "待元老院预算表决",
+            "can_bid": is_budgeted,
+        })
+    return rows
+
+
+def _triumph_war_rows(state: GameState) -> List[Dict[str, Any]]:
+    war_system = state.get_war_system()
+    if not war_system:
+        return []
+    rows: List[Dict[str, Any]] = []
+    for war in war_system.get_resolved_wars():
+        if war.status != WarStatus.RESOLVED or war.soldier_share <= 0 or war.triumph_commander_id is None:
+            continue
+        commander = state.get_member(war.triumph_commander_id)
+        rows.append({
+            "war_id": str(war.id),
+            "name": war.name,
+            "commander_id": war.triumph_commander_id,
+            "commander_name": _figure_name(commander) if commander else "未知指挥官",
+            "soldier_share": war.soldier_share,
+        })
+    return rows

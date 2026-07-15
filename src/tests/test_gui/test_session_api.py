@@ -108,8 +108,13 @@ class TestSessionApi:
         assert phases["revenue"]["actionable"] is False
         assert phases["revenue"]["disabled_reason_key"] == "phase.disabled.not_current"
         assert phases["revenue"]["handoff_task"] == "GUI-P0-03"
+        assert phases["forum"]["implemented"] is True
+        assert phases["forum"]["interaction_mode"] == "interactive"
+        assert phases["forum"]["actionable"] is False
+        assert phases["forum"]["disabled_reason_key"] == "phase.disabled.not_current"
+        assert phases["forum"]["handoff_task"] == "GUI-P0-03"
         for phase_id, phase in phases.items():
-            if phase_id in {"mortality", "revenue", "population", "senate"}:
+            if phase_id in {"mortality", "revenue", "forum", "population", "senate"}:
                 continue
             assert phase["implemented"] is False
             assert phase["interaction_mode"] == "placeholder"
@@ -200,6 +205,26 @@ class TestSessionApi:
         assert "can_campaign" in data
         assert "can_vote" in data
         assert "can_complete" in data
+
+    def test_get_forum_view(self):
+        result = session_api.create_gui_prototype_session(start_phase="forum")
+        state = result["data"]["state"]
+        viewer_id = result["data"]["human_players"][0]
+
+        from src.api import forum_api
+        forum_view = forum_api.get_forum_view(state, viewer_id)
+
+        assert forum_view["success"]
+        data = forum_view["data"]
+        assert data["phase_id"] == "forum"
+        assert data["current_phase_id"] == "forum"
+        assert data["current_step"] in {"retirement", "market", "resolution"}
+        assert isinstance(data["my_figures"], list)
+        assert isinstance(data["available_figures"], list)
+        assert isinstance(data["pending_contracts"], list)
+        assert isinstance(data["triumph_wars"], list)
+        assert "can_execute" in data
+        assert "can_advance" in data
 
     def test_complete_population_player(self):
         """完成当前玩家操作并切换"""

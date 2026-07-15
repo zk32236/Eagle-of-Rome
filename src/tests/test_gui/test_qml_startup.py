@@ -101,6 +101,7 @@ def test_main_qml_exposes_core_gui_regions():
         "mortalityStage",
         "populationStage",
         "senateStage",
+        "forumStage",
         "lockedStagePlaceholder",
         "feedbackPanel",
         "playerHandoffOverlay",
@@ -184,6 +185,8 @@ def test_shell_store_exposes_seven_phase_navigation_items():
     assert store.phaseNavigation[5]["name"] == "战争"
     assert store.phaseNavigation[-1]["name"] == "决算"
     assert store.phaseNavigation[0]["actionable"] is True
+    assert store.phaseNavigation[2]["implemented"] is True
+    assert store.phaseNavigation[2]["actionable"] is False
     assert store.phaseNavigation[3]["implemented"] is True
     assert store.phaseNavigation[3]["actionable"] is False
     assert store.phaseNavigation[4]["implemented"] is True
@@ -323,3 +326,27 @@ def test_revenue_stage_structural_placement():
     center_panel = root.findChild(QObject, "centerPanel")
     assert action_layer.parent().objectName() == "centerPanel", \
         f"revenueActionLayer parent is '{action_layer.parent().objectName()}', expected 'centerPanel'"
+
+
+def test_forum_stage_structural_placement():
+    """Verify ForumStage is mounted inside the central stage container."""
+    engine, qml_dir = _create_engine()
+    engine.load(QUrl.fromLocalFile(os.path.join(qml_dir, "Main.qml")))
+    QGuiApplication.processEvents()
+
+    root = engine.rootObjects()[0]
+    stage = root.findChild(QObject, "forumStage")
+    assert stage is not None, "forumStage not found in QML tree"
+    container = stage.parent()
+    assert container.objectName() == "stageContainer", \
+        f"ForumStage parent is '{container.objectName()}', expected 'stageContainer'"
+
+    width_diff = abs(stage.property("width") - container.property("width"))
+    height_diff = abs(stage.property("height") - container.property("height"))
+    assert width_diff < 5
+    assert height_diff < 5
+
+    action_layer = root.findChild(QObject, "forumActionLayer")
+    assert action_layer is not None, "forumActionLayer not found"
+    assert action_layer.parent().objectName() == "centerPanel", \
+        f"forumActionLayer parent is '{action_layer.parent().objectName()}', expected 'centerPanel'"

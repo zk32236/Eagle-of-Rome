@@ -1,4 +1,4 @@
-import QtQuick 2.15
+﻿import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import Qt5Compat.GraphicalEffects
@@ -8,18 +8,18 @@ import "../components"
 import "../i18n"
 
 /*!
- * \brief GameShell — v3.25.1 Codex v4.0 main shell skeleton.
+ * \brief GameShell - v3.25.1 Codex v4.0 main shell skeleton.
  *
  * Layout contract: GUI_LAYOUT_CONTRACT_Phase1_v3.25.1.md
  *
- *   A — TopStatusBar:  x=10, y=10, w=1420, h=62
- *   B — PhaseRail:     x=10, y=82, w=92, h=736   (inside main-wrapper: padding=10)
- *   C — StageDesktop:  x=112, y=82, w=1022, h=736 (center, gap=10 each side)
- *   D — ContextPanel:  x=1144, y=82, w=286, h=736
- *   E — BottomQueryBar: x=10, y=828, w=1420, h=62
- *   F — MainAction:    inside StageDesktop.StageActionSlot
+ *   A - TopStatusBar:  x=10, y=10, w=1420, h=62
+ *   B - PhaseRail:     x=10, y=82, w=92, h=736   (inside main-wrapper: padding=10)
+ *   C - StageDesktop:  x=112, y=82, w=1022, h=736 (center, gap=10 each side)
+ *   D - ContextPanel:  x=1144, y=82, w=286, h=736
+ *   E - BottomQueryBar: x=10, y=828, w=1420, h=62
+ *   F - MainAction:    inside StageDesktop.StageActionSlot
  *
- * Viewport: 1440×900. main-wrapper replaces anchors with direct positioning
+ * Viewport: 1440x900. main-wrapper replaces anchors with direct positioning
  * to match exact contract coordinates.
  */
 Rectangle {
@@ -27,7 +27,7 @@ Rectangle {
     objectName: "gameShellRoot"
     color: theme.bgApp
 
-    // 暴露给外部的方法
+    // 暴露给外部的反馈方法
     function showFeedback(type, message) {
         contextPanel.showFeedback(type, message)
     }
@@ -36,7 +36,7 @@ Rectangle {
     }
 
     // ============================================================
-    // A — TopStatusBar (§2)
+    // A - TopStatusBar
     // x=10, y=10, w=1420, h=62
     // ============================================================
     TopStatusBar {
@@ -58,7 +58,7 @@ Rectangle {
     // ============================================================
 
     // ============================================================
-    // B — PhaseRail (§3)
+    // B - PhaseRail
     // x=10, y=82, w=92, h=736
     // ============================================================
     PhaseRail {
@@ -74,7 +74,7 @@ Rectangle {
     }
 
     // ============================================================
-    // D — ContextPanel (§5)
+    // D - ContextPanel
     // x=1144, y=82, w=286, h=736
     // ============================================================
     ContextPanel {
@@ -90,7 +90,7 @@ Rectangle {
     }
 
     // ============================================================
-    // E — BottomQueryBar (§6)
+    // E - BottomQueryBar
     // x=10, y=828, w=1420, h=62
     // ============================================================
     BottomQueryBar {
@@ -111,12 +111,13 @@ Rectangle {
                 showFeedback("error", result.message)
             }
         }
+
     }
 
     // ============================================================
-    // C — StageDesktop (§4) — H0: 4 slots populated per phase
+    // C - StageDesktop: H0 slots populated per phase
     // x=112, y=82, w=1022, h=736
-    // Gap B→C = 10, gap C→D = 10
+    // Gap B->C = 10, gap C->D = 10
     //
     // StageHeaderSlot: mortality badge+title+desc / other phases generic
     // StageInstructionSlot: mortality step bar / other phases visible but empty
@@ -129,13 +130,13 @@ Rectangle {
         anchors.top: topBar.bottom
         anchors.topMargin: 10
         anchors.left: phaseRail.right
-        anchors.leftMargin: 10   // gap B→C
+        anchors.leftMargin: 10   // gap B->C
         anchors.right: contextPanel.left
-        anchors.rightMargin: 10  // gap C→D
+        anchors.rightMargin: 10  // gap C->D
         anchors.bottom: bottomQueryBar.top
         anchors.bottomMargin: 10
 
-        // ---- StageHeaderSlot — mortality badge+title+desc / other phases generic ----
+        // ---- StageHeaderSlot: phase badge, title, and description ----
         Rectangle {
             objectName: "stageAnnouncement"
             parent: centerPanel.stageHeader
@@ -148,7 +149,7 @@ Rectangle {
                 anchors.fill: parent
                 spacing: 6
 
-                // Phase badge (999px pill style) — H0.2: gradient per layout contract §4.1
+                // Phase badge pill style
                 Rectangle {
                     Layout.preferredWidth: badgeText.implicitWidth + 24
                     Layout.preferredHeight: 22
@@ -174,7 +175,7 @@ Rectangle {
 
                 // Phase title
                 Text {
-                    text: "🎴 " + GuiText.mortalityTitle
+                    text: "🃏 " + GuiText.mortalityTitle
                     color: "#681B07"
                     font.pixelSize: 20
                     font.bold: true
@@ -225,7 +226,7 @@ Rectangle {
 
                 // Phase title
                 Text {
-                    text: "💰 " + "收入结算"
+                    text: "💰 收入结算"
                     color: "#681B07"
                     font.pixelSize: 20
                     font.bold: true
@@ -248,6 +249,7 @@ Rectangle {
             ColumnLayout {
                 visible: sessionStore.selectedPhaseId !== "mortality"
                     && sessionStore.selectedPhaseId !== "revenue"
+                    && sessionStore.selectedPhaseId !== "forum"
                 anchors.fill: parent
                 spacing: 6
 
@@ -283,9 +285,57 @@ Rectangle {
                     Layout.fillWidth: true
                 }
             }
+
+            // Forum phase: badge "3/7" + title + description
+            ColumnLayout {
+                visible: sessionStore.selectedPhaseId === "forum"
+                anchors.fill: parent
+                spacing: 6
+
+                Rectangle {
+                    Layout.preferredWidth: forumBadgeText.implicitWidth + 24
+                    Layout.preferredHeight: 22
+                    radius: 999
+                    border.color: "#52D9AF63"
+                    border.width: 1
+
+                    gradient: Gradient {
+                        orientation: Gradient.Vertical
+                        GradientStop { position: 0.0; color: "#8B2500" }
+                        GradientStop { position: 1.0; color: "#671B07" }
+                    }
+
+                    Text {
+                        id: forumBadgeText
+                        anchors.centerIn: parent
+                        text: "3 / 7"
+                        color: theme.headerText
+                        font.pixelSize: theme.statLabelSize
+                        font.bold: true
+                    }
+                }
+
+                Text {
+                    text: "🏛️ 广场阶段"
+                    color: "#681B07"
+                    font.pixelSize: 20
+                    font.bold: true
+                    font.letterSpacing: 0.3
+                }
+
+                Text {
+                    text: "解雇 → 人才市场（招募/竞标/公地凯旋）→ 公示"
+                    color: "#766652"
+                    font.pixelSize: 13
+                    font.italic: true
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 980
+                }
+            }
         }
 
-        // ---- StageInstructionSlot — mortality step bar (visible for all phases) ----
+        // ---- StageInstructionSlot: phase step bar ----
         Rectangle {
             parent: centerPanel.stageInstruction
             anchors.fill: parent
@@ -399,9 +449,65 @@ Rectangle {
                     }
                 }
             }
+
+            // Forum step bar
+            Rectangle {
+                visible: sessionStore.selectedPhaseId === "forum"
+                anchors.fill: parent
+                color: "#D1FFF9EC"
+                border.color: "#85A8753B"
+                border.width: 1
+                radius: 10
+
+                Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left
+                    anchors.leftMargin: 12
+                    spacing: 7
+
+                    Row {
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        Rectangle { width: 20; height: 20; radius: 10; color: "#2EA44F"; Text { anchors.centerIn: parent; text: "✓"; color: "#FFFFFF"; font.pixelSize: theme.smallSize; font.bold: true } }
+                        Text { text: "公示区"; color: "#2C1E12"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    }
+                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    Row {
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        Rectangle {
+                            width: 20; height: 20; radius: 10
+                            color: sessionStore.forumCurrentStep === "retirement" ? "#E8B84B" : "#E8D5C4"
+                            Text { anchors.centerIn: parent; text: "1"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true }
+                        }
+                        Text {
+                            text: "解雇成员"
+                            color: sessionStore.forumCurrentStep === "retirement" ? "#2C1E12" : "#766652"
+                            font.pixelSize: theme.bodySize
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    Row {
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        Rectangle {
+                            width: 20; height: 20; radius: 10
+                            color: sessionStore.forumCurrentStep !== "retirement" ? "#E8B84B" : "#E8D5C4"
+                            Text { anchors.centerIn: parent; text: "2"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true }
+                        }
+                        Text {
+                            text: "市场（招募·竞标·认购·凯旋）"
+                            color: sessionStore.forumCurrentStep !== "retirement" ? "#2C1E12" : "#999999"
+                            font.pixelSize: theme.bodySize
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                }
+            }
         }
 
-        // ---- StageContentSlot — phase stage components ----
+        // ---- StageContentSlot: phase stage components ----
         Rectangle {
             id: stageContainer
             objectName: "stageContainer"
@@ -437,18 +543,26 @@ Rectangle {
                 visible: sessionStore.selectedPhaseId === "revenue"
             }
 
+            ForumStage {
+                id: forumStage
+                objectName: "forumStage"
+                anchors.fill: parent
+                visible: sessionStore.selectedPhaseId === "forum"
+            }
+
             LockedStagePlaceholder {
                 id: lockedPlaceholder
                 objectName: "lockedStagePlaceholder"
                 anchors.fill: parent
                 visible: sessionStore.selectedPhaseId !== "mortality"
                     && sessionStore.selectedPhaseId !== "revenue"
+                    && sessionStore.selectedPhaseId !== "forum"
                     && sessionStore.selectedPhaseId !== "population"
                     && sessionStore.selectedPhaseId !== "senate"
             }
         }
 
-        // ---- StageActionSlot — mortality execute button ----
+        // ---- StageActionSlot: phase action buttons ----
         Rectangle {
             id: mortalityActionLayer
             objectName: "mortalityActionLayer"
@@ -463,7 +577,7 @@ Rectangle {
             z: 50
 
             // Execute button (only visible in mortality phase)
-            // Two-state: execute → done (advance button is in ContextPanel)
+            // Two-state: execute -> done (advance button is in ContextPanel)
             Rectangle {
                 id: executeBtn
                 objectName: "mortalityPrimaryActionButton"
@@ -481,7 +595,7 @@ Rectangle {
                 // Use hover property to toggle gradient
                 property bool hovered: false
 
-                // Drop shadow (D-06) — active when button is usable
+                // Drop shadow is active when button is usable.
                 layer.enabled: sessionStore.canExecuteMortality
                 layer.effect: DropShadow {
                     transparentBorder: true
@@ -526,7 +640,7 @@ Rectangle {
 
                 Text {
                     anchors.centerIn: parent
-                    text: sessionStore.canExecuteMortality ? "⚡ 执行天命" : "✅ 已执行"
+                    text: sessionStore.canExecuteMortality ? "⚡ 执行天命" : "✓ 已执行"
                     color: theme.headerText
                     font.pixelSize: 13; font.bold: true
                 }
@@ -548,7 +662,7 @@ Rectangle {
             }
         }
 
-        // Revenue action layer — only settlement button
+        // Revenue action layer: only settlement button
         // Advance button is in ContextPanel.OperationSection
         Rectangle {
             id: revenueActionLayer
@@ -563,7 +677,7 @@ Rectangle {
             visible: sessionStore.selectedPhaseId === "revenue"
             z: 50
 
-            // Revenue primary action button — Two-state: settle → done
+            // Revenue primary action button: settle -> done
             Rectangle {
                 id: revenueExecuteBtn
                 objectName: "revenuePrimaryActionButton"
@@ -623,7 +737,7 @@ Rectangle {
                     anchors.centerIn: parent
                     text: sessionStore.canExecuteRevenue
                         ? "💰 确认收入结算"
-                        : "⛔ 不可操作"
+                        : "✓ 不可操作"
                     color: theme.headerText
                     font.pixelSize: 13; font.bold: true
                 }
@@ -639,6 +753,86 @@ Rectangle {
                         var result = sessionStore.doExecuteRevenue()
                         if (!result.success) {
                             revenueStage.showFeedback("error", result.message)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Forum action layer
+        Rectangle {
+            id: forumActionLayer
+            objectName: "forumActionLayer"
+            parent: centerPanel
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 20
+            height: 34
+            color: "transparent"
+            visible: sessionStore.selectedPhaseId === "forum"
+            z: 50
+
+            Rectangle {
+                id: forumExecuteBtn
+                objectName: "forumPrimaryActionButton"
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.verticalCenter: parent.verticalCenter
+                width: sessionStore.forumResolved ? 170 : 150
+                height: 30
+                radius: 4
+
+                property bool hovered: false
+
+                layer.enabled: sessionStore.canExecuteForum || sessionStore.canAdvanceForum
+                layer.effect: DropShadow {
+                    transparentBorder: true
+                    horizontalOffset: 0
+                    verticalOffset: 3
+                    radius: 8
+                    samples: 16
+                    color: "#B0000000"
+                }
+
+                gradient: Gradient {
+                    orientation: Gradient.Vertical
+                    GradientStop {
+                        position: 0.0
+                        color: (sessionStore.canExecuteForum || sessionStore.canAdvanceForum)
+                            ? (forumExecuteBtn.hovered ? "#A33A17" : "#84250A")
+                            : "#C89A80"
+                    }
+                    GradientStop {
+                        position: 1.0
+                        color: (sessionStore.canExecuteForum || sessionStore.canAdvanceForum)
+                            ? (forumExecuteBtn.hovered ? "#7A210B" : "#671B07")
+                            : "#A97962"
+                    }
+                }
+
+                Text {
+                    anchors.centerIn: parent
+                    text: sessionStore.forumResolved
+                        ? "▶ 推进到人口阶段"
+                        : (sessionStore.forumCurrentStep === "retirement" ? "✓ 完成解雇" : "⚖ 结算广场")
+                    color: theme.headerText
+                    font.pixelSize: 13
+                    font.bold: true
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    enabled: sessionStore.canExecuteForum || sessionStore.canAdvanceForum
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onEntered: forumExecuteBtn.hovered = true
+                    onExited: forumExecuteBtn.hovered = false
+                    onClicked: {
+                        var result = sessionStore.forumResolved
+                            ? sessionStore.doAdvanceForum()
+                            : sessionStore.doCompleteForumStep()
+                        if (!result.success) {
+                            forumStage.showFeedback("error", result.message)
                         }
                     }
                 }

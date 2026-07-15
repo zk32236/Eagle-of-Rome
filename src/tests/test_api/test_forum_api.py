@@ -152,6 +152,24 @@ def test_state():
 
 
 # ========== retire_figure 测试 ==========
+class TestForumView:
+    def test_get_forum_view_returns_gui_dto(self, test_state):
+        result = forum_api.get_forum_view(test_state, "p1")
+
+        assert result["success"] is True
+        data = result["data"]
+        assert data["phase_id"] == "forum"
+        assert data["viewer_player_id"] == "p1"
+        assert data["viewer_faction_id"] == "f1"
+        assert data["current_step"] in {"retirement", "market", "resolution"}
+        assert isinstance(data["my_figures"], list)
+        assert isinstance(data["available_figures"], list)
+        assert isinstance(data["pending_contracts"], list)
+        assert isinstance(data["triumph_wars"], list)
+        assert "can_execute" in data
+        assert "can_advance" in data
+
+
 class TestRetireFigure:
     """测试 retire_figure API"""
 

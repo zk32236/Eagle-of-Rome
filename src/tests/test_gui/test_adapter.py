@@ -166,6 +166,40 @@ class TestGuiApiAdapter:
         assert view["can_resolve"] is False
         assert "faction_leaders" in view
 
+    def test_adapter_get_forum_view_exposes_interactive_dto(self):
+        adapter, state, players = self.setup_adapter(start_phase="forum")
+        state.set_current_player(players[0])
+
+        view = adapter.get_forum_view(players[0])
+
+        assert view["phase_id"] == "forum"
+        assert view["current_phase_id"] == "forum"
+        assert view["can_execute"] is True
+        assert isinstance(view["my_figures"], list)
+        assert isinstance(view["available_figures"], list)
+        assert isinstance(view["pending_contracts"], list)
+
+    def test_session_store_forum_step_and_resolution_flow(self):
+        result = session_api.create_gui_prototype_session(start_phase="forum")
+        state = result["data"]["state"]
+        store = GuiSessionStore(state)
+        store.initialize(result["data"]["human_players"][0])
+
+        assert store.selectedPhaseId == "forum"
+        assert store.forumCurrentStep == "retirement"
+        step_feedback = store.doCompleteForumStep()
+        assert step_feedback["success"]
+        assert store.forumCurrentStep == "market"
+
+        resolve_feedback = store.doResolveForum()
+        assert resolve_feedback["success"]
+        assert store.forumResolved is True
+        assert store.canAdvanceForum is True
+
+        advance_feedback = store.doAdvanceForum()
+        assert advance_feedback["success"]
+        assert store.currentPhaseId == "population"
+
     def test_opc_global_queries_are_readonly_or_placeholder(self):
         result = session_api.create_gui_prototype_session()
         state = result["data"]["state"]

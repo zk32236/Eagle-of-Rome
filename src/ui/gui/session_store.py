@@ -28,6 +28,7 @@ class GuiSessionStore(QObject):
     mortalityViewChanged = Signal()
     senateViewChanged = Signal()
     revenueViewChanged = Signal()
+    forumViewChanged = Signal()
     queryResultChanged = Signal()
     currentPlayerChanged = Signal()
     phaseChanged = Signal()
@@ -45,6 +46,9 @@ class GuiSessionStore(QObject):
         self._mortality_view: Dict[str, Any] = {}
         self._senate_view: Dict[str, Any] = {}
         self._revenue_view: Dict[str, Any] = {}
+        self._forum_view: Dict[str, Any] = {}
+        self._forum_result: Dict[str, Any] = {}
+        self._forum_step_override: str = ""
         self._revenue_result: Dict[str, Any] = {}
         self._mortality_result: Dict[str, Any] = {}
         self._current_player_id: str = ""
@@ -65,6 +69,7 @@ class GuiSessionStore(QObject):
         self._refresh_population_view()
         self._refresh_senate_view()
         self._refresh_revenue_view()
+        self._refresh_forum_view()
 
     # -----------------------------------------------------------------------
     # QML 可访问属性
@@ -295,6 +300,52 @@ class GuiSessionStore(QObject):
                 data = data["data"]
         return data.get("ending_treasury", self.treasury) if isinstance(data, dict) else self.treasury
 
+    @Property(dict, notify=forumViewChanged)
+    def forumView(self) -> Dict[str, Any]:
+        return self._forum_view
+
+    @Property(dict, notify=forumViewChanged)
+    def forumResult(self) -> Dict[str, Any]:
+        return self._forum_result or self._forum_view.get("result", {})
+
+    @Property(str, notify=forumViewChanged)
+    def forumCurrentStep(self) -> str:
+        if self._forum_step_override:
+            return self._forum_step_override
+        return self._forum_view.get("current_step", "retirement")
+
+    @Property(list, notify=forumViewChanged)
+    def forumMyFigures(self) -> List[Dict[str, Any]]:
+        return self._forum_view.get("my_figures", [])
+
+    @Property(list, notify=forumViewChanged)
+    def forumAvailableFigures(self) -> List[Dict[str, Any]]:
+        return self._forum_view.get("available_figures", [])
+
+    @Property(list, notify=forumViewChanged)
+    def forumPendingContracts(self) -> List[Dict[str, Any]]:
+        return self._forum_view.get("pending_contracts", [])
+
+    @Property(int, notify=forumViewChanged)
+    def forumLandQuota(self) -> int:
+        return self._forum_view.get("land_sale_quota", 0)
+
+    @Property(list, notify=forumViewChanged)
+    def forumTriumphWars(self) -> List[Dict[str, Any]]:
+        return self._forum_view.get("triumph_wars", [])
+
+    @Property(bool, notify=forumViewChanged)
+    def canExecuteForum(self) -> bool:
+        return self._forum_view.get("can_execute", False)
+
+    @Property(bool, notify=forumViewChanged)
+    def canAdvanceForum(self) -> bool:
+        return self._forum_view.get("can_advance", False)
+
+    @Property(bool, notify=forumViewChanged)
+    def forumResolved(self) -> bool:
+        return self._forum_view.get("resolved", False) or bool(self._forum_result)
+
     @Property(dict, notify=queryResultChanged)
     def globalQueryResult(self) -> Dict[str, Any]:
         return self._global_query_result
@@ -400,6 +451,7 @@ class GuiSessionStore(QObject):
             self._refresh_population_view()
             self._refresh_senate_view()
             self._refresh_revenue_view()
+            self._refresh_forum_view()
         self._raise_feedback(feedback)
         self.revenueViewChanged.emit()
         return feedback
@@ -416,8 +468,91 @@ class GuiSessionStore(QObject):
             self._refresh_population_view()
             self._refresh_senate_view()
             self._refresh_revenue_view()
+            self._refresh_forum_view()
         self._raise_feedback(feedback)
         self.revenueViewChanged.emit()
+        return feedback
+
+    @Slot(int, result=dict)
+    def doRetireFigure(self, figure_id: int) -> dict:
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.retire_figure(self._viewer_id, figure_id)
+        self._raise_feedback(feedback)
+        self._refresh_forum_view()
+        return feedback
+
+    @Slot(int, int, result=dict)
+    def doRecruitFigure(self, figure_id: int, amount: int) -> dict:
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.recruit_figure(self._viewer_id, figure_id, amount)
+        self._raise_feedback(feedback)
+        self._refresh_forum_view()
+        return feedback
+
+    @Slot(int, int, int, result=dict)
+    def doPlaceBid(self, figure_id: int, contract_id: int, amount: int) -> dict:
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.place_bid(self._viewer_id, figure_id, contract_id, amount)
+        self._raise_feedback(feedback)
+        self._refresh_forum_view()
+        return feedback
+
+    @Slot(int, int, result=dict)
+    def doBuyLand(self, figure_id: int, amount: int) -> dict:
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.buy_land(self._viewer_id, figure_id, amount)
+        self._raise_feedback(feedback)
+        self._refresh_forum_view()
+        return feedback
+
+    @Slot(str, bool, result=dict)
+    def doVoteTriumph(self, war_id: str, vote: bool) -> dict:
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.vote_triumph(self._viewer_id, war_id, vote)
+        self._raise_feedback(feedback)
+        self._refresh_forum_view()
+        return feedback
+
+    @Slot(result=dict)
+    def doCompleteForumStep(self) -> dict:
+        if self.forumCurrentStep == "retirement":
+            self._forum_step_override = "market"
+            self._refresh_forum_view()
+            feedback = self._feedback(True, "广场解雇环节完成，人才市场已开放", "success")
+            self._raise_feedback(feedback)
+            return feedback
+        return self.doResolveForum()
+
+    @Slot(result=dict)
+    def doResolveForum(self) -> dict:
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.resolve_forum()
+        if feedback.get("success"):
+            self._forum_result = feedback
+            self._forum_step_override = "resolution"
+        self._raise_feedback(feedback)
+        self._refresh_snapshot()
+        self._refresh_forum_view()
+        return feedback
+
+    @Slot(result=dict)
+    def doAdvanceForum(self) -> dict:
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.advance_forum(self._viewer_id)
+        if feedback.get("success"):
+            self._forum_step_override = ""
+            self._refresh_snapshot()
+            self._refresh_forum_view()
+            self._refresh_population_view()
+        self._raise_feedback(feedback)
+        self.forumViewChanged.emit()
         return feedback
 
     @Slot(str, result=dict)
@@ -471,6 +606,8 @@ class GuiSessionStore(QObject):
             self._refresh_revenue_view()
         elif phase_id == "senate":
             self._refresh_senate_view()
+        elif phase_id == "forum":
+            self._refresh_forum_view()
         return feedback
 
     @Slot(str, result=dict)
@@ -502,6 +639,7 @@ class GuiSessionStore(QObject):
         self._refresh_population_view()
         self._refresh_senate_view()
         self._refresh_revenue_view()
+        self._refresh_forum_view()
         feedback = self._feedback(True, gui_text("feedback.snapshot.refreshed"), "success")
         self._raise_feedback(feedback)
         return feedback
@@ -515,6 +653,7 @@ class GuiSessionStore(QObject):
         self._refresh_population_view()
         self._refresh_senate_view()
         self._refresh_revenue_view()
+        self._refresh_forum_view()
         self.currentPlayerChanged.emit()
         return True
 
@@ -533,6 +672,7 @@ class GuiSessionStore(QObject):
         self._refresh_population_view()
         self._refresh_senate_view()
         self._refresh_revenue_view()
+        self._refresh_forum_view()
 
     def _refresh_snapshot(self):
         self._snapshot = self._adapter.get_snapshot(self._viewer_id)
@@ -561,6 +701,12 @@ class GuiSessionStore(QObject):
     def _refresh_revenue_view(self):
         self._revenue_view = self._adapter.get_revenue_view(self._viewer_id)
         self.revenueViewChanged.emit()
+
+    def _refresh_forum_view(self):
+        self._forum_view = self._adapter.get_forum_view(self._viewer_id)
+        if self._forum_step_override and self._forum_view.get("resolved"):
+            self._forum_step_override = "resolution"
+        self.forumViewChanged.emit()
 
     def _raise_feedback(self, feedback: dict):
         ftype = feedback.get("feedback_type", "info")
