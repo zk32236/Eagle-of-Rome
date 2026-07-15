@@ -200,6 +200,22 @@ class TestGuiApiAdapter:
         assert advance_feedback["success"]
         assert store.currentPhaseId == "population"
 
+    def test_session_store_population_resolution_keeps_results_visible(self):
+        result = session_api.create_gui_prototype_session(start_phase="population")
+        state = result["data"]["state"]
+        store = GuiSessionStore(state)
+        store.initialize(result["data"]["human_players"][0])
+
+        assert store.selectedPhaseId == "population"
+        assert store.populationCurrentStep in {"campaign", "vote"}
+        feedback = store.doResolveElection()
+
+        assert feedback["success"]
+        assert store.populationResolved is True
+        assert store.populationCurrentStep == "results"
+        assert store.selectedPhaseId == "population"
+        assert isinstance(store.populationElectionResults, list)
+
     def test_opc_global_queries_are_readonly_or_placeholder(self):
         result = session_api.create_gui_prototype_session()
         state = result["data"]["state"]

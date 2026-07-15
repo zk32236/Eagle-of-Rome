@@ -157,15 +157,18 @@ def get_candidates(state: GameState) -> dict:
         # 构建输出列表
         cand_list = []
         for fig in top_candidates:
+            faction = state.get_faction(fig.faction_id) if fig.faction_id else None
             cand_list.append({
                 "id": fig.id,
                 "name": fig.get_formal_name(),
                 "faction_id": fig.faction_id,
-                "faction_name": state.get_faction(fig.faction_id).name if fig.faction_id else "无",
+                "faction_name": faction.name if faction else "无",
                 "martial": fig.martial,
                 "intelligence": fig.intelligence,
                 "charisma": fig.charisma,
                 "zeal": fig.zeal,
+                "influence": fig.influence,
+                "wealth": fig.wealth,
             })
         final_data[office] = cand_list
 

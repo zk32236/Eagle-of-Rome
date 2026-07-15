@@ -350,3 +350,23 @@ def test_forum_stage_structural_placement():
     assert action_layer is not None, "forumActionLayer not found"
     assert action_layer.parent().objectName() == "centerPanel", \
         f"forumActionLayer parent is '{action_layer.parent().objectName()}', expected 'centerPanel'"
+
+
+def test_population_stage_phase4_objects_exist():
+    """Verify Phase 4 population prototype regions are present in QML."""
+    engine, qml_dir = _create_engine()
+    engine.load(QUrl.fromLocalFile(os.path.join(qml_dir, "Main.qml")))
+    QGuiApplication.processEvents()
+
+    root = engine.rootObjects()[0]
+    required = [
+        "populationStageRoot",
+        "populationAnnouncement",
+        "populationCandidateTable",
+        "populationCampaignPanel",
+        "populationVotePanel",
+        "populationVoteLock",
+        "populationResolveButton",
+    ]
+    for object_name in required:
+        assert root.findChild(QObject, object_name) is not None, f"{object_name} not found"

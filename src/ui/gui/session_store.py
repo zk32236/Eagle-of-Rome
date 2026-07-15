@@ -178,6 +178,34 @@ class GuiSessionStore(QObject):
         return flat
 
     @Property(dict, notify=populationViewChanged)
+    def populationView(self) -> Dict[str, Any]:
+        return self._population_view
+
+    @Property(list, notify=populationViewChanged)
+    def populationCampaigns(self) -> List[Dict[str, Any]]:
+        return self._population_view.get("my_campaigns", [])
+
+    @Property(str, notify=populationViewChanged)
+    def populationCurrentStep(self) -> str:
+        return self._population_view.get("current_step", "campaign")
+
+    @Property(bool, notify=populationViewChanged)
+    def populationResolved(self) -> bool:
+        return self._population_view.get("resolved", False)
+
+    @Property(list, notify=populationViewChanged)
+    def populationElectionResults(self) -> List[Dict[str, Any]]:
+        return self._population_view.get("election_results", [])
+
+    @Property(list, notify=populationViewChanged)
+    def populationInfluenceBefore(self) -> List[Dict[str, Any]]:
+        return self._population_view.get("faction_influence_before", [])
+
+    @Property(list, notify=populationViewChanged)
+    def populationInfluenceAfter(self) -> List[Dict[str, Any]]:
+        return self._population_view.get("faction_influence_after", [])
+
+    @Property(dict, notify=populationViewChanged)
     def myVotes(self) -> Dict[str, int]:
         return self._population_view.get("my_votes", {})
 
@@ -402,9 +430,15 @@ class GuiSessionStore(QObject):
         feedback = self._adapter.resolve_election()
         self._raise_feedback(feedback)
         self._refresh_snapshot()
+        if feedback.get("success"):
+            self._selected_phase_id = "population"
+            self._selected_phase_summary = self._summary_from_phase(
+                self._phase_by_id("population")
+            )
         self._refresh_mortality_view()
         self._refresh_population_view()
         self._refresh_senate_view()
+        self.phaseChanged.emit()
         return feedback
 
     @Slot(result=dict)

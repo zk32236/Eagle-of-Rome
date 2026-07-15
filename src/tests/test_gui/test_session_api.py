@@ -205,6 +205,11 @@ class TestSessionApi:
         assert "can_campaign" in data
         assert "can_vote" in data
         assert "can_complete" in data
+        assert data["current_step"] in {"campaign", "vote", "results"}
+        assert "resolved" in data
+        assert "election_results" in data
+        assert "faction_influence_before" in data
+        assert "faction_influence_after" in data
 
     def test_get_forum_view(self):
         result = session_api.create_gui_prototype_session(start_phase="forum")
@@ -263,3 +268,11 @@ class TestSessionApi:
         result = session_api.resolve_population_slice(state)
         assert result["success"]
         assert state.is_phase_executed("population")
+        data = result["data"]
+        assert "election_results" in data
+        assert "faction_influence_before" in data
+        assert "faction_influence_after" in data
+        view = session_api.get_population_view(state, human_players[0])
+        assert view["success"]
+        assert view["data"]["resolved"] is True
+        assert view["data"]["current_step"] == "results"

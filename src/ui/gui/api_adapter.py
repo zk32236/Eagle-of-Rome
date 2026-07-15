@@ -101,8 +101,8 @@ class GuiApiAdapter:
         return self.call(player_api.next_player, self._state, player_id)
 
     def resolve_election(self) -> Dict[str, Any]:
-        from src.api import population_api
-        return self.call(population_api.resolve_election, self._state)
+        from src.api import session_api
+        return self.call(session_api.resolve_population_slice, self._state)
 
     # -----------------------------------------------------------------------
     # 天命阶段专用 API

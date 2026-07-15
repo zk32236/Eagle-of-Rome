@@ -185,6 +185,8 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
         # 候选人（所有人可见，但只含公开信息）
         cand_result = population_api.get_candidates(state)
         candidates = cand_result.get("data", {}) if cand_result.get("success") else {}
+        result = state.get_phase_result("population")
+        result_data = result.get("data", {}) if isinstance(result, dict) else {}
 
         # 当前 viewer 已投票的官职
         my_votes = {}
@@ -202,9 +204,14 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
         is_current = state.is_current_player(viewer_player_id)
         current_phase_id = _infer_current_phase_id(state)
         is_population_phase = current_phase_id == "population"
-        can_campaign = is_current and is_population_phase and len(my_campaigns) < len(my_figures)
-        can_vote = is_current and is_population_phase
-        can_complete = is_current and is_population_phase
+        resolved = bool(result) or state.is_phase_executed("population")
+        office_count = len([office for office, rows in candidates.items() if rows])
+        campaign_done = bool(my_campaigns)
+        vote_done = office_count > 0 and len(my_votes) >= office_count
+        current_step = "results" if resolved else ("vote" if campaign_done else "campaign")
+        can_campaign = is_current and is_population_phase and not resolved
+        can_vote = is_current and is_population_phase and campaign_done and not resolved
+        can_complete = is_current and is_population_phase and vote_done and not resolved
 
         # 字段级错误/禁用原因
         field_errors = {}
@@ -216,6 +223,20 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
             "candidates": candidates,
             "my_votes": my_votes,
             "my_campaigns": my_campaigns,
+            "current_step": current_step,
+            "resolved": resolved,
+            "office_count": office_count,
+            "campaign_done": campaign_done,
+            "vote_done": vote_done,
+            "election_results": result_data.get("election_results", []) if isinstance(result_data, dict) else [],
+            "faction_influence_before": (
+                result_data.get("faction_influence_before", _faction_influence_rows(state))
+                if isinstance(result_data, dict) else _faction_influence_rows(state)
+            ),
+            "faction_influence_after": (
+                result_data.get("faction_influence_after", _faction_influence_rows(state))
+                if isinstance(result_data, dict) else _faction_influence_rows(state)
+            ),
             "is_current_player": is_current,
             "current_phase_id": current_phase_id,
             "can_campaign": can_campaign,
@@ -255,6 +276,7 @@ def resolve_population_slice(state: GameState) -> dict:
     返回结构化选举结果，供 GUI 消费。
     """
     try:
+        influence_before = _faction_influence_rows(state)
         # 先让 AI 自动完成（如果还有未完成的玩家）
         from src.ui.processors.auto_player_processor import AutoPlayerProcessor
         from src.core.deciders.impl.auto_retirement_decider import AutoRetirementDecider
@@ -287,22 +309,23 @@ def resolve_population_slice(state: GameState) -> dict:
         if not resolve_result:
             return api_response(False, "Election resolve returned None")
 
-        # 将结果结构化
-        structured = []
-        if resolve_result.get("success") and resolve_result.get("data"):
-            for item in resolve_result.get("data", []):
-                if isinstance(item, dict):
-                    structured.append({
-                        "office": item.get("office", ""),
-                        "figure_id": item.get("figure_id", 0),
-                        "figure_name": item.get("figure_name", ""),
-                        "faction_id": item.get("faction_id", ""),
-                        "faction_name": item.get("faction_name", ""),
-                    })
+        structured = _population_election_results_from_state(state)
+        influence_after = _faction_influence_rows(state)
+        data = {
+            "election_results": structured,
+            "faction_influence_before": influence_before,
+            "faction_influence_after": influence_after,
+            "raw_result": resolve_result.get("data", {}),
+        }
 
         state.mark_phase_executed("population")
+        state.record_phase_result("population", {
+            "success": True,
+            "message": "Election resolved",
+            "data": data,
+        })
         logger.info("Population phase resolved", extra={"results": structured})
-        return api_response(True, "Election resolved", {"election_results": structured})
+        return api_response(True, "Election resolved", data)
     except Exception as e:
         logger.exception("Population resolution failed")
         return api_response(False, f"Population resolution failed: {e}", errors=[str(e)])
@@ -343,6 +366,61 @@ def _infer_current_phase_id(state: GameState) -> str:
         if not state.is_phase_executed(phase_id):
             return phase_id
     return "resolution"
+
+
+def _faction_influence_rows(state: GameState) -> List[Dict[str, Any]]:
+    rows = []
+    for faction in state.factions.values():
+        members = [m for m in state.get_living_members() if m.faction_id == faction.id]
+        rows.append({
+            "id": faction.id,
+            "name": faction.name,
+            "short_name": _faction_short_name(faction.name),
+            "total_influence": sum(m.influence for m in members),
+        })
+    return rows
+
+
+def _faction_short_name(name: str) -> str:
+    mapping = {
+        "Optimates": "Opt",
+        "Populares": "Pop",
+        "Equites": "Equ",
+    }
+    return mapping.get(name, name[:3])
+
+
+def _population_election_results_from_state(state: GameState) -> List[Dict[str, Any]]:
+    office_order = ["consul", "censor", "praetor", "quaestor", "tribune"]
+    results: List[Dict[str, Any]] = []
+    for office in office_order:
+        winners = [
+            fig for fig in state.get_living_members()
+            if getattr(fig, "office", "") == office
+        ]
+        for winner in winners:
+            faction = state.get_faction(winner.faction_id) if winner.faction_id else None
+            results.append({
+                "office": office,
+                "office_name": _office_name(office),
+                "figure_id": winner.id,
+                "figure_name": winner.get_formal_name(),
+                "faction_id": winner.faction_id,
+                "faction_name": faction.name if faction else "",
+                "faction_short_name": _faction_short_name(faction.name) if faction else "",
+            })
+    return results
+
+
+def _office_name(office: str) -> str:
+    names = {
+        "consul": "执政官",
+        "censor": "监察官",
+        "praetor": "大法官",
+        "quaestor": "财务官",
+        "tribune": "保民官",
+    }
+    return names.get(office, office)
 
 
 def _phase_definitions() -> List[Dict[str, Any]]:
