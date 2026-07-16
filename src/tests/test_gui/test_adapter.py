@@ -70,7 +70,7 @@ class TestGuiApiAdapter:
         assert not feedback["success"]
         assert feedback["feedback_type"] == "error"
 
-    def test_session_store_selects_senate_readonly_phase_without_business_execution(self):
+    def test_session_store_selects_senate_phase_without_business_execution(self):
         result = session_api.create_gui_prototype_session()
         assert result["success"]
         state = result["data"]["state"]
@@ -85,12 +85,12 @@ class TestGuiApiAdapter:
         assert feedback["success"]
         assert store.selectedPhaseId == "senate"
         assert store.selectedPhaseSummary["implemented"] is True
-        assert store.selectedPhaseSummary["interaction_mode"] == "readonly"
-        assert store.selectedPhaseSummary["actionable"] is False
+        assert store.selectedPhaseSummary["interaction_mode"] == "interactive"
         assert store.selectedPhaseSummary["handoff_task"] == "GUI-P0-02C"
         assert store.senateView["interaction_mode"] == "readonly"
-        assert store.senateView["can_create_proposal"] is False
-        assert store.senateView["can_vote"] is False
+        assert store.senateView["current_step"] == "proposal"
+        assert "proposal_options" in store.senateView
+        assert "submitted_proposals" in store.senateView
         assert store.senateView["can_resolve"] is False
         assert state.get_senate_proposals() == proposals_before
         assert state.is_phase_executed("senate") is False
@@ -152,19 +152,115 @@ class TestGuiApiAdapter:
         assert store.selectedPhaseSummary["handoff_task"] == "GUI-P0-03"
         assert store.canAdvanceMortality is False
 
-    def test_adapter_get_senate_view_exposes_readonly_dto(self):
+    def test_adapter_get_senate_view_exposes_phase5a_dto(self):
         adapter, state, players = self.setup_adapter(start_phase="senate")
         state.set_current_player(players[0])
 
         view = adapter.get_senate_view(players[0])
 
         assert view["phase_id"] == "senate"
-        assert view["interaction_mode"] == "readonly"
-        assert view["actionable"] is False
-        assert view["can_create_proposal"] is False
-        assert view["can_vote"] is False
+        assert view["interaction_mode"] == "interactive"
+        assert view["current_step"] == "proposal"
+        assert view["actionable"] is True
+        assert "proposal_options" in view
+        assert "submitted_proposals" in view
         assert view["can_resolve"] is False
         assert "faction_leaders" in view
+
+    def test_session_store_submits_senate_proposals_and_moves_to_vote_step(self):
+        result = session_api.create_gui_prototype_session(start_phase="senate")
+        state = result["data"]["state"]
+        player_id = result["data"]["human_players"][0]
+        viewer = state.get_player(player_id)
+        consul = next(fig for fig in state.get_living_members() if fig.faction_id == viewer.faction_id)
+        consul.office = "consul"
+        store = GuiSessionStore(state)
+        store.initialize(player_id)
+        option = {"type": "land", "params": {"act_type": "sale", "percent": 0.1}}
+
+        feedback = store.doSubmitSenateProposals([option])
+
+        assert feedback["success"]
+        assert len(state.get_senate_proposals()) == 1
+        assert store.senateCurrentStep == "senate_vote"
+        assert len(store.senateSubmittedProposals) == 1
+
+    def test_session_store_submits_senate_votes_and_moves_to_veto_step(self):
+        result = session_api.create_gui_prototype_session(start_phase="senate")
+        state = result["data"]["state"]
+        player_id = result["data"]["human_players"][0]
+        viewer = state.get_player(player_id)
+        consul = next(fig for fig in state.get_living_members() if fig.faction_id == viewer.faction_id)
+        consul.office = "consul"
+        store = GuiSessionStore(state)
+        store.initialize(player_id)
+        store.doSubmitSenateProposals([{"type": "land", "params": {"act_type": "sale", "percent": 0.1}}])
+
+        submitted_before_vote = list(store.senateSubmittedProposals)
+
+        feedback = store.doSubmitSenateVotes()
+
+        assert feedback["success"]
+        assert store.senateCurrentStep == "tribune_veto"
+        assert store.senateSubmittedProposals == submitted_before_vote
+        assert len(store.senateSubmittedProposals) == 1
+
+    def test_session_store_submits_senate_veto_confirmation_and_records_result(self):
+        result = session_api.create_gui_prototype_session(start_phase="senate")
+        state = result["data"]["state"]
+        player_id = result["data"]["human_players"][0]
+        viewer = state.get_player(player_id)
+        consul = next(fig for fig in state.get_living_members() if fig.faction_id == viewer.faction_id)
+        consul.office = "consul"
+        tribune = next(fig for fig in state.get_living_members() if fig.faction_id == viewer.faction_id and fig is not consul)
+        tribune.office = "tribune"
+        store = GuiSessionStore(state)
+        store.initialize(player_id)
+        store.doSubmitSenateProposals([{"type": "land", "params": {"act_type": "sale", "percent": 0.1}}])
+        store.doSubmitSenateVotes()
+
+        feedback = store.doSubmitSenateVetoes([])
+
+        assert feedback["success"]
+        result_data = state.get_phase_result("senate")
+        assert result_data is not None
+        assert (
+            result_data["data"]["passed_proposals_snapshot"]
+            or result_data["data"]["rejected_proposals_snapshot"]
+        )
+        assert store.senateCurrentStep == "results"
+        assert store.senateSubmittedProposals
+
+        advance = store.doAdvanceSenate()
+
+        assert advance["success"]
+        assert store.currentPhaseId == "combat"
+        assert store.selectedPhaseId == "combat"
+
+    def test_session_store_auto_resolves_tribune_veto_when_viewer_has_no_tribune(self):
+        result = session_api.create_gui_prototype_session(start_phase="senate")
+        state = result["data"]["state"]
+        player_id = result["data"]["human_players"][0]
+        viewer = state.get_player(player_id)
+        consul = next(fig for fig in state.get_living_members() if fig.faction_id == viewer.faction_id)
+        consul.office = "consul"
+        other = next(p for p in state.get_all_players() if p.player_id != player_id)
+        other_member = next(fig for fig in state.get_living_members() if fig.faction_id == other.faction_id)
+        other_member.office = "tribune"
+        store = GuiSessionStore(state)
+        store.initialize(player_id)
+        store.doSubmitSenateProposals([{"type": "land", "params": {"act_type": "sale", "percent": 0.1}}])
+        store.doSubmitSenateVotes()
+
+        assert store.senateCurrentStep == "tribune_veto"
+        assert store.canSubmitSenateVeto is True
+        assert store.canManuallySelectSenateVeto is False
+        feedback = store.doSubmitSenateVetoes([])
+
+        assert feedback["success"]
+        result_data = state.get_phase_result("senate")
+        assert result_data is not None
+        assert store.senateCurrentStep == "results"
 
     def test_adapter_get_forum_view_exposes_interactive_dto(self):
         adapter, state, players = self.setup_adapter(start_phase="forum")
@@ -190,6 +286,7 @@ class TestGuiApiAdapter:
         step_feedback = store.doCompleteForumStep()
         assert step_feedback["success"]
         assert store.forumCurrentStep == "market"
+        assert len(store.forumAvailableFigures) >= 3
 
         resolve_feedback = store.doResolveForum()
         assert resolve_feedback["success"]
@@ -199,6 +296,26 @@ class TestGuiApiAdapter:
         advance_feedback = store.doAdvanceForum()
         assert advance_feedback["success"]
         assert store.currentPhaseId == "population"
+
+    def test_session_store_forum_market_includes_retired_and_new_figures(self):
+        result = session_api.create_gui_prototype_session(start_phase="forum")
+        state = result["data"]["state"]
+        player_id = result["data"]["human_players"][0]
+        store = GuiSessionStore(state)
+        store.initialize(player_id)
+        retiree = next(row for row in store.forumMyFigures if not row.get("is_leader"))
+
+        retire_feedback = store.doRetireFigure(retiree["id"])
+        assert retire_feedback["success"]
+        before_market_ids = {row["id"] for row in store.forumAvailableFigures}
+        assert retiree["id"] in before_market_ids
+
+        step_feedback = store.doCompleteForumStep()
+
+        assert step_feedback["success"]
+        after_market_ids = {row["id"] for row in store.forumAvailableFigures}
+        assert retiree["id"] in after_market_ids
+        assert len(after_market_ids - before_market_ids) == 3
 
     def test_session_store_population_resolution_keeps_results_visible(self):
         result = session_api.create_gui_prototype_session(start_phase="population")

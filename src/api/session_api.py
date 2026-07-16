@@ -362,9 +362,7 @@ def _implemented_phase_ids() -> set:
 
 
 def _phase_interaction_mode(phase_id: str) -> str:
-    if phase_id == "senate":
-        return "readonly"
-    if phase_id in {"mortality", "revenue", "forum", "population"}:
+    if phase_id in {"mortality", "revenue", "forum", "population", "senate"}:
         return "interactive"
     return "placeholder"
 
@@ -479,8 +477,8 @@ def _phase_definitions() -> List[Dict[str, Any]]:
             "subtitle_key": "phase.senate.subtitle",
             "description_key": "phase.senate.description",
             "name": "元老院",
-            "subtitle": "提案、表决与国家决议",
-            "description": "元老院阶段将在 GUI-P0-02C 承接。本轮不执行提案或表决业务。",
+            "subtitle": "执政官提案 → 元老院表决 → 保民官否决",
+            "description": "执政官提案 → 元老院表决 → 保民官否决 → 法案公示与政府运作。",
             "handoff_task": "GUI-P0-02C",
         },
         {
@@ -525,7 +523,7 @@ def _build_phase_navigation(state: GameState, current_phase_id: str, viewer_play
             disabled_reason = f"{definition['handoff_task']} 后续任务承接，当前暂不可操作"
         elif interaction_mode == "readonly":
             disabled_reason_key = "phase.disabled.readonly"
-            disabled_reason = "元老院已接入只读；提案、投票与结算由 GUI-P0-02C 后续子任务承接"
+            disabled_reason = "当前不是元老院阶段或当前行动玩家，暂不可操作"
         elif not current:
             disabled_reason_key = "phase.disabled.not_current"
             disabled_reason = "该阶段不是当前阶段，暂不可操作"
@@ -577,7 +575,7 @@ def _build_phase_summary(phase_id: str, state: Optional[GameState] = None, viewe
         disabled_reason = f"{definition.get('handoff_task', '后续任务')} 承接，本轮不会改变游戏状态"
     elif interaction_mode == "readonly":
         disabled_reason_key = "phase.disabled.readonly"
-        disabled_reason = "元老院已接入只读；提案、投票与结算由 GUI-P0-02C 后续子任务承接"
+        disabled_reason = "当前不是元老院阶段或当前行动玩家，暂不可操作"
     elif not current:
         disabled_reason_key = "phase.disabled.not_current"
         disabled_reason = "该阶段不是当前阶段，暂不可操作"
@@ -614,8 +612,8 @@ def _build_phase_summary(phase_id: str, state: Optional[GameState] = None, viewe
 def _build_global_warnings(state: GameState, viewer_player_id: str) -> List[Dict[str, str]]:
     warnings: List[Dict[str, str]] = [{
         "type": "info",
-        "key": "warning.gui_p0_02c_1.readonly_senate",
-        "message": "GUI-P0-02C-1 接入元老院只读状态；收入、广场、战争、决算仍为占位。",
+        "key": "warning.gui_p0_05.senate_phase5a",
+        "message": "GUI-P0-05 已开放元老院 Phase 5A 执政官提案；表决、否决与结算按子环节逐步验收。",
     }]
     if not state.is_current_player(viewer_player_id):
         warnings.append({

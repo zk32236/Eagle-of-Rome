@@ -190,7 +190,7 @@ def test_shell_store_exposes_seven_phase_navigation_items():
     assert store.phaseNavigation[3]["implemented"] is True
     assert store.phaseNavigation[3]["actionable"] is False
     assert store.phaseNavigation[4]["implemented"] is True
-    assert store.phaseNavigation[4]["interaction_mode"] == "readonly"
+    assert store.phaseNavigation[4]["interaction_mode"] == "interactive"
     assert store.phaseNavigation[4]["actionable"] is False
 
 

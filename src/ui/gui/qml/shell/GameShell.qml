@@ -294,12 +294,61 @@ Rectangle {
                 }
             }
 
+            // Senate phase: badge "5/7" + title + description
+            ColumnLayout {
+                visible: sessionStore.selectedPhaseId === "senate"
+                anchors.fill: parent
+                spacing: 6
+
+                Rectangle {
+                    Layout.preferredWidth: senateBadgeText.implicitWidth + 24
+                    Layout.preferredHeight: 22
+                    radius: 999
+                    border.color: "#52D9AF63"
+                    border.width: 1
+
+                    gradient: Gradient {
+                        orientation: Gradient.Vertical
+                        GradientStop { position: 0.0; color: "#8B2500" }
+                        GradientStop { position: 1.0; color: "#671B07" }
+                    }
+
+                    Text {
+                        id: senateBadgeText
+                        anchors.centerIn: parent
+                        text: "5 / 7"
+                        color: theme.headerText
+                        font.pixelSize: theme.statLabelSize
+                        font.bold: true
+                    }
+                }
+
+                Text {
+                    text: "🏺 元老院阶段"
+                    color: "#681B07"
+                    font.pixelSize: 20
+                    font.bold: true
+                    font.letterSpacing: 0.3
+                }
+
+                Text {
+                    text: "执政官提案 → 元老院表决 → 保民官否决 → 法案公示与政府运作"
+                    color: "#766652"
+                    font.pixelSize: 13
+                    font.italic: true
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 980
+                }
+            }
+
             // Other phases: generic header (original stageAnnouncement style)
             ColumnLayout {
                 visible: sessionStore.selectedPhaseId !== "mortality"
                     && sessionStore.selectedPhaseId !== "revenue"
                     && sessionStore.selectedPhaseId !== "forum"
                     && sessionStore.selectedPhaseId !== "population"
+                    && sessionStore.selectedPhaseId !== "senate"
                 anchors.fill: parent
                 spacing: 6
 
@@ -617,6 +666,60 @@ Rectangle {
                     }
                 }
             }
+
+            // Senate step bar
+            Rectangle {
+                visible: sessionStore.selectedPhaseId === "senate"
+                anchors.fill: parent
+                color: "#D1FFF9EC"
+                border.color: "#85A8753B"
+                border.width: 1
+                radius: 10
+
+                Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left
+                    anchors.leftMargin: 12
+                    spacing: 7
+
+                    Row {
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        Rectangle { width: 20; height: 20; radius: 10; color: "#2EA44F"; Text { anchors.centerIn: parent; text: "✓"; color: "#FFFFFF"; font.pixelSize: theme.smallSize; font.bold: true } }
+                        Text { text: "公示"; color: "#2C1E12"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    }
+                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    Row {
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        Rectangle {
+                            width: 20; height: 20; radius: 10
+                            color: sessionStore.senateCurrentStep === "proposal" ? "#E8B84B" : "#2EA44F"
+                            Text { anchors.centerIn: parent; text: sessionStore.senateCurrentStep === "proposal" ? "1" : "✓"; color: sessionStore.senateCurrentStep === "proposal" ? "#2C1E12" : "#FFFFFF"; font.pixelSize: theme.smallSize; font.bold: true }
+                        }
+                        Text { text: "执政官提案"; color: "#2C1E12"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter; font.bold: sessionStore.senateCurrentStep === "proposal" }
+                    }
+                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    Row {
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        Rectangle {
+                            width: 20; height: 20; radius: 10
+                            color: sessionStore.senateCurrentStep === "senate_vote" ? "#E8B84B" : "#E8D5C4"
+                            Text { anchors.centerIn: parent; text: "2"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true }
+                        }
+                        Text { text: "元老表决"; color: sessionStore.senateCurrentStep === "senate_vote" ? "#2C1E12" : "#766652"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter; font.bold: sessionStore.senateCurrentStep === "senate_vote" }
+                    }
+                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    Row {
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        Rectangle { width: 20; height: 20; radius: 10; color: "#E8D5C4"; Text { anchors.centerIn: parent; text: "3"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true } }
+                        Text { text: "保民官否决"; color: "#766652"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    }
+                }
+            }
+
         }
 
         // ---- StageContentSlot: phase stage components ----
@@ -670,6 +773,7 @@ Rectangle {
                     && sessionStore.selectedPhaseId !== "revenue"
                     && sessionStore.selectedPhaseId !== "forum"
                     && sessionStore.selectedPhaseId !== "population"
+                    && sessionStore.selectedPhaseId !== "senate"
                     && sessionStore.selectedPhaseId !== "senate"
             }
         }

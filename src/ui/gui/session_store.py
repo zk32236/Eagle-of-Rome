@@ -286,6 +286,42 @@ class GuiSessionStore(QObject):
     def senatePendingContracts(self) -> List[Dict[str, Any]]:
         return self._senate_view.get("pending_contracts", [])
 
+    @Property(str, notify=senateViewChanged)
+    def senateCurrentStep(self) -> str:
+        return self._senate_view.get("current_step", "proposal")
+
+    @Property(list, notify=senateViewChanged)
+    def senateProposalOptions(self) -> List[Dict[str, Any]]:
+        return self._senate_view.get("proposal_options", [])
+
+    @Property(list, notify=senateViewChanged)
+    def senateSubmittedProposals(self) -> List[Dict[str, Any]]:
+        return self._senate_view.get("submitted_proposals", [])
+
+    @Property(list, notify=senateViewChanged)
+    def senateSeatShares(self) -> List[Dict[str, Any]]:
+        return self._senate_view.get("seat_shares", [])
+
+    @Property(bool, notify=senateViewChanged)
+    def canCreateSenateProposal(self) -> bool:
+        return self._senate_view.get("can_create_proposal", False)
+
+    @Property(bool, notify=senateViewChanged)
+    def canSubmitSenateVote(self) -> bool:
+        return self._senate_view.get("can_vote", False)
+
+    @Property(bool, notify=senateViewChanged)
+    def canSubmitSenateVeto(self) -> bool:
+        return self._senate_view.get("can_veto", False) or self._senate_view.get("can_auto_veto", False)
+
+    @Property(bool, notify=senateViewChanged)
+    def canManuallySelectSenateVeto(self) -> bool:
+        return self._senate_view.get("can_veto", False)
+
+    @Property(bool, notify=senateViewChanged)
+    def canAdvanceSenate(self) -> bool:
+        return self._senate_view.get("can_advance", False)
+
     # -----------------------------------------------------------------------
     # 收入阶段属性
     # -----------------------------------------------------------------------
@@ -577,9 +613,10 @@ class GuiSessionStore(QObject):
     @Slot(result=dict)
     def doCompleteForumStep(self) -> dict:
         if self.forumCurrentStep == "retirement":
-            self._forum_step_override = "market"
+            feedback = self._adapter.open_forum_market(self._viewer_id)
+            if feedback.get("success"):
+                self._forum_step_override = "market"
             self._refresh_forum_view()
-            feedback = self._feedback(True, "广场解雇环节完成，人才市场已开放", "success")
             self._raise_feedback(feedback)
             return feedback
         return self.doResolveForum()
@@ -609,6 +646,103 @@ class GuiSessionStore(QObject):
             self._refresh_population_view()
         self._raise_feedback(feedback)
         self.forumViewChanged.emit()
+        return feedback
+
+    def _variant_to_python(self, value):
+        if hasattr(value, "toVariant"):
+            return value.toVariant()
+        if hasattr(value, "toPython"):
+            return value.toPython()
+        return value
+
+    @Slot("QVariant", result=dict)
+    def doSubmitSenateProposals(self, proposals) -> dict:
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        payload = self._variant_to_python(proposals)
+        selected = []
+        for item in payload or []:
+            item = self._variant_to_python(item)
+            if isinstance(item, dict):
+                selected.append(item)
+        feedback = self._adapter.submit_senate_proposals(self._viewer_id, selected)
+        self._raise_feedback(feedback)
+        if feedback.get("success"):
+            self._refresh_snapshot()
+            self._refresh_senate_view()
+        self.senateViewChanged.emit()
+        return feedback
+
+    @Slot(result=dict)
+    def doSubmitSenateVotes(self) -> dict:
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        proposals = self._senate_view.get("submitted_proposals", []) or []
+        proposal_ids = [int(item.get("id")) for item in proposals if item.get("id") is not None]
+        if not proposal_ids:
+            feedback = self._feedback(False, "没有可表决的法案", "error")
+            self._raise_feedback(feedback)
+            return feedback
+        votes = [True for _ in proposal_ids]
+        feedback = self._adapter.submit_senate_votes(self._viewer_id, proposal_ids, votes)
+        self._raise_feedback(feedback)
+        if feedback.get("success"):
+            self._refresh_snapshot()
+            self._refresh_senate_view()
+        self.senateViewChanged.emit()
+        return feedback
+
+    @Slot("QVariant", result=dict)
+    def doSubmitSenateVetoes(self, proposal_ids) -> dict:
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        payload = self._variant_to_python(proposal_ids)
+        veto_ids = []
+        for item in payload or []:
+            item = self._variant_to_python(item)
+            try:
+                veto_ids.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        if self._senate_view.get("can_auto_veto", False):
+            auto_feedback = self._adapter.apply_auto_senate_vetoes()
+            self._raise_feedback(auto_feedback)
+            if not auto_feedback.get("success"):
+                self._refresh_senate_view()
+                self.senateViewChanged.emit()
+                return auto_feedback
+        elif veto_ids:
+            veto_feedback = self._adapter.submit_senate_vetoes(self._viewer_id, veto_ids)
+            self._raise_feedback(veto_feedback)
+            if not veto_feedback.get("success"):
+                self._refresh_senate_view()
+                self.senateViewChanged.emit()
+                return veto_feedback
+
+        feedback = self._adapter.resolve_senate()
+        self._raise_feedback(feedback)
+        self._refresh_snapshot()
+        self._refresh_senate_view()
+        self.senateViewChanged.emit()
+        return feedback
+
+    @Slot(result=dict)
+    def doAdvanceSenate(self) -> dict:
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        if not self.canAdvanceSenate:
+            feedback = self._feedback(False, "Senate result is not ready", "error")
+            self._raise_feedback(feedback)
+            return feedback
+        feedback = self._adapter.advance_senate(self._viewer_id)
+        self._raise_feedback(feedback)
+        if feedback.get("success"):
+            self._refresh_snapshot()
+            self._refresh_senate_view()
+            self._selected_phase_id = "combat"
+            self._selected_phase_summary = self._summary_from_phase(self._phase_by_id("combat"))
+            self.phaseChanged.emit()
+        self.senateViewChanged.emit()
         return feedback
 
     @Slot(str, result=dict)

@@ -146,6 +146,10 @@ class GuiApiAdapter:
         from src.api import forum_api
         return self.call(forum_api.retire_figure, self._state, player_id, figure_id)
 
+    def open_forum_market(self, player_id: str) -> Dict[str, Any]:
+        from src.api import forum_api
+        return self.call(forum_api.open_market, self._state, player_id)
+
     def recruit_figure(self, player_id: str, figure_id: int, amount: int) -> Dict[str, Any]:
         from src.api import forum_api
         return self.call(forum_api.recruit_figure, self._state, player_id, figure_id, amount)
@@ -219,6 +223,37 @@ class GuiApiAdapter:
             return result.get("data", {})
         logger.error(f"Senate view failed: {result.get('message')}")
         return {}
+
+    def submit_senate_proposals(self, player_id: str, proposals: List[Dict[str, Any]]) -> Dict[str, Any]:
+        from src.api import senate_api
+        return self.call(senate_api.propose_many, self._state, player_id, proposals)
+
+    def submit_senate_votes(self, player_id: str, proposal_ids: List[int], votes: List[bool]) -> Dict[str, Any]:
+        from src.api import senate_api
+        return self.call(senate_api.vote, self._state, player_id, proposal_ids, votes)
+
+    def submit_senate_vetoes(self, player_id: str, proposal_ids: List[int]) -> Dict[str, Any]:
+        from src.api import senate_api
+        return self.call(senate_api.veto, self._state, player_id, proposal_ids)
+
+    def apply_auto_senate_vetoes(self) -> Dict[str, Any]:
+        from src.api import senate_api
+        return self.call(senate_api.apply_auto_tribune_vetoes, self._state)
+
+    def resolve_senate(self) -> Dict[str, Any]:
+        from src.api import senate_api
+        feedback = self.call(senate_api.resolve_senate, self._state)
+        if feedback.get("success"):
+            self._state.record_phase_result("senate", {
+                "success": True,
+                "message": feedback.get("message", ""),
+                "data": feedback.get("data", {}) or {},
+            })
+        return feedback
+
+    def advance_senate(self, player_id: str) -> Dict[str, Any]:
+        from src.api import senate_api
+        return self.call(senate_api.advance_senate_phase, self._state, player_id)
 
     def get_global_query_result(self, viewer_id: str, query_id: str) -> Dict[str, Any]:
         from src.api import gui_query_api

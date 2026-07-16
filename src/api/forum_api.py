@@ -9,7 +9,7 @@ from src.core.i18n import i18n
 from src.core.entities.contract import ContractType, ContractStatus
 from src.core.entities.war import WarStatus
 from src.core.service.land_trading_service import LandTradingService
-from src.core.entities.figure import ClassTier
+from src.core.entities.figure import ClassTier, Figure
 
 
 NEXT_PHASE_ID = "population"
@@ -29,7 +29,7 @@ def get_forum_view(state: GameState, viewer_player_id: str) -> dict:
         pending = state.get_forum_pending()
         has_market_actions = any(
             pending.get(key)
-            for key in ("recruitment_bids", "contract_bids", "land_purchases", "triumph_votes")
+            for key in ("market_opened", "recruitment_bids", "contract_bids", "land_purchases", "triumph_votes")
         )
 
         if state.is_phase_executed("forum") or result:
@@ -130,6 +130,54 @@ def retire_figure(state: GameState, player_id: str, figure_id: int) -> dict:
     state.log_event(f"人物被淘汰: {figure.get_formal_name()}", level=logging.INFO,
                     extra={"figure_id": figure.id})
     return api_response(True, message, data={"figure_id": figure_id})
+
+
+
+def open_market(state: GameState, player_id: str) -> dict:
+    """Open the forum market and generate the turn's new figures once."""
+    ok, resp = _check_player_permission(state, player_id)
+    if not ok:
+        return resp
+
+    pending = state.get_forum_pending()
+    if pending.get("market_opened"):
+        return api_response(True, "Forum market already open", data={"generated_figures": []})
+
+    generated = _generate_market_figures(state)
+    state.add_forum_action("market_opened", True)
+    if generated:
+        state.log_event(
+            f"Forum market opened: generated {len(generated)} figures",
+            level=logging.INFO,
+            extra={"figure_ids": [fig.id for fig in generated]},
+        )
+    return api_response(
+        True,
+        "Forum market opened",
+        data={"generated_figures": [_available_figure_row(fig) for fig in generated]},
+    )
+
+
+def _generate_market_figures(state: GameState) -> List[Figure]:
+    new_figures: List[Figure] = []
+    forum_rules = state.config.get("forum_rules", {})
+    count = int(forum_rules.get("new_figures_count", 3) or 3)
+    probs = forum_rules.get("class_probabilities", {})
+    nobile_prob = float(probs.get("nobile", 0.1) or 0.1)
+    eques_prob = float(probs.get("eques", 0.25) or 0.25)
+
+    for _ in range(max(0, count)):
+        tier_roll = random.random()
+        if tier_roll < nobile_prob:
+            fig = Figure.create_nobile(state.allocate_id(), None, age=random.randint(30, 50))
+        elif tier_roll < nobile_prob + eques_prob:
+            fig = Figure.create_eques(state.allocate_id(), None, age=random.randint(25, 40))
+        else:
+            fig = Figure.create_plebeian(state.allocate_id(), None, age=random.randint(20, 35))
+        state.add_member(fig)
+        state.curia.add_figure(fig)
+        new_figures.append(fig)
+    return new_figures
 
 
 def recruit_figure(state: GameState, player_id: str, figure_id: int, amount: int) -> dict:
@@ -711,23 +759,24 @@ def _my_figure_rows(state: GameState, faction_id: Optional[str]) -> List[Dict[st
     return rows
 
 
+def _available_figure_row(figure: Figure) -> Dict[str, Any]:
+    return {
+        "id": figure.id,
+        "name": _figure_name(figure),
+        "martial": getattr(figure, "martial", 0),
+        "intellect": getattr(figure, "intellect", 0),
+        "charisma": getattr(figure, "charisma", 0),
+        "zeal": getattr(figure, "zeal", 0),
+        "influence": getattr(figure, "influence", 0),
+        "wealth": getattr(figure, "wealth", 0),
+        "class_tier": _tier_value(figure.class_tier),
+        "class_label": _tier_label(figure.class_tier),
+        "cost": max(10, getattr(figure, "influence", 0)),
+    }
+
+
 def _available_figure_rows(state: GameState) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    for figure in state.curia.get_all_available():
-        rows.append({
-            "id": figure.id,
-            "name": _figure_name(figure),
-            "martial": getattr(figure, "martial", 0),
-            "intellect": getattr(figure, "intellect", 0),
-            "charisma": getattr(figure, "charisma", 0),
-            "zeal": getattr(figure, "zeal", 0),
-            "influence": getattr(figure, "influence", 0),
-            "wealth": getattr(figure, "wealth", 0),
-            "class_tier": _tier_value(figure.class_tier),
-            "class_label": _tier_label(figure.class_tier),
-            "cost": max(10, getattr(figure, "influence", 0)),
-        })
-    return rows
+    return [_available_figure_row(figure) for figure in state.curia.get_all_available()]
 
 
 def _pending_contract_rows(state: GameState) -> List[Dict[str, Any]]:

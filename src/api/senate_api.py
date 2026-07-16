@@ -5,11 +5,13 @@
 """
 
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from src.api import api_response
 from src.core.deciders.impl.auto_war_takeover_decider import AutoWarTakeoverDecider
 from src.core.deciders.senate_vote_decider import SenateVoteDecider
+from src.core.deciders.impl.auto_tribune_veto_decider import AutoTribuneVetoDecider
+from src.core.deciders.tribune_veto_decider import TribuneVetoDecider
 from src.core.entities.figure import Figure
 from src.core.game_state import GameState
 from src.core.systems.political_system import PoliticalSystem
@@ -34,6 +36,191 @@ def get_senate_initial_info(state: GameState) -> dict:
     except Exception as exc:
         return api_response(False, f"获取信息失败: {exc}", errors=[str(exc)])
 
+
+
+def _safe_name(item: Any, *attrs: str) -> str:
+    for attr in attrs:
+        value = getattr(item, attr, None)
+        if value:
+            return str(value)
+    if isinstance(item, dict):
+        for attr in attrs:
+            value = item.get(attr)
+            if value:
+                return str(value)
+    return ""
+
+
+def _proposal_label(state: GameState, proposal: Dict[str, Any]) -> str:
+    ptype = proposal.get("type", "")
+    if ptype == "war":
+        ws = state.get_war_system()
+        war = ws.get_war_by_id(proposal.get("war_id")) if ws else None
+        return f"宣战 — {_safe_name(war, 'name') or proposal.get('war_id')}（征召 {proposal.get('legions', 0)} 个军团）"
+    if ptype == "peace":
+        ws = state.get_war_system()
+        war = ws.get_war_by_id(proposal.get("war_id")) if ws else None
+        return f"停战 — {_safe_name(war, 'name') or proposal.get('war_id')}"
+    if ptype == "governor":
+        province = state.get_province(proposal.get("province_id"))
+        candidate = state.get_member(proposal.get("candidate_id"))
+        candidate_name = candidate.get_formal_name() if candidate else proposal.get("candidate_id")
+        return f"总督任命 — {_safe_name(province, 'name') or proposal.get('province_id')}：{candidate_name}"
+    if ptype == "budget":
+        contract = state.get_contract(proposal.get("contract_id"))
+        amount = proposal.get("modified_budget")
+        return f"建造合同 — {_safe_name(contract, 'name') or proposal.get('contract_id')}（预算 {amount} T）"
+    if ptype == "land":
+        if proposal.get("act_type") == "sale":
+            return "卖地法案 — 出售国家公地"
+        return "分地法案 — 分配公地给平民"
+    return ptype
+
+
+def _proposal_option(key: str, proposal_type: str, title: str, detail: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "key": key,
+        "type": proposal_type,
+        "title": title,
+        "detail": detail,
+        "params": params,
+        "selected": False,
+        "enabled": True,
+    }
+
+
+def _build_proposal_options(state: GameState, info: Dict[str, Any]) -> List[Dict[str, Any]]:
+    options: List[Dict[str, Any]] = []
+    for war in info.get("war_threats", []):
+        options.append(_proposal_option(
+            f"war:{war.get('war_id')}", "war",
+            f"宣战 — {war.get('name', war.get('war_id'))}",
+            f"征召 6 个军团；威胁 {war.get('threat_level', 0)}",
+            {"war_id": war.get("war_id"), "legions": 6},
+        ))
+    for peace in info.get("pending_peace_treaties", []):
+        options.append(_proposal_option(
+            f"peace:{peace.get('war_id')}", "peace",
+            f"停战 — {peace.get('name', peace.get('war_id'))}",
+            f"赔款 {peace.get('indemnity', 0)} T；期限 {peace.get('duration', 0)} 年",
+            {"war_id": peace.get("war_id")},
+        ))
+    politics = _political_system(state)
+    vacancies = info.get("governor_vacancies", {}) or {}
+    for governor_type, provinces in vacancies.items():
+        candidates = politics.get_eligible_governor_candidates(governor_type)
+        available = [candidate for candidate in candidates if not politics.is_governor_position_occupied(candidate.id)]
+        candidate = available[0] if available else None
+        for province in provinces:
+            if not candidate:
+                continue
+            options.append(_proposal_option(
+                f"governor:{province.get('province_id')}", "governor",
+                f"总督任命 — {province.get('province_name', province.get('province_id'))}",
+                f"候选人：{candidate.get_formal_name()}",
+                {"province_id": province.get("province_id"), "candidate_id": candidate.id},
+            ))
+    for contract in info.get("pending_contracts", []):
+        base_cost = contract.get("base_cost", 0)
+        options.append(_proposal_option(
+            f"budget:{contract.get('contract_id')}", "budget",
+            f"建造合同 — {contract.get('name', contract.get('contract_id'))}",
+            f"预算金额 {base_cost} T；预期收益 {contract.get('expected_profit', 0)} T",
+            {"contract_id": contract.get("contract_id"), "modified_budget": base_cost},
+        ))
+    public_land = state.get_national_public_land()
+    if public_land > 0:
+        options.append(_proposal_option(
+            "land:sale", "land", "卖地法案 — 出售国家公地",
+            f"出售 10% 国家公地；当前公地 {public_land} C",
+            {"act_type": "sale", "percent": 0.10},
+        ))
+        options.append(_proposal_option(
+            "land:distribution", "land", "分地法案 — 分配公地给平民",
+            f"分配 10% 国家公地；当前公地 {public_land} C",
+            {"act_type": "distribution", "percent": 0.10},
+        ))
+    return options
+
+
+def _submitted_proposal_rows(state: GameState) -> List[Dict[str, Any]]:
+    rows = []
+    for proposal in state.get_senate_proposals():
+        row = proposal.copy()
+        row["label"] = _proposal_label(state, proposal)
+        rows.append(row)
+    return rows
+
+
+def _seat_share_rows(state: GameState) -> List[Dict[str, Any]]:
+    total = sum(faction.get_senate_influence(state) for faction in state.get_active_factions())
+    rows = []
+    for faction in state.get_active_factions():
+        influence = faction.get_senate_influence(state)
+        rows.append({
+            "faction_id": faction.id,
+            "faction_name": faction.name,
+            "influence": influence,
+            "percent": int(round(influence * 100 / total)) if total else 0,
+        })
+    return rows
+
+
+def _current_tribune(state: GameState) -> Optional[Figure]:
+    for member in state.get_living_members():
+        if member.office == "tribune" and not member.is_dead:
+            return member
+    return None
+
+
+def _viewer_has_tribune(state: GameState, viewer_player_id: str) -> bool:
+    viewer = state.get_player(viewer_player_id)
+    tribune = _current_tribune(state)
+    return bool(viewer and tribune and tribune.faction_id == viewer.faction_id)
+
+
+def _passed_proposals_for_veto(state: GameState) -> List[Dict[str, Any]]:
+    politics = _political_system(state)
+    passed = []
+    for proposal in state.get_senate_proposals():
+        result = politics.calculate_vote_result(proposal)
+        if result.get("passed") and not result.get("vetoed"):
+            passed.append(proposal)
+    return passed
+
+
+def apply_auto_tribune_vetoes(
+    state: GameState,
+    veto_decider: Optional[TribuneVetoDecider] = None,
+) -> dict:
+    """Apply AI tribune veto decisions for GUI when current viewer does not own the tribune."""
+    if not state:
+        return api_response(False, "Invalid game state")
+    tribune = _current_tribune(state)
+    if not tribune:
+        return api_response(True, "No tribune is available; veto step skipped", data={"vetoed": [], "decisions": []})
+    decider = veto_decider or AutoTribuneVetoDecider()
+    politics = _political_system(state)
+    vetoed = []
+    decisions = []
+    for proposal in _passed_proposals_for_veto(state):
+        issue = politics.build_issue_from_proposal(proposal)
+        should_veto = decider.decide_veto(issue, tribune.id, state)
+        if should_veto:
+            state.record_senate_veto(proposal["id"])
+            vetoed.append(proposal["id"])
+        decisions.append({
+            "proposal_id": proposal["id"],
+            "proposal_type": proposal.get("type"),
+            "vetoed": should_veto,
+            "tribune_id": tribune.id,
+            "tribune_faction_id": tribune.faction_id,
+        })
+    return api_response(
+        True,
+        f"AI tribune veto decisions completed; vetoed {len(vetoed)} proposal(s)",
+        data={"vetoed": vetoed, "decisions": decisions},
+    )
 
 def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
     """返回 GUI 元老院只读视图，不执行提案、投票或结算业务。"""
@@ -62,6 +249,36 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         governor_vacancies = info.get("governor_vacancies", {})
         pending_contracts = info.get("pending_contracts", [])
 
+        senate_result = state.get_phase_result("senate")
+        result_data = senate_result.get("data", {}) if isinstance(senate_result, dict) else {}
+        proposals = _submitted_proposal_rows(state)
+        proposal_options = _build_proposal_options(state, info)
+        if not proposals and result_data:
+            proposals = []
+            for proposal in result_data.get("passed_proposals_snapshot", []) or []:
+                row = proposal.copy()
+                row["label"] = _proposal_label(state, proposal)
+                row["result"] = "passed"
+                proposals.append(row)
+            for proposal in result_data.get("rejected_proposals_snapshot", []) or []:
+                row = proposal.copy()
+                row["label"] = _proposal_label(state, proposal)
+                row["result"] = "rejected"
+                proposals.append(row)
+        player_votes = state.get_senate_votes_copy().get(viewer_player_id, {})
+        voted_all = bool(proposals) and all(proposal.get("id") in player_votes for proposal in proposals)
+        if result_data:
+            current_step = "results"
+        elif not proposals:
+            current_step = "proposal"
+        elif voted_all:
+            current_step = "tribune_veto"
+        else:
+            current_step = "senate_vote"
+        actionable = current_phase_id == "senate" and state.is_current_player(viewer_player_id)
+        can_create = actionable and current_step == "proposal" and len(proposal_options) > 0
+        viewer_has_tribune = _viewer_has_tribune(state, viewer_player_id)
+
         data = {
             "phase_id": "senate",
             "viewer_player_id": viewer_player_id,
@@ -69,20 +286,27 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "is_current_phase": current_phase_id == "senate",
             "is_current_player": state.is_current_player(viewer_player_id),
             "current_phase_id": current_phase_id,
-            "interaction_mode": "readonly",
-            "actionable": False,
-            "can_create_proposal": False,
-            "can_vote": False,
-            "can_resolve": False,
+            "interaction_mode": "interactive" if current_phase_id == "senate" else "readonly",
+            "current_step": current_step,
+            "actionable": actionable,
+            "can_create_proposal": can_create,
+            "can_vote": actionable and current_step == "senate_vote" and len(proposals) > 0,
+            "can_veto": actionable and current_step == "tribune_veto" and viewer_has_tribune,
+            "can_auto_veto": actionable and current_step == "tribune_veto" and not viewer_has_tribune,
+            "viewer_has_tribune": viewer_has_tribune,
+            "can_resolve": actionable and current_step == "tribune_veto",
+            "can_advance": current_step == "results",
             "summary": {
-                "title": "元老院只读状态",
-                "status": "readonly",
-                "message": "元老院已接入只读状态；提案、投票与结算由后续任务承接。",
+                "title": "元老院议事",
+                "status": current_step,
+                "message": "执政官提案 → 元老院表决 → 保民官否决 → 法案公示与政府运作",
                 "faction_leader_count": len(info.get("faction_leaders", [])),
                 "active_foreign_war_count": len(active_foreign_wars),
                 "war_threat_count": len(war_threats),
                 "pending_peace_treaty_count": len(pending_peace_treaties),
                 "pending_contract_count": len(pending_contracts),
+                "proposal_option_count": len(proposal_options),
+                "submitted_proposal_count": len(proposals),
             },
             "faction_leaders": info.get("faction_leaders", []),
             "presiding_officer": info.get("presiding_officer"),
@@ -91,16 +315,18 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "pending_peace_treaties": pending_peace_treaties,
             "governor_vacancies": governor_vacancies,
             "pending_contracts": pending_contracts,
-            "warnings": [
-                {
-                    "type": "info",
-                    "key": "senate.readonly.no_actions",
-                    "message": "当前 GUI 页面仅展示元老院公开状态，不开放政治行动。",
-                }
-            ],
-            "disabled_reason": "元老院操作将在 GUI-P0-02C 后续子任务接入。",
+            "proposal_options": proposal_options,
+            "submitted_proposals": proposals,
+            "senate_result": senate_result or {},
+            "seat_shares": _seat_share_rows(state),
+            "warnings": [{
+                "type": "info",
+                "key": "senate.phase5a",
+                "message": "当前开放 Phase 5A 执政官提案；表决、否决与结算由后续子环节接入。",
+            }],
+            "disabled_reason": "" if actionable else "当前不是元老院阶段或当前行动玩家，暂不可操作。",
         }
-        return api_response(True, "Senate readonly view refreshed", data)
+        return api_response(True, "Senate phase view refreshed", data)
     except Exception as exc:
         return api_response(False, f"获取元老院视图失败: {exc}", errors=[str(exc)])
 
@@ -122,6 +348,47 @@ def propose(state: GameState, player_id: str, proposal_type: str, bypass_turn_ch
         errors=result.get("errors", []),
     )
 
+
+
+def propose_many(state: GameState, player_id: str, proposals: List[Dict[str, Any]]) -> dict:
+    """Record a batch of GUI-selected senate proposals."""
+    if not state:
+        return api_response(False, "无效的游戏状态")
+    if not proposals:
+        return api_response(False, "未选择任何法案")
+    created = []
+    errors = []
+    for spec in proposals:
+        proposal_type = spec.get("type")
+        params = spec.get("params", {}) or {}
+        result = propose(state, player_id, proposal_type, **params)
+        if result.get("success"):
+            created.append({
+                "proposal_id": result.get("data", {}).get("proposal_id"),
+                "type": proposal_type,
+            })
+        else:
+            errors.append(result.get("message", "提案失败"))
+    if errors and not created:
+        return api_response(False, "提交法案失败", data={"created": created}, errors=errors)
+    return api_response(
+        True,
+        f"已提交 {len(created)} 项法案",
+        data={"created": created, "errors": errors},
+        errors=errors,
+    )
+
+
+def advance_senate_phase(state: GameState, player_id: str) -> dict:
+    """Mark senate complete and advance the GUI shell to combat."""
+    if not state:
+        return api_response(False, "Invalid game state")
+    if not state.is_current_player(player_id):
+        return api_response(False, "Current player mismatch")
+    if not state.get_phase_result("senate"):
+        return api_response(False, "Senate result is not ready")
+    state.mark_phase_executed("senate")
+    return api_response(True, "Advanced to combat phase", data={"next_phase_id": "combat"})
 
 def _infer_current_phase_id(state: GameState) -> str:
     for phase_id in ["mortality", "revenue", "forum", "population", "senate", "combat", "resolution"]:

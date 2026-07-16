@@ -104,6 +104,7 @@ class GameState:
             "land_purchases": [],  # 公地认购记录，每个元素为 (faction_id, amount)
             "triumph_votes": [],  # 凯旋投票记录，每个元素为 (faction_id, vote)  # vote为True/False
             "land_trades": [],  # 土地交易记录，每个元素为 (seller_id, buyer_id, land, price)
+            "market_opened": [],  # GUI/CLI market generation guard
         }
 
         # 人口阶段临时存储
@@ -667,6 +668,7 @@ class GameState:
             "land_purchases": [],
             "triumph_votes": [],
             "land_trades": [],
+            "market_opened": [],
         }
         instance._population_pending = {
             "campaigns": [],
