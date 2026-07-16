@@ -227,6 +227,11 @@ def resolve_election(state: GameState) -> dict:
 
     # 按公职分组投票
     votes_by_office = {}
+    cand_result = get_candidates(state)
+    candidates_by_office = cand_result.get("data", {}) if cand_result.get("success") else {}
+    candidate_ids_by_office = {
+        office: {c["id"] for c in candidates} for office, candidates in candidates_by_office.items()
+    }
     for player_id, office, fig_id in votes:
         votes_by_office.setdefault(office, []).append((player_id, fig_id))
 
@@ -241,6 +246,7 @@ def resolve_election(state: GameState) -> dict:
 
     results = []
     elected_figures = []
+    election_results = []
 
     election_order = ["consul", "censor", "praetor", "quaestor", "tribune"]
     for office in election_order:
@@ -249,8 +255,11 @@ def resolve_election(state: GameState) -> dict:
             continue
 
         # 计算每位候选人获得的加权票数
+        valid_candidate_ids = candidate_ids_by_office.get(office, set())
         score = {}
         for player_id, fig_id in office_votes:
+            if fig_id not in valid_candidate_ids:
+                continue
             player = state.get_player(player_id)
             if not player:
                 continue
@@ -283,6 +292,14 @@ def resolve_election(state: GameState) -> dict:
 
             faction = state.get_faction(winner.faction_id)
             faction_name = faction.name if faction else "无"
+            election_results.append({
+                "office": office,
+                "figure_id": winner.id,
+                "figure_name": winner.get_formal_name(),
+                "faction_id": winner.faction_id,
+                "faction_name": faction_name,
+                "faction_short_name": faction_name[:3] if faction_name != "无" else "",
+            })
             results.append(f"      {office.upper()}: {winner.get_formal_name()} ({faction_name})")
             state.log_event(
                 f"选举结果: {office} 当选者 {winner.name}",
@@ -298,4 +315,4 @@ def resolve_election(state: GameState) -> dict:
     else:
         message = "   📋 无有效选举结果"
 
-    return api_response(True, message, data={"elected": [f.id for f in elected_figures]})
+    return api_response(True, message, data={"elected": [f.id for f in elected_figures], "election_results": election_results})

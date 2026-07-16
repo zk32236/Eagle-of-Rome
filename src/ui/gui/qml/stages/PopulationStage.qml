@@ -9,6 +9,9 @@ Rectangle {
 
     property var offices: ["consul", "censor", "praetor", "quaestor", "tribune"]
     property var selectedVotes: ({})
+    property color actionButtonTop: "#FFF9EC"
+    property color actionButtonBottom: "#E8D5B8"
+    property color actionButtonHover: "#F4DFB8"
 
     function officeName(office) {
         var names = {
@@ -153,6 +156,7 @@ Rectangle {
             objectName: "populationCandidateTable"
             Layout.fillWidth: true
             Layout.preferredHeight: 206
+            clip: true
             color: "transparent"
 
             ColumnLayout {
@@ -173,6 +177,23 @@ Rectangle {
                     Text { text: "派系"; color: "#766652"; font.pixelSize: 11; Layout.preferredWidth: 78 }
                     Text { text: "选举结果"; color: "#766652"; font.pixelSize: 11; Layout.fillWidth: true }
                 }
+
+                Flickable {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    contentWidth: width
+                    contentHeight: candidateRows.implicitHeight
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    ScrollBar.vertical: ScrollBar {
+                        policy: ScrollBar.AsNeeded
+                    }
+
+                    ColumnLayout {
+                        id: candidateRows
+                        width: parent.width
+                        spacing: 3
 
                 Repeater {
                     model: root.offices
@@ -241,6 +262,8 @@ Rectangle {
                                 Layout.fillWidth: true
                             }
                         }
+                    }
+                }
                     }
                 }
             }
@@ -355,16 +378,42 @@ Rectangle {
                         border.color: "#D4A574"
                         border.width: 0
 
-                        Button {
+                        Rectangle {
+                            id: campaignButton
+                            property bool hovered: false
+                            property bool buttonEnabled: sessionStore.canCampaign && !campaignSubmitted()
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.leftMargin: 12
                             anchors.rightMargin: 12
                             height: 26
-                            text: campaignSubmitted() ? "↠ 庆典已完成" : "↠ 完成庆典"
-                            enabled: sessionStore.canCampaign && !campaignSubmitted()
-                            onClicked: {
+                            radius: 4
+                            opacity: buttonEnabled ? 1.0 : 0.35
+                            border.color: "#D4A574"
+                            border.width: 1
+                            gradient: Gradient {
+                                orientation: Gradient.Vertical
+                                GradientStop { position: 0.0; color: campaignButton.hovered && campaignButton.buttonEnabled ? root.actionButtonHover : root.actionButtonTop }
+                                GradientStop { position: 1.0; color: root.actionButtonBottom }
+                            }
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: campaignSubmitted() ? "⬻️ 庆典已完成" : "⬻️ 完成庆典"
+                                color: "#2C1E12"
+                                font.pixelSize: 12
+                                font.bold: true
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: campaignButton.buttonEnabled
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onEntered: campaignButton.hovered = true
+                                onExited: campaignButton.hovered = false
+                                onClicked: {
                                 var ok = true
                                 for (var i = 0; i < campaignRepeater.count; i++) {
                                     var item = campaignRepeater.itemAt(i)
@@ -379,6 +428,7 @@ Rectangle {
                                 if (!ok) {
                                     root.forceActiveFocus()
                                 }
+                            }
                             }
                         }
                     }
@@ -485,18 +535,43 @@ Rectangle {
                         Layout.preferredHeight: 44
                         color: "transparent"
 
-                        Button {
+                        Rectangle {
                             id: resolveButton
                             objectName: "populationResolveButton"
+                            property bool hovered: false
+                            property bool buttonEnabled: sessionStore.canVote && campaignSubmitted() && !sessionStore.populationResolved
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.leftMargin: 12
                             anchors.rightMargin: 12
                             height: 26
-                            text: sessionStore.populationResolved ? "↠ 投票已完成" : "↠ 完成投票"
-                            enabled: sessionStore.canVote && campaignSubmitted() && !sessionStore.populationResolved
-                            onClicked: {
+                            radius: 4
+                            opacity: buttonEnabled ? 1.0 : 0.35
+                            border.color: "#D4A574"
+                            border.width: 1
+                            gradient: Gradient {
+                                orientation: Gradient.Vertical
+                                GradientStop { position: 0.0; color: resolveButton.hovered && resolveButton.buttonEnabled ? root.actionButtonHover : root.actionButtonTop }
+                                GradientStop { position: 1.0; color: root.actionButtonBottom }
+                            }
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: sessionStore.populationResolved ? "⬻️ 投票已完成" : "⬻️ 完成投票"
+                                color: "#2C1E12"
+                                font.pixelSize: 12
+                                font.bold: true
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: resolveButton.buttonEnabled
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onEntered: resolveButton.hovered = true
+                                onExited: resolveButton.hovered = false
+                                onClicked: {
                                 var offices = root.offices
                                 for (var i = 0; i < offices.length; i++) {
                                     var office = offices[i]
@@ -506,6 +581,7 @@ Rectangle {
                                     }
                                 }
                                 sessionStore.doResolveElection()
+                            }
                             }
                         }
                     }

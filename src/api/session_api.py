@@ -187,6 +187,9 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
         candidates = cand_result.get("data", {}) if cand_result.get("success") else {}
         result = state.get_phase_result("population")
         result_data = result.get("data", {}) if isinstance(result, dict) else {}
+        resolved = bool(result) or state.is_phase_executed("population")
+        if resolved and isinstance(result_data, dict) and result_data.get("candidates"):
+            candidates = result_data["candidates"]
 
         # 当前 viewer 已投票的官职
         my_votes = {}
@@ -204,7 +207,6 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
         is_current = state.is_current_player(viewer_player_id)
         current_phase_id = _infer_current_phase_id(state)
         is_population_phase = current_phase_id == "population"
-        resolved = bool(result) or state.is_phase_executed("population")
         office_count = len([office for office, rows in candidates.items() if rows])
         campaign_done = bool(my_campaigns)
         vote_done = office_count > 0 and len(my_votes) >= office_count
@@ -212,6 +214,7 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
         can_campaign = is_current and is_population_phase and not resolved
         can_vote = is_current and is_population_phase and campaign_done and not resolved
         can_complete = is_current and is_population_phase and vote_done and not resolved
+        can_advance = resolved and _infer_current_phase_id(state) == "senate"
 
         # 字段级错误/禁用原因
         field_errors = {}
@@ -242,6 +245,7 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
             "can_campaign": can_campaign,
             "can_vote": can_vote,
             "can_complete": can_complete,
+            "can_advance": can_advance,
             "field_errors": field_errors,
         }
         return api_response(True, "Population view", data)
@@ -304,18 +308,22 @@ def resolve_population_slice(state: GameState) -> dict:
             else:
                 break
 
+        cand_result = population_api.get_candidates(state)
+        candidates_before_resolve = cand_result.get("data", {}) if cand_result.get("success") else {}
         # 结算选举
         resolve_result = population_api.resolve_election(state)
         if not resolve_result:
             return api_response(False, "Election resolve returned None")
 
-        structured = _population_election_results_from_state(state)
+        raw_result = resolve_result.get("data", {}) or {}
+        structured = raw_result.get("election_results") or _population_election_results_from_state(state)
         influence_after = _faction_influence_rows(state)
         data = {
             "election_results": structured,
+            "candidates": candidates_before_resolve,
             "faction_influence_before": influence_before,
             "faction_influence_after": influence_after,
-            "raw_result": resolve_result.get("data", {}),
+            "raw_result": raw_result,
         }
 
         state.mark_phase_executed("population")

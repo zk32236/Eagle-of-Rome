@@ -519,6 +519,12 @@ class TestGetCandidates:
         consul_ids = [c["id"] for c in result["data"]["consul"]]
         assert 1 not in consul_ids
 
+    def test_candidate_count_is_two_per_office(self, state_normal_mode):
+        """人口阶段每个官职最多提供 2 名候选人。"""
+        result = population_api.get_candidates(state_normal_mode)
+        assert result["success"] is True
+        for candidates in result["data"].values():
+            assert len(candidates) <= 2
 
 # ========== TestResolveElection ==========
 
@@ -547,6 +553,22 @@ class TestResolveElection:
         assert fig1.office == "consul"
         assert fig2.office is None
         assert fig1.name in result["message"]
+
+    def test_result_data_uses_elected_candidate_office(self, state_normal_mode):
+        """选举结果 DTO 必须来自本轮候选人与投票结果，不能从旧 office 状态反查。"""
+        fig1 = state_normal_mode.get_member(1)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        stale_holder = state_normal_mode.get_member(3)
+        stale_holder.office = "consul"
+        state_normal_mode._population_pending["votes"] = [("p1", "consul", 1)]
+
+        result = population_api.resolve_election(state_normal_mode)
+
+        assert result["success"] is True
+        election_results = result["data"]["election_results"]
+        assert election_results == [election_results[0]]
+        assert election_results[0]["office"] == "consul"
+        assert election_results[0]["figure_id"] == 1
 
     def test_vote_weighted_by_faction_influence(self, state_normal_mode):
         """按派系影响力加权计票"""

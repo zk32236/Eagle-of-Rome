@@ -221,6 +221,10 @@ class GuiSessionStore(QObject):
     def canComplete(self) -> bool:
         return self._population_view.get("can_complete", False)
 
+    @Property(bool, notify=populationViewChanged)
+    def canAdvancePopulation(self) -> bool:
+        return self._population_view.get("can_advance", False)
+
     @Property(dict, notify=mortalityViewChanged)
     def mortalityResult(self) -> Dict[str, Any]:
         return self._mortality_result
@@ -439,6 +443,24 @@ class GuiSessionStore(QObject):
         self._refresh_population_view()
         self._refresh_senate_view()
         self.phaseChanged.emit()
+        return feedback
+
+    @Slot(result=dict)
+    def doAdvancePopulation(self) -> dict:
+        """确认人口阶段结果并切换到元老院阶段视图。"""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        if not self.canAdvancePopulation:
+            feedback = self._feedback(False, "人口阶段尚未完成，无法推进", "error")
+            self._raise_feedback(feedback)
+            return feedback
+        self._refresh_snapshot()
+        self._selected_phase_id = "senate"
+        self._selected_phase_summary = self._summary_from_phase(self._phase_by_id("senate"))
+        self._refresh_senate_view()
+        self.phaseChanged.emit()
+        feedback = self._feedback(True, "进入元老院阶段", "success")
+        self._raise_feedback(feedback)
         return feedback
 
     @Slot(result=dict)

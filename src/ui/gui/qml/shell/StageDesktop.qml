@@ -25,6 +25,8 @@ Rectangle {
     objectName: "centerPanel"
     color: "transparent"
 
+    property bool compactActionSlot: false
+
     // Desktop background gradient
     Rectangle {
         anchors.fill: parent
@@ -89,9 +91,9 @@ Rectangle {
             id: stageActionSlot
             objectName: "stageActionSlot"
             Layout.fillWidth: true
-            Layout.preferredHeight: 46
+            Layout.preferredHeight: root.compactActionSlot ? 0 : 46
             color: "transparent"
-            visible: true  // H0: always visible; GameShell controls content visibility
+            visible: !root.compactActionSlot
         }
     }
 

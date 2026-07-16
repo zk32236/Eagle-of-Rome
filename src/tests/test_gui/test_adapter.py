@@ -215,6 +215,12 @@ class TestGuiApiAdapter:
         assert store.populationCurrentStep == "results"
         assert store.selectedPhaseId == "population"
         assert isinstance(store.populationElectionResults, list)
+        assert store.canAdvancePopulation is True
+
+        advance_feedback = store.doAdvancePopulation()
+        assert advance_feedback["success"]
+        assert store.currentPhaseId == "senate"
+        assert store.selectedPhaseId == "senate"
 
     def test_opc_global_queries_are_readonly_or_placeholder(self):
         result = session_api.create_gui_prototype_session()

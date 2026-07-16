@@ -135,6 +135,7 @@ Rectangle {
         anchors.rightMargin: 10  // gap C->D
         anchors.bottom: bottomQueryBar.top
         anchors.bottomMargin: 10
+        compactActionSlot: sessionStore.selectedPhaseId === "population" || sessionStore.selectedPhaseId === "forum"
 
         // ---- StageHeaderSlot: phase badge, title, and description ----
         Rectangle {
@@ -245,11 +246,60 @@ Rectangle {
                 }
             }
 
+            // Population phase: v3.25.1 title + description
+            ColumnLayout {
+                visible: sessionStore.selectedPhaseId === "population"
+                anchors.fill: parent
+                spacing: 6
+
+                Rectangle {
+                    Layout.preferredWidth: populationBadgeText.implicitWidth + 24
+                    Layout.preferredHeight: 22
+                    radius: 999
+                    border.color: "#52D9AF63"
+                    border.width: 1
+
+                    gradient: Gradient {
+                        orientation: Gradient.Vertical
+                        GradientStop { position: 0.0; color: "#8B2500" }
+                        GradientStop { position: 1.0; color: "#671B07" }
+                    }
+
+                    Text {
+                        id: populationBadgeText
+                        anchors.centerIn: parent
+                        text: "4 / 7"
+                        color: theme.headerText
+                        font.pixelSize: theme.statLabelSize
+                        font.bold: true
+                    }
+                }
+
+                Text {
+                    text: "⚖️ 人口阶段 — 选举"
+                    color: "#681B07"
+                    font.pixelSize: 20
+                    font.bold: true
+                    font.letterSpacing: 0.3
+                }
+
+                Text {
+                    text: "庆典赞助 → 投票选举 → 结果公示"
+                    color: "#766652"
+                    font.pixelSize: 13
+                    font.italic: true
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 980
+                }
+            }
+
             // Other phases: generic header (original stageAnnouncement style)
             ColumnLayout {
                 visible: sessionStore.selectedPhaseId !== "mortality"
                     && sessionStore.selectedPhaseId !== "revenue"
                     && sessionStore.selectedPhaseId !== "forum"
+                    && sessionStore.selectedPhaseId !== "population"
                 anchors.fill: parent
                 spacing: 6
 
@@ -499,6 +549,68 @@ Rectangle {
                         Text {
                             text: "市场（招募·竞标·认购·凯旋）"
                             color: sessionStore.forumCurrentStep !== "retirement" ? "#2C1E12" : "#999999"
+                            font.pixelSize: theme.bodySize
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                }
+            }
+
+            // Population step bar
+            Rectangle {
+                visible: sessionStore.selectedPhaseId === "population"
+                anchors.fill: parent
+                color: "#D1FFF9EC"
+                border.color: "#85A8753B"
+                border.width: 1
+                radius: 10
+
+                Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left
+                    anchors.leftMargin: 12
+                    spacing: 7
+
+                    Row {
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        Rectangle { width: 20; height: 20; radius: 10; color: "#2EA44F"; Text { anchors.centerIn: parent; text: "✓"; color: "#FFFFFF"; font.pixelSize: theme.smallSize; font.bold: true } }
+                        Text { text: "📢 公示区"; color: "#2C1E12"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    }
+                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    Row {
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        Rectangle {
+                            width: 20; height: 20; radius: 10
+                            color: root.populationCampaignDone ? "#2EA44F" : "#E8B84B"
+                            Text {
+                                anchors.centerIn: parent
+                                text: root.populationCampaignDone ? "✓" : "1"
+                                color: root.populationCampaignDone ? "#FFFFFF" : "#2C1E12"
+                                font.pixelSize: theme.smallSize
+                                font.bold: true
+                            }
+                        }
+                        Text {
+                            text: "🎉 庆典赞助"
+                            color: "#2C1E12"
+                            font.pixelSize: theme.bodySize
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    Row {
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        Rectangle {
+                            width: 20; height: 20; radius: 10
+                            color: root.populationCampaignDone ? "#E8B84B" : "#E8D5C4"
+                            Text { anchors.centerIn: parent; text: "2"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true }
+                        }
+                        Text {
+                            text: "🗳️ 投票选举"
+                            color: root.populationCampaignDone ? "#2C1E12" : "#999999"
                             font.pixelSize: theme.bodySize
                             anchors.verticalCenter: parent.verticalCenter
                         }
@@ -758,87 +870,11 @@ Rectangle {
                 }
             }
         }
-
-        // Forum action layer
-        Rectangle {
-            id: forumActionLayer
-            objectName: "forumActionLayer"
-            parent: centerPanel
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: 20
-            height: 34
-            color: "transparent"
-            visible: sessionStore.selectedPhaseId === "forum"
-            z: 50
-
-            Rectangle {
-                id: forumExecuteBtn
-                objectName: "forumPrimaryActionButton"
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.verticalCenter: parent.verticalCenter
-                width: sessionStore.forumResolved ? 170 : 150
-                height: 30
-                radius: 4
-
-                property bool hovered: false
-
-                layer.enabled: sessionStore.canExecuteForum || sessionStore.canAdvanceForum
-                layer.effect: DropShadow {
-                    transparentBorder: true
-                    horizontalOffset: 0
-                    verticalOffset: 3
-                    radius: 8
-                    samples: 16
-                    color: "#B0000000"
-                }
-
-                gradient: Gradient {
-                    orientation: Gradient.Vertical
-                    GradientStop {
-                        position: 0.0
-                        color: (sessionStore.canExecuteForum || sessionStore.canAdvanceForum)
-                            ? (forumExecuteBtn.hovered ? "#A33A17" : "#84250A")
-                            : "#C89A80"
-                    }
-                    GradientStop {
-                        position: 1.0
-                        color: (sessionStore.canExecuteForum || sessionStore.canAdvanceForum)
-                            ? (forumExecuteBtn.hovered ? "#7A210B" : "#671B07")
-                            : "#A97962"
-                    }
-                }
-
-                Text {
-                    anchors.centerIn: parent
-                    text: sessionStore.forumResolved
-                        ? "▶ 推进到人口阶段"
-                        : (sessionStore.forumCurrentStep === "retirement" ? "✓ 完成解雇" : "⚖ 结算广场")
-                    color: theme.headerText
-                    font.pixelSize: 13
-                    font.bold: true
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    enabled: sessionStore.canExecuteForum || sessionStore.canAdvanceForum
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onEntered: forumExecuteBtn.hovered = true
-                    onExited: forumExecuteBtn.hovered = false
-                    onClicked: {
-                        var result = sessionStore.forumResolved
-                            ? sessionStore.doAdvanceForum()
-                            : sessionStore.doCompleteForumStep()
-                        if (!result.success) {
-                            forumStage.showFeedback("error", result.message)
-                        }
-                    }
-                }
-            }
-        }
     }
+
+    readonly property bool populationCampaignDone: sessionStore.populationResolved
+        || sessionStore.populationCurrentStep !== "campaign"
+        || (sessionStore.populationCampaigns || []).length > 0
 
     // 玩家交接遮罩
     PlayerHandoffOverlay {

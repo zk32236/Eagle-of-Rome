@@ -205,6 +205,7 @@ class TestSessionApi:
         assert "can_campaign" in data
         assert "can_vote" in data
         assert "can_complete" in data
+        assert "can_advance" in data
         assert data["current_step"] in {"campaign", "vote", "results"}
         assert "resolved" in data
         assert "election_results" in data
@@ -259,7 +260,7 @@ class TestSessionApi:
 
     def test_resolve_population_slice(self):
         """结算人口阶段"""
-        result = session_api.create_gui_prototype_session()
+        result = session_api.create_gui_prototype_session(start_phase="population")
         state = result["data"]["state"]
         human_players = result["data"]["human_players"]
         for pid in human_players:
@@ -276,3 +277,14 @@ class TestSessionApi:
         assert view["success"]
         assert view["data"]["resolved"] is True
         assert view["data"]["current_step"] == "results"
+        assert view["data"]["can_advance"] is True
+        snapshot = session_api.get_session_snapshot(state, human_players[0])
+        assert snapshot["success"]
+        assert snapshot["data"]["current_phase_id"] == "senate"
+        result_candidate_ids = {
+            row["figure_id"] for row in view["data"]["election_results"]
+        }
+        visible_candidate_ids = {
+            candidate["id"] for rows in view["data"]["candidates"].values() for candidate in rows
+        }
+        assert result_candidate_ids <= visible_candidate_ids

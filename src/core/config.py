@@ -46,9 +46,11 @@ class Config:
                 "aedile": 36
             },
             "candidates_per_election": {
-                "consul": 3,
-                "praetor": 3,
-                "quaestor": 3
+                "consul": 2,
+                "praetor": 2,
+                "quaestor": 2,
+                "censor": 2,
+                "tribune": 2
             },
             "voting": {
                 "finalist_count": 2,

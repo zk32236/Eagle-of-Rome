@@ -345,11 +345,8 @@ def test_forum_stage_structural_placement():
     height_diff = abs(stage.property("height") - container.property("height"))
     assert width_diff < 5
     assert height_diff < 5
-
     action_layer = root.findChild(QObject, "forumActionLayer")
-    assert action_layer is not None, "forumActionLayer not found"
-    assert action_layer.parent().objectName() == "centerPanel", \
-        f"forumActionLayer parent is '{action_layer.parent().objectName()}', expected 'centerPanel'"
+    assert action_layer is None, "ForumStage should use in-panel actions and right ContextPanel advance only"
 
 
 def test_population_stage_phase4_objects_exist():
