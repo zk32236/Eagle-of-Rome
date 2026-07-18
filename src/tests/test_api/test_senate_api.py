@@ -271,3 +271,179 @@ class TestGovernorEligibility(unittest.TestCase):
         self.assertTrue(is_governor_position_occupied(self.state, 1))
         self.assertTrue(is_governor_position_occupied(self.state, 2))
         self.assertFalse(is_governor_position_occupied(self.state, 3))
+
+
+class TestAutoSubmitProposals(unittest.TestCase):
+    """测试 auto_submit_proposals 函数"""
+
+    def setUp(self):
+        self.state = GameState.create_for_testing({})
+        self.state.turn = type('MockTurn', (), {'turn_number': 1, 'year': -264, 'leader_ids': []})()
+        self.state.mark_phase_executed("population")
+        self.state._treasury = 500
+
+        # 初始化系统
+        self.state._war_system = WarSystem(self.state)
+        self.state._war_system.load_wars_from_json("wars.json")
+        self.state._military_system = MilitarySystem(self.state)
+        self.state._naval_system = NavalSystem(self.state)
+
+        # 创建派系
+        self.faction1 = Faction(id="optimates", name="Optimates", treasury=50)
+        self.state.add_faction(self.faction1)
+
+        # 创建执政官
+        self.consul = Figure(id=1, name="执政官", faction_id="optimates", age=40)
+        self.consul.office = "consul"
+        self.consul.class_tier = ClassTier.NOBILE
+        self.consul.influence = 50
+        self.state.add_member(self.consul)
+        self.faction1.member_ids.append(1)
+
+        # 设置玩家
+        self.state._players = {
+            "player1": MagicMock(player_id="player1", faction_id="optimates", player_type="human"),
+        }
+        self.state._current_player_id = "player1"
+
+    def test_auto_submit_proposals_no_consul(self):
+        """无执政官时返回失败"""
+        # 移除执政官官职
+        for m in self.state.get_living_members():
+            m.office = None
+        result = senate_api.auto_submit_proposals(self.state)
+        self.assertFalse(result["success"])
+        self.assertIn("没有执政官", result["message"])
+
+    def test_auto_submit_proposals_empty_state(self):
+        """空状态（无战争/空缺/合同/公地）返回成功但空列表"""
+        # 使用测试配置关闭所有提议
+        self.state.config.testing.propose_war_chance = 0.0
+        self.state.config.testing.always_declare = False
+        # 同时关闭土地法案提案（默认 30% 概率）
+        self.state.config.political_rules.land_proposal.sale_chance = 0.0
+        self.state.config.political_rules.land_proposal.distribution_chance = 0.0
+        result = senate_api.auto_submit_proposals(self.state)
+        # 当没有提案生成时，如果无错误则 success=True，有 0 项提案
+        self.assertTrue(result["success"])
+        self.assertEqual(len(result["data"].get("proposals", [])), 0)
+
+    def test_auto_submit_proposals_invalid_state(self):
+        """None 状态返回失败"""
+        result = senate_api.auto_submit_proposals(None)
+        self.assertFalse(result["success"])
+
+    def test_auto_submit_proposals_war_threat(self):
+        """威胁战争：自动宣战提案"""
+        # 添加威胁战争
+        war = War(id="war_test_threat", name="测试威胁战争", war_type=WarType.FOREIGN, strength=5, naval_required=False)
+        war.status = WarStatus.THREAT
+        self.state.get_war_system()._threats.append(war)
+        # 确保必定宣战
+        self.state.config.testing.always_declare = True
+        self.state.config.testing.min_legions = 6
+        self.state.config.testing.max_legions = 6
+
+        result = senate_api.auto_submit_proposals(self.state)
+        self.assertTrue(result["success"])
+        proposals = result["data"].get("proposals", [])
+        war_proposals = [p for p in proposals if p["type"] == "war"]
+        self.assertGreaterEqual(len(war_proposals), 1)
+        self.assertEqual(war_proposals[0]["war_id"], "war_test_threat")
+        self.assertEqual(war_proposals[0]["legions"], 6)
+
+    def test_auto_submit_proposals_war_bypass_turn_check(self):
+        """确保 war 提案绕过回合检查"""
+        war = War(id="war_bypass", name="绕过检查战争", war_type=WarType.FOREIGN, strength=5, naval_required=False)
+        war.status = WarStatus.THREAT
+        self.state.get_war_system()._threats.append(war)
+        self.state.config.testing.always_declare = True
+        self.state.config.testing.min_legions = 6
+        self.state.config.testing.max_legions = 6
+
+        result = senate_api.auto_submit_proposals(self.state)
+        self.assertTrue(result["success"])
+        # 验证提案已存入 state
+        stored = self.state.get_senate_proposals()
+        self.assertGreaterEqual(len(stored), 1)
+        self.assertEqual(stored[0]["type"], "war")
+
+    def test_auto_submit_proposals_peace_treaty(self):
+        """待决停战：自动和平提案"""
+        ws = self.state.get_war_system()
+        war = War(id="peace_test", name="停战测试战争", war_type=WarType.FOREIGN, strength=5)
+        war.status = WarStatus.TRUCE
+        treaty = {"indemnity": 100, "duration": 3, "status": "pending"}
+        war.set_peace_treaty(treaty)
+        ws._truce_wars.append(war)
+
+        result = senate_api.auto_submit_proposals(self.state)
+        self.assertTrue(result["success"])
+        proposals = result["data"].get("proposals", [])
+        peace_proposals = [p for p in proposals if p["type"] == "peace"]
+        self.assertGreaterEqual(len(peace_proposals), 1)
+        self.assertEqual(peace_proposals[0]["war_id"], "peace_test")
+
+    def test_auto_submit_proposals_returns_valid_structure(self):
+        """返回值结构符合 api_response 规范"""
+        result = senate_api.auto_submit_proposals(self.state)
+        self.assertIn("success", result)
+        self.assertIn("message", result)
+        self.assertIn("data", result)
+        self.assertIn("errors", result)
+        self.assertIn("proposals", result["data"])
+
+    def test_auto_submit_proposals_custom_deciders(self):
+        """传入自定义决策器"""
+        from src.core.deciders.impl.auto_budget_decider import AutoBudgetDecider
+        from src.core.deciders.impl.auto_land_proposal_decider import AutoLandProposalDecider
+
+        budget = AutoBudgetDecider()
+        land = [AutoLandProposalDecider("populares", "distribution")]
+        result = senate_api.auto_submit_proposals(
+            self.state, budget_decider=budget, land_proposal_deciders=land
+        )
+        self.assertIn("success", result)
+
+    def test_auto_submit_proposals_all_types(self):
+        """综合场景：所有 5 种提案类型"""
+        ws = self.state.get_war_system()
+
+        # 宣战：添加威胁战争
+        war1 = War(id="w1", name="威胁战争W1", war_type=WarType.FOREIGN, strength=5, naval_required=False)
+        war1.status = WarStatus.THREAT
+        ws._threats.append(war1)
+        self.state.config.testing.always_declare = True
+        self.state.config.testing.min_legions = 6
+        self.state.config.testing.max_legions = 6
+
+        # 和平：添加停战
+        war2 = War(id="w2", name="停战战争W2", war_type=WarType.FOREIGN, strength=5)
+        war2.status = WarStatus.TRUCE
+        war2.set_peace_treaty({"indemnity": 100, "duration": 3, "status": "pending"})
+        ws._truce_wars.append(war2)
+
+        # 总督：添加行省和候选人
+        old_consul = Figure(id=5, name="前执政官", faction_id="optimates", age=60)
+        old_consul.office = "ex-consul"
+        old_consul.class_tier = ClassTier.NOBILE
+        old_consul.office_history.append(
+            type('Term', (), {'office_type': 'consul', 'end_turn': 10})()
+        )
+        self.state.add_member(old_consul)
+        self.faction1.member_ids.append(5)
+
+        province = Province(province_id=10, name="西西里", total_land=1000, conquered=True, governor_type="proconsul")
+        self.state.add_province(province)
+
+        # 土地：设置公地（get_national_public_land 会遍历 provinces）
+        # 测试默认 state 可能已有 provinces，不依赖 land 提案
+
+        result = senate_api.auto_submit_proposals(self.state)
+        self.assertTrue(result["success"])
+        proposals = result["data"].get("proposals", [])
+        types_found = set(p["type"] for p in proposals)
+        self.assertIn("war", types_found)
+        self.assertIn("peace", types_found)
+        # 总督任命依赖候选人选举逻辑，可能因随机性跳过行省
+        # budget 和 land 依赖合同/公地数据，不强制断言

@@ -43,16 +43,16 @@ Rectangle {
         id: topBar
         objectName: "topStatusBar"
         anchors.top: parent.top
-        anchors.topMargin: 10
+        anchors.topMargin: 14
         anchors.left: parent.left
-        anchors.leftMargin: 10
+        anchors.leftMargin: 14
         anchors.right: parent.right
-        anchors.rightMargin: 10
+        anchors.rightMargin: 14
         height: 62
     }
 
     // ============================================================
-    // main-wrapper inner padding = 10px all sides
+    // main-wrapper inner padding = 14px all sides
     // Content area: y = 10(header margin) + 62(header h) + 10(padding) = 82
     // Content area left: 10(padding)
     // ============================================================
@@ -65,11 +65,11 @@ Rectangle {
         id: phaseRail
         objectName: "phaseRail"
         anchors.top: topBar.bottom
-        anchors.topMargin: 10     // main-wrapper padding top
+        anchors.topMargin: 14     // main-wrapper padding top
         anchors.left: parent.left
-        anchors.leftMargin: 10    // main-wrapper padding left
+        anchors.leftMargin: 14    // main-wrapper padding left
         anchors.bottom: bottomQueryBar.top
-        anchors.bottomMargin: 10  // main-wrapper padding bottom
+        anchors.bottomMargin: 14  // main-wrapper padding bottom
         width: 92
     }
 
@@ -81,11 +81,11 @@ Rectangle {
         id: contextPanel
         objectName: "contextPanel"
         anchors.top: topBar.bottom
-        anchors.topMargin: 10
+        anchors.topMargin: 14
         anchors.right: parent.right
-        anchors.rightMargin: 10
+        anchors.rightMargin: 14
         anchors.bottom: bottomQueryBar.top
-        anchors.bottomMargin: 10
+        anchors.bottomMargin: 14
         width: 286
     }
 
@@ -97,11 +97,11 @@ Rectangle {
         id: bottomQueryBar
         objectName: "bottomQueryBar"
         anchors.left: parent.left
-        anchors.leftMargin: 10
+        anchors.leftMargin: 14
         anchors.right: parent.right
-        anchors.rightMargin: 10
+        anchors.rightMargin: 14
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 10
+        anchors.bottomMargin: 14
         height: 62
         onQueryRequested: function(queryId) {
             var result = sessionStore.doGlobalQuery(queryId)
@@ -128,13 +128,13 @@ Rectangle {
         id: centerPanel
         objectName: "centerPanel"
         anchors.top: topBar.bottom
-        anchors.topMargin: 10
+        anchors.topMargin: 14
         anchors.left: phaseRail.right
-        anchors.leftMargin: 10   // gap B->C
+        anchors.leftMargin: 14   // gap B->C
         anchors.right: contextPanel.left
-        anchors.rightMargin: 10  // gap C->D
+        anchors.rightMargin: 14  // gap C->D
         anchors.bottom: bottomQueryBar.top
-        anchors.bottomMargin: 10
+        anchors.bottomMargin: 14
         compactActionSlot: sessionStore.selectedPhaseId === "population" || sessionStore.selectedPhaseId === "forum"
 
         // ---- StageHeaderSlot: phase badge, title, and description ----
@@ -342,6 +342,54 @@ Rectangle {
                 }
             }
 
+            // Combat phase: badge "6/7" + title + description
+            ColumnLayout {
+                visible: sessionStore.selectedPhaseId === "combat"
+                anchors.fill: parent
+                spacing: 6
+
+                Rectangle {
+                    Layout.preferredWidth: combatBadgeText.implicitWidth + 24
+                    Layout.preferredHeight: 22
+                    radius: 999
+                    border.color: "#52D9AF63"
+                    border.width: 1
+
+                    gradient: Gradient {
+                        orientation: Gradient.Vertical
+                        GradientStop { position: 0.0; color: "#8B2500" }
+                        GradientStop { position: 1.0; color: "#671B07" }
+                    }
+
+                    Text {
+                        id: combatBadgeText
+                        anchors.centerIn: parent
+                        text: "6 / 7"
+                        color: theme.headerText
+                        font.pixelSize: theme.statLabelSize
+                        font.bold: true
+                    }
+                }
+
+                Text {
+                    text: "⚔️ 战斗阶段"
+                    color: "#681B07"
+                    font.pixelSize: 20
+                    font.bold: true
+                    font.letterSpacing: 0.3
+                }
+
+                Text {
+                    text: "多场战争独立裁定。每场战争每回合仅一次进攻机会。"
+                    color: "#766652"
+                    font.pixelSize: 13
+                    font.italic: true
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 980
+                }
+            }
+
             // Other phases: generic header (original stageAnnouncement style)
             ColumnLayout {
                 visible: sessionStore.selectedPhaseId !== "mortality"
@@ -349,6 +397,7 @@ Rectangle {
                     && sessionStore.selectedPhaseId !== "forum"
                     && sessionStore.selectedPhaseId !== "population"
                     && sessionStore.selectedPhaseId !== "senate"
+                    && sessionStore.selectedPhaseId !== "combat"
                 anchors.fill: parent
                 spacing: 6
 
@@ -720,6 +769,70 @@ Rectangle {
                 }
             }
 
+            // Combat step bar
+            Rectangle {
+                visible: sessionStore.selectedPhaseId === "combat"
+                anchors.fill: parent
+                color: "#D1FFF9EC"
+                border.color: "#85A8753B"
+                border.width: 1
+                radius: 10
+
+                Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left
+                    anchors.leftMargin: 12
+                    spacing: 7
+
+                    Row {
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        Rectangle { width: 20; height: 20; radius: 10; color: "#2EA44F"; Text { anchors.centerIn: parent; text: "✓"; color: "#FFFFFF"; font.pixelSize: theme.smallSize; font.bold: true } }
+                        Text { text: "公示"; color: "#2C1E12"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    }
+                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    Row {
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        Rectangle {
+                            width: 20; height: 20; radius: 10
+                            color: sessionStore.combatCurrentStep === "select" ? "#E8B84B" : "#2EA44F"
+                            Text { anchors.centerIn: parent; text: sessionStore.combatCurrentStep === "select" ? "1" : "✓"; color: sessionStore.combatCurrentStep === "select" ? "#2C1E12" : "#FFFFFF"; font.pixelSize: theme.smallSize; font.bold: true }
+                        }
+                        Text { text: "选择战争"; color: "#2C1E12"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter; font.bold: sessionStore.combatCurrentStep === "select" }
+                    }
+                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    Row {
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        Rectangle {
+                            width: 20; height: 20; radius: 10
+                            color: sessionStore.combatCurrentStep === "action" ? "#E8B84B" : "#E8D5C4"
+                            Text { anchors.centerIn: parent; text: "2"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true }
+                        }
+                        Text { text: "进攻/防御"; color: sessionStore.combatCurrentStep === "action" ? "#2C1E12" : "#766652"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter; font.bold: sessionStore.combatCurrentStep === "action" }
+                    }
+                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    Row {
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        Rectangle {
+                            width: 20; height: 20; radius: 10
+                            color: sessionStore.combatCurrentStep === "result" ? "#E8B84B" : "#E8D5C4"
+                            Text { anchors.centerIn: parent; text: "3"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true }
+                        }
+                        Text { text: "查看战果"; color: sessionStore.combatCurrentStep === "result" ? "#2C1E12" : "#766652"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    }
+                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    Row {
+                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        Rectangle { width: 20; height: 20; radius: 10; color: "#E8D5C4"; Text { anchors.centerIn: parent; text: "4"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true } }
+                        Text { text: "推进决算"; color: "#766652"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
+                    }
+                }
+            }
+
         }
 
         // ---- StageContentSlot: phase stage components ----
@@ -765,6 +878,13 @@ Rectangle {
                 visible: sessionStore.selectedPhaseId === "forum"
             }
 
+            CombatStage {
+                id: combatStage
+                objectName: "combatStage"
+                anchors.fill: parent
+                visible: sessionStore.selectedPhaseId === "combat"
+            }
+
             LockedStagePlaceholder {
                 id: lockedPlaceholder
                 objectName: "lockedStagePlaceholder"
@@ -774,7 +894,7 @@ Rectangle {
                     && sessionStore.selectedPhaseId !== "forum"
                     && sessionStore.selectedPhaseId !== "population"
                     && sessionStore.selectedPhaseId !== "senate"
-                    && sessionStore.selectedPhaseId !== "senate"
+                    && sessionStore.selectedPhaseId !== "combat"
             }
         }
 

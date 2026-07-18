@@ -51,6 +51,7 @@ class WarSystem:
             name=f"{province.name} 起义",
             war_type=WarType.PROVINCIAL,
             strength=rebellion_strength,
+            threat_level=rebellion_strength,
             naval_required=False,
             rebellion_province_id=province.province_id,
         )

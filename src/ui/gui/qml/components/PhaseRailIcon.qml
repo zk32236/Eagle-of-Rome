@@ -38,10 +38,10 @@ Item {
         // Background gradient based on state
         gradient: Gradient {
             orientation: Gradient.Vertical
-            GradientStop { position: 0.0; color: root.state === "done" ? "#B34F8B57" : root.state === "current" ? "#EFD27D" : "transparent" }
-            GradientStop { position: 1.0; color: root.state === "done" ? "#B8375F3C" : root.state === "current" ? "#D2A144" : "transparent" }
+            GradientStop { position: 0.0; color: root.state === "done" ? "#B34F8B57" : root.state === "current" ? "#EFD27D" : "#554F8B57" }
+            GradientStop { position: 1.0; color: root.state === "done" ? "#B8375F3C" : root.state === "current" ? "#D2A144" : "#55375F3C" }
         }
-        color: root.state === "todo" ? "#0EFFFFFF" : "transparent"
+        color: "transparent"
 
         // Box shadow for current state (via outer glow rectangle)
         Rectangle {
@@ -68,7 +68,7 @@ Item {
                 color: {
                     if (root.state === "done") return "#F5EAD2"
                     if (root.state === "current") return "#2C1E12"
-                    return "#877663"
+                    return "#C5C3B3"
                 }
             }
 
@@ -80,7 +80,7 @@ Item {
                 color: {
                     if (root.state === "done") return "#F5EAD2"
                     if (root.state === "current") return "#2C1E12"
-                    return "#877663"
+                    return "#C5C3B3"
                 }
             }
         }

@@ -46,7 +46,7 @@ Rectangle {
         Rectangle {
             id: logoContainer
             height: parent.height - 12
-            Layout.preferredWidth: logoRow.implicitWidth + 28
+            Layout.preferredWidth: logoRow.implicitWidth + 60
             Layout.fillHeight: true
             color: "#0DFFFFFF"
             radius: 9
@@ -110,7 +110,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
             iconText: "🏛️"
-            statValue: sessionStore.stability !== undefined ? sessionStore.stability : "--"
+            statValue: sessionStore.stability !== undefined ? (sessionStore.stability + "%") : "--"
             statLabel: "稳定度"
         }
 
@@ -127,7 +127,7 @@ Rectangle {
         // ---- Round Info (rightmost standalone pill) ----
         Rectangle {
             id: roundInfo
-            Layout.preferredWidth: 152
+            Layout.preferredWidth: 160
             Layout.fillHeight: true
             radius: 9
             color: "#33FFFFFF"

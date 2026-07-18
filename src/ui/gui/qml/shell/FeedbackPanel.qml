@@ -7,38 +7,18 @@ import "../i18n"
 
 Rectangle {
     id: root
-    color: theme.bgSurface1
-    border.color: theme.borderNormal
-    border.width: 1
+    color: "transparent"
+    border.width: 0
 
     // 暴露方法
     function show(type, message) {
         feedbackList.append(type, message)
     }
 
-    // H0.3: EventLog compression — reduced margins and spacing for tighter layout
+    // Event log entries — compact layout matching design density
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 8
-        spacing: 4
-
-        // 标题栏 — compressed
-        RowLayout {
-            Layout.fillWidth: true
-            Text {
-                text: GuiText.feedbackLogTitle
-                color: theme.textMuted
-                font.pixelSize: 10
-                font.bold: true
-            }
-            Item { Layout.fillWidth: true }
-            AppButton {
-                text: GuiText.clearFeedback
-                type: "ghost"
-                fontSize: 9
-                onClicked: feedbackList.clear()
-            }
-        }
+        spacing: 2
 
         // 事件列表 — compressed
         ListView {
@@ -65,7 +45,7 @@ Rectangle {
 
             delegate: Rectangle {
                 width: feedbackList.width
-                height: 22
+                height: 20
                 color: "transparent"
                 RowLayout {
                     anchors.fill: parent
@@ -82,7 +62,7 @@ Rectangle {
                         color: typeColor
                         font.pixelSize: 9
                         font.bold: true
-                        Layout.preferredWidth: 48
+                        Layout.preferredWidth: 36
                     }
                     Text {
                         text: message

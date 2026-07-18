@@ -66,10 +66,10 @@ Rectangle {
             onClicked: sessionStore.selectPhase("senate")
         }
         PhaseRailIcon {
-            objectName: "phaseRailIcon_war"
+            objectName: "phaseRailIcon_combat"
             iconText: "⚔️"; label: "战斗"
-            state: sessionStore.selectedPhaseId === "war" ? "current" : (sessionStore.currentPhaseIndex > 5 ? "done" : "todo")
-            onClicked: sessionStore.selectPhase("war")
+            state: sessionStore.selectedPhaseId === "combat" ? "current" : (sessionStore.currentPhaseIndex > 5 ? "done" : "todo")
+            onClicked: sessionStore.selectPhase("combat")
         }
         PhaseRailIcon {
             objectName: "phaseRailIcon_resolution"

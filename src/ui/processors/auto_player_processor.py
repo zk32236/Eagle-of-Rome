@@ -229,3 +229,39 @@ class AutoPlayerProcessor:
 
         except Exception as e:
             logging.exception(f"市场环节 AI 决策异常: {e}")
+
+    def process_senate(self, player_id: str, faction: Faction, bypass_permission: bool = False) -> dict:
+        """自动执行元老院阶段提案生成（AI 执政官专用）。
+
+        当人类玩家不是执政官时，由 AutoPlayerProcessor 检测并调用此方法，
+        确保 AI 执政官自动提交提案。
+
+        Args:
+            player_id: 当前人类玩家 ID（用于日志上下文）
+            faction: 当前人类玩家派系
+            bypass_permission: 保留参数，接口一致性
+
+        Returns:
+            senate_api.auto_submit_proposals() 的 api_response dict
+        """
+        try:
+            from src.api import senate_api
+            result = senate_api.auto_submit_proposals(self.state)
+            if result["success"]:
+                count = len(result["data"].get("proposals", []))
+                self.state.log_event(
+                    f"AI 自动提案完成: {faction.name} 提交了 {count} 项法案",
+                    level=logging.INFO,
+                )
+            else:
+                self.state.log_event(
+                    f"AI 自动提案失败: {result['message']}",
+                    level=logging.WARNING,
+                )
+            return result
+        except Exception as e:
+            self.state.log_event(
+                f"元老院阶段 AI 决策异常: {e}",
+                level=logging.ERROR,
+            )
+            return {"success": False, "message": str(e), "data": {}, "errors": [str(e)]}

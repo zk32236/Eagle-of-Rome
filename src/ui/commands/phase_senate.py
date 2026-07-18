@@ -1151,173 +1151,26 @@ class SenateCommand(Command):
         return passed
 
     def _auto_generate_proposals(self):
-        """为AI玩家自动生成所有提案，存入 _senate_pending"""
+        """为AI玩家自动生成所有提案（委托至 senate_api.auto_submit_proposals）"""
         from src.api import senate_api
 
         consul_player_id = self._current_consul_player_id
         if not consul_player_id:
             return
 
-        # 收集成功提案的描述
-        proposal_descriptions = []
-
-        # 1. 宣战提案（战争威胁）
-        ws = self.state.get_war_system()
-        if ws:
-            threats = ws.get_threat_wars()
-            if threats:
-                propose_chance = self.state.config.get("testing.propose_war_chance", 0.7)
-                always_declare = self.state.config.get("testing.always_declare", False)
-                min_legions = self.state.config.get("testing.min_legions", 4)
-                max_legions = self.state.config.get("testing.max_legions", 8)
-
-                for war in threats:
-                    # 如果战争已有 pending 停战草案，则跳过
-                    if war.peace_treaty and war.peace_treaty.get('status') == 'pending':
-                        continue
-                    # 检查海战条件
-                    if war.naval_required:
-                        naval_system = self.state.naval_system
-                        if not naval_system or not naval_system.get_available_fleets():
-                            continue
-
-                    if always_declare or random.random() < propose_chance:
-                        legions = random.randint(min_legions, max_legions)
-                        result = senate_api.propose(
-                            self.state, consul_player_id, "war",
-                            bypass_turn_check=True,
-                            war_id=war.id,
-                            legions=legions
-                        )
-                        if result["success"]:
-                            desc = self._generate_proposal_description("war", {"war_id": war.id, "legions": legions})
-                            proposal_descriptions.append(desc)
-                        else:
-                            print(f"⚠️ 提案失败: {result['message']}", flush=True)
-                            self.state.log_event(f"AI自动宣战失败: {result['message']}", level=logging.WARNING)
-
-        # 2. 停战草案（待决停战）
-        if ws:
-            pending_peace = ws.get_truce_wars_with_pending_treaty()
-            for war in pending_peace:
-                result = senate_api.propose(
-                    self.state, consul_player_id, "peace",
-                    bypass_turn_check=True,
-                    war_id=war.id
-                )
-                if result["success"]:
-                    desc = self._generate_proposal_description("peace", {"war_id": war.id})
-                    proposal_descriptions.append(desc)
-                else:
-                    print(f"⚠️ 提案失败: {result['message']}", flush=True)
-                    self.state.log_event(f"AI自动停战提案失败: {result['message']}", level=logging.WARNING)
-
-        # 3. 总督任命（行省空缺）
-        all_provinces = [p for p in self.state.get_all_provinces() if p.conquered and p.province_id != 0]
-        proconsul_provinces = [p for p in all_provinces if p.governor_type == "proconsul"]
-        propraetor_provinces = [p for p in all_provinces if p.governor_type == "propraetor"]
-
-        def get_candidates(office_type: str):
-            cand_list = []
-            for fig in self.state.get_living_members():
-                if fig.is_absent:
-                    continue
-                if fig.office is not None and not fig.office.startswith("ex-"):
-                    continue
-                last_end = None
-                for term in fig.office_history:
-                    if term.office_type == office_type and term.end_turn is not None:
-                        if last_end is None or term.end_turn > last_end:
-                            last_end = term.end_turn
-                if last_end is not None:
-                    cand_list.append((fig, last_end))
-            cand_list.sort(key=lambda x: -x[1])
-            return [c[0] for c in cand_list]
-
-        consuls = get_candidates('consul')
-        praetors = get_candidates('praetor')
-
-        used = set()
-
-        def assign(provinces, candidates, used_set):
-            remaining = list(provinces)
-            random.shuffle(remaining)
-            assignments = []
-            for cand in candidates:
-                if cand.id in used_set:
-                    continue
-                if not remaining:
-                    break
-                chosen = random.choice(remaining)
-                remaining.remove(chosen)
-                assignments.append((chosen, cand))
-                used_set.add(cand.id)
-            return assignments
-
-        proconsul_assignments = assign(proconsul_provinces, consuls, used)
-        propraetor_assignments = assign(propraetor_provinces, praetors, used)
-
-        for province, candidate in proconsul_assignments + propraetor_assignments:
-            result = senate_api.propose(
-                self.state, consul_player_id, "governor",
-                bypass_turn_check=True,
-                province_id=province.province_id,
-                candidate_id=candidate.id
-            )
-            if result["success"]:
-                desc = self._generate_proposal_description("governor", {"province_id": province.province_id,
-                                                                        "candidate_id": candidate.id})
-                proposal_descriptions.append(desc)
-            else:
-                print(f"⚠️ 提案失败: {result['message']}", flush=True)
-                self.state.log_event(f"AI自动总督任命失败: {result['message']}", level=logging.WARNING)
-
-        # 4. 预算合同
-        pending_contracts = [c for c in self.state.contracts if c.status == ContractStatus.PENDING]
-        if pending_contracts:
-            proposals = self.budget_decider.decide_proposals(pending_contracts, self.state)
-            for contract in proposals:
-                kwargs = {"contract_id": contract.id}
-                # 仅对公共工程合同（包括舰队）进行随机预算加成
-                if contract.contract_type == ContractType.PUBLIC_WORKS:
-                    margin_range = self.state.config.get("economic_rules.public_work_budget_margin_range", [0.05, 0.20])
-                    r = random.uniform(margin_range[0], margin_range[1])
-                    modified_budget = int(contract.base_cost * (1 + r))
-                    kwargs["modified_budget"] = modified_budget
-                    self.state.log_event(
-                        f"自动预算提案加成: 合同 {contract.name} 原始预算 {contract.base_cost} 加成 {r * 100:.1f}% → {modified_budget}",
-                        level=logging.DEBUG
-                    )
-                result = senate_api.propose(
-                    self.state, consul_player_id, "budget",
-                    bypass_turn_check=True,
-                    **kwargs
-                )
-
-        # 5. 土地法案
-        for faction in self.state.factions.values():
-            for decider in self.land_proposal_deciders:
-                decider_result = decider.decide_proposal(faction.id, self.state)
-                if decider_result:
-                    act_type, percent = decider_result
-                    result = senate_api.propose(
-                        self.state, consul_player_id, "land",
-                        bypass_turn_check=True,
-                        act_type=act_type,
-                        percent=percent
-                    )
-                    if result["success"]:
-                        desc = self._generate_proposal_description("land", {"act_type": act_type, "percent": percent})
-                        proposal_descriptions.append(desc)
-                    else:
-                        print(f"⚠️ 提案失败: {result['message']}", flush=True)
-                        self.state.log_event(f"AI自动土地法案失败: {result['message']}", level=logging.WARNING)
-
-        # 打印成功提案列表
-        if proposal_descriptions:
-            print("\n✅ 执政官提案:")
-            for idx, desc in enumerate(proposal_descriptions, 1):
-                print(f"\tB{idx:02d} {desc}")
+        result = senate_api.auto_submit_proposals(
+            self.state,
+            budget_decider=self.budget_decider,
+            land_proposal_deciders=self.land_proposal_deciders,
+        )
+        if result["success"]:
+            proposals = result["data"].get("proposals", [])
+            if proposals:
+                print("\n✅ 执政官提案:")
+                for idx, prop in enumerate(proposals, 1):
+                    print(f"\tB{idx:02d} {prop['description']}")
+        else:
+            print(f"⚠️ 自动提案失败: {result['message']}", flush=True)
 
     def _prompt_player_vote(self, proposals: list, player_id: str, faction_name: str):
         proposal_map = {}

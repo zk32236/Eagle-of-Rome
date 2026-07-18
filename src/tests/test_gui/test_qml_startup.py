@@ -149,16 +149,16 @@ def test_opc_shell_exposes_twelve_bottom_query_buttons():
     bottom_bar = root.findChild(QObject, "bottomQueryBar")
     assert bottom_bar is not None
     query_ids = [
-        "game_status",
         "faction_info",
-        "war_list",
-        "legion_status",
         "figure_search",
+        "game_status",
         "faction_treasury",
         "public_land",
         "private_land",
         "contract_status",
         "province_info",
+        "war_list",
+        "legion_status",
         "fleet_status",
         "help",
     ]

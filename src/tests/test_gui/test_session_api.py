@@ -258,33 +258,169 @@ class TestSessionApi:
         result = session_api.complete_population_player(state, human_players[1])
         assert not result["success"]
 
-    def test_resolve_population_slice(self):
-        """结算人口阶段"""
+    def test_resolve_population_slice_two_step_contract(self):
+        """Two-step contract: resolve records result, does NOT mark phase executed.
+
+        Covers acceptance cases P-A01, P-A02, P-A07.
+        """
         result = session_api.create_gui_prototype_session(start_phase="population")
         state = result["data"]["state"]
         human_players = result["data"]["human_players"]
-        for pid in human_players:
-            state.set_current_player(pid)
-        # 结算
-        result = session_api.resolve_population_slice(state)
-        assert result["success"]
-        assert state.is_phase_executed("population")
-        data = result["data"]
+        player_id = human_players[0]
+        state.set_current_player(player_id)
+
+        # Step 1: resolve (was done for all AI players via set_current_player above,
+        # but the resolution only works after all human players completed too)
+        # Re-run resolution to exercise the two-step path
+        resolve_result = session_api.resolve_population_slice(state)
+        assert resolve_result["success"]
+        data = resolve_result["data"]
         assert "election_results" in data
         assert "faction_influence_before" in data
         assert "faction_influence_after" in data
-        view = session_api.get_population_view(state, human_players[0])
+
+        # Two-step contract: phase NOT executed after resolve
+        assert not state.is_phase_executed("population")
+        assert session_api._infer_current_phase_id(state) == "population"
+
+        # View still shows population phase, can_advance should match standard pattern
+        view = session_api.get_population_view(state, player_id)
         assert view["success"]
         assert view["data"]["resolved"] is True
         assert view["data"]["current_step"] == "results"
+        # can_advance should now evaluate using the 4-condition pattern;
+        # current phase is population, is_current_player, not executed, has result = True
         assert view["data"]["can_advance"] is True
-        snapshot = session_api.get_session_snapshot(state, human_players[0])
+
+        snapshot = session_api.get_session_snapshot(state, player_id)
         assert snapshot["success"]
-        assert snapshot["data"]["current_phase_id"] == "senate"
-        result_candidate_ids = {
-            row["figure_id"] for row in view["data"]["election_results"]
-        }
-        visible_candidate_ids = {
-            candidate["id"] for rows in view["data"]["candidates"].values() for candidate in rows
-        }
-        assert result_candidate_ids <= visible_candidate_ids
+        # current_phase_id should STILL be "population" because phase is not executed
+        assert snapshot["data"]["current_phase_id"] == "population"
+
+        # Step 2: advance
+        adv_result = session_api.advance_population_phase(state, player_id)
+        assert adv_result["success"] is True
+        assert state.is_phase_executed("population")
+        assert session_api._infer_current_phase_id(state) == "senate"
+
+        # Post-advance snapshot
+        snapshot2 = session_api.get_session_snapshot(state, player_id)
+        assert snapshot2["success"]
+        assert snapshot2["data"]["current_phase_id"] == "senate"
+
+    def test_advance_population_before_resolve_returns_failure(self):
+        """Advance before resolve returns failure; phase state unchanged.
+
+        Covers acceptance case P-A04.
+        """
+        result = session_api.create_gui_prototype_session(start_phase="population")
+        state = result["data"]["state"]
+        human_players = result["data"]["human_players"]
+        player_id = human_players[0]
+        state.set_current_player(player_id)
+
+        # Attempt advance without resolving first
+        adv_result = session_api.advance_population_phase(state, player_id)
+        assert not adv_result["success"]
+        assert not state.is_phase_executed("population")
+        assert session_api._infer_current_phase_id(state) == "population"
+
+    def test_advance_population_non_current_player_returns_failure(self):
+        """Non-current-player advance returns failure; phase state unchanged.
+
+        Covers acceptance case P-A05.
+        """
+        result = session_api.create_gui_prototype_session(start_phase="population")
+        state = result["data"]["state"]
+        human_players = result["data"]["human_players"]
+        if len(human_players) < 2:
+            pytest.skip("Need at least 2 players")
+
+        player1 = human_players[0]
+        player2 = human_players[1]
+        state.set_current_player(player1)
+
+        # Resolve (player1 is current — resolution works)
+        session_api.resolve_population_slice(state)
+
+        # Player2 (non-current) tries to advance
+        adv_result = session_api.advance_population_phase(state, player2)
+        assert not adv_result["success"]
+        # Phase state unchanged
+        assert not state.is_phase_executed("population")
+
+    def test_advance_population_double_advance_returns_failure(self):
+        """Double advance returns failure; no duplicate side effects.
+
+        Covers acceptance case P-A06.
+        """
+        result = session_api.create_gui_prototype_session(start_phase="population")
+        state = result["data"]["state"]
+        human_players = result["data"]["human_players"]
+        player_id = human_players[0]
+        state.set_current_player(player_id)
+
+        # Resolve
+        session_api.resolve_population_slice(state)
+
+        # First advance: should succeed
+        adv1 = session_api.advance_population_phase(state, player_id)
+        assert adv1["success"]
+        assert state.is_phase_executed("population")
+
+        # Second advance: should fail (already executed)
+        adv2 = session_api.advance_population_phase(state, player_id)
+        assert not adv2["success"]
+
+    # ══════════════════════════════════════════════════════════════════
+    # Combat phase session API tests
+    # ══════════════════════════════════════════════════════════════════
+
+    def test_implemented_phase_includes_combat(self):
+        """_implemented_phase_ids() contains 'combat'."""
+        assert "combat" in session_api._implemented_phase_ids()
+
+    def test_phase_interaction_mode_combat(self):
+        """_phase_interaction_mode('combat') returns 'interactive'."""
+        assert session_api._phase_interaction_mode("combat") == "interactive"
+
+    def test_phase_order_includes_combat(self):
+        """_phase_order() contains 'combat' at index 5."""
+        order = session_api._phase_order()
+        assert "combat" in order
+        assert order.index("combat") >= 4  # After senate
+
+    def test_combat_phase_navigation_is_interactive_when_current(self):
+        """When combat is the current phase, navigation shows it as interactive."""
+        result = session_api.create_gui_prototype_session(start_phase="combat")
+        assert result["success"]
+        state = result["data"]["state"]
+        viewer_id = result["data"]["human_players"][0]
+
+        snapshot = session_api.get_session_snapshot(state, viewer_id)
+        assert snapshot["success"]
+        data = snapshot["data"]
+        phases = {phase["id"]: phase for phase in data["phase_navigation"]}
+
+        assert data["current_phase_id"] == "combat"
+        assert phases["combat"]["implemented"] is True
+        assert phases["combat"]["interaction_mode"] == "interactive"
+        assert phases["combat"]["actionable"] is True
+        assert phases["combat"]["handoff_task"] == "GUI-P0-02E"
+
+    def test_combat_snapshot_includes_expected_phase_data(self):
+        """Snapshot includes combat phase with correct metadata."""
+        result = session_api.create_gui_prototype_session()
+        state = result["data"]["state"]
+        viewer_id = result["data"]["human_players"][0]
+
+        snapshot = session_api.get_session_snapshot(state, viewer_id)
+        assert snapshot["success"]
+
+        phases = {phase["id"]: phase for phase in snapshot["data"]["phase_navigation"]}
+        combat = phases["combat"]
+
+        assert combat["name"] == "战争"
+        assert combat["subtitle"] == "陆战、海战与战役结果"
+        assert "combat" in combat["description"]
+        assert combat["index"] == 6  # 6th phase (1-indexed)

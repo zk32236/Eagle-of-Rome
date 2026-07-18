@@ -214,7 +214,13 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
         can_campaign = is_current and is_population_phase and not resolved
         can_vote = is_current and is_population_phase and campaign_done and not resolved
         can_complete = is_current and is_population_phase and vote_done and not resolved
-        can_advance = resolved and _infer_current_phase_id(state) == "senate"
+        # Standard 4-condition pattern matching Mortality/Revenue/Forum/Senate/Combat
+        can_advance = (
+            current_phase_id == "population"
+            and state.is_current_player(viewer_player_id)
+            and not state.is_phase_executed("population")
+            and bool(state.get_phase_result("population"))
+        )
 
         # 字段级错误/禁用原因
         field_errors = {}
@@ -326,7 +332,7 @@ def resolve_population_slice(state: GameState) -> dict:
             "raw_result": raw_result,
         }
 
-        state.mark_phase_executed("population")
+        # Two-step pattern: resolve records result, does NOT mark phase executed
         state.record_phase_result("population", {
             "success": True,
             "message": "Election resolved",
@@ -337,6 +343,50 @@ def resolve_population_slice(state: GameState) -> dict:
     except Exception as e:
         logger.exception("Population resolution failed")
         return api_response(False, f"Population resolution failed: {e}", errors=[str(e)])
+
+
+# ---------------------------------------------------------------------------
+# 6. 人口阶段推进
+# ---------------------------------------------------------------------------
+
+def advance_population_phase(state: GameState, viewer_player_id: str) -> dict:
+    """Confirm population result and advance to Senate phase.
+
+    Failure semantics:
+    - If phase not yet resolved (no result) -> return failure, no state change
+    - If not current player -> return failure, no state change
+    - If already executed -> return failure, no duplicate state change
+    - If current phase is not population -> return failure
+    """
+    viewer = state.get_player(viewer_player_id)
+    if not viewer:
+        return api_response(False, "Viewer player not found")
+
+    # Guard: phase not yet executed (prevents double-advance)
+    if state.is_phase_executed("population"):
+        return api_response(False, "Population phase already executed")
+
+    # Guard: correct current phase
+    current_phase_id = _infer_current_phase_id(state)
+    if current_phase_id != "population":
+        return api_response(False, f"Current phase is {current_phase_id}, not population")
+
+    # Guard: active player check
+    if not state.is_current_player(viewer_player_id):
+        return api_response(False, "Viewer is not the active player")
+
+    # Guard: result must exist (cannot advance unresolved phase)
+    result = state.get_phase_result("population")
+    if not result:
+        return api_response(False, "Population phase has not been resolved")
+
+    # Perform the advance (single state mutation point)
+    state.mark_phase_executed("population")
+    return api_response(True, "Population phase advanced", {
+        "phase_executed": True,
+        "next_phase_id": "senate",
+        "result": result,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -358,11 +408,11 @@ def _phase_order() -> List[str]:
 
 
 def _implemented_phase_ids() -> set:
-    return {"mortality", "revenue", "forum", "population", "senate"}
+    return {"mortality", "revenue", "forum", "population", "senate", "combat"}
 
 
 def _phase_interaction_mode(phase_id: str) -> str:
-    if phase_id in {"mortality", "revenue", "forum", "population", "senate"}:
+    if phase_id in {"mortality", "revenue", "forum", "population", "senate", "combat"}:
         return "interactive"
     return "placeholder"
 

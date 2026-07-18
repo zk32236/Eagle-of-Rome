@@ -37,16 +37,16 @@ Rectangle {
     }
 
     property var queryButtons: [
-        { "id": "game_status", "icon": "📊", "label": GuiText.queryGameStatus, "status": "connected" },
         { "id": "faction_info", "icon": "📋", "label": GuiText.queryFactionInfo, "status": "readonly" },
-        { "id": "war_list", "icon": "⚔️", "label": GuiText.queryWarList, "status": "readonly" },
-        { "id": "legion_status", "icon": "🗡️", "label": GuiText.queryLegionStatus, "status": "readonly" },
         { "id": "figure_search", "icon": "👤", "label": GuiText.queryFigureSearch, "status": "placeholder" },
+        { "id": "game_status", "icon": "📊", "label": GuiText.queryGameStatus, "status": "connected" },
         { "id": "faction_treasury", "icon": "💰", "label": GuiText.queryFactionTreasury, "status": "placeholder" },
         { "id": "public_land", "icon": "🌾", "label": GuiText.queryPublicLand, "status": "placeholder" },
         { "id": "private_land", "icon": "🏡", "label": GuiText.queryPrivateLand, "status": "placeholder" },
         { "id": "contract_status", "icon": "📦", "label": GuiText.queryContractStatus, "status": "placeholder" },
         { "id": "province_info", "icon": "🏛️", "label": GuiText.queryProvinceInfo, "status": "placeholder" },
+        { "id": "war_list", "icon": "⚔️", "label": GuiText.queryWarList, "status": "readonly" },
+        { "id": "legion_status", "icon": "🗡️", "label": GuiText.queryLegionStatus, "status": "readonly" },
         { "id": "fleet_status", "icon": "⚓", "label": GuiText.queryFleetStatus, "status": "placeholder" },
         { "id": "help", "icon": "❓", "label": GuiText.queryHelp, "status": "placeholder" }
     ]

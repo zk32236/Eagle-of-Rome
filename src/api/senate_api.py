@@ -5,13 +5,18 @@
 """
 
 import logging
+import random
 from typing import Any, Dict, List, Optional
 
 from src.api import api_response
+from src.core.deciders.impl.auto_budget_decider import AutoBudgetDecider
+from src.core.deciders.impl.auto_land_proposal_decider import AutoLandProposalDecider
 from src.core.deciders.impl.auto_war_takeover_decider import AutoWarTakeoverDecider
+from src.core.deciders.land_proposal_decider import LandProposalDecider
 from src.core.deciders.senate_vote_decider import SenateVoteDecider
 from src.core.deciders.impl.auto_tribune_veto_decider import AutoTribuneVetoDecider
 from src.core.deciders.tribune_veto_decider import TribuneVetoDecider
+from src.core.entities.contract import ContractType, ContractStatus
 from src.core.entities.figure import Figure
 from src.core.game_state import GameState
 from src.core.systems.political_system import PoliticalSystem
@@ -379,12 +384,244 @@ def propose_many(state: GameState, player_id: str, proposals: List[Dict[str, Any
     )
 
 
+def auto_submit_proposals(
+    state: GameState,
+    budget_decider: Optional[AutoBudgetDecider] = None,
+    land_proposal_deciders: Optional[List[LandProposalDecider]] = None,
+) -> dict:
+    """为 AI 执政官自动生成所有提案（无控制台输出）。
+
+    Args:
+        state: 游戏状态
+        budget_decider: 预算决策器（默认 AutoBudgetDecider）
+        land_proposal_deciders: 土地法案决策器列表
+            （默认 [AutoLandProposalDecider("populares","distribution"),
+                   AutoLandProposalDecider("optimates","sale")]）
+
+    Returns:
+        api_response dict:
+            success: bool
+            message: str
+            data: {"proposals": [{"type": ..., "description": ..., ...}]}
+            errors: []
+    """
+    if not state:
+        return api_response(False, "无效的游戏状态")
+
+    # 1. 查找执政官人物
+    consul_figure = None
+    for member in state.get_living_members():
+        if member.office == "consul" and not member.is_absent:
+            consul_figure = member
+            break
+    if not consul_figure and state.turn and state.turn.leader_ids:
+        leader_id = state.turn.leader_ids[0]
+        consul_figure = state.get_member(leader_id)
+    if not consul_figure:
+        return api_response(False, "没有执政官，无法自动提交提案")
+
+    # 2. 查找执政官对应玩家
+    consul_player = state.get_player_by_faction(consul_figure.faction_id)
+    if not consul_player:
+        return api_response(False, "执政官无对应玩家")
+    consul_player_id = consul_player.player_id
+
+    # 3. 默认决策器
+    if budget_decider is None:
+        budget_decider = AutoBudgetDecider()
+    if land_proposal_deciders is None:
+        land_proposal_deciders = [
+            AutoLandProposalDecider("populares", "distribution"),
+            AutoLandProposalDecider("optimates", "sale"),
+        ]
+
+    created_proposals = []
+    errors = []
+
+    # ========== 4a. 宣战提案（战争威胁） ==========
+    ws = state.get_war_system()
+    if ws:
+        threats = ws.get_threat_wars()
+        if threats:
+            propose_chance = state.config.get("testing.propose_war_chance", 0.7)
+            always_declare = state.config.get("testing.always_declare", False)
+            min_legions = state.config.get("testing.min_legions", 4)
+            max_legions = state.config.get("testing.max_legions", 8)
+
+            for war in threats:
+                if war.peace_treaty and war.peace_treaty.get('status') == 'pending':
+                    continue
+                if war.naval_required:
+                    naval_system = state.naval_system
+                    if not naval_system or not naval_system.get_available_fleets():
+                        continue
+
+                if always_declare or random.random() < propose_chance:
+                    legions = random.randint(min_legions, max_legions)
+                    result = propose(
+                        state, consul_player_id, "war",
+                        bypass_turn_check=True,
+                        war_id=war.id,
+                        legions=legions,
+                    )
+                    if result["success"]:
+                        created_proposals.append({
+                            "type": "war",
+                            "war_id": war.id,
+                            "legions": legions,
+                            "description": f"对 {war.name} 宣战，申请征召 {legions} 个军团",
+                        })
+                    else:
+                        errors.append(f"宣战失败({war.id}): {result['message']}")
+
+    # ========== 4b. 停战草案（待决停战） ==========
+    if ws:
+        pending_peace = ws.get_truce_wars_with_pending_treaty()
+        for war in pending_peace:
+            result = propose(
+                state, consul_player_id, "peace",
+                bypass_turn_check=True,
+                war_id=war.id,
+            )
+            if result["success"]:
+                created_proposals.append({
+                    "type": "peace",
+                    "war_id": war.id,
+                    "description": f"对 {war.name} 的停战协议进行表决",
+                })
+            else:
+                errors.append(f"停战提案失败({war.id}): {result['message']}")
+
+    # ========== 4c. 总督任命（行省空缺） ==========
+    all_provinces = [p for p in state.get_all_provinces() if p.conquered and p.province_id != 0]
+    proconsul_provinces = [p for p in all_provinces if p.governor_type == "proconsul"]
+    propraetor_provinces = [p for p in all_provinces if p.governor_type == "propraetor"]
+
+    def _get_candidates(office_type: str):
+        cand_list = []
+        for fig in state.get_living_members():
+            if fig.is_absent:
+                continue
+            if fig.office is not None and not fig.office.startswith("ex-"):
+                continue
+            last_end = None
+            for term in fig.office_history:
+                if term.office_type == office_type and term.end_turn is not None:
+                    if last_end is None or term.end_turn > last_end:
+                        last_end = term.end_turn
+            if last_end is not None:
+                cand_list.append((fig, last_end))
+        cand_list.sort(key=lambda x: -x[1])
+        return [c[0] for c in cand_list]
+
+    consuls = _get_candidates('consul')
+    praetors = _get_candidates('praetor')
+    used = set()
+
+    def _assign(provinces, candidates, used_set):
+        remaining = list(provinces)
+        random.shuffle(remaining)
+        assignments = []
+        for cand in candidates:
+            if cand.id in used_set:
+                continue
+            if not remaining:
+                break
+            chosen = random.choice(remaining)
+            remaining.remove(chosen)
+            assignments.append((chosen, cand))
+            used_set.add(cand.id)
+        return assignments
+
+    proconsul_assignments = _assign(proconsul_provinces, consuls, used)
+    propraetor_assignments = _assign(propraetor_provinces, praetors, used)
+
+    for province, candidate in proconsul_assignments + propraetor_assignments:
+        result = propose(
+            state, consul_player_id, "governor",
+            bypass_turn_check=True,
+            province_id=province.province_id,
+            candidate_id=candidate.id,
+        )
+        if result["success"]:
+            created_proposals.append({
+                "type": "governor",
+                "province_id": province.province_id,
+                "candidate_id": candidate.id,
+                "description": f"任命 {candidate.get_formal_name()} 为 {province.name} 行省总督",
+            })
+        else:
+            errors.append(f"总督任命失败({province.province_id}): {result['message']}")
+
+    # ========== 4d. 预算合同 ==========
+    pending_contracts = [c for c in state.contracts if c.status == ContractStatus.PENDING]
+    if pending_contracts:
+        budget_proposals = budget_decider.decide_proposals(pending_contracts, state)
+        for contract in budget_proposals:
+            kwargs = {"contract_id": contract.id}
+            if contract.contract_type == ContractType.PUBLIC_WORKS:
+                margin_range = state.config.get("economic_rules.public_work_budget_margin_range", [0.05, 0.20])
+                r = random.uniform(margin_range[0], margin_range[1])
+                modified_budget = int(contract.base_cost * (1 + r))
+                kwargs["modified_budget"] = modified_budget
+                state.log_event(
+                    f"自动预算提案加成: 合同 {contract.name} 原始预算 {contract.base_cost} 加成 {r * 100:.1f}% → {modified_budget}",
+                    level=logging.DEBUG,
+                )
+            result = propose(state, consul_player_id, "budget", bypass_turn_check=True, **kwargs)
+            if result["success"]:
+                budget_display = kwargs.get("modified_budget", contract.base_cost)
+                created_proposals.append({
+                    "type": "budget",
+                    "contract_id": contract.id,
+                    "modified_budget": budget_display,
+                    "description": f"{contract.name} 预算 {budget_display} 塔兰特",
+                })
+            else:
+                errors.append(f"预算提案失败({contract.id}): {result['message']}")
+
+    # ========== 4e. 土地法案 ==========
+    for faction in state.factions.values():
+        for decider in land_proposal_deciders:
+            decider_result = decider.decide_proposal(faction.id, state)
+            if decider_result:
+                act_type, percent = decider_result
+                result = propose(
+                    state, consul_player_id, "land",
+                    bypass_turn_check=True,
+                    act_type=act_type,
+                    percent=percent,
+                )
+                if result["success"]:
+                    act_name = "公地出售法案" if act_type == "sale" else "公地分配法案"
+                    created_proposals.append({
+                        "type": "land",
+                        "act_type": act_type,
+                        "percent": percent,
+                        "description": f"{act_name} {percent * 100:.1f}% 国家公地",
+                    })
+                else:
+                    errors.append(f"土地法案失败({act_type}): {result['message']}")
+
+    # ========== 返回结果 ==========
+    message = f"已自动提交 {len(created_proposals)} 项提案"
+    return api_response(
+        success=bool(created_proposals) or not errors,
+        message=message,
+        data={"proposals": created_proposals},
+        errors=errors,
+    )
+
+
 def advance_senate_phase(state: GameState, player_id: str) -> dict:
     """Mark senate complete and advance the GUI shell to combat."""
     if not state:
         return api_response(False, "Invalid game state")
     if not state.is_current_player(player_id):
         return api_response(False, "Current player mismatch")
+    # Guard: prevents double-advance if phase already marked executed
+    if state.is_phase_executed("senate"):
+        return api_response(False, "Senate phase already executed")
     if not state.get_phase_result("senate"):
         return api_response(False, "Senate result is not ready")
     state.mark_phase_executed("senate")
@@ -432,6 +669,14 @@ def resolve_senate(
     if not state:
         return api_response(False, "无效的游戏状态")
     result = _political_system(state).resolve_senate(vote_decider, takeover_decider)
+    # Record phase result immediately — before any callback (e.g. _on_refresh)
+    # can read it. This eliminates the stale-state window where QML binding
+    # sees no senate result during adapter.resolve_senate().
+    state.record_phase_result("senate", {
+        "success": result.get("success", False),
+        "message": result.get("message", ""),
+        "data": result.get("data", {}) or {},
+    })
     return api_response(
         success=result.get("success", False),
         message=result.get("message", ""),

@@ -240,7 +240,66 @@ class Config:
         """
         return copy.deepcopy(self._config)
 
+    def __getattr__(self, name: str):
+        """
+        支持属性风格的嵌套读取: config.testing.always_declare
+        返回 _ConfigAttrProxy 以便继续链式访问。
+        """
+        if name.startswith('_'):
+            raise AttributeError(name)
+        return _ConfigAttrProxy(self, self._config, name)
+
+    def __setattr__(self, name: str, value: Any):
+        """
+        支持属性风格赋值:
+          - 私有属性（_ 开头）走标准 Python 属性设置
+          - 公开属性直接写入 _config 顶层，以便链式子代理处理嵌套
+        """
+        if name.startswith('_'):
+            object.__setattr__(self, name, value)
+        else:
+            self._config[name] = copy.deepcopy(value)
+
     @property
     def path(self) -> Optional[str]:
         """获取配置文件路径"""
         return self._config_path
+
+
+class _ConfigAttrProxy:
+    """配置属性代理：支持链式属性访问和赋值的辅助对象"""
+
+    def __init__(self, cfg: 'Config', data: dict, path_component: str):
+        self._cfg = cfg
+        self._data = data
+        self._path_component = path_component
+
+    def __getattr__(self, name: str):
+        if name.startswith('_'):
+            raise AttributeError(name)
+        # 在父 data 中确保路径存在（惰性创建），然后传入实际的子 dict
+        parent = self._data
+        if self._path_component not in parent:
+            parent[self._path_component] = {}
+        sub = parent[self._path_component]
+        if isinstance(sub, dict):
+            return _ConfigAttrProxy(self._cfg, sub, name)
+        raise AttributeError(name)
+
+    def __setattr__(self, name: str, value: Any):
+        if name.startswith('_'):
+            object.__setattr__(self, name, value)
+        else:
+            # 确保父路径存在
+            parent = self._data
+            if self._path_component not in parent:
+                parent[self._path_component] = {}
+            target = parent[self._path_component]
+            if isinstance(target, dict):
+                target[name] = copy.deepcopy(value)
+            else:
+                raise TypeError(f"无法设置嵌套属性: {self._path_component}.{name}")
+
+    def __repr__(self) -> str:
+        val = self._data.get(self._path_component, '<missing>')
+        return f"<ConfigAttrProxy {self._path_component}={val!r}>"

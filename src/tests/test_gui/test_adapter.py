@@ -318,6 +318,10 @@ class TestGuiApiAdapter:
         assert len(after_market_ids - before_market_ids) == 3
 
     def test_session_store_population_resolution_keeps_results_visible(self):
+        """Population resolution via two-step contract via unified dispatch.
+
+        Covers acceptance cases P-A01, P-A02, P-A03.
+        """
         result = session_api.create_gui_prototype_session(start_phase="population")
         state = result["data"]["state"]
         store = GuiSessionStore(state)
@@ -332,9 +336,14 @@ class TestGuiApiAdapter:
         assert store.populationCurrentStep == "results"
         assert store.selectedPhaseId == "population"
         assert isinstance(store.populationElectionResults, list)
+
+        # P-A01/P-A02: After resolution, population NOT executed, still on population
+        assert store.currentPhaseId == "population"
         assert store.canAdvancePopulation is True
 
-        advance_feedback = store.doAdvancePopulation()
+        # P-A03: Advance via unified dispatch -> should route to Population advance
+        assert store.canAdvanceCurrentPhase is True
+        advance_feedback = store.doAdvanceCurrentPhase()
         assert advance_feedback["success"]
         assert store.currentPhaseId == "senate"
         assert store.selectedPhaseId == "senate"
@@ -378,3 +387,125 @@ class TestGuiApiAdapter:
         assert result["title_key"] == "query.game_status.title"
         assert result["status"] == "connected"
         assert "items" in result
+
+    # ══════════════════════════════════════════════════════════════════
+    # Combat adapter tests
+    # ══════════════════════════════════════════════════════════════════
+
+    def setup_combat_state(self, adapter, state, players, with_wars=True):
+        """Helper to set up a state with combat-phase wars for testing."""
+        from src.core.entities.war import War, WarType, WarStatus
+        from src.core.entities.figure import Figure
+        from src.core.entities.entities import Faction
+
+        # Ensure war system exists
+        if not state.get_war_system():
+            from src.core.systems.war_system import WarSystem
+            state._war_system = WarSystem(state)
+        if not state.get_military_system():
+            from src.core.systems.military_system import MilitarySystem
+            state._military_system = MilitarySystem(state)
+
+        state.mark_phase_executed("mortality")
+        state.mark_phase_executed("revenue")
+        state.mark_phase_executed("forum")
+        state.mark_phase_executed("population")
+        state.mark_phase_executed("senate")
+        state.set_current_player(players[0])
+
+        if with_wars:
+            # Find or create a commander
+            faction = next(iter(state.factions.values()))
+            viewer = state.get_player(players[0])
+
+            commander = None
+            for fig in state.get_living_members():
+                if fig.faction_id == viewer.faction_id:
+                    commander = fig
+                    commander.martial = 5
+                    break
+            if not commander:
+                commander = Figure(id=999, name="TestCommander", faction_id=viewer.faction_id, age=40)
+                commander.martial = 5
+                state.add_member(commander)
+
+            war = War(
+                id="test_adapter_war",
+                name="Test Adapter War",
+                war_type=WarType.FOREIGN,
+                strength=6,
+                threat_level=2,
+                rewards={"treasury": 80},
+                disaster_numbers=[2, 3],
+            )
+            war.commander_id = commander.id
+            war.legions_assigned = 3
+            war.status = WarStatus.ACTIVE
+            state._war_system._active_wars.append(war)
+
+        return adapter, state, players
+
+    def test_get_combat_view_success(self):
+        """Combat adapter returns data dict on success."""
+        adapter, state, players = self.setup_adapter()
+        adapter, state, players = self.setup_combat_state(adapter, state, players, with_wars=True)
+
+        view = adapter.get_combat_view(players[0])
+
+        assert isinstance(view, dict)
+        assert view.get("phase_id") == "combat"
+        assert len(view.get("active_wars", [])) > 0
+        assert view.get("current_step") == "select"
+
+    def test_get_combat_view_failure(self):
+        """Combat adapter returns empty dict on API failure (None state)."""
+        adapter, state, players = self.setup_adapter()
+        # Corrupt state to cause failure
+        adapter._state = None
+
+        view = adapter.get_combat_view(players[0])
+
+        assert isinstance(view, dict)
+        assert view == {}
+
+    def test_do_combat_action_success(self):
+        """Combat adapter.call wrapping works for do_combat_action."""
+        adapter, state, players = self.setup_adapter()
+        adapter, state, players = self.setup_combat_state(adapter, state, players, with_wars=True)
+
+        # First select the war
+        from src.api import combat_api
+        select_feedback = adapter.call(combat_api.select_war, state, players[0], "test_adapter_war")
+        assert select_feedback["success"]
+
+        # Then execute attack
+        feedback = adapter.do_combat_action(players[0], "test_adapter_war", "attack")
+
+        assert feedback["success"]
+        data = feedback.get("data", {})
+        assert "result" in data
+        assert "dice" in data
+        assert "total_attack" in data
+        assert "enemy_defence" in data
+
+    def test_advance_combat_success(self):
+        """Combat adapter advance_combat returns success after all wars resolved."""
+        adapter, state, players = self.setup_adapter()
+        adapter, state, players = self.setup_combat_state(adapter, state, players, with_wars=True)
+
+        from src.api import combat_api
+
+        # Resolve the single war
+        select_feedback = adapter.call(combat_api.select_war, state, players[0], "test_adapter_war")
+        assert select_feedback["success"]
+
+        action_feedback = adapter.call(combat_api.do_combat_action, state, players[0], "test_adapter_war", "attack")
+        assert action_feedback["success"]
+
+        confirm_feedback = adapter.call(combat_api.confirm_battle_result, state, players[0])
+        assert confirm_feedback["success"]
+
+        # Now advance
+        feedback = adapter.advance_combat(players[0])
+        assert feedback["success"]
+        assert feedback["data"]["next_phase_id"] == "resolution"

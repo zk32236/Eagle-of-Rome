@@ -29,6 +29,7 @@ class GuiSessionStore(QObject):
     senateViewChanged = Signal()
     revenueViewChanged = Signal()
     forumViewChanged = Signal()
+    combatViewChanged = Signal()
     queryResultChanged = Signal()
     currentPlayerChanged = Signal()
     phaseChanged = Signal()
@@ -49,6 +50,8 @@ class GuiSessionStore(QObject):
         self._forum_view: Dict[str, Any] = {}
         self._forum_result: Dict[str, Any] = {}
         self._forum_step_override: str = ""
+        self._combat_view: Dict[str, Any] = {}
+        self._combat_result: Dict[str, Any] = {}
         self._revenue_result: Dict[str, Any] = {}
         self._mortality_result: Dict[str, Any] = {}
         self._current_player_id: str = ""
@@ -70,6 +73,7 @@ class GuiSessionStore(QObject):
         self._refresh_senate_view()
         self._refresh_revenue_view()
         self._refresh_forum_view()
+        self._refresh_combat_view()
 
     # -----------------------------------------------------------------------
     # QML 可访问属性
@@ -414,9 +418,127 @@ class GuiSessionStore(QObject):
     def forumResolved(self) -> bool:
         return self._forum_view.get("resolved", False) or bool(self._forum_result)
 
+    # -----------------------------------------------------------------------
+    # Combat stage properties
+    # -----------------------------------------------------------------------
+    @Property(dict, notify=combatViewChanged)
+    def combatView(self) -> Dict[str, Any]:
+        return self._combat_view
+
+    @Property(list, notify=combatViewChanged)
+    def combatActiveWars(self) -> List[Dict[str, Any]]:
+        return self._combat_view.get("active_wars", [])
+
+    @Property(list, notify=combatViewChanged)
+    def combatBattleResults(self) -> List[Dict[str, Any]]:
+        return self._combat_view.get("battle_results", [])
+
+    @Property(str, notify=combatViewChanged)
+    def combatCurrentStep(self) -> str:
+        return self._combat_view.get("current_step", "select")
+
+    @Property(bool, notify=combatViewChanged)
+    def canAdvanceCombat(self) -> bool:
+        return self._combat_view.get("can_advance", False)
+
+    @Property(bool, notify=combatViewChanged)
+    def allCombatResolved(self) -> bool:
+        return self._combat_view.get("all_resolved", False)
+
+    @Property(str, notify=combatViewChanged)
+    def combatSelectedWarId(self) -> str:
+        return self._combat_view.get("selected_war_id", "")
+
+    @Property(bool, notify=combatViewChanged)
+    def hasActiveWars(self) -> bool:
+        wars = self._combat_view.get("active_wars", [])
+        return len(wars) > 0
+
+    @Property(list, notify=combatViewChanged)
+    def combatResolvedWarCards(self) -> List[Dict[str, Any]]:
+        return self._combat_view.get("resolved_war_cards", [])
+
+    @Property(list, notify=combatViewChanged)
+    def combatResolvedWarIds(self) -> List[str]:
+        return self._combat_view.get("resolved_war_ids", [])
+
+    @Property(list, notify=combatViewChanged)
+    def combatAllWarCards(self) -> List[Dict[str, Any]]:
+        """Combined list of active + resolved war cards for QML Repeater."""
+        active = self._combat_view.get("active_wars", [])
+        resolved = self._combat_view.get("resolved_war_cards", [])
+        return active + resolved
+
+    @Property(dict, notify=combatViewChanged)
+    def combatResult(self) -> Dict[str, Any]:
+        return self._combat_result
+
+    @Property(dict, notify=combatViewChanged)
+    def combatBattleResultDetail(self) -> Dict[str, Any]:
+        results = self._combat_view.get("battle_results", [])
+        return results[0] if results else {}
+
+    @Property(int, notify=combatViewChanged)
+    def combatFleetCount(self) -> int:
+        return self._combat_view.get("fleet_count", 0)
+
+    @Property(int, notify=combatViewChanged)
+    def combatAvailableLegions(self) -> int:
+        return self._combat_view.get("available_legion_count", 0)
+
     @Property(dict, notify=queryResultChanged)
     def globalQueryResult(self) -> Dict[str, Any]:
         return self._global_query_result
+
+    # -----------------------------------------------------------------------
+    # 阶段推进统一分派
+    # -----------------------------------------------------------------------
+    _PHASE_ADVANCE_DISPATCH = {
+        "mortality": {
+            "can_attr": "canAdvanceMortality",
+            "slot": "doAdvanceMortality",
+            "label": "\u23ed\ufe0f 推进到收入阶段",
+        },
+        "revenue": {
+            "can_attr": "canAdvanceRevenue",
+            "slot": "doAdvanceRevenue",
+            "label": "\u23ed\ufe0f 推进到广场",
+        },
+        "forum": {
+            "can_attr": "canAdvanceForum",
+            "slot": "doAdvanceForum",
+            "label": "\u23ed\ufe0f 推进到人口阶段",
+        },
+        "population": {
+            "can_attr": "canAdvancePopulation",
+            "slot": "doAdvancePopulation",
+            "label": "\u23ed\ufe0f 进入元老院阶段",
+        },
+        "senate": {
+            "can_attr": "canAdvanceSenate",
+            "slot": "doAdvanceSenate",
+            "label": "\u23ed\ufe0f 推进到战斗阶段",
+        },
+        "combat": {
+            "can_attr": "canAdvanceCombat",
+            "slot": "doAdvanceCombat",
+            "label": "\u23ed\ufe0f 推进到决断阶段",
+        },
+    }
+
+    @Property(bool, notify=phaseChanged)
+    def canAdvanceCurrentPhase(self) -> bool:
+        dispatch = self._PHASE_ADVANCE_DISPATCH.get(self.currentPhaseId)
+        if not dispatch:
+            return False
+        return getattr(self, dispatch["can_attr"], False)
+
+    @Property(str, notify=phaseChanged)
+    def advanceCurrentPhaseText(self) -> str:
+        dispatch = self._PHASE_ADVANCE_DISPATCH.get(self.currentPhaseId)
+        if not dispatch:
+            return "\u23ed\ufe0f 推进到下一阶段"
+        return dispatch["label"]
 
     # -----------------------------------------------------------------------
     # QML Slot — 操作入口
@@ -490,12 +612,15 @@ class GuiSessionStore(QObject):
             feedback = self._feedback(False, "人口阶段尚未完成，无法推进", "error")
             self._raise_feedback(feedback)
             return feedback
-        self._refresh_snapshot()
-        self._selected_phase_id = "senate"
-        self._selected_phase_summary = self._summary_from_phase(self._phase_by_id("senate"))
-        self._refresh_senate_view()
-        self.phaseChanged.emit()
-        feedback = self._feedback(True, "进入元老院阶段", "success")
+
+        # Call adapter -> session_api.advance_population_phase()
+        feedback = self._adapter.advance_population(self._viewer_id)
+        if feedback.get("success"):
+            self._refresh_snapshot()
+            self._selected_phase_id = "senate"
+            self._selected_phase_summary = self._summary_from_phase(self._phase_by_id("senate"))
+            self._refresh_senate_view()
+            self.phaseChanged.emit()
         self._raise_feedback(feedback)
         return feedback
 
@@ -648,6 +773,87 @@ class GuiSessionStore(QObject):
         self.forumViewChanged.emit()
         return feedback
 
+    # -----------------------------------------------------------------------
+    # Combat stage Slot
+    # -----------------------------------------------------------------------
+    @Slot(str, result=dict)
+    def doSelectWar(self, war_id: str) -> dict:
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        from src.api import combat_api
+        feedback = self._adapter.call(combat_api.select_war, self._state, self._viewer_id, war_id)
+        self._raise_feedback(feedback)
+        if feedback.get("success"):
+            self._refresh_combat_view()
+        self.combatViewChanged.emit()
+        return feedback
+
+    @Slot(str, str, result=dict)
+    def doCombatAction(self, war_id: str, action: str) -> dict:
+        """Execute a combat action: 'scout', 'defence', 'attack'."""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.do_combat_action(self._viewer_id, war_id, action)
+        self._raise_feedback(feedback)
+        if feedback.get("success"):
+            self._combat_result = feedback.get("data", {}) or {}
+            self._refresh_snapshot()
+            self._refresh_combat_view()
+        self.combatViewChanged.emit()
+        return feedback
+
+    @Slot(result=dict)
+    def doConfirmBattleResult(self) -> dict:
+        """Acknowledge battle result, return to SELECT or go to ADVANCE."""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.confirm_battle_result(self._viewer_id)
+        self._raise_feedback(feedback)
+        if feedback.get("success"):
+            self._refresh_snapshot()
+            self._refresh_combat_view()
+        self.combatViewChanged.emit()
+        return feedback
+
+    @Slot(result=dict)
+    def doAdvanceCombat(self) -> dict:
+        """Advance to Resolution phase."""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        if not self.canAdvanceCombat:
+            feedback = self._feedback(False, "尚有未结算的战争", "error")
+            self._raise_feedback(feedback)
+            return feedback
+        feedback = self._adapter.advance_combat(self._viewer_id)
+        self._raise_feedback(feedback)
+        if feedback.get("success"):
+            self._selected_phase_id = "resolution"
+            self._selected_phase_summary = self._summary_from_phase(
+                self._phase_by_id("resolution")
+            )
+            self.phaseChanged.emit()
+        self.combatViewChanged.emit()
+        return feedback
+
+    @Slot(result=dict)
+    def doAdvanceCurrentPhase(self) -> dict:
+        """Unified dispatch: advance button based on currentPhaseId."""
+        phase_id = self.currentPhaseId
+        if phase_id == "mortality":
+            return self.doAdvanceMortality()
+        elif phase_id == "revenue":
+            return self.doAdvanceRevenue()
+        elif phase_id == "forum":
+            return self.doAdvanceForum()
+        elif phase_id == "population":
+            return self.doAdvancePopulation()
+        elif phase_id == "senate":
+            return self.doAdvanceSenate()
+        elif phase_id == "combat":
+            return self.doAdvanceCombat()
+        else:
+            return {"success": False, "message": f"\u672a\u77e5\u9636\u6bb5: {phase_id}", "errors": [f"unknown phase: {phase_id}"]}
+
     def _variant_to_python(self, value):
         if hasattr(value, "toVariant"):
             return value.toVariant()
@@ -742,6 +948,12 @@ class GuiSessionStore(QObject):
             self._selected_phase_id = "combat"
             self._selected_phase_summary = self._summary_from_phase(self._phase_by_id("combat"))
             self.phaseChanged.emit()
+
+            # Auto-resolve combat for AI players
+            if self.currentPlayerId != self._viewer_id:
+                self._adapter.auto_resolve_combat(self._viewer_id)
+            # Refresh combat view for all players entering combat phase
+            self._refresh_combat_view()
         self.senateViewChanged.emit()
         return feedback
 
@@ -798,6 +1010,8 @@ class GuiSessionStore(QObject):
             self._refresh_senate_view()
         elif phase_id == "forum":
             self._refresh_forum_view()
+        elif phase_id == "combat":
+            self._refresh_combat_view()
         return feedback
 
     @Slot(str, result=dict)
@@ -830,6 +1044,7 @@ class GuiSessionStore(QObject):
         self._refresh_senate_view()
         self._refresh_revenue_view()
         self._refresh_forum_view()
+        self._refresh_combat_view()
         feedback = self._feedback(True, gui_text("feedback.snapshot.refreshed"), "success")
         self._raise_feedback(feedback)
         return feedback
@@ -844,6 +1059,7 @@ class GuiSessionStore(QObject):
         self._refresh_senate_view()
         self._refresh_revenue_view()
         self._refresh_forum_view()
+        self._refresh_combat_view()
         self.currentPlayerChanged.emit()
         return True
 
@@ -863,6 +1079,7 @@ class GuiSessionStore(QObject):
         self._refresh_senate_view()
         self._refresh_revenue_view()
         self._refresh_forum_view()
+        self._refresh_combat_view()
 
     def _refresh_snapshot(self):
         self._snapshot = self._adapter.get_snapshot(self._viewer_id)
@@ -897,6 +1114,10 @@ class GuiSessionStore(QObject):
         if self._forum_step_override and self._forum_view.get("resolved"):
             self._forum_step_override = "resolution"
         self.forumViewChanged.emit()
+
+    def _refresh_combat_view(self):
+        self._combat_view = self._adapter.get_combat_view(self._viewer_id)
+        self.combatViewChanged.emit()
 
     def _raise_feedback(self, feedback: dict):
         ftype = feedback.get("feedback_type", "info")

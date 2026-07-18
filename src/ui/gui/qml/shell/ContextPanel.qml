@@ -32,6 +32,18 @@ Rectangle {
         feedbackPanel.show(type, message)
     }
 
+    // P6-R8-14: build compact phase chain for combat — placeholders, not hardcoded names
+    function combatPhaseChain() {
+        var wars = sessionStore.combatActiveWars || []
+        var parts = ["公示"]
+        for (var i = 0; i < wars.length; i++) {
+            var name = wars[i].name || ("战争" + (i + 1))
+            parts.push(name)
+        }
+        parts.push("战斗结果公示")
+        return parts.join(" → ")
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 0
@@ -73,7 +85,21 @@ Rectangle {
                         font.bold: true
                         Layout.fillWidth: true
                     }
+                    // P6-R8-14: compact phase chain for combat; placeholder format
                     Text {
+                        visible: sessionStore.selectedPhaseId === "combat"
+                        text: root.combatPhaseChain()
+                        color: theme.accentGoldSoft
+                        font.pixelSize: theme.bodySize
+                        font.bold: true
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                    }
+                    // Standard subtitle/description for non-combat phases
+                    Text {
+                        visible: sessionStore.selectedPhaseId !== "combat"
                         text: (sessionStore.selectedPhaseSummary && sessionStore.selectedPhaseSummary.subtitle) || ""
                         color: theme.accentPrimary
                         font.pixelSize: theme.bodySize
@@ -81,6 +107,7 @@ Rectangle {
                         Layout.fillWidth: true
                     }
                     Text {
+                        visible: sessionStore.selectedPhaseId !== "combat"
                         text: (sessionStore.selectedPhaseSummary && sessionStore.selectedPhaseSummary.description) || ""
                         color: theme.textMuted
                         font.pixelSize: theme.smallSize
@@ -114,104 +141,42 @@ Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 32
                         radius: 7
-                        enabled: canAdvance
+                        enabled: advanceBtn.canAdvance
 
-                        property bool canAdvance: sessionStore.canAdvanceMortality
-                            || sessionStore.canAdvanceRevenue
-                            || sessionStore.canAdvanceForum
-                            || sessionStore.canAdvanceSenate
-                            || sessionStore.canAdvancePopulation
+                        property bool canAdvance: sessionStore.canAdvanceCurrentPhase
 
-                        function advanceText() {
-                            if (sessionStore.canAdvanceMortality) return "⏭️ 推进到收入阶段"
-                            if (sessionStore.canAdvanceRevenue) return "⏭️ 推进到广场"
-                            if (sessionStore.canAdvanceForum) return "⏭️ 推进到人口阶段"
-                            if (sessionStore.canAdvanceSenate) return "⏭️ 推进到战斗阶段"
-                            if (sessionStore.canAdvancePopulation) return "⏭️ 进入元老院阶段"
-                            return "⏭️ 推进到下一阶段"
-                        }
-
-                        // 激活态: 深红底 + 金色字；禁用态: 半透明底 + 灰色字
-                        color: canAdvance ? "#84250A" : "#0EFFFFFF"
-                        border.color: canAdvance ? "transparent" : "#33D9AF63"
+                        // P6-R8-15: normal action button appearance (not red highlight)
+                        color: advanceBtn.canAdvance ? theme.bgSurface1 : "#0EFFFFFF"
+                        border.color: advanceBtn.canAdvance ? "#57D9AF63" : "#33D9AF63"
                         border.width: 1
-
-                        // Drop shadow for active state (D-06 风格)
-                        layer.enabled: canAdvance
-                        layer.effect: DropShadow {
-                            transparentBorder: true
-                            horizontalOffset: 0
-                            verticalOffset: 3
-                            radius: 8
-                            samples: 16
-                            color: "#B0000000"
-                        }
-
-                        // Top highlight edge (D-06)
-                        Rectangle {
-                            anchors.top: parent.top
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.leftMargin: 4
-                            anchors.rightMargin: 4
-                            height: 1
-                            radius: 2
-                            gradient: Gradient {
-                                orientation: Gradient.Vertical
-                                GradientStop { position: 0.0; color: "#66FFFFFF" }
-                                GradientStop { position: 1.0; color: "transparent" }
-                            }
-                        }
 
                         Text {
                             anchors.centerIn: parent
-                            text: advanceBtn.advanceText()
-                            color: canAdvance ? theme.headerText : theme.textMuted
+                            text: advanceBtn.canAdvance ? sessionStore.advanceCurrentPhaseText : "⏭️ 推进到下一阶段"
+                            color: advanceBtn.canAdvance ? theme.headerText : theme.textMuted
                             font.pixelSize: theme.buttonSize
                             font.bold: true
                         }
 
                         MouseArea {
                             anchors.fill: parent
-                            enabled: canAdvance
+                            enabled: advanceBtn.canAdvance
                             cursorShape: Qt.PointingHandCursor
                             hoverEnabled: true
                             onEntered: {
-                                if (canAdvance) {
-                                    advanceBtn.color = "#A33A17"
+                                if (advanceBtn.canAdvance) {
+                                    advanceBtn.color = "#2C2118"
                                 }
                             }
                             onExited: {
-                                if (canAdvance) {
-                                    advanceBtn.color = "#84250A"
+                                if (advanceBtn.canAdvance) {
+                                    advanceBtn.color = theme.bgSurface1
                                 }
                             }
                             onClicked: {
-                                if (sessionStore.canAdvanceMortality) {
-                                    var advResult = sessionStore.doAdvanceMortality()
-                                    if (!advResult.success) {
-                                        root.showFeedback("error", advResult.message || "推进失败")
-                                    }
-                                } else if (sessionStore.canAdvanceRevenue) {
-                                    var revResult = sessionStore.doAdvanceRevenue()
-                                    if (!revResult.success) {
-                                        root.showFeedback("error", revResult.message || "推进失败")
-                                    }
-                                } else if (sessionStore.canAdvanceSenate) {
-                                    var senateResult = sessionStore.doAdvanceSenate()
-                                    if (!senateResult.success) {
-                                        root.showFeedback("error", senateResult.message || "推进失败")
-                                    }
-                                } else if (sessionStore.canAdvancePopulation) {
-                                    var popResult = sessionStore.doAdvancePopulation()
-                                    if (!popResult.success) {
-                                        root.showFeedback("error", popResult.message || "推进失败")
-                                    }
-                                } else if (sessionStore.canAdvanceForum) {
-                                    var forumResult = sessionStore.doAdvanceForum()
-                                    if (!forumResult.success) {
-                                        root.showFeedback("error", forumResult.message || "推进失败")
-                                    }
+                                var result = sessionStore.doAdvanceCurrentPhase()
+                                if (!result.success) {
+                                    root.showFeedback("error", result.message || "推进失败")
                                 }
                             }
                         }

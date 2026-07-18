@@ -104,6 +104,10 @@ class GuiApiAdapter:
         from src.api import session_api
         return self.call(session_api.resolve_population_slice, self._state)
 
+    def advance_population(self, player_id: str) -> Dict[str, Any]:
+        from src.api import session_api
+        return self.call(session_api.advance_population_phase, self._state, player_id)
+
     # -----------------------------------------------------------------------
     # 天命阶段专用 API
     # -----------------------------------------------------------------------
@@ -243,17 +247,35 @@ class GuiApiAdapter:
     def resolve_senate(self) -> Dict[str, Any]:
         from src.api import senate_api
         feedback = self.call(senate_api.resolve_senate, self._state)
-        if feedback.get("success"):
-            self._state.record_phase_result("senate", {
-                "success": True,
-                "message": feedback.get("message", ""),
-                "data": feedback.get("data", {}) or {},
-            })
+        # Phase result is now recorded inside senate_api.resolve_senate()
         return feedback
 
     def advance_senate(self, player_id: str) -> Dict[str, Any]:
         from src.api import senate_api
         return self.call(senate_api.advance_senate_phase, self._state, player_id)
+
+    # -----------------------------------------------------------------------
+    # Combat stage API
+    # -----------------------------------------------------------------------
+    def get_combat_view(self, viewer_id: str) -> Dict[str, Any]:
+        from src.api import combat_api
+        result = combat_api.get_combat_view(self._state, viewer_id)
+        if result.get("success"):
+            return result.get("data", {})
+        logger.error(f"Combat view failed: {result.get('message')}")
+        return {}
+
+    def do_combat_action(self, player_id: str, war_id: str, action: str) -> Dict[str, Any]:
+        from src.api import combat_api
+        return self.call(combat_api.do_combat_action, self._state, player_id, war_id, action)
+
+    def confirm_battle_result(self, player_id: str) -> Dict[str, Any]:
+        from src.api import combat_api
+        return self.call(combat_api.confirm_battle_result, self._state, player_id)
+
+    def advance_combat(self, player_id: str) -> Dict[str, Any]:
+        from src.api import combat_api
+        return self.call(combat_api.advance_combat, self._state, player_id)
 
     def get_global_query_result(self, viewer_id: str, query_id: str) -> Dict[str, Any]:
         from src.api import gui_query_api
@@ -273,6 +295,49 @@ class GuiApiAdapter:
             "summary": {},
             "errors": result.get("errors", []),
         }
+
+    def auto_resolve_combat(self, player_id: str) -> dict:
+        """Auto-resolve all active wars for AI players."""
+        from src.api import combat_api
+        try:
+            combat_view = self.get_combat_view(player_id)
+            active_wars = combat_view.get("active_wars", []) if isinstance(combat_view, dict) else []
+
+            if not active_wars:
+                return {
+                    "success": True,
+                    "message": "No active wars to resolve",
+                    "feedback_type": "info",
+                    "feedback_message": "没有活跃的战争",
+                }
+
+            for war_card in active_wars:
+                war_id = war_card["war_id"]
+                select_result = combat_api.select_war(self._state, player_id, war_id)
+                if not select_result.get("success"):
+                    continue
+                action_result = combat_api.do_combat_action(
+                    self._state, player_id, war_id, "attack", auto=True
+                )
+                if not action_result.get("success"):
+                    continue
+                combat_api.confirm_battle_result(self._state, player_id)
+
+            advance_result = combat_api.advance_combat(self._state, player_id)
+
+            if advance_result.get("success") and self._refresh_callback:
+                self._refresh_callback()
+
+            return advance_result
+        except Exception as exc:
+            logger.exception("auto_resolve_combat failed")
+            return {
+                "success": False,
+                "message": f"Auto-resolve combat failed: {exc}",
+                "errors": [str(exc)],
+                "feedback_type": "error",
+                "feedback_message": f"自动战斗失败: {exc}",
+            }
 
     # -----------------------------------------------------------------------
     # 内部工具
