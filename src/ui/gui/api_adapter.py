@@ -296,6 +296,25 @@ class GuiApiAdapter:
             "errors": result.get("errors", []),
         }
 
+    # -----------------------------------------------------------------------
+    # Resolution stage API
+    # -----------------------------------------------------------------------
+    def get_resolution_view(self, viewer_id: str) -> Dict[str, Any]:
+        from src.api import session_api
+        result = session_api.get_resolution_view(self._state, viewer_id)
+        if result.get("success"):
+            return result.get("data", {})
+        logger.error(f"Resolution view failed: {result.get('message')}")
+        return {}
+
+    def execute_phase(self, phase_id: str, player_id: str) -> Dict[str, Any]:
+        from src.api.game_api import execute_phase as _exec_phase
+        return self.call(_exec_phase, self._state, phase_id, player_id)
+
+    def advance_year(self, player_id: str) -> Dict[str, Any]:
+        from src.api import game_api
+        return self.call(game_api.advance_year, self._state, player_id)
+
     def auto_resolve_combat(self, player_id: str) -> dict:
         """Auto-resolve all active wars for AI players."""
         from src.api import combat_api

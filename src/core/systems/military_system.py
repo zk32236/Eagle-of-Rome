@@ -107,6 +107,18 @@ class MilitarySystem:
         if recovered:
             terms = TerminologyService.get()
             print(f"      ♻️ 军团 {recovered[0]} 已恢复，可重新征召")
+            legion = self.get_legion_by_number(recovered[0])
+            self.state.log_event(
+                f"军团恢复: #{recovered[0]}",
+                extra={
+                    "type": "legion_recovered",
+                    "legion_number": recovered[0],
+                    "legion_name": legion.name if legion else f"Legion {recovered[0]}",
+                    "destroyed_turn": legion.destroyed_turn if legion else None,
+                    "current_turn": current_turn,
+                    "recovery_interval": interval,
+                }
+            )
 
         return recovered
 

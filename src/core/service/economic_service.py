@@ -146,6 +146,16 @@ class EconomicService:
                     "rate": rate,
                 }
             )
+        else:
+            # 无行省/无运营费变体日志
+            self.state.log_event(
+                f"国家运营费: 无需扣除（无行省）",
+                extra={
+                    "type": "national_opex_no_provinces",
+                    "total_land": total_land,
+                    "amount": 0,
+                }
+            )
 
         return {
             "amount": opex,

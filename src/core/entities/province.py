@@ -253,15 +253,25 @@ class Province:
         self._governor_designate_id = new_governor_id
         self._old_governor_id = old_governor_id
 
-    def clear_governor_designate(self) -> None:
+    def clear_governor_designate(self, state=None) -> None:
         """清空候任总督记录。"""
+        if state is not None and self._governor_designate_id is not None:
+            state.log_event(
+                f"候任总督清空: {self._name}",
+                extra={
+                    "type": "governor_designate_cleared",
+                    "province_id": self._province_id,
+                    "former_designate_id": self._governor_designate_id,
+                }
+            )
         self._governor_designate_id = None
         self._old_governor_id = None
 
     def complete_governor_transition(
         self,
         turn: int,
-        promote_designate: bool = True
+        promote_designate: bool = True,
+        state=None,
     ) -> tuple[Optional[int], Optional[int]]:
         """完成候任总督交接并清理本轮临时记录。"""
         old_governor_id = self._old_governor_id
@@ -271,6 +281,18 @@ class Province:
             self._governor_since = turn
         self._governor_designate_id = None
         self._old_governor_id = None
+        if state is not None:
+            state.log_event(
+                f"总督交接完成: {self._name}",
+                extra={
+                    "type": "governor_transition_complete",
+                    "province_id": self._province_id,
+                    "province_name": self._name,
+                    "old_governor_id": old_governor_id,
+                    "new_governor_id": designate_id if promote_designate else None,
+                    "turn": turn,
+                }
+            )
         return old_governor_id, designate_id
 
     def set_event_flag(self, key: str, value: Any) -> None:

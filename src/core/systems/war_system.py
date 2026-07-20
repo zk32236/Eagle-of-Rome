@@ -262,7 +262,12 @@ class WarSystem:
         self.state.log_event(
             f"停战草案未获批准，战争恢复为活跃: {war.name}",
             level=logging.INFO,
-            extra={"war_id": war.id, "preserve_commander": preserve_commander}
+            extra={
+                "type": "treaty_rejected_war_restored",
+                "war_id": war.id,
+                "war_name": war.name,
+                "preserve_commander": preserve_commander,
+            }
         )
         return True
 
@@ -336,6 +341,16 @@ class WarSystem:
                 "threats_after": [w.id for w in self._threats],
             }
         )
+        self.state.log_event(
+            f"战争激活: {war.name}",
+            extra={
+                "type": "war_activated_proposal",
+                "war_id": war.id,
+                "war_name": war.name,
+                "consul_id": consul_id,
+                "legions": legions,
+            }
+        )
         return True
 
     def deactivate_war_to_threat(self, war_id: str, threat_level: int = 1) -> bool:
@@ -367,7 +382,12 @@ class WarSystem:
 
         self.state.log_event(
             f"战争降级为威胁：{war.name}，威胁等级 {threat_level}",
-            extra={"war_id": war.id, "threat_level": threat_level}
+            extra={
+                "type": "war_deactivated_to_threat",
+                "war_id": war.id,
+                "war_name": war.name,
+                "threat_level": threat_level,
+            }
         )
         return True
 
@@ -389,6 +409,17 @@ class WarSystem:
         if victory:
             war.status = WarStatus.RESOLVED
 
+            # ---- 战斗大胜日志 ----
+            self.state.log_event(
+                f"战斗大胜: {war.name}",
+                extra={
+                    "type": "combat_triumph",
+                    "war_id": war.id,
+                    "war_name": war.name,
+                    "victory": True,
+                }
+            )
+
             # === 起义战争特殊处理 ===
             is_rebellion = False
             if war.rebellion_province_id is not None:
@@ -403,8 +434,18 @@ class WarSystem:
                             commander.family_prestige += 1
                             self.state.log_event(
                                 f"指挥官 {commander.name} 因镇压起义获得声望+1",
-                                extra={"figure_id": commander.id}
+                                extra={"figure_id": commander.id, "type": "rebellion_suppressed"}
                             )
+                    self.state.log_event(
+                        f"起义镇压成功: {war.name}",
+                        extra={
+                            "type": "rebellion_suppressed",
+                            "war_id": war.id,
+                            "province_id": province.province_id if province else None,
+                            "commander_id": war.commander_id,
+                            "prestige_gained": 1,
+                        }
+                    )
                     print(f"      ✅ 起义镇压成功，{province.name} 民怨归零。")
             # =========================
 
@@ -533,7 +574,12 @@ class WarSystem:
             print(f"   ❌ {war.name} lost! Defeat!")
             self.state.log_event(
                 f"战争失败：{war.name}",
-                extra={"war_id": war.id, "victory": False}
+                extra={
+                    "type": "combat_defeat",
+                    "war_id": war.id,
+                    "war_name": war.name,
+                    "victory": False,
+                }
             )
 
         # --- 清理战争数据（无论胜负）---
@@ -612,6 +658,17 @@ class WarSystem:
                         "action": "escalate"
                     }
                 )
+                # 威胁升级 INFO 日志
+                self.state.log_event(
+                    f"战争威胁升级: {war.name} {old_level}->{war.threat_level}",
+                    extra={
+                        "type": "threat_escalated",
+                        "war_id": war.id,
+                        "war_name": war.name,
+                        "old_level": old_level,
+                        "new_level": war.threat_level,
+                    }
+                )
                 if war.threat_level >= 3:
                     war.status = WarStatus.ACTIVE
                     war.activation_turn = self.state.turn.turn_number
@@ -627,6 +684,16 @@ class WarSystem:
                             "war_id": war.id,
                             "action": "activate",
                             "active_after": [w.id for w in self._active_wars],
+                        }
+                    )
+                    # 威胁自动激活 INFO 日志
+                    self.state.log_event(
+                        f"战争威胁自动激活: {war.name}",
+                        extra={
+                            "type": "threat_auto_activated",
+                            "war_id": war.id,
+                            "war_name": war.name,
+                            "activation_turn": war.activation_turn,
                         }
                     )
                     events.append(f"⚔️ 战争爆发：{war.name}！")

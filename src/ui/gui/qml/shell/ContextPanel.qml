@@ -134,6 +134,33 @@ Rectangle {
                         font.letterSpacing: 1
                     }
 
+                    // ── Resolution phase: three-layer info structure (T5, P1-08) ──
+                    // Layer 1: 红色摘要 — 阶段标题
+                    Text {
+                        visible: sessionStore.selectedPhaseId === "resolution"
+                        text: "📋 决算阶段"
+                        color: "#8B2500"
+                        font.pixelSize: 14
+                        font.bold: true
+                    }
+
+                    // Layer 2: 灰色两行说明文字
+                    Text {
+                        visible: sessionStore.selectedPhaseId === "resolution"
+                        text: "年度总结与决算公示，确认后推进到下一年度。"
+                        color: "#766652"
+                        font.pixelSize: 12
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
+
+                    // Spacer 6px
+                    Item {
+                        visible: sessionStore.selectedPhaseId === "resolution"
+                        Layout.preferredHeight: 6
+                        Layout.fillWidth: true
+                    }
+
                     // Phase advance button — 当前阶段已结算/已执行后出现
                     Rectangle {
                         id: advanceBtn

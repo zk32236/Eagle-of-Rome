@@ -25,10 +25,10 @@ class Config:
             "leader_cooldown_years": 10,
             "leaders_per_election": 2,
             "office_cooldowns": {
-                "consul": 10,
+                "consul": 5,
                 "praetor": 5,
                 "quaestor": 2,
-                "censor": 8,
+                "censor": 3,
                 "aedile": 4
             },
             "offices_per_election": {
@@ -81,6 +81,7 @@ class Config:
             "national_public_land_tax_rate": 0.02,  # 国家公地税率（2%）
             "private_land_income_rate": 0.05,  # 私地收益率 5%
             "initial_national_public_land": 1000,  # 初始国家公地数量
+            "national_opex_rate": 0.0003,  # 国家运营费率（0.03%）
             "province_tax_rate": 0.1,  # 行省基础税率（10%）
             "tax_auction_ratio": 0.8,  # 包税权拍卖底价占年收益的比例（80%）
             "tax_contract_profit_rate": 0.2,  # 保留原利润比例（可沿用，但阶段3将基于实际利润）

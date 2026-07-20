@@ -390,6 +390,245 @@ def advance_population_phase(state: GameState, viewer_player_id: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 7. 决算阶段视图
+# ---------------------------------------------------------------------------
+
+def get_resolution_view(state: GameState, viewer_player_id: str) -> dict:
+    """
+    返回决算阶段的只读视图 DTO。
+
+    仅包含业务事实，不包含 Store 私有状态。
+    can_advance / is_advancing 由 Store 组合，API 不返回。
+
+    五步进度采用二态模型（resolve 前全部 pending → resolve 后全部 completed）。
+    """
+    try:
+        viewer = state.get_player(viewer_player_id)
+        if not viewer:
+            return api_response(False, "Viewer player not found")
+
+        resolved = state.is_phase_executed("resolution")
+        status = "completed" if resolved else "pending"
+
+        # 五步进度（二态模型）
+        step_definitions = [
+            {"step": 1, "name": "governor_return", "display": "总督返回"},
+            {"step": 2, "name": "contract_expiry", "display": "合同到期"},
+            {"step": 3, "name": "risk_check", "display": "风险检查"},
+            {"step": 4, "name": "annual_decay", "display": "年度衰减"},
+            {"step": 5, "name": "next_year", "display": "推进下一年度"},
+        ]
+        step_statuses = [{**sd, "status": status} for sd in step_definitions]
+
+        # 结算结果
+        if resolved:
+            results = _build_resolution_results(state)
+        else:
+            results = _empty_resolution_results()
+
+        # 风险警告
+        warnings = _build_resolution_warnings(state) if resolved else []
+
+        # 年度总结
+        if resolved:
+            summary = _build_resolution_summary(state)
+        else:
+            summary = _empty_resolution_summary()
+
+        data = {
+            "resolved": resolved,
+            "step_statuses": step_statuses,
+            "results": results,
+            "warnings": warnings,
+            "summary": summary,
+            "is_current_player": state.is_current_player(viewer_player_id),
+        }
+        return api_response(True, "Resolution view", data)
+    except Exception as e:
+        logger.exception("Resolution view failed")
+        return api_response(False, f"Resolution view failed: {e}", errors=[str(e)])
+
+
+def _build_resolution_results(state: GameState) -> dict:
+    """从游戏状态提取结算结果。"""
+    # 总督轮换记录 - 检查有候任总督的行省
+    governor_transitions = []
+    for province in state.get_all_provinces():
+        desig_id = province.governor_designate_id
+        if desig_id is not None:
+            designate = state.get_member(desig_id)
+            if designate:
+                governor = state.get_member(province.governor_id)
+                governor_transitions.append({
+                    "province": province.name,
+                    "governor": designate.get_formal_name(),
+                    "old_governor": governor.get_formal_name() if governor else None,
+                })
+
+    # 合同到期数量
+    expired_count = 0
+    for contract in state.contracts:
+        c_status = getattr(contract, "status", None)
+        if c_status is not None:
+            status_name = getattr(c_status, "name", str(c_status))
+            if status_name == "EXPIRED":
+                expired_count += 1
+
+    # 和约到期（转为威胁的战争）
+    truce_expired = []
+    war_system = state.get_war_system()
+    if war_system:
+        threat_wars = war_system.get_threat_wars()
+        truce_expired = [w.name for w in threat_wars]
+
+    # 元老院主导派系
+    total_influence = 0
+    faction_infos = []
+    for faction in state.factions.values():
+        inf = 0
+        for mid in faction.member_ids:
+            member = state.get_member(mid)
+            if member:
+                inf += getattr(member, "influence", 0)
+        total_influence += inf
+        faction_infos.append({"id": faction.id, "name": faction.name, "influence": inf})
+
+    dominant_faction = None
+    if total_influence > 0 and faction_infos:
+        top = max(faction_infos, key=lambda x: x["influence"])
+        dominant_faction = {
+            "id": top["id"],
+            "name": top["name"],
+            "influence_share": round(top["influence"] / total_influence, 4),
+        }
+
+    # 军团状态
+    legion_status = "active"
+    ms = state.get_military_system()
+    if ms:
+        all_legions = ms.get_all_legions()
+        if all_legions and all(
+            getattr(l, "status", None) is not None
+            and getattr(l.status, "name", str(l.status)) == "DESTROYED"
+            for l in all_legions
+        ):
+            legion_status = "destroyed"
+
+    return {
+        "governor_transitions": governor_transitions,
+        "contracts_expired": expired_count,
+        "truce_expired": truce_expired,
+        "dominant_faction": dominant_faction,
+        "treasury": state.treasury,
+        "legion_status": legion_status,
+    }
+
+
+def _empty_resolution_results() -> dict:
+    return {
+        "governor_transitions": [],
+        "contracts_expired": 0,
+        "truce_expired": [],
+        "dominant_faction": None,
+        "treasury": 0,
+        "legion_status": "unknown",
+    }
+
+
+def _build_resolution_warnings(state: GameState) -> list:
+    """从当前游戏状态提取风险警告。"""
+    warnings = []
+
+    # 国库赤字检查
+    if state.treasury < 0:
+        level = "critical" if state.treasury <= -50 else "warning"
+        warnings.append({
+            "level": level,
+            "message": f"国库赤字：{state.treasury} 第纳尔",
+        })
+
+    # 派系独裁风险检查
+    total_inf = 0
+    faction_infos = []
+    for faction in state.factions.values():
+        inf = 0
+        for mid in faction.member_ids:
+            member = state.get_member(mid)
+            if member:
+                inf += getattr(member, "influence", 0)
+        total_inf += inf
+        faction_infos.append({"name": faction.name, "influence": inf})
+
+    if total_inf > 0:
+        for fi in faction_infos:
+            share = fi["influence"] / total_inf
+            if share >= 0.7:
+                warnings.append({
+                    "level": "critical",
+                    "message": f"{fi['name']} 影响力 {share:.1%}，独裁风险！",
+                })
+            elif share >= 0.5:
+                warnings.append({
+                    "level": "warning",
+                    "message": f"{fi['name']} 影响力 {share:.1%}，接近绝对多数",
+                })
+
+    return warnings
+
+
+def _build_resolution_summary(state: GameState) -> dict:
+    """从游戏状态提取年度总结。"""
+    # 元老院主导派系
+    total_influence = 0
+    faction_infos = []
+    for faction in state.factions.values():
+        inf = 0
+        for mid in faction.member_ids:
+            member = state.get_member(mid)
+            if member:
+                inf += getattr(member, "influence", 0)
+        total_influence += inf
+        faction_infos.append({"id": faction.id, "name": faction.name, "influence": inf})
+
+    dominant = None
+    if total_influence > 0 and faction_infos:
+        top = max(faction_infos, key=lambda x: x["influence"])
+        dominant = {
+            "id": top["id"],
+            "name": top["name"],
+            "influence_share": round(top["influence"] / total_influence, 4),
+        }
+
+    # 年份显示
+    current_year = state.turn.year if state.turn else 0
+    next_year = current_year + 1
+    next_year_display = _format_year(next_year)
+
+    # 衰减状态
+    decay_applied = resolved = state.is_phase_executed("resolution")
+
+    return {
+        "dominant_faction": dominant,
+        "treasury": state.treasury,
+        "next_year": next_year_display,
+        "decay_applied": decay_applied,
+        "decay_details": "影响力年度衰减已应用" if decay_applied else "",
+        "current_year": _format_year(current_year),
+    }
+
+
+def _empty_resolution_summary() -> dict:
+    return {
+        "dominant_faction": None,
+        "treasury": 0,
+        "next_year": "",
+        "decay_applied": False,
+        "decay_details": "",
+        "current_year": "",
+    }
+
+
+# ---------------------------------------------------------------------------
 # 辅助函数
 # ---------------------------------------------------------------------------
 
@@ -408,11 +647,11 @@ def _phase_order() -> List[str]:
 
 
 def _implemented_phase_ids() -> set:
-    return {"mortality", "revenue", "forum", "population", "senate", "combat"}
+    return {"mortality", "revenue", "forum", "population", "senate", "combat", "resolution"}
 
 
 def _phase_interaction_mode(phase_id: str) -> str:
-    if phase_id in {"mortality", "revenue", "forum", "population", "senate", "combat"}:
+    if phase_id in {"mortality", "revenue", "forum", "population", "senate", "combat", "resolution"}:
         return "interactive"
     return "placeholder"
 

@@ -151,6 +151,21 @@ class PoliticalSystem:
             level=logging.INFO,
             extra={"proposal_id": proposal_id, "proposal_type": proposal_type, "player_id": player_id},
         )
+        # 总督AI自动提名额外日志
+        if proposal_type == "governor":
+            province_id = kwargs.get("province_id")
+            candidate_id = kwargs.get("candidate_id")
+            province = self.state.get_province(province_id) if province_id else None
+            candidate = self.state.get_member(candidate_id) if candidate_id else None
+            self.state.log_event(
+                f"总督AI自动提名: {candidate.get_formal_name() if candidate else str(candidate_id)} -> {province.name if province else str(province_id)}",
+                extra={
+                    "type": "governor_ai_auto_nominate",
+                    "province_id": province_id,
+                    "candidate_id": candidate_id,
+                    "governor_type": province.governor_type if province else None,
+                }
+            )
         return self._result(True, f"提案已记录 (ID: {proposal_id})", {"proposal_id": proposal_id})
 
     def record_vote(self, player_id: str, proposal_ids: List[int], votes: List[bool]) -> dict:
@@ -267,6 +282,7 @@ class PoliticalSystem:
                     "oppose": result["oppose_influence"],
                     "total": result["total_influence"],
                     "vetoed": result["vetoed"],
+                    "type": "senate_vote_proposal_passed",
                 },
             )
 
@@ -407,6 +423,16 @@ class PoliticalSystem:
                     new_governor = self.state.get_member(proposal["candidate_id"])
                     if new_governor:
                         new_governor.is_absent = True
+                    self.state.log_event(
+                        f"候任总督设定: {new_governor.get_formal_name() if new_governor else proposal['candidate_id']} -> {province.name}",
+                        extra={
+                            "type": "governor_set_designate",
+                            "province_id": proposal["province_id"],
+                            "province_name": province.name,
+                            "candidate_id": proposal["candidate_id"],
+                            "candidate_name": new_governor.get_formal_name() if new_governor else None,
+                        }
+                    )
                     return {"success": True, "message": f"任命 {proposal['candidate_id']} 为 {province.name} 候任总督"}
 
             if proposal_type == "budget":
@@ -466,7 +492,13 @@ class PoliticalSystem:
         self.state.log_event(
             f"宣战提案执行: {war.name}",
             level=logging.INFO,
-            extra={"war_id": war.id, "consul_id": consul_id, "legions": legions},
+            extra={
+                "type": "war_declaration_passed",
+                "war_id": war.id,
+                "war_name": war.name,
+                "consul_id": consul_id,
+                "legions": legions,
+            },
         )
 
     def execute_passed_peace_treaty(self, war):
@@ -505,7 +537,14 @@ class PoliticalSystem:
         self.state.log_event(
             f"停战草案执行: {war.name}",
             level=logging.INFO,
-            extra={"war_id": war.id, "end_turn": end_turn},
+            extra={
+                "type": "treaty_approved",
+                "war_id": war.id,
+                "war_name": war.name,
+                "indemnity": treaty.get("indemnity", 0),
+                "duration": treaty.get("duration", 0),
+                "end_turn": end_turn,
+            },
         )
 
     def restore_rejected_peace_wars(self, wars: List[Any]) -> List[Any]:
@@ -525,7 +564,12 @@ class PoliticalSystem:
                 self.state.log_event(
                     f"停战草案未通过，战争恢复: {war.name}",
                     level=logging.INFO,
-                    extra={"war_id": war.id},
+                    extra={
+                        "type": "treaty_rejected",
+                        "war_id": war.id,
+                        "war_name": war.name,
+                        "faction_id": getattr(war, "declared_by", None),
+                    },
                 )
         return restored
 

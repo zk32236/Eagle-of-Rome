@@ -132,7 +132,14 @@ class NavalSystem:
 
             self.state.log_event(
                 f"生成舰队建造合同：{contract.name}，预算 {total_budget}，需建造 {needed_ships} 艘 {default_type}，工期 {contract._build_time} 年",
-                extra={"contract_id": contract.id, "war_id": war.id}
+                extra={
+                    "type": "naval_construction_generated",
+                    "contract_id": contract.id,
+                    "war_id": war.id,
+                    "total_budget": total_budget,
+                    "needed_ships": needed_ships,
+                    "fleet_type": default_type,
+                }
             )
 
         return contracts
@@ -257,7 +264,13 @@ class NavalSystem:
 
                 self.state.log_event(
                     f"舰队 {fleet.number} 建造完成，实际战力 {fleet._strength_base}",
-                    level=logging.INFO
+                    level=logging.INFO,
+                    extra={
+                        "type": "naval_construction_complete",
+                        "fleet_number": fleet.number,
+                        "strength": fleet._strength_base,
+                        "target_war_id": fleet._target_war_id,
+                    }
                 )
 
                 # 防御性检查：确保舰队在 _fleets 中
@@ -455,7 +468,18 @@ class NavalSystem:
                         if self.get_fleet(fid) and not self.get_fleet(fid).is_building]
         if not roman_fleets:
             # 没有可用舰队，海战自动失败
-            return "DEFEAT", {"roman_losses": 0, "enemy_loss": 0}
+            result = "DEFEAT"
+            self.state.log_event(
+                f"海战自动战败（无可用舰队）: {war.name}",
+                extra={
+                    "type": "naval_battle_defeat",
+                    "war_id": war.id,
+                    "result": result,
+                    "roman_losses": 0,
+                    "enemy_loss": 0,
+                }
+            )
+            return result, {"roman_losses": 0, "enemy_loss": 0}
 
         roman_strength = sum(f.get_combat_strength(self.state) for f in roman_fleets)
         enemy_strength = war.enemy_naval_current
@@ -463,6 +487,27 @@ class NavalSystem:
         total = dice + roman_strength - enemy_strength
         result = self._simplified_crt(dice, total, war)
         losses = self._apply_naval_losses(war, result, roman_fleets)
+
+        # 海战结果变体日志
+        variant_map = {
+            "TRIUMPH": "naval_battle_triumph",
+            "VICTORY": "naval_battle_victory",
+            "STALEMATE": "naval_battle_stalemate",
+            "DEFEAT": "naval_battle_defeat",
+            "DISASTER": "naval_battle_disaster",
+        }
+        variant_type = variant_map.get(result, "naval_battle_stalemate")
+        self.state.log_event(
+            f"海战结果: {war.name} -> {result}",
+            extra={
+                "type": variant_type,
+                "war_id": war.id,
+                "result": result,
+                "roman_losses": losses,
+                "enemy_loss": 0,
+            }
+        )
+
         return result, {"roman_losses": losses, "enemy_loss": 0}
 
     def _simplified_crt(self, dice: int, total: int, war) -> str:
@@ -529,9 +574,14 @@ class NavalSystem:
                 fleet.mark_destroyed(current_turn)
                 disbanded.append(fleet.number)
                 self.state.log_event(
-                    f"[DEBUG] 舰队 {fleet.number} 已解散（根据决策器）",
-                    level=logging.DEBUG,
-                    extra={"fleet": fleet.number, "reason": "decider"}
+                    f"舰队 {fleet.number} 已解散（根据决策器）",
+                    level=logging.INFO,
+                    extra={
+                        "type": "naval_fleet_disbanded",
+                        "fleet_number": fleet.number,
+                        "reason": "decider",
+                        "current_turn": current_turn,
+                    }
                 )
         return disbanded
 

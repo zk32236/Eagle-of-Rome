@@ -118,6 +118,14 @@ class MortalityService:
         living = self.state.get_living_members()
         if not living:
             logs.append("   😇 无存活人物，死神空手而归")
+            self.state.log_event(
+                f"死神来了: 无存活人物",
+                extra={
+                    "type": "figure_death_no_victims",
+                    "event_name": event_name,
+                    "death_count": death_count,
+                }
+            )
             return {
                 "name": event_name,
                 "effect": "death",
@@ -154,9 +162,19 @@ class MortalityService:
                         logs.append(f"      📜 {victim.name} 的合同 {contract.name} 已终止")
 
             self.state.mark_member_dead(victim.id, transfer_land=True, transfer_wealth=True)
+            faction = self.state.get_faction(victim.faction_id)
+            faction_name = faction.name if faction else "无派系"
             self.state.log_event(
                 f"人物死亡: {victim.name} (ID:{victim.id})",
-                extra={"type": "figure_death", "figure_id": victim.id, "name": victim.name}
+                extra={
+                    "type": "figure_death",
+                    "figure_id": victim.id,
+                    "name": victim.name,
+                    "faction_id": victim.faction_id,
+                    "faction_name": faction_name,
+                    "class_tier": victim.class_tier.value,
+                    "terminated_contracts_count": len(terminated_contracts),
+                }
             )
             impacts.append({
                 "type": "figure_death",
@@ -182,7 +200,12 @@ class MortalityService:
         bonus = int((multiplier - 1) * 100)
         self.state.log_event(
             "风调雨顺触发",
-            extra={"type": "event", "event": "bountiful_harvest", "multiplier": multiplier}
+            extra={
+                "type": "bumper_harvest_triggered",
+                "multiplier": multiplier,
+                "bonus_percent": bonus,
+                "turn": self.state.turn.turn_number,
+            }
         )
         return {
             "name": event_name,
@@ -210,7 +233,13 @@ class MortalityService:
                 })
                 self.state.log_event(
                     f"国泰民安: {province.name} 民怨 {old}→0",
-                    extra={"type": "peace_event", "province_id": province.province_id, "old": old, "new": 0}
+                    extra={
+                        "type": "peace_event_grievance_cleared",
+                        "province_id": province.province_id,
+                        "province_name": province.name,
+                        "old": old,
+                        "new": 0,
+                    }
                 )
 
         war_system = self.state.get_war_system()
@@ -230,7 +259,13 @@ class MortalityService:
                     })
                     self.state.log_event(
                         f"国泰民安: {war.name} 威胁等级 {old}→0",
-                        extra={"type": "peace_event", "war_id": war.id, "old": old, "new": 0}
+                        extra={
+                            "type": "peace_event_threat_cleared",
+                            "war_id": war.id,
+                            "war_name": war.name,
+                            "old": old,
+                            "new": 0,
+                        }
                     )
 
         self.state.log_event("国泰民安触发", extra={"type": "event", "event": "peace"})
@@ -262,7 +297,14 @@ class MortalityService:
             impact = {"type": "hero_spawn", "subtype": "historical", "hero_id": chosen["id"], "name": chosen["name"]}
             self.state.log_event(
                 f"天降猛男: 历史英雄 {chosen['name']} 选中",
-                extra={"type": "mighty_man", "hero_id": chosen["id"], "name": chosen["name"]}
+                extra={
+                    "type": "hero_historical_spawned",
+                    "hero_id": chosen["id"],
+                    "hero_name": chosen["name"],
+                    "birth_year": chosen.get("birth_year"),
+                    "death_year": chosen.get("death_year"),
+                    "current_year": current_year,
+                }
             )
         else:
             self.state.hero_to_spawn = {"type": "random"}
@@ -271,7 +313,11 @@ class MortalityService:
             impact = {"type": "hero_spawn", "subtype": "random"}
             self.state.log_event(
                 "天降猛男: 无历史英雄，将生成随机猛人",
-                extra={"type": "mighty_man", "subtype": "random"}
+                extra={
+                    "type": "hero_random_fallback",
+                    "current_year": current_year,
+                    "available_hero_count": len(available),
+                }
             )
 
         self.state.hero_spawned_this_turn = True
@@ -307,7 +353,13 @@ class MortalityService:
             )
             self.state.log_event(
                 f"无妄天灾: {province.name} 受灾，损失 {loss*100:.0f}%",
-                extra={"type": "disaster", "province_id": province.province_id, "loss": loss}
+                extra={
+                    "type": "disaster_triggered",
+                    "province_id": province.province_id,
+                    "province_name": province.name,
+                    "loss_ratio": loss,
+                    "disaster_name": disaster['name'] if disasters else None,
+                }
             )
             return {
                 "name": event_name,

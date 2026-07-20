@@ -12,15 +12,16 @@ import "../i18n"
  *
  * Layout contract: GUI_LAYOUT_CONTRACT_Phase1_v3.25.1.md
  *
- *   A - TopStatusBar:  x=10, y=10, w=1420, h=62
- *   B - PhaseRail:     x=10, y=82, w=92, h=736   (inside main-wrapper: padding=10)
- *   C - StageDesktop:  x=112, y=82, w=1022, h=736 (center, gap=10 each side)
- *   D - ContextPanel:  x=1144, y=82, w=286, h=736
- *   E - BottomQueryBar: x=10, y=828, w=1420, h=62
+ *   A - TopStatusBar:  x=14, y=14, w=1412, h=62
+ *   B - PhaseRail:     x=14, y=90, w=92, h=736   (inside main-wrapper: padding=14)
+ *   C - StageDesktop:  x=120, y=90, w=1022, h=736 (center, gap=14 each side)
+ *   D - ContextPanel:  x=1156, y=90, w=286, h=736
+ *   E - BottomQueryBar: x=14, y=840, w=1412, h=46
  *   F - MainAction:    inside StageDesktop.StageActionSlot
  *
- * Viewport: 1440x900. main-wrapper replaces anchors with direct positioning
- * to match exact contract coordinates.
+ * Viewport: 1440x900 (fixed baseline). main-wrapper inner padding = 14px all sides.
+ * All coordinates match the SA GUI Layout Contract §6.2.
+ * See workspace/dev-tasks/EOR-Phase7-R1-SA-Development-Task.md §6 for reference.
  */
 Rectangle {
     id: root
@@ -91,7 +92,7 @@ Rectangle {
 
     // ============================================================
     // E - BottomQueryBar
-    // x=10, y=828, w=1420, h=62
+    // x=10, y=828, w=1420, h=46 (P2-05: 62→46 per SA Layout Contract §6.2)
     // ============================================================
     BottomQueryBar {
         id: bottomQueryBar
@@ -102,7 +103,7 @@ Rectangle {
         anchors.rightMargin: 14
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 14
-        height: 62
+        height: 46
         onQueryRequested: function(queryId) {
             var result = sessionStore.doGlobalQuery(queryId)
             if (result.success) {
@@ -390,6 +391,54 @@ Rectangle {
                 }
             }
 
+            // Resolution phase: badge "7/7" + title + description
+            ColumnLayout {
+                visible: sessionStore.selectedPhaseId === "resolution"
+                anchors.fill: parent
+                spacing: 6
+
+                Rectangle {
+                    Layout.preferredWidth: resolutionBadgeText.implicitWidth + 24
+                    Layout.preferredHeight: 22
+                    radius: 999
+                    border.color: "#52D9AF63"
+                    border.width: 1
+
+                    gradient: Gradient {
+                        orientation: Gradient.Vertical
+                        GradientStop { position: 0.0; color: "#8B2500" }
+                        GradientStop { position: 1.0; color: "#671B07" }
+                    }
+
+                    Text {
+                        id: resolutionBadgeText
+                        anchors.centerIn: parent
+                        text: "7 / 7"
+                        color: theme.headerText
+                        font.pixelSize: theme.statLabelSize
+                        font.bold: true
+                    }
+                }
+
+                Text {
+                    text: "📋 决算阶段"
+                    color: "#681B07"
+                    font.pixelSize: 20
+                    font.bold: true
+                    font.letterSpacing: 0.3
+                }
+
+                Text {
+                    text: "年度总结与决算公示，确认后推进到下一年度。"
+                    color: "#766652"
+                    font.pixelSize: 13
+                    font.italic: true
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 980
+                }
+            }
+
             // Other phases: generic header (original stageAnnouncement style)
             ColumnLayout {
                 visible: sessionStore.selectedPhaseId !== "mortality"
@@ -398,6 +447,7 @@ Rectangle {
                     && sessionStore.selectedPhaseId !== "population"
                     && sessionStore.selectedPhaseId !== "senate"
                     && sessionStore.selectedPhaseId !== "combat"
+                    && sessionStore.selectedPhaseId !== "resolution"
                 anchors.fill: parent
                 spacing: 6
 
@@ -885,6 +935,13 @@ Rectangle {
                 visible: sessionStore.selectedPhaseId === "combat"
             }
 
+            ResolutionStage {
+                id: resolutionStage
+                objectName: "resolutionStage"
+                anchors.fill: parent
+                visible: sessionStore.selectedPhaseId === "resolution"
+            }
+
             LockedStagePlaceholder {
                 id: lockedPlaceholder
                 objectName: "lockedStagePlaceholder"
@@ -895,6 +952,7 @@ Rectangle {
                     && sessionStore.selectedPhaseId !== "population"
                     && sessionStore.selectedPhaseId !== "senate"
                     && sessionStore.selectedPhaseId !== "combat"
+                    && sessionStore.selectedPhaseId !== "resolution"
             }
         }
 
@@ -1094,6 +1152,13 @@ Rectangle {
                 }
             }
         }
+
+        // ============================================================
+        // Resolution action layer: REMOVED
+        // This placeholder rebellion button (disabled, visible on resolved)
+        // was duplicate #3 of the phase advance button.
+        // The sole advance button is in ContextPanel.OperationSection.
+        // ============================================================
     }
 
     readonly property bool populationCampaignDone: sessionStore.populationResolved

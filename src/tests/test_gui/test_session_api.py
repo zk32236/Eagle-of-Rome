@@ -113,18 +113,16 @@ class TestSessionApi:
         assert phases["forum"]["actionable"] is False
         assert phases["forum"]["disabled_reason_key"] == "phase.disabled.not_current"
         assert phases["forum"]["handoff_task"] == "GUI-P0-03"
-        for phase_id, phase in phases.items():
-            if phase_id in {"mortality", "revenue", "forum", "population", "senate"}:
-                continue
-            assert phase["implemented"] is False
-            assert phase["interaction_mode"] == "placeholder"
+        # combat and resolution are implemented but not current (actionable=False)
+        for phase_id in ["combat", "resolution"]:
+            phase = phases[phase_id]
+            assert phase["implemented"] is True
+            assert phase["interaction_mode"] == "interactive"
             assert phase["actionable"] is False
-            assert phase["handoff_task"].startswith("GUI-P0-02")
+            assert phase["disabled_reason_key"] == "phase.disabled.not_current"
             assert phase["name_key"].startswith("phase.")
             assert phase["description_key"].startswith("phase.")
             assert phase["status_key"]
-            assert phase["disabled_reason_key"] == "phase.disabled.placeholder"
-            assert "暂不可操作" in phase["disabled_reason"]
 
     def test_shell_snapshot_exposes_i18n_keys_for_new_gui_copy(self):
         result = session_api.create_gui_prototype_session()
@@ -422,5 +420,5 @@ class TestSessionApi:
 
         assert combat["name"] == "战争"
         assert combat["subtitle"] == "陆战、海战与战役结果"
-        assert "combat" in combat["description"]
+        assert "战争" in combat["description"]
         assert combat["index"] == 6  # 6th phase (1-indexed)

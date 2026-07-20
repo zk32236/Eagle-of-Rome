@@ -12,6 +12,11 @@ from PySide6.QtCore import QObject, Signal, Property, Slot, QAbstractListModel, 
 from src.core.game_state import GameState
 from src.ui.gui.api_adapter import GuiApiAdapter
 from src.ui.gui.localization import gui_text
+from src.ui.processors.auto_player_processor import AutoPlayerProcessor
+from src.core.deciders.impl.auto_retirement_decider import AutoRetirementDecider
+from src.core.deciders.impl.auto_recruitment_decider import AutoRecruitmentDecider
+from src.core.deciders.impl.auto_bid_decider import AutoBidDecider
+from src.core.deciders.impl.auto_triumph_decider import AutoTriumphDecider
 
 logger = logging.getLogger("EOR-GUI")
 
@@ -30,6 +35,8 @@ class GuiSessionStore(QObject):
     revenueViewChanged = Signal()
     forumViewChanged = Signal()
     combatViewChanged = Signal()
+    resolutionViewChanged = Signal()
+    resolutionAdvancingChanged = Signal()
     queryResultChanged = Signal()
     currentPlayerChanged = Signal()
     phaseChanged = Signal()
@@ -52,6 +59,9 @@ class GuiSessionStore(QObject):
         self._forum_step_override: str = ""
         self._combat_view: Dict[str, Any] = {}
         self._combat_result: Dict[str, Any] = {}
+        self._resolution_view: Dict[str, Any] = {}
+        self._resolution_resolving: bool = False
+        self._resolution_advancing: bool = False
         self._revenue_result: Dict[str, Any] = {}
         self._mortality_result: Dict[str, Any] = {}
         self._current_player_id: str = ""
@@ -60,6 +70,7 @@ class GuiSessionStore(QObject):
         self._selected_phase_summary: Dict[str, Any] = {}
         self._global_query_result: Dict[str, Any] = {}
         self._feedback_queue: List[Dict[str, str]] = []
+        self._forum_ai_processed = False
 
     # -----------------------------------------------------------------------
     # 初始化
@@ -74,6 +85,7 @@ class GuiSessionStore(QObject):
         self._refresh_revenue_view()
         self._refresh_forum_view()
         self._refresh_combat_view()
+        self._refresh_resolution_view()
 
     # -----------------------------------------------------------------------
     # QML 可访问属性
@@ -150,6 +162,14 @@ class GuiSessionStore(QObject):
             if phase.get("id") == self.currentPhaseId:
                 return phase.get("name", "")
         return "天命"
+
+    @Property(int, notify=snapshotChanged)
+    def currentPhaseIndex(self) -> int:
+        nav = self.phaseNavigation
+        for i, phase in enumerate(nav):
+            if phase.get("id") == self.currentPhaseId:
+                return i
+        return 0
 
     @Property(str, notify=snapshotChanged)
     def viewerFactionName(self) -> str:
@@ -491,6 +511,51 @@ class GuiSessionStore(QObject):
         return self._global_query_result
 
     # -----------------------------------------------------------------------
+    # Resolution stage properties
+    # -----------------------------------------------------------------------
+    @Property(dict, notify=resolutionViewChanged)
+    def resolutionView(self) -> Dict[str, Any]:
+        return self._resolution_view
+
+    @Property(list, notify=resolutionViewChanged)
+    def resolutionStepStatuses(self) -> list:
+        return self._resolution_view.get("step_statuses", [])
+
+    @Property(dict, notify=resolutionViewChanged)
+    def resolutionResults(self) -> dict:
+        return self._resolution_view.get("results", {})
+
+    @Property(list, notify=resolutionViewChanged)
+    def resolutionWarnings(self) -> list:
+        return self._resolution_view.get("warnings", [])
+
+    @Property(dict, notify=resolutionViewChanged)
+    def resolutionSummary(self) -> dict:
+        return self._resolution_view.get("summary", {})
+
+    @Property(bool, notify=resolutionViewChanged)
+    def resolutionResolved(self) -> bool:
+        return self._resolution_view.get("resolved", False)
+
+    @Property(bool, notify=resolutionViewChanged)
+    def isResolutionResolving(self) -> bool:
+        return self._resolution_resolving
+
+    @Property(bool, notify=resolutionViewChanged)
+    def canAdvanceResolution(self) -> bool:
+        """是否可以推进下一年度（结算完成 + 当前玩家 + 非推进中 + 非分派中）"""
+        if not self._resolution_view:
+            return False
+        resolved = self._resolution_view.get("resolved", False)
+        is_current = self._resolution_view.get("is_current_player", False)
+        return resolved and is_current and not self._resolution_resolving and not self._resolution_advancing
+
+    @Property(bool, notify=resolutionAdvancingChanged)
+    def isResolutionAdvancing(self) -> bool:
+        """是否正在执行 advance_year（loading 状态）"""
+        return self._resolution_advancing
+
+    # -----------------------------------------------------------------------
     # 阶段推进统一分派
     # -----------------------------------------------------------------------
     _PHASE_ADVANCE_DISPATCH = {
@@ -523,6 +588,11 @@ class GuiSessionStore(QObject):
             "can_attr": "canAdvanceCombat",
             "slot": "doAdvanceCombat",
             "label": "\u23ed\ufe0f 推进到决断阶段",
+        },
+        "resolution": {
+            "can_attr": "canAdvanceResolution",
+            "slot": "doAdvanceResolution",
+            "label": "\u23ed\ufe0f 推进到下一回合",
         },
     }
 
@@ -741,6 +811,7 @@ class GuiSessionStore(QObject):
             feedback = self._adapter.open_forum_market(self._viewer_id)
             if feedback.get("success"):
                 self._forum_step_override = "market"
+                self._process_ai_factions_forum()
             self._refresh_forum_view()
             self._raise_feedback(feedback)
             return feedback
@@ -750,6 +821,11 @@ class GuiSessionStore(QObject):
     def doResolveForum(self) -> dict:
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
+
+        # Safety net: process AI forum actions if not already done
+        # (covers the case where doCompleteForumStep was bypassed)
+        self._process_ai_factions_forum()
+
         feedback = self._adapter.resolve_forum()
         if feedback.get("success"):
             self._forum_result = feedback
@@ -759,6 +835,97 @@ class GuiSessionStore(QObject):
         self._refresh_forum_view()
         return feedback
 
+    # -----------------------------------------------------------------------
+    # AI Forum Processing
+    # -----------------------------------------------------------------------
+    def _process_ai_factions_forum(self) -> None:
+        """
+        Execute forum actions for all non-human (AI) factions.
+        Called after the human completes retirement step, before market
+        transition. Also called as a safety net in doResolveForum().
+        Double-processing is prevented by a guard flag.
+        """
+        if getattr(self, '_forum_ai_processed', False):
+            logger.debug("AI forum already processed, skipping")
+            return
+
+        all_players = self._state.get_all_players()
+        ai_players = [p for p in all_players if p.player_id != self._viewer_id]
+        if not ai_players:
+            logger.info("No AI players to process for forum")
+            self._forum_ai_processed = True
+            return
+
+        # Instantiate deciders and processor
+        processor = AutoPlayerProcessor(
+            self._state,
+            retirement_decider=AutoRetirementDecider(self._state),
+            recruitment_decider=AutoRecruitmentDecider(),
+            bid_decider=AutoBidDecider(),
+            triumph_decider=AutoTriumphDecider(),
+        )
+
+        # Bypass player permission checks for AI operations
+        saved_bypass = self._state.config.get("testing.bypass_player_check", False)
+        self._state.config.testing.bypass_player_check = True
+
+        try:
+            for ai_player in ai_players:
+                ai_faction = self._state.get_faction(ai_player.faction_id)
+                if not ai_faction:
+                    logger.warning(
+                        "AI player has no faction, skipping forum processing",
+                        extra={"player_id": ai_player.player_id},
+                    )
+                    continue
+
+                logger.info(
+                    "Processing AI forum actions",
+                    extra={
+                        "player_id": ai_player.player_id,
+                        "faction_id": ai_faction.id,
+                        "faction_name": ai_faction.name,
+                    },
+                )
+
+                try:
+                    # Step 1: Open market (generate new figures) — idempotent
+                    open_result = self._adapter.open_forum_market(ai_player.player_id)
+                    if not open_result.get("success"):
+                        logger.warning(
+                            f"AI market open failed for {ai_faction.name}: "
+                            f"{open_result.get('message')}"
+                        )
+
+                    # Step 2: Retirement
+                    processor.process_retirement(ai_player.player_id, ai_faction)
+
+                    # Step 3: Market decisions (recruit, bid, land, triumph)
+                    processor.process_market(ai_player.player_id, ai_faction)
+
+                    logger.info(
+                        f"AI forum actions completed for {ai_faction.name}",
+                        extra={
+                            "player_id": ai_player.player_id,
+                            "faction_id": ai_faction.id,
+                        },
+                    )
+                except Exception as e:
+                    logger.exception(
+                        f"AI forum processing failed for faction {ai_faction.name}: {e}"
+                    )
+                    # Continue processing other AI factions
+
+        except Exception as e:
+            logger.exception(f"Unexpected error in AI forum processing: {e}")
+        finally:
+            self._state.config.testing.bypass_player_check = saved_bypass
+            self._forum_ai_processed = True
+            logger.info("AI forum processing completed")
+
+    # -----------------------------------------------------------------------
+    # Forum stage Slot — Advance
+    # -----------------------------------------------------------------------
     @Slot(result=dict)
     def doAdvanceForum(self) -> dict:
         if not self._viewer_id:
@@ -835,6 +1002,47 @@ class GuiSessionStore(QObject):
         self.combatViewChanged.emit()
         return feedback
 
+    # -----------------------------------------------------------------------
+    # Resolution stage Slot
+    # -----------------------------------------------------------------------
+    @Slot(result=dict)
+    def doAdvanceResolution(self) -> dict:
+        """推进到下一年度（决算完成确认，返回天命阶段）。"""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        if self._resolution_advancing:
+            feedback = self._feedback(False, "正在推进中，请稍候", "warning")
+            self._raise_feedback(feedback)
+            return feedback
+        if not self.canAdvanceResolution:
+            feedback = self._feedback(False, "决算尚未完成，无法推进", "error")
+            self._raise_feedback(feedback)
+            return feedback
+
+        self._resolution_advancing = True
+        self.resolutionAdvancingChanged.emit()
+        self.resolutionViewChanged.emit()
+
+        try:
+            feedback = self._adapter.advance_year(self._viewer_id)
+            if feedback.get("success"):
+                self._refresh_snapshot()
+                self._selected_phase_id = "mortality"
+                self._selected_phase_summary = self._summary_from_phase(
+                    self._phase_by_id("mortality")
+                )
+                self.phaseChanged.emit()
+            else:
+                # 失败：停留在 Phase 7，保留结算结果
+                logger.warning(f"Year advance failed: {feedback.get('message')}")
+                self._refresh_resolution_view()
+            self._raise_feedback(feedback)
+            return feedback
+        finally:
+            self._resolution_advancing = False
+            self.resolutionAdvancingChanged.emit()
+            self.resolutionViewChanged.emit()
+
     @Slot(result=dict)
     def doAdvanceCurrentPhase(self) -> dict:
         """Unified dispatch: advance button based on currentPhaseId."""
@@ -851,6 +1059,8 @@ class GuiSessionStore(QObject):
             return self.doAdvanceSenate()
         elif phase_id == "combat":
             return self.doAdvanceCombat()
+        elif phase_id == "resolution":
+            return self.doAdvanceResolution()
         else:
             return {"success": False, "message": f"\u672a\u77e5\u9636\u6bb5: {phase_id}", "errors": [f"unknown phase: {phase_id}"]}
 
@@ -1012,6 +1222,11 @@ class GuiSessionStore(QObject):
             self._refresh_forum_view()
         elif phase_id == "combat":
             self._refresh_combat_view()
+        elif phase_id == "resolution":
+            self._refresh_resolution_view()
+            # 自动结算触发：首次进入且尚未结算
+            if not self._resolution_view.get("resolved", False) and not self._resolution_resolving:
+                self._executeResolution()
         return feedback
 
     @Slot(str, result=dict)
@@ -1045,6 +1260,7 @@ class GuiSessionStore(QObject):
         self._refresh_revenue_view()
         self._refresh_forum_view()
         self._refresh_combat_view()
+        self._refresh_resolution_view()
         feedback = self._feedback(True, gui_text("feedback.snapshot.refreshed"), "success")
         self._raise_feedback(feedback)
         return feedback
@@ -1060,6 +1276,7 @@ class GuiSessionStore(QObject):
         self._refresh_revenue_view()
         self._refresh_forum_view()
         self._refresh_combat_view()
+        self._refresh_resolution_view()
         self.currentPlayerChanged.emit()
         return True
 
@@ -1080,6 +1297,12 @@ class GuiSessionStore(QObject):
         self._refresh_revenue_view()
         self._refresh_forum_view()
         self._refresh_combat_view()
+        self._refresh_resolution_view()
+        # Auto-settlement trigger: resolution phase, not yet resolved, not currently resolving
+        if (self._selected_phase_id == "resolution"
+                and not self._resolution_view.get("resolved", False)
+                and not self._resolution_resolving):
+            self._executeResolution()
 
     def _refresh_snapshot(self):
         self._snapshot = self._adapter.get_snapshot(self._viewer_id)
@@ -1118,6 +1341,38 @@ class GuiSessionStore(QObject):
     def _refresh_combat_view(self):
         self._combat_view = self._adapter.get_combat_view(self._viewer_id)
         self.combatViewChanged.emit()
+
+    def _refresh_resolution_view(self):
+        self._resolution_view = self._adapter.get_resolution_view(self._viewer_id)
+        self.resolutionViewChanged.emit()
+
+    def _executeResolution(self):
+        """自动结算：进入 resolution 阶段时触发，防重复。"""
+        if self._resolution_resolving:
+            logger.info("Resolution already resolving, skipping")
+            return
+        if not self._viewer_id:
+            logger.warning("Cannot execute resolution: no viewer_id")
+            return
+
+        self._resolution_resolving = True
+        self.resolutionViewChanged.emit()
+        self.phaseChanged.emit()  # 同步通知 advance 按钮绑定
+        try:
+            feedback = self._adapter.execute_phase("resolution", self._viewer_id)
+            if feedback.get("success"):
+                # 结算成功：刷新快照和 resolution view
+                self._refresh_snapshot()
+                self._refresh_resolution_view()
+                self.phaseChanged.emit()
+            else:
+                logger.warning(f"Resolution execution failed: {feedback.get('message')}")
+                self._refresh_resolution_view()
+            self._raise_feedback(feedback)
+        finally:
+            self._resolution_resolving = False
+            self.resolutionViewChanged.emit()
+            self.phaseChanged.emit()  # 同步通知 advance 按钮绑定
 
     def _raise_feedback(self, feedback: dict):
         ftype = feedback.get("feedback_type", "info")
