@@ -1,6 +1,6 @@
 # src/core/entities/curia.py
 
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, field
 from .figure import Figure
 
@@ -53,6 +53,29 @@ class Curia:
     def clear(self):
         """清空所有等待人物（注意：调用者需同时从全局成员中移除）"""
         self.available_figures.clear()
+
+    # ==================== 序列化方法 ====================
+
+    def to_dict(self) -> Dict[str, Any]:
+        """将 Curia 序列化为字典。串行化时只存人物ID，反序列化时由 GameState 解析引用。"""
+        import copy
+        return {
+            "available_figure_ids": [f.id for f in self.available_figures],
+            "recruited_history": copy.deepcopy(self.recruited_history),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Curia":
+        """从字典重建 Curia 对象。
+
+        Note: available_figures 不会被立即填充，而是存储 pending ID 列表。
+        调用方（如 GameState.load_from_dict）需在成员加载完成后二次解析。
+        """
+        import copy
+        curia = cls()
+        curia.recruited_history = copy.deepcopy(data.get("recruited_history", []))
+        curia._pending_figure_ids = list(data.get("available_figure_ids", []))
+        return curia
 
     def __repr__(self) -> str:
         counts = {}

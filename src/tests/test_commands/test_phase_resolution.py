@@ -238,7 +238,8 @@ class TestResolutionCommand(unittest.TestCase):
 
         self.assertTrue(result)
         # 验证合同状态已改变（后台逻辑）
-        self.assertEqual(contract_expired.status, ContractStatus.EXPIRED)
+        # CLI 壳方法已空 — 合同过期下沉到 GameState.advance_year()
+        self.assertEqual(contract_expired.status, ContractStatus.PENDING)
         self.assertEqual(contract_pending.status, ContractStatus.PENDING)
         # 输出中不应包含过期信息
         self.assertNotIn("expired", output.lower())
@@ -272,7 +273,7 @@ class TestResolutionCommand(unittest.TestCase):
         self.assertNotIn("Active Contracts", output)
 
     def test_annual_decay(self):
-        """测试年度衰减（后台执行，无输出）"""
+        """测试年度衰减已移至 advance_year()（execute 中不再执行）"""
         # 记录初始值
         pop1 = self.fig1.popularity
         vet1 = self.fig1.veterans
@@ -282,15 +283,21 @@ class TestResolutionCommand(unittest.TestCase):
         vet2 = self.fig2.veterans
         age2 = self.fig2.age
 
+        # execute() 不再执行衰减，验证其中无毒副作用
         cmd = ResolutionCommand(self.state)
         f = io.StringIO()
         with redirect_stdout(f):
             result = cmd.execute([])
         output = f.getvalue()
-
         self.assertTrue(result)
-        # 验证衰减已发生（人气降50%，老兵降20%，年龄+1）
-        # 注意：由于取整，可能会有1的误差，我们使用近似检查
+        self.assertNotIn("Annual Decay", output)
+        self.assertEqual(self.fig1.popularity, pop1)
+        self.assertEqual(self.fig1.veterans, vet1)
+        self.assertEqual(self.fig1.age, age1)
+
+        # 衰减现在在 advance_year() 中执行
+        self.state.advance_year()
+
         self.assertLess(self.fig1.popularity, pop1)
         self.assertLess(self.fig1.veterans, vet1)
         self.assertEqual(self.fig1.age, age1 + 1)
@@ -298,9 +305,6 @@ class TestResolutionCommand(unittest.TestCase):
         self.assertLess(self.fig2.popularity, pop2)
         self.assertLess(self.fig2.veterans, vet2)
         self.assertEqual(self.fig2.age, age2 + 1)
-
-        # 输出中不应包含衰减信息
-        self.assertNotIn("Annual Decay", output)
 
     def test_prepare_next_year(self):
         """测试准备下一年（方法无输出，仅验证可调用）"""

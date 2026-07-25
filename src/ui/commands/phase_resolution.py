@@ -45,10 +45,6 @@ class ResolutionCommand(Command):
         # 4. 后台功能（不打印）
         self._process_contract_expiration(terms, verbose=False)
         self._prepare_next_year(verbose=False)
-        self._apply_annual_decay(terms, verbose=False)
-        self._process_temp_influence_decay(verbose=False)
-
-
         ms = self.state.get_military_system()
         if ms:
             ms.process_legion_recovery(self.state.turn.turn_number)  # 该方法内部已无打印或需修改
@@ -65,72 +61,14 @@ class ResolutionCommand(Command):
     # ======== MVP 0.7.1 停战议和 =======
 
     def _check_truce_expiry(self):
-        """检查和约是否到期，若到期则转为威胁状态"""
-        war_system = self.state.get_war_system()
-        if not war_system:
-            return
-
-        current_turn = self.state.turn.turn_number
-        # 获取所有停战中且和约已批准的战争
-        truce_wars = war_system.get_truce_wars_with_approved_treaty()
-        expired = []
-        for war in truce_wars:
-            if war.is_truce_expired(current_turn):
-                # 将战争从停战列表移至威胁列表
-                war_system._move_to_threat(war, threat_level=1)
-                war.clear_peace_treaty()
-                expired.append(war.name)
-                print(f"      ⏰ {war.name} 和约到期，重启威胁！")
-                self.state.log_event(
-                    f"{war.name} 和约到期，重启威胁",
-                    extra={'type': 'truce_expired', 'war_id': war.id}
-                )
-        if expired:
-            print(f"      📢 {len(expired)} 场战争和约到期。")
+        """Shell method — logic moved to GameState.advance_year()"""
+        return []
 
     # ================================= MVP 0.1-0.5 =======================================
 
     def _process_governor_return(self):
-        for province in self.state.get_all_provinces():
-            designate_id = province.governor_designate_id
-            designate = (
-                self.state.get_member(designate_id)
-                if designate_id is not None
-                else None
-            )
-            promote_designate = designate is not None and not designate.is_dead
-            old_id, designate_id = province.complete_governor_transition(
-                self.state.turn.turn_number,
-                promote_designate=promote_designate
-            )
-            self.state.log_event(
-                f"总督交接完成: province={province.province_id}",
-                level=logging.DEBUG,
-                extra={
-                    "type": "governor_transition",
-                    "phase": "resolution",
-                    "province_id": province.province_id,
-                    "old_governor_id": old_id,
-                    "designate_id": designate_id,
-                    "promoted": promote_designate,
-                }
-            )
-            # 先处理返回罗马的旧总督
-            if old_id is not None:
-                old_fig = self.state.get_member(old_id)
-                if old_fig and not old_fig.is_dead:
-                    old_fig.is_absent = False
-                    old_fig.office = None  # 卸任总督官职
-                    old_fig.update_influence()
-                    print(f"      🔄 旧总督 {old_fig.get_formal_name()} 返回罗马")
-                    self.state.log_event(f"旧总督 {old_fig.get_formal_name()} 返回罗马")
-
-            # 再处理候任总督上任
-            if promote_designate:
-                designate.office = province.governor_type
-                designate.update_influence()
-                print(f"      👑 新总督 {designate.get_formal_name()} 正式上任 {province.name}")
-                self.state.log_event(f"新总督 {designate.get_formal_name()} 正式上任 {province.name}")
+        """Shell method — logic moved to GameState.advance_year()"""
+        return []
 
     def _check_all_conditions(self, terms):
         """检查所有胜利/失败条件，打印简洁信息"""
@@ -197,18 +135,8 @@ class ResolutionCommand(Command):
             print(f"      📊 元老院无派系")
 
     def _process_contract_expiration(self, terms, verbose=False):
-        """处理合同过期（无打印）"""
-        expired_count = 0
-
-        for contract in self.state.contracts:
-            if getattr(contract, '_is_fleet_construction', False):
-                continue
-            if contract.status == ContractStatus.PENDING:
-                turns_pending = self.state.turn.turn_number - getattr(contract, '_created_turn', self.state.turn.turn_number)
-                if turns_pending >= 3:
-                    contract.expire()
-                    expired_count += 1
-        # 不打印
+        """Shell method — logic moved to GameState.advance_year()"""
+        return 0
 
     def _prepare_next_year(self, verbose=False):
         """准备下一年（无打印）"""

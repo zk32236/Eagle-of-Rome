@@ -315,7 +315,16 @@ class TestGuiApiAdapter:
         assert step_feedback["success"]
         after_market_ids = {row["id"] for row in store.forumAvailableFigures}
         assert retiree["id"] in after_market_ids
-        assert len(after_market_ids - before_market_ids) == 3
+        # Verify generated figures from the API response
+        # (do not use set difference which conflates AI retirements)
+        generated = step_feedback.get("data", {}).get("generated_figures", [])
+        generated_ids = {row["id"] for row in generated}
+        assert len(generated_ids) == 3, (
+            f"Expected 3 generated market figures, got {len(generated_ids)}: {generated_ids}"
+        )
+        assert generated_ids.issubset(after_market_ids), (
+            f"Generated figures {generated_ids} not all in market: {after_market_ids}"
+        )
 
     def test_session_store_population_resolution_keeps_results_visible(self):
         """Population resolution via two-step contract via unified dispatch.

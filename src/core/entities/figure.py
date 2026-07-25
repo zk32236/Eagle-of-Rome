@@ -651,6 +651,133 @@ class Figure:
     def has_active_contract(self) -> bool:
         return self._has_active_contract
 
+    # ==================== 序列化方法 ====================
+
+    def to_dict(self) -> Dict[str, Any]:
+        """将人物实体序列化为字典。"""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "faction_id": self.faction_id,
+            "praenomen": self.praenomen,
+            "nomen": self.nomen,
+            "cognomen": self.cognomen,
+            "wealth": self.wealth,
+            "popularity": self.popularity,
+            "land": self.land,
+            "veterans": self.veterans,
+            "office": self.office,
+            "class_tier": self.class_tier.value,
+            "age": self.age,
+            "zeal": self.zeal,
+            "charisma": self.charisma,
+            "martial": self.martial,
+            "intelligence": self.intelligence,
+            "family": self.family,
+            "family_prestige": self.family_prestige,
+            "experience": self.experience,
+            "military_exp": self.military_exp,
+            "economic_exp": self.economic_exp,
+            "political_exp": self.political_exp,
+            "loyalty": self.loyalty,
+            "loyalty_history": self.loyalty_history.copy(),
+            "corruption": self.corruption,
+            "bribe_income": self.bribe_income,
+            "is_faction_leader": self.is_faction_leader,
+            "is_dead": self.is_dead,
+            "is_present": self.is_present,
+            "is_available": self.is_available,
+            "abandoned_by": self.abandoned_by,
+            "is_absent": self.is_absent,
+            "office_history": [
+                {
+                    "office_type": term.office_type,
+                    "start_turn": term.start_turn,
+                    "end_turn": term.end_turn,
+                    "is_active": term.is_active,
+                }
+                for term in self.office_history
+            ],
+            "festival_history": self.festival_history.copy(),
+            "contract_history": self.contract_history.copy(),
+            "land_trade_history": self.land_trade_history.copy(),
+            "_land_private": self._land_private,
+            "_contract_ids": self._contract_ids.copy(),
+            "_has_active_contract": self._has_active_contract,
+            "_tribute_profit": self._tribute_profit,
+            "_project_profit": self._project_profit,
+            "_influence": self._influence,
+            "_temp_influence_tasks": self._temp_influence_tasks.copy(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Figure":
+        """从字典重建人物对象。"""
+        # 重建公职任期
+        office_history = []
+        for term_data in data.get("office_history", []):
+            office_history.append(OfficeTerm(
+                office_type=term_data["office_type"],
+                start_turn=term_data["start_turn"],
+                end_turn=term_data.get("end_turn"),
+                is_active=term_data.get("is_active", True),
+            ))
+
+        # 解析社会阶层枚举
+        class_tier_value = data.get("class_tier", "plebeian")
+        class_tier = ClassTier(class_tier_value)
+
+        figure = cls(
+            id=data["id"],
+            name=data["name"],
+            faction_id=data.get("faction_id"),
+            praenomen=data.get("praenomen"),
+            nomen=data.get("nomen"),
+            cognomen=data.get("cognomen"),
+            wealth=data.get("wealth", 0),
+            popularity=data.get("popularity", 0),
+            land=data.get("land", 0),
+            veterans=data.get("veterans", 0),
+            office=data.get("office"),
+            class_tier=class_tier,
+            age=data.get("age", 30),
+            zeal=data.get("zeal", 0),
+            charisma=data.get("charisma", 0),
+            martial=data.get("martial", 0),
+            intelligence=data.get("intelligence", 0),
+            family=data.get("family"),
+            family_prestige=data.get("family_prestige", 0),
+            experience=data.get("experience", 0),
+            military_exp=data.get("military_exp", 0),
+            economic_exp=data.get("economic_exp", 0),
+            political_exp=data.get("political_exp", 0),
+            loyalty=data.get("loyalty", 5),
+            loyalty_history=data.get("loyalty_history", []).copy(),
+            corruption=data.get("corruption", 0),
+            bribe_income=data.get("bribe_income", 0),
+            is_faction_leader=data.get("is_faction_leader", False),
+            is_dead=data.get("is_dead", False),
+            is_present=data.get("is_present", True),
+            is_available=data.get("is_available", True),
+            abandoned_by=data.get("abandoned_by"),
+            is_absent=data.get("is_absent", False),
+            office_history=office_history,
+            festival_history=data.get("festival_history", []).copy(),
+            contract_history=data.get("contract_history", []).copy(),
+            land_trade_history=data.get("land_trade_history", []).copy(),
+        )
+
+        # 覆盖 __post_init__ 设置的后台字段
+        figure._land_private = data.get("_land_private", 0)
+        figure._contract_ids = data.get("_contract_ids", []).copy()
+        figure._has_active_contract = data.get("_has_active_contract", False)
+        figure._tribute_profit = data.get("_tribute_profit", 0)
+        figure._project_profit = data.get("_project_profit", 0)
+        figure._influence = data.get("_influence", figure._influence)
+        figure._temp_influence_tasks = data.get("_temp_influence_tasks", []).copy()
+
+        return figure
+
     @property
     def tribute_profit(self) -> int:
         return self._tribute_profit

@@ -133,6 +133,8 @@ def get_candidates(state: GameState) -> dict:
         for fig in state.get_living_members():
             if fig.is_absent:
                 continue
+            if fig.faction_id is None:  # curia 中无派系新人不应参选
+                continue
             if fig.id in used_figure_ids:
                 continue
             can_hold, _ = fig.can_hold_office(office, current_turn, state.config)

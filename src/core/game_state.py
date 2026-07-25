@@ -25,7 +25,7 @@ from src.core.entities.city import City
 
 
 if TYPE_CHECKING:
-    from src.core.entities import Faction, GameTurn
+    from src.core.entities import Faction, GameTurn, Player
     from src.core.systems.war_system import WarSystem
     from src.core.systems.military_system import MilitarySystem
 
@@ -511,6 +511,16 @@ class GameState:
                 "campaigns": self._population_pending["campaigns"].copy(),
                 "votes": self._population_pending["votes"].copy(),
             },
+            # Phase 2 新增字段：curia、forum、senate
+            "_curia": self._curia.to_dict() if self._curia else None,
+            "_forum_pending": self.get_forum_pending(),
+            "_senate_pending": {
+                "proposals": self._senate_pending["proposals"].copy(),
+                "votes": {k: v.copy() for k, v in self._senate_pending["votes"].items()},
+                "vetoes": list(self._senate_pending["vetoes"]),
+                "proposal_id_counter": self._senate_pending["proposal_id_counter"],
+            },
+            "_pending_land_sale_quota": self._pending_land_sale_quota,
         }
         return data
 
@@ -522,8 +532,9 @@ class GameState:
         # 恢复基础字段
         self._treasury = data.get("_treasury", 0)
         self._national_public_land = data.get("_national_public_land", 0)
-        if data.get("_turn") and self._turn:
-            self._turn.load_from_dict(data["_turn"])
+        if data.get("_turn"):
+            from src.core.entities.entities import GameTurn
+            self._turn = GameTurn(**data["_turn"])
         self._executed_phases = set(data.get("_executed_phases", []))
         self._phase_results = data.get("_phase_results", {}).copy()
         self._contract_id_counter = data.get("_contract_id_counter", 1)
@@ -598,6 +609,48 @@ class GameState:
             self._population_pending["campaigns"] = []
         if "votes" not in self._population_pending:
             self._population_pending["votes"] = []
+
+        # Phase 2 新增：恢复 curia
+        if data.get("_curia"):
+            from src.core.entities.curia import Curia
+            curia = Curia.from_dict(data["_curia"])
+            # 解析 pending figure IDs 为实际的 Figure 对象
+            for fid in getattr(curia, '_pending_figure_ids', []):
+                figure = self._members.get(fid)
+                if figure:
+                    curia.add_figure(figure)
+            self._curia = curia
+
+        # Phase 2 新增：恢复 forum pending
+        self._forum_pending = data.get("_forum_pending", {
+            "retirements": [],
+            "recruitment_bids": [],
+            "contract_bids": [],
+            "land_purchases": [],
+            "triumph_votes": [],
+            "land_trades": [],
+            "market_opened": [],
+        })
+        # 确保所有 key 都存在
+        required_forum_keys = [
+            "retirements", "recruitment_bids", "contract_bids",
+            "land_purchases", "triumph_votes", "land_trades", "market_opened",
+        ]
+        for key in required_forum_keys:
+            if key not in self._forum_pending:
+                self._forum_pending[key] = []
+
+        # Phase 2 新增：恢复 senate pending
+        senate_data = data.get("_senate_pending", {})
+        self._senate_pending = {
+            "proposals": senate_data.get("proposals", []).copy(),
+            "votes": {k: v.copy() for k, v in senate_data.get("votes", {}).items()},
+            "vetoes": set(senate_data.get("vetoes", [])),
+            "proposal_id_counter": senate_data.get("proposal_id_counter", 1),
+        }
+
+        # Phase 2 新增：恢复待售公地配额
+        self._pending_land_sale_quota = data.get("_pending_land_sale_quota", 0)
 
     def _initialize_mortality_pool(self):
         """初始化天命池"""
@@ -843,6 +896,155 @@ class GameState:
             self._turn.advance_year()
         self._executed_phases.clear()
         self._phase_results.clear()
+
+        # P0: curia 清理
+        self._cleanup_curia()
+
+        # P0: 清空所有阶段临时数据
+        self.clear_population_pending()
+        self.clear_forum_pending()
+        self.clear_senate_pending()
+        self.clear_pending_land_acts()
+
+        # P0: 年度衰减（含年龄递增 — 由 advance_year 统一处理）
+        decay_rates = {"veterans": 0.20, "popularity": 0.50}
+        for member in self.get_living_members():
+            member.apply_annual_decay(decay_rates)
+            member.age += 1
+
+        # P0: 临时影响力衰减
+        for member in self.get_living_members():
+            if member.get_temp_influence() > 0:
+                member.decay_temp_influence_tasks()
+                member.update_influence()
+
+        # P1: 合同过期处理
+        self.process_contract_expiration()
+
+        # P1: 总督交接处理
+        self.process_governor_transitions()
+
+        # P1: 和约到期处理
+        self.process_truce_expiry()
+
+        # P0: 年度衰减完成日志
+        self.log_event(
+            f"年度衰减完成: 衰减率 veterans={decay_rates['veterans']}, popularity={decay_rates['popularity']}",
+            level=logging.DEBUG
+        )
+
+    # ========== P1: 年度推进附加处理 ==========
+
+    def process_contract_expiration(self) -> int:
+        """P1: 处理合同过期 - 所有 PENDING 合同存在 ≥3 回合则过期"""
+        expired_count = 0
+        for contract in self.contracts:
+            if getattr(contract, '_is_fleet_construction', False):
+                continue
+            if contract.status == ContractStatus.PENDING:
+                current_turn = self._turn.turn_number if self._turn else 0
+                created_turn = contract.create_turn
+                turns_pending = current_turn - created_turn
+                if turns_pending >= 3:
+                    contract.expire()
+                    expired_count += 1
+                    self.log_event(
+                        f"合同 {contract.id} ({contract.contract_type.name}) 已过期，存在 {turns_pending} 回合",
+                        level=logging.DEBUG
+                    )
+        return expired_count
+
+    def process_governor_transitions(self) -> list:
+        """P1: 处理总督交接 - 旧总督返回 + 候任总督上任"""
+        transitions = []
+        for province in self.get_all_provinces():
+            designate_id = province.governor_designate_id
+            designate = (
+                self.get_member(designate_id)
+                if designate_id is not None
+                else None
+            )
+            promote_designate = designate is not None and not designate.is_dead
+            old_id, designate_id = province.complete_governor_transition(
+                self._turn.turn_number if self._turn else 0,
+                promote_designate=promote_designate
+            )
+
+            # 处理旧总督返回
+            if old_id is not None:
+                old_fig = self.get_member(old_id)
+                if old_fig is not None and not old_fig.is_dead:
+                    assert old_fig is not None
+                    old_fig.is_absent = False
+                    old_fig.office = None
+                    old_fig.update_influence()
+                    self.log_event(
+                        f"旧总督 {old_fig.get_formal_name()} 返回罗马 (province_id={province.province_id})",
+                        level=logging.DEBUG
+                    )
+
+            # 处理候任总督上任或跳过
+            if promote_designate:
+                designate.office = province.governor_type
+                designate.update_influence()
+                self.log_event(
+                    f"新总督 {designate.get_formal_name()} 正式上任 {province.name} (province_id={province.province_id})",
+                    level=logging.DEBUG
+                )
+            else:
+                self.log_event(
+                    f"行省 {province.name} (ID={province.province_id}) 无候任总督，跳过交接",
+                    level=logging.DEBUG
+                )
+
+            transitions.append({
+                "province_id": province.province_id,
+                "old_governor_id": old_id,
+                "new_governor_id": designate_id if promote_designate else None,
+            })
+        return transitions
+
+    def process_truce_expiry(self) -> list:
+        """P1: 处理和约到期 - 到期停战转为威胁"""
+        war_system = self.get_war_system()
+        if not war_system:
+            return []
+
+        current_turn = self._turn.turn_number if self._turn else 0
+        truce_wars = war_system.get_truce_wars_with_approved_treaty()
+        expired = []
+        for war in truce_wars:
+            if war.is_truce_expired(current_turn):
+                # noinspection PyProtectedMember
+                war_system._move_to_threat(war, threat_level=1)
+                war.clear_peace_treaty()
+                expired.append(war.name)
+                self.log_event(
+                    f"和约到期: {war.name} (ID={war.id}) 重启威胁",
+                    level=logging.DEBUG
+                )
+        if expired:
+            self.log_event(
+                f"{len(expired)} 场战争和约到期",
+                level=logging.DEBUG
+            )
+        return expired
+
+    def _cleanup_curia(self) -> None:
+        """P0-1: 清理人才市场中无派系的广场人物。"
+        
+        - 无 faction_id 的人物（广场生成的新人物）→ 从 _members 删除
+        - 有 faction_id 的人物（退休的派系成员）→ 保留在 _members 中
+        """
+        curia = self._curia
+        if curia and not curia.is_empty():
+            for fig in curia.get_all_available():
+                if fig.faction_id is None:
+                    self._members.pop(fig.id, None)
+            curia.available_figures = [
+                fig for fig in curia.available_figures
+                if fig.faction_id is not None
+            ]
 
     def is_phase_executed(self, phase_name: str) -> bool:
         """检查阶段是否已执行"""

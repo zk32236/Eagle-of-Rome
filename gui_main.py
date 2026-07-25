@@ -28,7 +28,7 @@ def main():
     logger.info("Starting Eagle of Rome GUI...")
 
     # 创建 GUI 原型会话
-    result = session_api.create_gui_prototype_session()
+    result = session_api.create_gui_prototype_session(config_path="data/config/game_config.json")
     if not result.get("success"):
         logger.error(f"Failed to create session: {result.get('message')}")
         print(f"ERROR: {result.get('message')}", file=sys.stderr)

@@ -67,7 +67,7 @@ class Config:
                 {"name": "无妄天灾", "type": "厄运", "effect": "disaster", "weight": 1}
             ],
             "event_draw_count": 1,  # 每回合抽取事件卡数量
-            "death_count": 2  # 添加这一行，每回合死2人
+            "death_count": 1  # 每回合随机死亡1人
         },
         "economic_rules": {
             "base_tax": 100,

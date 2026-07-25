@@ -71,6 +71,7 @@ class GuiSessionStore(QObject):
         self._global_query_result: Dict[str, Any] = {}
         self._feedback_queue: List[Dict[str, str]] = []
         self._forum_ai_processed = False
+        self._last_reset_turn: int = 0
 
     # -----------------------------------------------------------------------
     # 初始化
@@ -924,6 +925,20 @@ class GuiSessionStore(QObject):
             logger.info("AI forum processing completed")
 
     # -----------------------------------------------------------------------
+    # Cache Reset Helper
+    # -----------------------------------------------------------------------
+    def _reset_phase_caches(self) -> None:
+        """清除所有阶段缓存字段。幂等——适用于年度推进、观众切换和初始化。"""
+        self._forum_result = {}
+        self._forum_step_override = ""
+        self._forum_ai_processed = False
+        self._mortality_result = {}
+        self._revenue_result = {}
+        self._combat_result = {}
+        self._last_reset_turn = self.turnNumber
+        self._refresh_forum_view()
+
+    # -----------------------------------------------------------------------
     # Forum stage Slot — Advance
     # -----------------------------------------------------------------------
     @Slot(result=dict)
@@ -1026,6 +1041,7 @@ class GuiSessionStore(QObject):
         try:
             feedback = self._adapter.advance_year(self._viewer_id)
             if feedback.get("success"):
+                self._reset_phase_caches()
                 self._refresh_snapshot()
                 self._selected_phase_id = "mortality"
                 self._selected_phase_summary = self._summary_from_phase(
@@ -1218,8 +1234,6 @@ class GuiSessionStore(QObject):
             self._refresh_revenue_view()
         elif phase_id == "senate":
             self._refresh_senate_view()
-        elif phase_id == "forum":
-            self._refresh_forum_view()
         elif phase_id == "combat":
             self._refresh_combat_view()
         elif phase_id == "resolution":
@@ -1268,6 +1282,7 @@ class GuiSessionStore(QObject):
     @Slot(result=bool)
     def switchViewer(self, new_viewer_id: str) -> bool:
         """切换 viewer（用于玩家交接遮罩确认后）"""
+        self._reset_phase_caches()
         self._viewer_id = new_viewer_id
         self._refresh_snapshot()
         self._refresh_mortality_view()
@@ -1291,6 +1306,9 @@ class GuiSessionStore(QObject):
     def _on_refresh(self):
         """API 操作成功后自动刷新"""
         self._refresh_snapshot()
+        # Belt-and-suspenders: detect year advance outside normal path
+        if not self._state.get_phase_result("mortality"):
+            self._reset_phase_caches()
         self._refresh_mortality_view()
         self._refresh_population_view()
         self._refresh_senate_view()

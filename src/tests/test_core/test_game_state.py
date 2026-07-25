@@ -11,7 +11,6 @@ from src.core.entities.province import Province
 from src.core.systems.naval_system import NavalSystem  # 在文件顶部添加导入
 import tempfile
 import logging
-from src.core.game_state import GameState
 from src.core.entities.entities import GameTurn
 import src.core.game_state
 importlib.reload(src.core.game_state)
@@ -537,6 +536,234 @@ def test_game_state_create_for_testing_includes_new_fields():
     assert state._wartime_tax_collected == 0
     assert state._tax_refund_due == 0
 
+
+def test_advance_year_debug_logging():
+    """验证 advance_year() 中 '年度衰减完成' DEBUG 日志写入 event_log"""
+    state = GameState.create_for_testing({})
+    state.advance_year()
+
+    # event_log 存储所有通过 log_event() 传入的消息，不依赖日志级别
+    log_messages = state.event_log
+    assert len(log_messages) > 0, "advance_year() 应写入至少一条日志"
+    assert any("年度衰减完成" in msg for msg in log_messages), (
+        f"应包含 '年度衰减完成'，实际日志: {log_messages}"
+    )
+    assert any("veterans=" in msg for msg in log_messages), (
+        f"应包含衰减率信息，实际日志: {log_messages}"
+    )
+
+
+def test_contract_expiration_file_logging():
+    """C-05: 验证合同过期经 advance_year() 写入文件日志"""
+    from src.core.entities.contract import ContractType, ContractStatus
+    from src.core.entities.entities import GameTurn
+    import os
+
+    original_log_filename = GameState._log_filename
+    GameState._log_filename = None
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = os.path.join(tmpdir, "test_contract.log")
+            config = {
+                "logging": {
+                    "enabled": True,
+                    "file_path": log_file,
+                    "max_bytes": 10485760,
+                    "backup_count": 3,
+                    "log_level": "DEBUG"
+                }
+            }
+            state = GameState.create_for_testing(config)
+            state.turn = GameTurn(turn_number=10, year=-260)
+
+            # 创建一份 PENDING 合同，_create_turn=5，当前回合=10 → 存在5回合 ≥3 → 过期
+            contract = state.create_contract(ContractType.TAX_FARMING, 1, 90, 5)
+            assert contract.status == ContractStatus.PENDING
+            assert contract.create_turn == 5
+
+            state.advance_year()
+            state.close_logging()
+
+            # 验证合同已过期
+            assert contract.status == ContractStatus.EXPIRED, (
+                f"合同应过期，实际状态: {contract.status}"
+            )
+
+            # 验证 event_log 包含合同过期消息
+            log_messages = state.event_log
+            assert any("合同" in msg and "已过期" in msg for msg in log_messages), (
+                f"event_log 应包含合同过期消息，实际: {log_messages}"
+            )
+
+            # 验证文件日志
+            log_files = [f for f in os.listdir(tmpdir) if f.endswith(".log")]
+            assert len(log_files) > 0, "No log file generated"
+            with open(os.path.join(tmpdir, log_files[0]), 'r', encoding='utf-8') as f:
+                content = f.read()
+            print(f"[C-05 TEST] File log content:\n{content}")
+            assert "合同" in content and "已过期" in content, (
+                f"文件日志应包含合同过期消息，实际: {content[:500]}"
+            )
+    finally:
+        GameState._log_filename = original_log_filename
+
+
+def test_governor_transition_file_logging():
+    """C-06: 验证总督交接经 advance_year() 写入文件日志"""
+    from src.core.entities.entities import GameTurn
+    from src.core.entities.figure import Figure
+    import os
+
+    original_log_filename = GameState._log_filename
+    GameState._log_filename = None
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = os.path.join(tmpdir, "test_governor.log")
+            config = {
+                "logging": {
+                    "enabled": True,
+                    "file_path": log_file,
+                    "max_bytes": 10485760,
+                    "backup_count": 3,
+                    "log_level": "DEBUG"
+                }
+            }
+            state = GameState.create_for_testing(config)
+            state.turn = GameTurn(turn_number=5, year=-265)
+
+            # 创建旧总督人物
+            old_gov = Figure(id=101, name="OldGuv", nomen="Cornelius", cognomen="Maximus",
+                             age=60, is_absent=True, office="proconsul")
+            # 创建候任总督人物
+            designate = Figure(id=102, name="Desig", nomen="Julius", cognomen="Novus",
+                               age=40, is_absent=False, office=None)
+            state._members[101] = old_gov
+            state._members[102] = designate
+
+            # 创建行省，设置旧总督和候任总督
+            province = Province(
+                province_id=1,
+                name="TestProvince",
+                total_land=500,
+                governor_id=101,
+                governor_designate_id=102,
+                old_governor_id=101,
+                governor_type="proconsul"
+            )
+            state.add_province(province)
+
+            state.advance_year()
+            state.close_logging()
+
+            # 验证 event_log 包含总督交接消息
+            log_messages = state.event_log
+            print(f"[C-06 TEST] event_log messages:")
+            for msg in log_messages:
+                if any(kw in msg for kw in ["旧总督", "新总督", "无候任"]):
+                    print(f"  {msg}")
+
+            # 验证旧总督返回
+            assert any("旧总督" in msg and "返回罗马" in msg for msg in log_messages), (
+                f"应包含旧总督返回消息，实际: {log_messages}"
+            )
+            assert not old_gov.is_absent, "旧总督 is_absent 应设为 False"
+            assert old_gov.office is None, "旧总督 office 应设为 None"
+
+            # 验证新总督上任
+            assert any("新总督" in msg and "正式上任" in msg for msg in log_messages), (
+                f"应包含新总督上任消息，实际: {log_messages}"
+            )
+            assert designate.office == "proconsul", f"新总督 office 应为 proconsul，实际: {designate.office}"
+
+            # 验证文件日志
+            log_files = [f for f in os.listdir(tmpdir) if f.endswith(".log")]
+            assert len(log_files) > 0, "No log file generated"
+            with open(os.path.join(tmpdir, log_files[0]), 'r', encoding='utf-8') as f:
+                content = f.read()
+            print(f"[C-06 TEST] File log content:\n{content}")
+            assert "旧总督" in content and "返回罗马" in content, (
+                f"文件日志应包含旧总督返回消息，实际: {content[:500]}"
+            )
+            assert "新总督" in content and "正式上任" in content, (
+                f"文件日志应包含新总督上任消息，实际: {content[:500]}"
+            )
+    finally:
+        GameState._log_filename = original_log_filename
+
+
+def test_truce_expiry_file_logging():
+    """C-07: 验证和约到期经 advance_year() 写入文件日志"""
+    from src.core.entities.entities import GameTurn
+    from src.core.entities.war import War, WarStatus
+    from src.core.systems.war_system import WarSystem
+    import os
+
+    original_log_filename = GameState._log_filename
+    GameState._log_filename = None
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = os.path.join(tmpdir, "test_truce.log")
+            config = {
+                "logging": {
+                    "enabled": True,
+                    "file_path": log_file,
+                    "max_bytes": 10485760,
+                    "backup_count": 3,
+                    "log_level": "DEBUG"
+                }
+            }
+            state = GameState.create_for_testing(config)
+            state.turn = GameTurn(turn_number=10, year=-260)
+
+            # 创建战争系统
+            ws = WarSystem(state)
+            state._war_system = ws
+
+            # 创建停战战争（truce_end_turn=8, 当前turn=10 → 已到期）
+            war = War(
+                id="test_truce_war",
+                name="Test Truce War",
+                start_year=-270,
+                threat_level=0,
+                strength=5
+            )
+            war.status = WarStatus.TRUCE
+            war.set_peace_treaty({"status": "approved"})
+            war.set_truce_end_turn(8)  # turn 8 is before current turn 10 → expired
+
+            # 添加到停战列表
+            ws._truce_wars.append(war)
+
+            state.advance_year()
+            state.close_logging()
+
+            # 验证战争已从停战移至威胁
+            assert war not in ws._truce_wars, "战争应从停战列表移除"
+            assert war in ws._threats, "战争应移至威胁列表"
+            assert war.status == WarStatus.THREAT, f"战争状态应为 THREAT，实际: {war.status}"
+
+            # 验证 event_log 包含和约到期消息
+            log_messages = state.event_log
+            print(f"[C-07 TEST] event_log messages:")
+            for msg in log_messages:
+                if any(kw in msg for kw in ["和约到期", "到期"]):
+                    print(f"  {msg}")
+
+            assert any("和约到期" in msg for msg in log_messages), (
+                f"应包含和约到期消息，实际: {log_messages}"
+            )
+
+            # 验证文件日志
+            log_files = [f for f in os.listdir(tmpdir) if f.endswith(".log")]
+            assert len(log_files) > 0, "No log file generated"
+            with open(os.path.join(tmpdir, log_files[0]), 'r', encoding='utf-8') as f:
+                content = f.read()
+            print(f"[C-07 TEST] File log content:\n{content}")
+            assert "和约到期" in content, (
+                f"文件日志应包含和约到期消息，实际: {content[:500]}"
+            )
+    finally:
+        GameState._log_filename = original_log_filename
 
 
 if __name__ == "__main__":

@@ -43,15 +43,10 @@ def test_truce_expired_single_war(mock_state, mock_war_system):
     cmd = ResolutionCommand(mock_state)
     cmd._check_truce_expiry()
 
-    # 验证战争被移到威胁列表
-    mock_war_system._move_to_threat.assert_called_once_with(war, threat_level=1)
-    # 验证清除草案
-    war.clear_peace_treaty.assert_called_once()
-    # 验证日志
-    mock_state.log_event.assert_called_once_with(
-        f"{war.name} 和约到期，重启威胁",
-        extra={'type': 'truce_expired', 'war_id': war.id}
-    )
+    # CLI 壳方法已空 — 和约到期下沉到 GameState.process_truce_expiry()
+    mock_war_system._move_to_threat.assert_not_called()
+    war.clear_peace_treaty.assert_not_called()
+    mock_state.log_event.assert_not_called()
 
 
 def test_truce_not_expired_single_war(mock_state, mock_war_system):
@@ -79,16 +74,14 @@ def test_truce_mixed_expiry(mock_state, mock_war_system):
     cmd = ResolutionCommand(mock_state)
     cmd._check_truce_expiry()
 
-    # 只有 war1 和 war3 应被处理
-    assert mock_war_system._move_to_threat.call_count == 2
-    mock_war_system._move_to_threat.assert_any_call(war1, threat_level=1)
-    mock_war_system._move_to_threat.assert_any_call(war3, threat_level=1)
-    war1.clear_peace_treaty.assert_called_once()
-    war3.clear_peace_treaty.assert_called_once()
+    # CLI 壳方法已空
+    assert mock_war_system._move_to_threat.call_count == 0
+    war1.clear_peace_treaty.assert_not_called()
+    war3.clear_peace_treaty.assert_not_called()
     war2.clear_peace_treaty.assert_not_called()
 
-    # 日志应调用两次
-    assert mock_state.log_event.call_count == 2
+    # CLI 壳方法不产生日志
+    assert mock_state.log_event.call_count == 0
 
 
 def test_no_truce_wars(mock_state, mock_war_system):

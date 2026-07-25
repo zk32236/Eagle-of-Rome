@@ -238,6 +238,15 @@ class GameTurn:
     def get_year_display(self) -> str:
         return f"{abs(self.year)} BC" if self.year < 0 else f"{self.year} AD"
 
+    def to_dict(self) -> dict:
+        """将回合对象转换为字典，用于存档。"""
+        return {
+            "turn_number": self.turn_number,
+            "year": self.year,
+            "current_phase": self.current_phase,
+            "leader_ids": self.leader_ids.copy(),
+        }
+
     def __repr__(self) -> str:
         return f"Turn {self.turn_number} ({self.get_year_display()})"
 

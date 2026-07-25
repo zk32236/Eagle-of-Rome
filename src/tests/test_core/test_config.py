@@ -129,7 +129,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.get("political_rules.leader_cooldown_years"), 10)
         self.assertEqual(config.get("political_rules.min_ages.consul"), 40)
         # 原为 draw_per_members，改为实际存在的键 death_count
-        self.assertEqual(config.get("mortality_rules.death_count"), 2)
+        self.assertEqual(config.get("mortality_rules.death_count"), 1)
 
         # 部分路径不存在
         self.assertIsNone(config.get("political_rules.nonexistent"))
@@ -160,8 +160,8 @@ class TestConfig(unittest.TestCase):
 
         config = Config(self.config_path)
         self.assertEqual(config.get("mortality_rules.event_draw_count"), 3)
-        # 其他值保持默认：death_count 应为 2
-        self.assertEqual(config.get("mortality_rules.death_count"), 2)
+        # 其他值保持默认：death_count 应为 1
+        self.assertEqual(config.get("mortality_rules.death_count"), 1)
 
     def test_deep_merge_nested(self):
         """测试嵌套字典深度合并"""

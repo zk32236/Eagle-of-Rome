@@ -5,6 +5,7 @@ from .contract import Contract, ContractType, ContractStatus
 from .curia import Curia
 from .legion import Legion, LegionStatus
 from .war import War, WarStatus, WarType
+from .player import Player, PlayerType
 
 __all__ = [
     'Senator', 'Faction', 'GameTurn',
@@ -13,5 +14,6 @@ __all__ = [
     'Curia',
     'Legion', 'LegionStatus',
     'War', 'WarStatus', 'WarType',
+    'Player', 'PlayerType',
     'Province'  # <-- 添加这一行
 ]
