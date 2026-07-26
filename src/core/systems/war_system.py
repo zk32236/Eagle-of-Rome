@@ -286,6 +286,111 @@ class WarSystem:
         self._legions_to_disband.clear()
         return result
 
+    def process_triumph_and_disbandment(self) -> dict:
+        """
+        Process all resolved wars for triumphs and legion disbandment.
+
+        Returns:
+            dict: {
+                "triumphs": [
+                    {
+                        "war_id": str,
+                        "war_name": str,
+                        "commander_id": int | None,
+                        "commander_name": str | None,
+                    },
+                ],
+                "disbanded": {
+                    "resolved_wars": { "total": int, "errors": [str] },
+                    "deescalated": { "total": int, "errors": [str] },
+                },
+                "failed_re_queued": [int],
+            }
+        """
+        from src.core.entities.legion import LegionStatus
+        ms = self.state.get_military_system()
+        triumphs = []
+        resolved_total = 0
+        resolved_errors = []
+        deescalated_total = 0
+        deescalated_errors = []
+        failed_re_queued = []
+
+        if not ms:
+            return {
+                "triumphs": [],
+                "disbanded": {"resolved_wars": {"total": 0, "errors": []},
+                              "deescalated": {"total": 0, "errors": []}},
+                "failed_re_queued": [],
+            }
+
+        # Process resolved wars
+        for war in self.get_resolved_wars():
+            # Triumph processing
+            if war.triumph_approved:
+                commander_id = war.triumph_commander_id or war.commander_id
+                commander = self.state.get_member(commander_id) if commander_id else None
+                if commander and not commander.is_dead:
+                    triumphs.append({
+                        "war_id": war.id,
+                        "war_name": war.name,
+                        "commander_id": commander.id,
+                        "commander_name": commander.name,
+                    })
+                    self.state.log_event(
+                        f"凯旋式: {commander.name} 举行凯旋",
+                        extra={"type": "triumph", "commander_id": commander.id, "war_id": war.id}
+                    )
+                    war.set_triumph_approved(False)
+
+            # Legion disbandment
+            if war.legion_numbers:
+                legion_numbers = list(war.legion_numbers)
+                disbanded, errors = ms.disband_legions_for_war(legion_numbers)
+                if disbanded > 0:
+                    resolved_total += disbanded
+                for err in errors:
+                    resolved_errors.append(err)
+
+                # Handle failed disbandments
+                if errors:
+                    for legion_number in legion_numbers:
+                        legion = ms.get_legion_by_number(legion_number)
+                        if legion is None or legion.status != LegionStatus.DISBANDED:
+                            failed_re_queued.append(legion_number)
+
+                war.clear_legion_numbers()
+
+        # Re-queue failed legions
+        if failed_re_queued:
+            self.add_legions_to_disband(failed_re_queued)
+
+        # Process de-escalated war legions
+        legions_to_disband = self.clear_legions_to_disband()
+        if legions_to_disband:
+            disbanded, errors = ms.disband_legions_for_war(legions_to_disband)
+            if disbanded > 0:
+                deescalated_total += disbanded
+            for err in errors:
+                deescalated_errors.append(err)
+
+            if errors:
+                for legion_number in legions_to_disband:
+                    legion = ms.get_legion_by_number(legion_number)
+                    if legion is None or legion.status != LegionStatus.DISBANDED:
+                        failed_re_queued.append(legion_number)
+                if failed_re_queued:
+                    self.add_legions_to_disband(failed_re_queued)
+
+        return {
+            "triumphs": triumphs,
+            "disbanded": {
+                "resolved_wars": {"total": resolved_total, "errors": resolved_errors},
+                "deescalated": {"total": deescalated_total, "errors": deescalated_errors},
+            },
+            "failed_re_queued": failed_re_queued,
+        }
+
     # ========== 以下函数为 MVP 0.5 之前（含）的内容 ==========
 
     # ========== 日志操作 ==========

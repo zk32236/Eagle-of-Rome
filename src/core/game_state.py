@@ -880,6 +880,152 @@ class GameState:
         """
         return self._config.get(f"economic_rules.{key}", default)
 
+    def check_victory_conditions(self) -> dict:
+        """
+        Check all victory/failure conditions.
+
+        Also handles treasury deficit turn counting (increment if negative,
+        reset if non-negative).
+
+        Returns:
+            dict: {
+                "game_over": bool,
+                "conditions": [
+                    {
+                        "type": "bankruptcy" | "legions_destroyed" | "revolt_majority"
+                               | "dictatorship" | "italy_grievance",
+                        "triggered": bool,
+                        "details": str,
+                        "critical": bool,  # True = triggers game over
+                    },
+                    ...
+                ],
+                "summary": {
+                    "deficit_turns": int,
+                    "deficit_limit": int,
+                    "total_influence": int,
+                    "top_faction": { "id": str, "name": str, "share": float } | None,
+                }
+            }
+        """
+        # 1. Treasury deficit counting
+        if self.treasury < 0:
+            self.increment_treasury_deficit_turns()
+        else:
+            self.reset_treasury_deficit_turns()
+
+        deficit = self.treasury_deficit_turns
+        limit = self.get_economic_rule("national_opex_deficit_limit", 3)
+
+        conditions = []
+        game_over = False
+
+        # Bankruptcy check
+        bankruptcy_triggered = deficit >= limit
+        if bankruptcy_triggered:
+            conditions.append({
+                "type": "bankruptcy",
+                "triggered": True,
+                "details": f"国库连续{limit}回合赤字，共和覆灭！（调试模式仅提示）",
+                "critical": True,
+            })
+            game_over = True
+        elif deficit > 0:
+            conditions.append({
+                "type": "bankruptcy",
+                "triggered": False,
+                "details": f"国库赤字（第{deficit}回合），再持续{limit - deficit}回合将导致共和覆灭",
+                "critical": False,
+            })
+
+        # 2. Legions all destroyed
+        ms = self.get_military_system()
+        all_destroyed = False
+        if ms:
+            all_legions = ms.get_all_legions()
+            if all_legions and all(l.status.name == "DESTROYED" for l in all_legions):
+                all_destroyed = True
+                conditions.append({
+                    "type": "legions_destroyed",
+                    "triggered": True,
+                    "details": "所有军团已被消灭，共和覆灭！",
+                    "critical": True,
+                })
+                game_over = True
+
+        # 3. Province revolt majority
+        provinces = self.get_all_provinces()
+        revolt_majority = False
+        if provinces:
+            revolt_provinces = [p for p in provinces if p.grievance >= 3]
+            if len(revolt_provinces) > len(provinces) // 2:
+                revolt_majority = True
+                conditions.append({
+                    "type": "revolt_majority",
+                    "triggered": True,
+                    "details": "超过半数行省爆发起义，共和覆灭！",
+                    "critical": True,
+                })
+                game_over = True
+
+        # 4. Faction dictatorship (>=70% influence)
+        total_senate_influence = 0
+        faction_influences = {}
+        for faction in self.factions.values():
+            inf = faction.get_senate_influence(self)
+            total_senate_influence += inf
+            faction_influences[faction.id] = inf
+
+        dictatorship = False
+        if total_senate_influence > 0:
+            for faction in self.factions.values():
+                share = faction_influences[faction.id] / total_senate_influence
+                if share >= 0.7:
+                    dictatorship = True
+                    conditions.append({
+                        "type": "dictatorship",
+                        "triggered": True,
+                        "details": f"{faction.name} 获得元老院 {share:.1%} 影响力，可能宣布独裁！",
+                        "critical": True,
+                    })
+                    game_over = True
+                    break
+
+        # 5. Italy grievance level 3
+        italy = self.get_province(0)
+        italy_grievance = False
+        if italy and italy.grievance == 3:
+            italy_grievance = True
+            conditions.append({
+                "type": "italy_grievance",
+                "triggered": True,
+                "details": "意大利本土民怨已达3级，若不在本年度内处理，共和国将面临覆灭！",
+                "critical": True,
+            })
+
+        # 6. Summary — top faction
+        top_faction = None
+        if total_senate_influence > 0:
+            top_faction_id = max(faction_influences, key=lambda fid: faction_influences[fid])
+            top_f = self.get_faction(top_faction_id)
+            top_share = faction_influences[top_faction_id] / total_senate_influence
+            top_faction = {
+                "id": top_f.id,
+                "name": top_f.name,
+                "share": top_share,
+            }
+
+        return {
+            "game_over": game_over,
+            "conditions": conditions,
+            "summary": {
+                "deficit_turns": deficit,
+                "deficit_limit": limit,
+                "total_influence": total_senate_influence,
+                "top_faction": top_faction,
+            },
+        }
+
     # ========== 天命机制 ==========
 
     def draw_mortality_number(self) -> int:

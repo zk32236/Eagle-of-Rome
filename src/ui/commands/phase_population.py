@@ -512,91 +512,28 @@ class PopulationCommand(Command):
         self._pre_election_influences = {}
 
     def _process_legion_disbandment_and_triumphs(self):
-        """处理军团解散和凯旋式（仅执行一次）"""
+        """处理军团解散和凯旋式（委托 war_system）"""
         ws = self.state.get_war_system()
         ms = self.state.get_military_system()
         if not ws or not ms:
             return
-
-        for war in ws.get_resolved_wars():
-            if war.triumph_approved:
-                commander_id = war.triumph_commander_id or war.commander_id
-                commander = self.state.get_member(commander_id) if commander_id else None
-                if commander and not commander.is_dead:
-                    print(f"      🏛️ {commander.name} 的军团举行凯旋式！")
-                    self.state.log_event(
-                        f"凯旋式: {commander.name} 举行凯旋",
-                        extra={"type": "triumph", "commander_id": commander.id, "war_id": war.id}
-                    )
-                    # 重置标记，避免重复
-                    war.set_triumph_approved(False)
-
-            if war.legion_numbers:
-                legion_numbers = list(war.legion_numbers)
-                disbanded, errors = ms.disband_legions_for_war(legion_numbers)
-                if disbanded > 0:
-                    print(f"      解散 {disbanded} 个参与 {war.name} 的军团")
-                for err in errors:
-                    print(f"      ⚠️ {err}")
-                if errors:
-                    failed_legions = []
-                    for legion_number in legion_numbers:
-                        legion = ms.get_legion_by_number(legion_number)
-                        if legion is None or legion.status != LegionStatus.DISBANDED:
-                            failed_legions.append(legion_number)
-                    if failed_legions:
-                        ws.add_legions_to_disband(failed_legions)
-                war.clear_legion_numbers()
-
-        legions_to_disband = ws.clear_legions_to_disband()
-        if legions_to_disband:
-            disbanded, errors = ms.disband_legions_for_war(legions_to_disband)
-            if disbanded > 0:
-                print(f"      解散 {disbanded} 个从降级战争返回的军团")
-            for err in errors:
-                print(f"      ⚠️ {err}")
-            if errors:
-                failed_legions = []
-                for legion_number in legions_to_disband:
-                    legion = ms.get_legion_by_number(legion_number)
-                    if legion is None or legion.status != LegionStatus.DISBANDED:
-                        failed_legions.append(legion_number)
-                if failed_legions:
-                    ws.add_legions_to_disband(failed_legions)
+        result = ws.process_triumph_and_disbandment()
+        for t in result["triumphs"]:
+            print(f"      🏛️ {t['commander_name']} 的军团举行凯旋式！")
+        d = result["disbanded"]
+        if d["resolved_wars"]["total"] > 0:
+            print(f"      解散 {d['resolved_wars']['total']} 个参与已结束战争的军团")
+        if d["deescalated"]["total"] > 0:
+            print(f"      解散 {d['deescalated']['total']} 个从降级战争返回的军团")
+        for err in (d["resolved_wars"]["errors"] + d["deescalated"]["errors"]):
+            print(f"      ⚠️ {err}")
 
     def _convert_battlefield_commanders(self):
-        """战场指挥官转换（支持无战争情况）"""
-        current_turn = self.state.turn.turn_number
-        war_system = self.state.get_war_system()
-        if not war_system:
-            return
-
-        for figure in self.state.get_living_members():
-            if not figure.is_absent:
-                continue
-            if figure.office not in ('consul', 'praetor'):
-                continue
-
-            old_office = figure.office
-            war = war_system.get_war_by_commander(figure.id)
-
-            # 确定任职开始回合
-            assigned_turn = (war.commander_assigned_turn if war and war.commander_assigned_turn is not None
-                             else current_turn - 1)
-
-            # 添加历史记录（使用 assigned_turn 和结束回合 current_turn-1）
-            figure.add_office_history(old_office, assigned_turn, current_turn - 1)
-
-            # 转换官职
-            new_office = 'proconsul' if old_office == 'consul' else 'propraetor'
-            figure.office = new_office
-            figure.update_influence()
-
-            # 如果有战争，更新其 commander_assigned_turn
-            if war:
-                war.set_commander_assigned_turn(current_turn)
-
-            print(f"      🔄 战场指挥官 {figure.name} 转为 {new_office}，继续指挥战争。")
+        """战场指挥官转换（委托 population_api）"""
+        from src.api import population_api
+        result = population_api.convert_battlefield_commanders(self.state)
+        for item in result["converted"]:
+            print(f"      🔄 战场指挥官 {item['name']} 转为 {item['new_office']}，继续指挥战争。")
 
     # ---------- 步骤4：完成 ----------
     def _handle_step_3(self):

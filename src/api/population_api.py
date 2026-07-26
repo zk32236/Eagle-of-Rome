@@ -318,3 +318,71 @@ def resolve_election(state: GameState) -> dict:
         message = "   📋 无有效选举结果"
 
     return api_response(True, message, data={"elected": [f.id for f in elected_figures], "election_results": election_results})
+
+
+def convert_battlefield_commanders(state: GameState) -> dict:
+    """
+    Convert battlefield commanders (consul\u2192proconsul, praetor\u2192propraetor).
+
+    Scans all living members for absent consuls/praetors, finds their war,
+    records office history, converts the office, updates influence,
+    and updates war.commander_assigned_turn.
+
+    Returns:
+        dict: {
+            "converted": [
+                {
+                    "figure_id": int,
+                    "name": str,
+                    "old_office": str,
+                    "new_office": str,
+                    "war_id": str | None,
+                },
+                ...
+            ],
+            "total": int,
+        }
+    """
+    current_turn = state.turn.turn_number
+    war_system = state.get_war_system()
+    converted = []
+
+    if not war_system:
+        return {"converted": [], "total": 0}
+
+    for figure in state.get_living_members():
+        if not figure.is_absent:
+            continue
+        if figure.office not in ("consul", "praetor"):
+            continue
+
+        old_office = figure.office
+        war = war_system.get_war_by_commander(figure.id)
+
+        # Determine assigned turn
+        if war and war.commander_assigned_turn is not None:
+            assigned_turn = war.commander_assigned_turn
+        else:
+            assigned_turn = current_turn - 1
+
+        # Record office history
+        figure.add_office_history(old_office, assigned_turn, current_turn - 1)
+
+        # Convert office
+        new_office = "proconsul" if old_office == "consul" else "propraetor"
+        figure.office = new_office
+        figure.update_influence()
+
+        # Update war commander_assigned_turn if applicable
+        if war:
+            war.set_commander_assigned_turn(current_turn)
+
+        converted.append({
+            "figure_id": figure.id,
+            "name": figure.get_formal_name() if hasattr(figure, "get_formal_name") else figure.name,
+            "old_office": old_office,
+            "new_office": new_office,
+            "war_id": war.id if war else None,
+        })
+
+    return {"converted": converted, "total": len(converted)}

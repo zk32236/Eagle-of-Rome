@@ -356,19 +356,20 @@ class TestPopulationCommandManual:
     def test_step3_legion_triumph_display(self, state_normal_mode, monkeypatch, capsys):
         """凯旋式信息在公示环节正确显示"""
         war_system = MagicMock()
-        war = MagicMock()
-        war.status = WarStatus.RESOLVED
-        war.triumph_approved = True
-        war.triumph_commander_id = 1
-        war.commander_id = 1
-        war.legion_numbers = []
-        war.set_triumph_approved = MagicMock()
-        war_system.get_resolved_wars.return_value = [war]
-        war_system.clear_legions_to_disband.return_value = []
+        war_system.process_triumph_and_disbandment.return_value = {
+            "triumphs": [{"war_id": "test", "war_name": "Test",
+                           "commander_id": 1, "commander_name": "凯撒"}],
+            "disbanded": {
+                "resolved_wars": {"total": 0, "errors": []},
+                "deescalated": {"total": 0, "errors": []},
+            },
+            "failed_re_queued": [],
+        }
+        war_system.get_resolved_wars.return_value = []
         state_normal_mode.get_war_system = MagicMock(return_value=war_system)
 
         ms = MagicMock()
-        ms.disband_legions_for_war.return_value = (0, [])  # 模拟解散返回
+        ms.disband_legions_for_war.return_value = (0, [])
         state_normal_mode.get_military_system = MagicMock(return_value=ms)
 
         fig1 = state_normal_mode.get_member(1)
@@ -455,21 +456,19 @@ class TestPopulationCommandManual:
 
     def test_triumph_only_once(self, state_normal_mode, capsys, monkeypatch):
         """验证凯旋信息和军团解散信息只输出一次"""
-        from src.core.entities.war import War, WarStatus
         from unittest.mock import MagicMock
-
-        # 创建模拟战争
-        war = War(id="test_war", name="Test War")
-        war.status = WarStatus.RESOLVED
-        war.set_triumph_approved(True)
-        war.set_triumph_commander(1)
-        war.add_legion_number(1)
-        war.add_legion_number(2)
 
         # 模拟战争系统
         ws = MagicMock()
-        ws.get_resolved_wars.return_value = [war]
-        ws.clear_legions_to_disband.return_value = []
+        ws.process_triumph_and_disbandment.return_value = {
+            "triumphs": [{"war_id": "test", "war_name": "Test War",
+                           "commander_id": 1, "commander_name": "Test Commander"}],
+            "disbanded": {
+                "resolved_wars": {"total": 2, "errors": []},
+                "deescalated": {"total": 0, "errors": []},
+            },
+            "failed_re_queued": [],
+        }
 
         # 模拟军事系统
         ms = MagicMock()

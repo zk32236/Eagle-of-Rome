@@ -495,7 +495,13 @@ class SenateCommand(Command):
             return
 
 
-        passed_proposals = self._get_passed_proposals()
+        from src.core.systems.political_system import PoliticalSystem
+        politics = PoliticalSystem(self.state)
+        passed_proposals = []
+        for proposal in proposals:
+            result = politics.calculate_vote_result(proposal)
+            if result.get("passed") and not result.get("vetoed"):
+                passed_proposals.append(proposal)
 
         if not passed_proposals:
             print("\n 📭 无提案需要通过保民官否决")
@@ -1032,55 +1038,7 @@ class SenateCommand(Command):
         else:
             return None
 
-    def _get_passed_proposals(self) -> list:
-        """获取已通过且未被否决的提案列表"""
-        proposals = self.state.get_senate_proposals()
-        votes = self.state.get_senate_votes_copy()
-        vetoes = self.state.get_senate_vetoes_copy()
-        passed = []
 
-        for proposal in proposals:
-            pid = proposal["id"]
-            if pid in vetoes:
-                continue
-
-            support_influence = 0
-            oppose_influence = 0
-            total_influence = 0
-
-            for faction in self.state.get_active_factions():
-                influence = faction.get_senate_influence(self.state)
-                if influence == 0:
-                    continue
-                total_influence += influence
-
-                player = self.state.get_player_by_faction(faction.id)
-                if not player:
-                    continue
-                player_id = player.player_id
-
-                # 优先使用已记录投票
-                if player_id in votes and pid in votes[player_id]:
-                    if votes[player_id][pid]:
-                        support_influence += influence
-                    else:
-                        oppose_influence += influence
-                else:
-                    # 未投票的派系，使用决策器补投（与 resolve_senate 逻辑一致）
-                    issue = self._build_issue_from_proposal(proposal)
-                    support = self.vote_decider.decide_vote(issue, faction, self.state)
-                    if support:
-                        support_influence += influence
-                    else:
-                        oppose_influence += influence
-
-            if total_influence == 0:
-                continue
-            support_ratio = support_influence / total_influence
-            if support_ratio > 0.5:
-                passed.append(proposal)
-
-        return passed
 
     def _auto_generate_proposals(self):
         """为AI玩家自动生成所有提案（委托至 senate_api.auto_submit_proposals）"""
@@ -1150,36 +1108,7 @@ class SenateCommand(Command):
             else:
                 print("未知命令，支持 vote <提案ID1> <提案ID2> ... 或 next", flush=True)
 
-    def _get_passed_proposals_from_votes(self, proposals: list) -> list:
-        """仅根据已记录的投票计算通过提案（不调用决策器补投）"""
-        passed = []
-        for proposal in proposals:
-            pid = proposal["id"]
-            support_influence = 0
-            oppose_influence = 0
-            total_influence = 0
-            for faction in self.state.get_active_factions():
-                influence = faction.get_senate_influence(self.state)
-                if influence == 0:
-                    continue
-                total_influence += influence
-                player = self.state.get_player_by_faction(faction.id)
-                if not player:
-                    continue
-                player_id = player.player_id
-                votes = self.state.get_senate_votes_copy().get(player_id, {})
-                if pid in votes:
-                    if votes[pid]:
-                        support_influence += influence
-                    else:
-                        oppose_influence += influence
-                # 未投票的派系视为弃权，不参与统计
-            if total_influence == 0:
-                continue
-            support_ratio = support_influence / total_influence
-            if support_ratio > 0.5:
-                passed.append(proposal)
-        return passed
+
 
     def _restore_rejected_peace_wars(self, wars: List[War]) -> None:
         """将否决/未提交的停战草案恢复为活跃战争，保留旧指挥官信息，由接管逻辑处理"""
@@ -1250,22 +1179,9 @@ class SenateCommand(Command):
                 print("          无元老在场，提案未通过。")
 
     def _auto_vote_for_player(self, player_id: str, proposals: list):
-        """为指定玩家（派系）自动投票"""
-        player = self.state.get_player(player_id)
-        if not player:
-            return
-        faction = self.state.get_faction(player.faction_id)
-        if not faction:
-            return
-        for proposal in proposals:
-            pid = proposal["id"]
-            # 检查是否已投票
-            votes = self.state.get_senate_votes_copy().get(player_id, {})
-            if pid in votes:
-                continue
-            issue = self._build_issue_from_proposal(proposal)
-            support = self.vote_decider.decide_vote(issue, faction, self.state)
-            self.state.record_senate_vote(player_id, pid, support)
+        """为指定玩家（派系）自动投票（委托 senate_api）"""
+        from src.api import senate_api
+        senate_api.auto_vote(self.state, player_id, proposals, self.vote_decider)
 
     def _print_announcement_header(self, passed_proposals: list):
 

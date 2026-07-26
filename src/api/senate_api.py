@@ -1069,3 +1069,66 @@ def assign_governors(state: GameState) -> list[dict]:
 
     return results
 
+
+def auto_vote(
+    state: GameState,
+    player_id: str,
+    proposals: list,
+    vote_decider: Optional[SenateVoteDecider] = None,
+) -> dict:
+    """
+    Auto-vote for a specific player on pending proposals.
+
+    Args:
+        state: GameState
+        player_id: Target player
+        proposals: List of proposal dicts to vote on
+        vote_decider: Optional decider; defaults to AutoSenateVoteDecider
+
+    Returns:
+        dict: {
+            "voted": int,           # proposals voted on
+            "skipped": int,         # proposals already voted
+            "errors": list[str],
+        }
+    """
+    if vote_decider is None:
+        from src.core.deciders.impl.auto_senate_vote_decider import AutoSenateVoteDecider
+        vote_decider = AutoSenateVoteDecider()
+
+    player = state.get_player(player_id)
+    if not player:
+        return {"voted": 0, "skipped": 0, "errors": ["player not found"]}
+
+    faction = state.get_faction(player.faction_id)
+    if not faction:
+        return {"voted": 0, "skipped": 0, "errors": ["faction not found"]}
+
+    voted_count = 0
+    skipped_count = 0
+    errors = []
+
+    for proposal in proposals:
+        pid = proposal["id"]
+        # Check if already voted
+        if state.has_senate_vote(player_id, pid):
+            skipped_count += 1
+            continue
+
+        # Build issue and decide vote
+        try:
+            from src.core.systems.political_system import PoliticalSystem
+            politics = PoliticalSystem(state)
+            issue = politics.build_issue_from_proposal(proposal)
+            support = vote_decider.decide_vote(issue, faction, state)
+            state.record_senate_vote(player_id, pid, support)
+            voted_count += 1
+        except Exception as exc:
+            errors.append(f"proposal {pid}: {exc}")
+
+    return {
+        "voted": voted_count,
+        "skipped": skipped_count,
+        "errors": errors,
+    }
+
