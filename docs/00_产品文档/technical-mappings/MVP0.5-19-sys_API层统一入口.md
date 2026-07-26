@@ -53,9 +53,31 @@ session_api, gui_query_api
 - CLI `phase_forum._execute_land_distribution()` → **委托至** `forum_api.execute_land_acts()`
 - CLI `phase_senate._process_land_proposals()` → **委托至** `senate_api.auto_submit_proposals()`
 
-## 5. 版本日志
+## 5. senate_api 新增接口（Wave-03 Senate & Military）
+
+### 5.1 `assign_governors() -> list[dict]`
+- **用途：** 总督候选人筛选与分配（C-10a）
+- **CLI 来源：** `phase_senate.py` ~L1441-1540
+- **返回：** `[{province_id, governor_id, name, assigned_at}]`
+
+### 5.2 `process_war_takeover(republic_state) -> dict`
+- **用途：** 处理战争接管逻辑（C-10c）
+- **CLI 来源：** `phase_senate.py` ~L905-991
+- **返回：** `{takeover_executed: bool, war_id, affected_provinces, result_details}`
+
+### 5.3 war_system 新增方法（Wave-03，由 CLI→API 下沉调用）
+
+| 方法 | 用途 | 缺口 |
+|:-----|:-----|:----:|
+| `assign_rebellion_commanders()` | 起义指挥官指派 | C-10b |
+| `auto_recruit_and_assign()` | 军团征召与指派 | C-10d |
+
+详见 `MVP0.3-02_战争系统.md` v1.1。
+
+## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.3 | 2026-07-26 | 新增 senate_api assign_governors / process_war_takeover + war_system 引用（Wave-03） |
 | v1.2 | 2026-07-26 | 新增 check_province_unrest / execute_land_acts API + 调用链 |
 | v1.1 | 2026-07-25 | 新增 generate_figures/generate_contracts API + 调用链说明 |
 | v1.0 | 2026-07-17 | 初版 |

@@ -17,5 +17,22 @@ src/ui/commands/phase_combat.py
 CRT 判定: combat_total = 2d6 + commander.martial + sum(legion_strengths) - war.strength
 结果: DISASTER / TRIUMPH / VICTORY / STALEMATE / DEFEAT
 
+## 4. Wave-03 新增方法
+
+### 4.1 `assign_rebellion_commanders() -> list[dict]`
+- **用途：** 为所有活跃起义指派指挥官（C-10b）
+- **CLI 来源：** `phase_senate.py` L1348-1408
+- **返回：** `[{rebellion_id, commander_id, name, assigned_at}]`
+- **日志：** DBUG（每起义/每选择）+ INFO（指派）
+
+### 4.2 `auto_recruit_and_assign() -> list[dict]`
+- **用途：** 自动征召军团并指派至战区（C-10d）
+- **CLI 来源：** `phase_senate.py` L1642-1708
+- **返回：** `[{legion_id, legion_name, assigned_to, assigned_at}]`
+- **日志：** DBUG（需求评估/征召）+ INFO（指派结果）
+
 ## 4. 版本日志
+| 版本 | 日期 | 摘要 |
+|:-----|:-----|:------|
+| v1.1 | 2026-07-26 | 追加 assign_rebellion_commanders() + auto_recruit_and_assign() 方法（Wave-03） |
 | v1.0 | 2026-07-12 | 初版 |
