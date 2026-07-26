@@ -31,8 +31,21 @@ CRT 判定: combat_total = 2d6 + commander.martial + sum(legion_strengths) - war
 - **返回：** `[{legion_id, legion_name, assigned_to, assigned_at}]`
 - **日志：** DBUG（需求评估/征召）+ INFO（指派结果）
 
-## 4. 版本日志
+## 5. Wave-04 Finale 新增方法
+
+### 5.1 `process_triumph_and_disbandment() -> dict`
+- **用途：** 人口阶段结束后处理军团解散与凯旋式（C-E1）
+- **CLI 来源：** `phase_population.py` ~L514-565
+- **逻辑：**
+  1. 遍历所有活跃战争
+  2. 对胜利战争：触发凯旋式（增加 commander 人气/影响力）
+  3. 对所有战争：解散多余军团（保留 minimum_garrison）
+- **返回：** `{triumphs: [{war_id, commander_id, popularity_gain, influence_gain}], disbandments: [{legion_id, reason}], summary: str}`
+- **日志：** DBUG（凯旋条件/解散决策）+ INFO（执行结果）
+
+## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.2 | 2026-07-26 | 追加 process_triumph_and_disbandment() 方法（Wave-04 Finale, C-E1） |
 | v1.1 | 2026-07-26 | 追加 assign_rebellion_commanders() + auto_recruit_and_assign() 方法（Wave-03） |
 | v1.0 | 2026-07-12 | 初版 |

@@ -74,9 +74,39 @@ session_api, gui_query_api
 
 详见 `MVP0.3-02_战争系统.md` v1.1。
 
-## 6. 版本日志
+## 6. Wave-04 Finale 新增接口
+
+### 6.1 `population_api.convert_battlefield_commanders(state: GameState) -> dict`
+- **用途：** 人口阶段结束后，将战场指挥官（执政官→资深执政官、执法官→资深执法官）转入行省总督状态（C-E2）
+- **CLI 来源：** `phase_population.py` ~L567-600
+- **逻辑：** 扫描存活成员中离任的执政官/执法官 → 记录 office history → 转换官职 → 更新 influence
+- **返回：** `{converted: [{figure_id, old_office, new_office, province_id}], summary: str}`
+- **处理边界：** 无离任指挥官 → 返回空列表；指挥官无战争 → fallback to current_turn-1
+
+### 6.2 `senate_api.auto_vote(state: GameState, player_id: str, proposals: list, vote_decider=None) -> dict`
+- **用途：** AI 派系自动对元老院提案进行投票（C-10e）
+- **CLI 来源：** `phase_senate.py` ~L1033-1060, ~L1320-1336
+- **逻辑：** 验证派系 → 跳过已投票提案 → 使用 vote_decider 决策（默认 AutoSenateVoteDecider）
+- **返回：** `{voted: [], skipped: [], errors: [], summary: str}`
+- **处理边界：** 玩家已投 → 跳过；无效派系 → 报错；无提案 → 空结果
+
+### 6.3 `GameState.check_victory_conditions() -> dict`
+- **用途：** 决算阶段检查胜利/失败条件（C-08-01）
+- **CLI 来源：** `phase_resolution.py` ~L73-167
+- **src（Core 层，非 API 模块，但作为调用链统一入口列于此）**
+- **检查项：**
+  1. 国库连续赤字（`treasury_deficit_turns >= national_opex_deficit_limit`）
+  2. 军团全军覆没（所有 legion status == DESTROYED）
+  3. 行省大范围暴动（grievance >= 3 的行省 > 50%）
+  4. 派系独裁（单派系影响力 >= 70%）
+  5. 意大利本土民怨（province(0).grievance >= 3）
+  6. 元老院主导派系（影响力占比最高派系）
+- **返回：** `{game_over: bool, conditions: [{type, triggered, details, critical}], summary: {top_faction, share}}`
+
+## 7. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.4 | 2026-07-26 | 新增 population_api.convert_battlefield_commanders / senate_api.auto_vote / GameState.check_victory_conditions（Wave-04 Finale） |
 | v1.3 | 2026-07-26 | 新增 senate_api assign_governors / process_war_takeover + war_system 引用（Wave-03） |
 | v1.2 | 2026-07-26 | 新增 check_province_unrest / execute_land_acts API + 调用链 |
 | v1.1 | 2026-07-25 | 新增 generate_figures/generate_contracts API + 调用链说明 |
