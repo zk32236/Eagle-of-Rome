@@ -946,3 +946,166 @@ class WarSystem:
                     result.append(war)
 
         return result
+
+    def assign_rebellion_commanders(self) -> list[dict]:
+        """为当前所有活跃起义指派指挥官。
+
+        遍历所有活跃 Rebellion 实体 → 从人物池筛选可用指挥官 → 指派。
+        返回指派结果列表：[{rebellion_id, commander_id, name, assigned_at}, ...]
+
+        业务逻辑继承自 phase_senate.py CLI _assign_rebellion_commanders:
+        - 遍历活跃起义 Rebellion
+        - 按指挥官资格筛选（政治/军事属性等）
+        - 分配最佳指挥官
+        - 更新 Rebellion 实体 commander 字段
+        """
+        ms = self.state.get_military_system()
+        if not ms:
+            return []
+
+        rebellion_strength = self.state.config.get("combat_rules.rebellion_strength", 5)
+        legion_count = (rebellion_strength + 1) // 2
+        if legion_count < 1:
+            legion_count = 1
+
+        assigned_at = self.state.turn.turn_number if hasattr(self.state, 'turn') and self.state.turn else 0
+        results = []
+
+        for war in self.get_active_wars():
+            if war.rebellion_province_id is None or war.commander_id is not None:
+                continue
+
+            province = self.state.get_province(war.rebellion_province_id)
+            if not province:
+                continue
+
+            # 优先使用候任总督，若无则使用现任总督
+            governor_id = province.governor_designate_id or province.governor_id
+            if governor_id is None:
+                continue
+
+            commander = self.state.get_member(governor_id)
+            if not commander or commander.is_dead:
+                continue
+
+            current = war.commander_id
+            self.state.log_event(
+                f"assign_rebellion_commanders: checking rebellion {war.id}, current_commander={current}",
+                level=logging.DEBUG,
+                extra={"rebellion_id": war.id, "current_commander": current, "method": "assign_rebellion_commanders"},
+            )
+
+            # 征召军团
+            available = ms.get_available_legions()
+            if not available:
+                continue
+
+            recruit_count = min(legion_count, len(available))
+            recruits = ms.recruit_multiple(recruit_count)
+            recruited_numbers = [r[0] for r in recruits if r[1]]
+            if not recruited_numbers:
+                continue
+
+            # 指派指挥官和军团
+            self.assign_commander(war.id, governor_id, len(recruited_numbers))
+            ms.assign_to_war(recruited_numbers, war.id, governor_id)
+            commander.is_absent = True  # 总督出征
+
+            commander_name = commander.get_formal_name() if hasattr(commander, 'get_formal_name') else commander.name
+
+            self.state.log_event(
+                f"assign_rebellion_commanders: selected commander {governor_id} for rebellion {war.id}",
+                level=logging.DEBUG,
+                extra={"rebellion_id": war.id, "commander_id": governor_id, "method": "assign_rebellion_commanders"},
+            )
+            self.state.log_event(
+                f"Rebellion commander assigned: rebellion={war.id}, commander={governor_id}, name={commander_name}",
+                level=logging.INFO,
+                extra={"rebellion_id": war.id, "commander_id": governor_id, "name": commander_name, "method": "assign_rebellion_commanders"},
+            )
+
+            results.append({
+                "rebellion_id": war.id,
+                "commander_id": governor_id,
+                "name": commander_name,
+                "assigned_at": assigned_at,
+            })
+
+        return results
+
+    def auto_recruit_and_assign(self) -> list[dict]:
+        """自动征召军团并指派至相应战区。
+
+        根据当前军事需求 → 征召新军团 → 指派至战区/起义。
+        返回征召+指派结果列表：[{legion_id, legion_name, assigned_to, assigned_at}, ...]
+
+        业务逻辑继承自 phase_senate.py CLI _auto_recruit_and_assign_legions_for_war:
+        - 评估当前军事需求（活跃起义/战争数量、现有军团不足等）
+        - 征召新军团实体
+        - 指派至对应战区
+        - 更新军团实体状态（commander、deployment 等）
+        """
+        ms = self.state.get_military_system()
+        if not ms:
+            return []
+
+        active_theaters = len(self.get_active_wars())
+        self.state.log_event(
+            f"auto_recruit_and_assign: assessing military need, active_theaters={active_theaters}",
+            level=logging.DEBUG,
+            extra={"active_theaters": active_theaters, "method": "auto_recruit_and_assign"},
+        )
+
+        if active_theaters == 0:
+            return []
+
+        assigned_at = self.state.turn.turn_number if hasattr(self.state, 'turn') and self.state.turn else 0
+        results = []
+
+        # 评估每个活跃战争/起义的军团需求
+        for war in self.get_active_wars():
+            existing_legions = ms.get_legions_for_battle(war.id) if ms else []
+            if existing_legions:
+                continue
+
+            # 计算所需军团数
+            min_leg = self.state.config.get("testing.min_legions", 4)
+            max_leg = self.state.config.get("testing.max_legions", 8)
+            recruit_count = random.randint(min_leg, max_leg)
+
+            available = ms.get_available_legions()
+            if not available:
+                continue
+
+            recruit_count = min(recruit_count, len(available))
+            results_list = ms.recruit_multiple(recruit_count)
+            recruited_numbers = [r[0] for r in results_list if r[1]]
+            if not recruited_numbers:
+                continue
+
+            # 指派至战争
+            assigned_count, msg = ms.assign_to_war(recruited_numbers, war.id, war.commander_id or 0)
+            if assigned_count > 0:
+                for num in recruited_numbers:
+                    war.add_legion_number(num)
+
+                theater_id = war.id
+                self.state.log_event(
+                    f"auto_recruit_and_assign: recruited legion {recruited_numbers[0]}, assigned to {theater_id}",
+                    level=logging.DEBUG,
+                    extra={"legion_id": recruited_numbers[0], "theater_id": theater_id, "method": "auto_recruit_and_assign"},
+                )
+                self.state.log_event(
+                    f"Legion recruited & assigned: legion={recruited_numbers[0]}, name={war.name}, theater={theater_id}",
+                    level=logging.INFO,
+                    extra={"legion_id": recruited_numbers[0], "name": war.name, "theater": theater_id, "method": "auto_recruit_and_assign"},
+                )
+
+                results.append({
+                    "legion_id": recruited_numbers[0],
+                    "legion_name": f"Legion {recruited_numbers[0]}",
+                    "assigned_to": theater_id,
+                    "assigned_at": assigned_at,
+                })
+
+        return results

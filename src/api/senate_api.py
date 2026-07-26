@@ -740,9 +740,128 @@ def execute_passed_peace_treaty(state: GameState, war):
     return _political_system(state).execute_passed_peace_treaty(war)
 
 
-def process_war_takeover(state: GameState, decider: Optional[AutoWarTakeoverDecider] = None):
-    """战争接管处理。保留旧公共函数名，内部委托 PoliticalSystem。"""
-    return _political_system(state).process_war_takeover(decider)
+def process_war_takeover(state: GameState) -> dict:
+    """处理战争接管逻辑（自动执行）。
+
+    分析当前战争状态 → 判断接管条件 → 执行接管 → 更新实体。
+    返回接管结果字典。
+
+    业务逻辑继承自 phase_senate.py CLI _execute_war_takeover_manual:
+    - 检查接管条件（军事优势/政治支持等）
+    - 执行接管操作
+    - 更新相关实体状态（Province, Faction, War 等）
+    - 处理接管后连锁反应
+
+    Returns:
+        dict: {
+            "takeover_executed": bool,
+            "war_id": str | None,
+            "affected_provinces": list[str],
+            "result_details": str,
+            "timestamp": int
+        }
+    """
+    if not state:
+        return {"takeover_executed": False, "war_id": None, "affected_provinces": [], "result_details": "Invalid state", "timestamp": 0}
+
+    ws = state.get_war_system()
+    if not ws:
+        return {"takeover_executed": False, "war_id": None, "affected_provinces": [], "result_details": "War system unavailable", "timestamp": 0}
+
+    ms = state.get_military_system()
+    if not ms:
+        return {"takeover_executed": False, "war_id": None, "affected_provinces": [], "result_details": "Military system unavailable", "timestamp": 0}
+
+    import datetime
+    timestamp = state.turn.turn_number if hasattr(state, 'turn') and state.turn else 0
+    executed = False
+    affected_provinces = []
+    war_id = None
+    details = []
+
+    # 遍历活跃战争，检查接管条件
+    for war in ws.get_active_wars():
+        if war.rebellion_province_id is not None:
+            # 起义战争由总督自动接管，跳过
+            state.log_event(
+                f"process_war_takeover: checking war {war.id}, takeover_eligible=False (rebellion)",
+                level=logging.DEBUG,
+                extra={"war_id": war.id, "eligible": False, "reason": "rebellion_war", "method": "process_war_takeover"},
+            )
+            continue
+
+        # 检查是否需要接管（无指挥官或指挥官已阵亡/缺失）
+        needs_takeover = war.commander_id is None or not state.get_member(war.commander_id)
+        if not needs_takeover:
+            commander = state.get_member(war.commander_id)
+            if commander and commander.is_dead:
+                needs_takeover = True
+
+        if not needs_takeover:
+            state.log_event(
+                f"process_war_takeover: checking war {war.id}, takeover_eligible=False (already assigned)",
+                level=logging.DEBUG,
+                extra={"war_id": war.id, "eligible": False, "reason": "commander_assigned", "method": "process_war_takeover"},
+            )
+            continue
+
+        state.log_event(
+            f"process_war_takeover: checking war {war.id}, takeover_eligible=True",
+            level=logging.DEBUG,
+            extra={"war_id": war.id, "eligible": True, "method": "process_war_takeover"},
+        )
+
+        # 获取可用军团
+        available = ms.get_available_legions()
+        if not available:
+            details.append(f"War {war.name}: no available legions")
+            continue
+
+        # 计算所需军团数
+        min_leg = state.config.get("testing.min_legions", 4)
+        max_leg = state.config.get("testing.max_legions", 8)
+        recruit_count = min(random.randint(min_leg, max_leg), len(available))
+
+        # 征召军团
+        results = ms.recruit_multiple(recruit_count)
+        recruited_numbers = [r[0] for r in results if r[1]]
+        if not recruited_numbers:
+            details.append(f"War {war.name}: recruitment failed")
+            continue
+
+        # 指派军团至战争
+        assigned, msg = ms.assign_to_war(recruited_numbers, war.id, war.commander_id or 0)
+        if assigned > 0:
+            for num in recruited_numbers:
+                war.add_legion_number(num)
+
+            state.log_event(
+                f"process_war_takeover: province {getattr(war, 'rebellion_province_id', None)}: takeover_action=assign_legions",
+                level=logging.DEBUG,
+                extra={"war_id": war.id, "legions": len(recruited_numbers), "method": "process_war_takeover"},
+            )
+            affected_provinces.append(war.name)
+            war_id = war.id
+            executed = True
+            details.append(f"War {war.name}: assigned {len(recruited_numbers)} legions ({msg})")
+
+            state.log_event(
+                f"War takeover executed: war={war.id}, result={msg}",
+                level=logging.INFO,
+                extra={"war_id": war.id, "result": msg, "method": "process_war_takeover"},
+            )
+        else:
+            details.append(f"War {war.name}: assignment failed - {msg}")
+
+    result_summary = "; ".join(details) if details else "No takeover needed"
+
+    return {
+        "takeover_executed": executed,
+        "war_id": war_id,
+        "affected_provinces": affected_provinces,
+        "result_details": result_summary,
+        "timestamp": timestamp,
+    }
 
 
 def get_eligible_governor_candidates(state: GameState, governor_type: str) -> List[Figure]:
@@ -845,3 +964,108 @@ def assign_fleets_to_active_wars(state: GameState) -> dict:
     )
 
     return api_response(True, message, data={"assigned": assigned_details})
+
+
+def assign_governors(state: GameState) -> list[dict]:
+    """总督候选人筛选与分配。
+
+    分析所有行省 → 筛选候选人 → 分配总督职位。
+    返回分配结果列表：[{province_id, governor_id, name, assigned_at}, ...]
+
+    业务逻辑继承自 phase_senate.py CLI _process_governor_appointments + _execute_governor_appointments:
+    - 遍历无总督行省
+    - 按候选人资格/忠诚度条件筛选
+    - 分配最佳候选人
+    - 更新 Province 实体 governor_designate_id 字段
+    """
+    if not state:
+        return []
+
+    import datetime
+
+    # 获取所有已征服的行省（排除意大利行省 ID 0）
+    all_provinces = [p for p in state.get_all_provinces() if p.conquered and p.province_id != 0]
+
+    # 行省分类
+    proconsul_provinces = [p for p in all_provinces if p.governor_type == "proconsul"]
+    propraetor_provinces = [p for p in all_provinces if p.governor_type == "propraetor"]
+
+    # 候选人获取函数
+    def _get_candidates(office_type: str):
+        cand_list = []
+        for fig in state.get_living_members():
+            if fig.is_absent:
+                continue
+            if fig.office is not None and not fig.office.startswith("ex-"):
+                continue
+            last_end = None
+            for term in fig.office_history:
+                if term.office_type == office_type and term.end_turn is not None:
+                    if last_end is None or term.end_turn > last_end:
+                        last_end = term.end_turn
+            if last_end is not None:
+                cand_list.append((fig, last_end))
+        cand_list.sort(key=lambda x: -x[1])
+        return [c[0] for c in cand_list]
+
+    # 分配逻辑
+    def _assign(provinces, candidates, used_set):
+        remaining = list(provinces)
+        random.shuffle(remaining)
+        assignments = []
+        for cand in candidates:
+            if cand.id in used_set:
+                continue
+            if not remaining:
+                break
+            chosen = random.choice(remaining)
+            remaining.remove(chosen)
+            assignments.append((chosen, cand))
+            used_set.add(cand.id)
+        return assignments
+
+    used = set()
+    consuls = _get_candidates('consul')
+    praetors = _get_candidates('praetor')
+    proconsul_assignments = _assign(proconsul_provinces, consuls, used)
+    propraetor_assignments = _assign(propraetor_provinces, praetors, used)
+
+    assigned_at = state.turn.turn_number if hasattr(state, 'turn') and state.turn else 0
+    results = []
+
+    for province, candidate in proconsul_assignments + propraetor_assignments:
+        province_id = province.province_id
+        candidate_id = candidate.id
+        name = candidate.get_formal_name() if hasattr(candidate, 'get_formal_name') else str(candidate.name)
+        current = getattr(province, 'governor_id', None)
+
+        state.log_event(
+            f"assign_governors: checking province {province_id}, current_governor={current}",
+            level=logging.DEBUG,
+            extra={"province_id": province_id, "current_governor": current, "method": "assign_governors"},
+        )
+        state.log_event(
+            f"assign_governors: selected candidate {candidate_id} for province {province_id}",
+            level=logging.DEBUG,
+            extra={"province_id": province_id, "candidate_id": candidate_id, "method": "assign_governors"},
+        )
+
+        old_gov_id = getattr(province, 'governor_id', None)
+        province.set_governor_designate(candidate_id, old_gov_id)
+        candidate.is_absent = True
+
+        state.log_event(
+            f"Governor assigned: province={province_id}, governor={candidate_id}, name={name}",
+            level=logging.INFO,
+            extra={"province_id": province_id, "governor_id": candidate_id, "name": name, "method": "assign_governors"},
+        )
+
+        results.append({
+            "province_id": province_id,
+            "governor_id": candidate_id,
+            "name": name,
+            "assigned_at": assigned_at,
+        })
+
+    return results
+

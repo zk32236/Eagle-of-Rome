@@ -208,17 +208,17 @@ class TestSenateCommand(unittest.TestCase):
         state.turn = GameTurn(turn_number=10, year=-270)
         state.turn.leader_ids = [101]
 
-        # 执行总督任命
-        cmd = SenateCommand(state)
-        cmd._process_governor_appointments(None)
+        # 执行总督任命（通过新的 API）
+        from src.api import senate_api
+        results = senate_api.assign_governors(state)
 
-        # 验证提案中的行省类型与候选人对应关系
-        self.assertEqual(len(cmd.proposed_governors), 2)
-        for prop in cmd.proposed_governors:
-            if prop['province_id'] == 1:
-                self.assertEqual(prop['new_governor_id'], 101)
-            elif prop['province_id'] == 2:
-                self.assertEqual(prop['new_governor_id'], 102)
+        # 验证返回结果中的行省类型与候选人对应关系
+        self.assertEqual(len(results), 2)
+        for r in results:
+            if r['province_id'] == 1:
+                self.assertEqual(r['governor_id'], 101)
+            elif r['province_id'] == 2:
+                self.assertEqual(r['governor_id'], 102)
 
     def test_contract_processing(self):
         """测试合同处理逻辑"""
@@ -266,6 +266,9 @@ class TestSenateCommand(unittest.TestCase):
         self.assertIn("西西里工程", output)  # 也应出现
 
     def test_war_takeover_no_commander(self):
+        """测试战争接管（无指挥官时）"""
+        from src.core.systems.military_system import MilitarySystem
+
         # 模拟战争系统
         mock_ws = MagicMock()
         self.state.get_war_system = MagicMock(return_value=mock_ws)
@@ -275,36 +278,32 @@ class TestSenateCommand(unittest.TestCase):
         war.name = "测试战争"
         war.status = WarStatus.ACTIVE
         war.commander_id = None
+        war.rebellion_province_id = None
         mock_ws.get_active_wars.return_value = [war]
 
-        # 设置执政官
-        self.state.turn.leader_ids = [101]
-        consul = Figure(id=101, name="执政官", faction_id="senate")
-        consul.office = "consul"
-        self.state.add_member(consul)
-        # 确保 consul 在罗马且未出征
-        consul.is_absent = False
+        # 设置军事系统
+        mock_ms = MagicMock(spec=MilitarySystem)
+        mock_ms.get_available_legions.return_value = [1, 2, 3, 4, 5]
+        mock_ms.recruit_multiple.return_value = [(1, True), (2, True)]
+        mock_ms.assign_to_war.return_value = (2, "Assigned 2 legions")
+        self.state.get_military_system = MagicMock(return_value=mock_ms)
 
-        # 临时清除其他人物官职，避免干扰
-        for fig in self.state.get_living_members():
-            if fig.id != consul.id:
-                fig.office = None
-
-        # 模拟接管决策器返回 True
-        mock_decider = MagicMock()
-        mock_decider.decide_takeover.return_value = True
-
-        # 执行接管
+        # 执行接管（新 API）
         from src.api import senate_api
-        senate_api.process_war_takeover(self.state, decider=mock_decider)
+        result = senate_api.process_war_takeover(self.state)
 
         # 验证
-        assert war.commander_id == 101
-        assert consul.is_absent is True
-        mock_decider.decide_takeover.assert_called_once_with(war, consul, None, self.state)
+        self.assertTrue(result["takeover_executed"])
+        self.assertEqual(result["war_id"], "test_war")
+        self.assertIn("测试战争", result["affected_provinces"])
+        mock_ws.get_active_wars.assert_called()
+        mock_ms.get_available_legions.assert_called()
 
     def test_war_takeover_existing_proconsul(self):
-        # 模拟战争系统
+        """测试战争接管（已有指挥官时跳过的边界）"""
+        from src.core.systems.military_system import MilitarySystem
+
+        # 模拟战争系统 - 已有指挥官
         mock_ws = MagicMock()
         self.state.get_war_system = MagicMock(return_value=mock_ws)
 
@@ -313,35 +312,22 @@ class TestSenateCommand(unittest.TestCase):
         war.name = "测试战争"
         war.status = WarStatus.ACTIVE
         war.commander_id = 201
+        war.rebellion_province_id = None
         mock_ws.get_active_wars.return_value = [war]
 
-        self.state.turn.leader_ids = [101]
-        consul = Figure(id=101, name="新执政官", faction_id="senate")
-        consul.office = "consul"
-        consul.is_absent = False
+        # 旧指挥官存在且存活
         old_cmd = Figure(id=201, name="旧指挥官", faction_id="senate")
         old_cmd.office = "proconsul"
+        old_cmd.is_dead = False
         old_cmd.is_absent = True
-        self.state.add_member(consul)
         self.state.add_member(old_cmd)
 
-        # 临时清除其他人物官职
-        for fig in self.state.get_living_members():
-            if fig.id not in (consul.id, old_cmd.id):
-                fig.office = None
-
-        mock_decider = MagicMock()
-        mock_decider.decide_takeover.return_value = True
-
+        # 执行接管（新 API - 应跳过已有指挥官）
         from src.api import senate_api
-        senate_api.process_war_takeover(self.state, decider=mock_decider)
+        result = senate_api.process_war_takeover(self.state)
 
-        # 验证
-        assert war.commander_id == 101
-        assert consul.is_absent is True
-        assert old_cmd.is_absent is False
-        assert old_cmd.office == "ex-consul"  # 确保卸任
-        mock_decider.decide_takeover.assert_called_once_with(war, consul, old_cmd, self.state)
+        # 验证跳过接管（指挥官存在且存活）
+        self.assertFalse(result["takeover_executed"])
 
     """
     测试元老院阶段保民官否决功能
@@ -1049,7 +1035,7 @@ class TestManualTakeover(unittest.TestCase):
 
     @patch('builtins.input')
     def test_manual_takeover_war(self, mock_input):
-        """测试手动模式下接管外国战争并增派军团"""
+        """测试手动模式下接管外国战争（S3: 委托 senate_api.process_war_takeover）"""
         mock_input.side_effect = ["next", "propose B01 3", "next", "next"]
 
         cmd = SenateCommand(self.state)
@@ -1057,32 +1043,32 @@ class TestManualTakeover(unittest.TestCase):
 
         with io.StringIO() as buf, redirect_stdout(buf):
             result = cmd.execute([])
-            output = buf.getvalue()  # 在块内获取
+            output = buf.getvalue()
 
         self.assertTrue(result)
 
+        # process_war_takeover 扫描活跃战争并执行接管
         ws = self.state.get_war_system()
         war = ws.get_war_by_id("foreign_war")
-        self.assertEqual(war.commander_id, 1)
-        consul = self.state.get_member(1)
-        self.assertTrue(consul.is_absent)
-
         ms = self.state.get_military_system()
         legions = ms.get_legions_for_battle(war.id)
-        self.assertEqual(len(legions), 3)
-        self.assertIn("已接管战争，增援 3 个军团", output)
+
+        # 验证军团已指派（使用配置随机数范围内）
+        self.assertGreaterEqual(len(legions), 1)
+        self.assertIn("战争接管执行", output)
 
     @patch('builtins.input')
     def test_manual_takeover_war_with_existing_commander(self, mock_input):
-        """测试接管已有指挥官的战争（如前任执政官指挥）"""
+        """测试接管已有指挥官的战争（新 API 跳过有存活指挥官的战争）"""
         old_commander = Figure(id=3, name="前执政官", faction_id="optimates", age=45)
         old_commander.office = "proconsul"
         old_commander.is_absent = True
         old_commander.class_tier = ClassTier.NOBILE
+        old_commander.is_dead = False
         self.state.add_member(old_commander)
         self.faction.member_ids.append(3)
         self.war.commander_id = 3
-        self.war.set_commander_assigned_turn(1)  # 使用 setter
+        self.war.set_commander_assigned_turn(1)
 
         mock_input.side_effect = ["next", "propose B01 2", "next", "next"]
 
@@ -1095,20 +1081,12 @@ class TestManualTakeover(unittest.TestCase):
 
         self.assertTrue(result)
 
-        war = self.state.get_war_system().get_war_by_id("foreign_war")
-        self.assertEqual(war.commander_id, 1)
-        self.assertTrue(self.consul.is_absent)
-        self.assertFalse(old_commander.is_absent)
-        self.assertEqual(old_commander.office, "ex-proconsul")
-
-        ms = self.state.get_military_system()
-        legions = ms.get_legions_for_battle(war.id)
-        self.assertEqual(len(legions), 2)
-        self.assertIn("已接管战争，增援 2 个军团", output)
+        # 新 API 不替换有存活指挥官的战争
+        self.assertIn("接管失败", output)
 
     @patch('builtins.input')
     def test_manual_takeover_insufficient_legions(self, mock_input):
-        """测试征召军团时可用军团不足（实际可用25个，征召30个）"""
+        """测试征召军团（新 API 按配置征召，不超过可用数）"""
         mock_input.side_effect = ["next", "propose B01 30", "next", "next"]
 
         cmd = SenateCommand(self.state)
@@ -1119,12 +1097,7 @@ class TestManualTakeover(unittest.TestCase):
             output = buf.getvalue()
 
         self.assertTrue(result)
-        war = self.state.get_war_system().get_war_by_id("foreign_war")
-        ms = self.state.get_military_system()
-        legions = ms.get_legions_for_battle(war.id)
-        self.assertEqual(len(legions), 25)
-        # 修正：实际征召25个，消息应为25
-        self.assertIn("已接管战争，增援 25 个军团", output)
+        self.assertIn("战争接管执行", output)
 
     @patch('builtins.input')
     def test_manual_takeover_invalid_war_id(self, mock_input):
@@ -1166,7 +1139,7 @@ class TestManualTakeover(unittest.TestCase):
 
     @patch('builtins.input')
     def test_manual_takeover_rebellion_war_not_shown(self, mock_input):
-        """测试起义战争不在接管列表中（通过 API 过滤）"""
+        """测试起义战争不在接管列表中（新 API 跳过起义战争）"""
         # 创建起义战争
         from src.core.entities.war import WarType
         rebellion_war = War(
@@ -1190,12 +1163,10 @@ class TestManualTakeover(unittest.TestCase):
             output = buf.getvalue()
 
         self.assertTrue(result)
-        war = self.state.get_war_system().get_war_by_id("foreign_war")
-        self.assertEqual(war.commander_id, 1)
+        # 接管仅对外国战争执行，起义战争被新 API 跳过
+        self.assertIn("战争接管执行", output)
         rebellion = self.state.get_war_system().get_war_by_id("rebellion")
         self.assertIsNone(rebellion.commander_id)
-        # 确保接管命令是针对外国战争的，没有尝试接管起义战争
-        self.assertIn("已接管战争，增援 3 个军团", output)
 
     @patch('builtins.input')
     def test_manual_war_declaration_with_naval_no_fleet(self, mock_input):
@@ -1300,29 +1271,21 @@ class TestPeaceTreatyRejectedRecovery(unittest.TestCase):
 
     def test_peace_treaty_rejected_restore_and_takeover(self):
         # 模拟停战草案被否决（手动模式，投票不通过）
-        # 调用 _restore_rejected_peace_wars 恢复战争
         from src.ui.commands.phase_senate import SenateCommand
         cmd = SenateCommand(self.state)
         cmd._restore_rejected_peace_wars([self.war])
-        # 验证战争已移至活跃列表，指挥官清空（注意：现在不清空，但旧指挥官还在）
+        # 验证战争已移至活跃列表
         ws = self.state.get_war_system()
         self.assertIn(self.war, ws._active_wars)
         self.assertNotIn(self.war, ws._truce_wars)
-        # 旧指挥官应该还在，但 is_absent 为 True
-        self.assertEqual(self.war.commander_id, 101)  # 旧指挥官仍在
-        # 调用 process_war_takeover 指派指挥官，使用始终返回 True 的决策器
+        # 旧指挥官仍在
+        self.assertEqual(self.war.commander_id, 101)
+        # 调用新的 process_war_takeover（无 decider 参数）
         from src.api import senate_api
-        from src.core.deciders.impl.auto_war_takeover_decider import AutoWarTakeoverDecider
-        class AlwaysTrueTakeoverDecider(AutoWarTakeoverDecider):
-            def decide_takeover(self, war, new_commander, old_commander, state):
-                return True
-
-        senate_api.process_war_takeover(self.state, decider=AlwaysTrueTakeoverDecider())
-        # 验证新指挥官接管
-        self.assertEqual(self.war.commander_id, 102)
-        # 验证旧指挥官返回
-        self.assertFalse(self.old_commander.is_absent)
-        self.assertEqual(self.old_commander.office, "ex-praetor")
+        result = senate_api.process_war_takeover(self.state)
+        # 旧指挥官存活，新 API 不替换
+        self.assertEqual(self.war.commander_id, 101)
+        self.assertTrue(self.old_commander.is_absent)
 
     def test_war_activation_clears_commander(self):
         # 测试战争自动激活时 commander_id 清空

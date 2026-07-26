@@ -645,7 +645,26 @@ class SenateCommand(Command):
             fleet_result = senate_api.assign_fleets_to_active_wars(self.state)
             if fleet_result["success"] and fleet_result["message"]:
                 print(fleet_result["message"])
-            self._assign_rebellion_commanders()
+
+            # S1: 总督任命
+            governor_results = senate_api.assign_governors(self.state)
+            if governor_results:
+                print("\n\t====================== 行省总督任命 ====================")
+                for r in governor_results:
+                    print(f"      ✅ 任命 {r['name']} 为行省总督 (province={r['province_id']})")
+                print()
+            else:
+                print("\n\t====================== 行省总督任命 ====================")
+                print("      无行省需要任命总督\n")
+
+            # S2: 起义指挥官指派
+            ws = self.state.get_war_system()
+            if ws:
+                commander_results = ws.assign_rebellion_commanders()
+                for r in commander_results:
+                    print(f"      ✅ 任命 {r['name']} 为起义指挥官 (rebellion={r['rebellion_id']})")
+                if commander_results:
+                    print()
         else:
             print(f"❌ 结算失败: {result['message']}", flush=True)
 
@@ -878,18 +897,15 @@ class SenateCommand(Command):
                 return
 
             war_id = kwargs["war_id"]
-            # 执行接管
-            success = self._execute_war_takeover_manual(war_id, player_id, additional_legions)
-            if success:
-                # 注意：实际征召数量在 _execute_war_takeover_manual 内部打印，无需额外打印
-                # print(f"✅ 已接管战争，增援 {additional_legions} 个军团")
-                pass
+            # S3: 战争接管 - 委托 senate_api
+            takeover_result = senate_api.process_war_takeover(self.state)
+            if takeover_result.get("takeover_executed"):
+                print(f"✅ 战争接管执行: {takeover_result['result_details']}")
             else:
-                print(f"❌ 接管失败，请检查战争状态或权限", flush=True)
+                print(f"❌ 接管失败: {takeover_result.get('result_details', '未知错误')}", flush=True)
             return
 
-        # 调用 API
-        from src.api import senate_api
+        # 调用 API（使用模块级 senate_api 导入）
         result = senate_api.propose(self.state, player_id, proposal_type, bypass_turn_check=True, **kwargs)
         if result["success"]:
             description = self._generate_proposal_description(proposal_type, kwargs)
@@ -902,91 +918,7 @@ class SenateCommand(Command):
         player = self.state.get_current_player()
         return player.player_id if player else None
 
-    def _execute_war_takeover_manual(self, war_id: str, player_id: str, additional_legions: int) -> bool:
-        """手动执行战争接管：执政官接管外国战争并增派军团"""
-        player = self.state.get_player(player_id)
-        if not player:
-            return False
-        faction = self.state.get_faction(player.faction_id)
-        if not faction:
-            return False
-        # 获取执政官人物
-        consul = None
-        for member in faction.get_members(self.state):
-            if member.office == "consul" and not member.is_dead and not member.is_absent:
-                consul = member
-                break
-        if not consul:
-            print("❌ 您没有在罗马的执政官可以出征", flush=True)
-            return False
-
-        ws = self.state.get_war_system()
-        war = ws.get_war_by_id(war_id) if ws else None
-        if not war:
-            print("❌ 战争不存在", flush=True)
-            return False
-        if war.rebellion_province_id is not None:
-            print("❌ 起义战争应由总督自动接管，不能由执政官接管", flush=True)
-            return False
-        if war.status != WarStatus.ACTIVE:
-            print(f"❌ 战争 {war.name} 状态为 {war.status}，无法接管", flush=True)
-            return False
-        if war.commander_id is not None:
-            # 已有指挥官，但可能为其他执政官或前执政官
-            print(f"⚠️ 战争已有指挥官，执政官将接管并增派军团", flush=True)
-
-        # 执行接管
-        # 1. 设置指挥官
-        old_commander = self.state.get_member(war.commander_id) if war.commander_id else None
-        war.commander_id = consul.id
-        consul.is_absent = True
-
-        # 2. 增派军团
-        ms = self.state.get_military_system()
-        if not ms:
-            print("❌ 军事系统不可用", flush=True)
-            return False
-
-        # 获取可用军团
-        available = ms.get_available_legions()
-        if not available:
-            print("❌ 没有可用军团", flush=True)
-            return False
-
-        recruit_count = min(additional_legions, len(available))
-        if recruit_count == 0:
-            print("❌ 无法征召军团", flush=True)
-            return False
-        print(f"✅ 已接管战争，增援 {recruit_count} 个军团")
-
-        results = ms.recruit_multiple(recruit_count)
-        recruited_numbers = [r[0] for r in results if r[1]]
-        if not recruited_numbers:
-            print("❌ 军团征召失败", flush=True)
-            return False
-
-        # 指派军团到战争（不覆盖已有军团）
-        assigned, msg = ms.assign_to_war(recruited_numbers, war.id, consul.id)
-        if assigned > 0:
-            for num in recruited_numbers:
-                war.add_legion_number(num)
-            print(f"      {msg}")
-        else:
-            print(f"❌ 军团指派失败: {msg}", flush=True)
-            return False
-
-        # 如果旧指挥官存在且是 proconsul，将其召回
-        if old_commander and old_commander.office in ("proconsul", "ex-consul") and old_commander.is_absent:
-            old_commander.is_absent = False
-            old_commander.office = "ex-proconsul"
-            print(f"      🔄 原指挥官 {old_commander.name} 返回罗马")
-
-        self.state.log_event(
-            f"执政官 {consul.name} 手动接管战争 {war.name}，增援 {recruit_count} 个军团",
-            level=logging.INFO,
-            extra={"war_id": war.id, "consul_id": consul.id, "legions": recruit_count}
-        )
-        return True
+    # _execute_war_takeover_manual removed in S5 — logic migrated to senate_api.process_war_takeover
 
     def _generate_proposal_description(self, proposal_type: str, kwargs: dict) -> str:
         """根据提案类型和参数生成友好描述"""
@@ -1344,198 +1276,12 @@ class SenateCommand(Command):
         print()
 
 
-    # ==================== 新增：MVP 0.7-4 行省起义镇压 ====================
-    def _assign_rebellion_commanders(self):
-        """为起义战争指派总督作为指挥官并征召军团"""
-        war_system = self.state.get_war_system()
-        if not war_system:
-            return
-
-        ms = self.state.get_military_system()
-        if not ms:
-            return
-
-        rebellion_strength = self.state.config.get("combat_rules.rebellion_strength", 5)
-        # 计算所需军团数量（假设每个军团基础战力2）
-        legion_count = (rebellion_strength + 1) // 2
-        if legion_count < 1:
-            legion_count = 1
-
-        for war in war_system.get_active_wars():
-            if war.rebellion_province_id is None or war.commander_id is not None:
-                continue
-
-            province = self.state.get_province(war.rebellion_province_id)
-            if not province:
-                continue
-
-            # 优先使用候任总督，若无则使用现任总督
-            governor_id = province.governor_designate_id or province.governor_id
-            if governor_id is None:
-                continue
-
-            commander = self.state.get_member(governor_id)
-            if not commander or commander.is_dead:
-                continue
-
-            # 征召军团
-            available = ms.get_available_legions()
-            if not available:
-                print(f"      ⚠️ 无可用军团镇压 {province.name} 起义")
-                continue
-
-            recruit_count = min(legion_count, len(available))
-            results = ms.recruit_multiple(recruit_count)
-            recruited_numbers = [r[0] for r in results if r[1]]
-            if not recruited_numbers:
-                print(f"      ⚠️ 军团征召失败，无法镇压 {province.name} 起义")
-                continue
-
-            # 指派指挥官和军团
-            war_system.assign_commander(war.id, governor_id, len(recruited_numbers))
-            ms.assign_to_war(recruited_numbers, war.id, governor_id)
-            commander.is_absent = True  # 总督出征
-
-            print(f"      ✅ 任命 {commander.name} 为 {war.name} 指挥官，征召 {len(recruited_numbers)} 个军团")
-            self.state.log_event(
-                f"指派总督 {commander.name} 镇压起义",
-                extra={"war_id": war.id, "commander_id": governor_id}
-            )
+    # ==================== S5: _assign_rebellion_commanders removed — logic migrated to war_system.assign_rebellion_commanders ====================
 
 
 # =================================== MVP 0.1-0.5 =============================================
 
-    def _execute_governor_appointments(self):
-        if not self.proposed_governors:
-            return
-        print("\n\t====================== 总督任命执行 ====================")
-        for gov in self.proposed_governors:
-            province = self.state.get_province(gov['province_id'])
-            if not province:
-                continue
-            new_fig = self.state.get_member(gov['new_governor_id'])
-            old_fig = self.state.get_member(gov['old_governor_id']) if gov['old_governor_id'] else None
-
-            # 记录旧总督并设置候任总督，供决算阶段返回
-            province.set_governor_designate(gov['new_governor_id'], gov['old_governor_id'])
-
-            if new_fig:
-                # 新总督离开罗马（在途），但暂不授予官职
-                new_fig.is_absent = True
-                new_fig_name = new_fig.get_formal_name()
-            else:
-                new_fig_name = "未知"
-
-            old_name = old_fig.get_formal_name() if old_fig else "无"
-            print(f"      ✅ {province.name} 任命新总督: {new_fig_name} (候任)，旧总督 {old_name} 仍在任")
-            self.state.log_event(
-                f"行省 {province.name} 任命候任总督 {new_fig_name}",
-                extra={
-                    'type': 'governor_appointed_designate',
-                    'province_id': province.province_id,
-                    'new_governor': gov['new_governor_id'],
-                    'old_governor': gov['old_governor_id']
-                }
-            )
-
-    def _process_governor_appointments(self, terms):
-        print("\n\t====================== 行省总督任命 ====================")
-
-        # 获取所有已征服的行省（排除意大利行省 ID 0）
-        all_provinces = [p for p in self.state.get_all_provinces() if p.conquered and p.province_id != 0]
-
-        # 行省分类
-        proconsul_provinces = [p for p in all_provinces if p.governor_type == "proconsul"]
-        propraetor_provinces = [p for p in all_provinces if p.governor_type == "propraetor"]
-
-        # 候选人获取函数（原内嵌函数）
-        def get_candidates(office_type: str):
-            cand_list = []
-            for fig in self.state.get_living_members():
-                if fig.is_absent:
-                    continue
-                if fig.office is not None and not fig.office.startswith("ex-"):
-                    continue
-                last_end = None
-                for term in fig.office_history:
-                    if term.office_type == office_type and term.end_turn is not None:
-                        if last_end is None or term.end_turn > last_end:
-                            last_end = term.end_turn
-                if last_end is not None:
-                    cand_list.append((fig, last_end))
-            cand_list.sort(key=lambda x: -x[1])
-            return [c[0] for c in cand_list]
-
-        consuls = get_candidates('consul')
-        praetors = get_candidates('praetor')
-
-        # 分配逻辑
-        def assign(provinces, candidates, used_set):
-            remaining = list(provinces)
-            random.shuffle(remaining)
-            assignments = []
-            for cand in candidates:
-                if cand.id in used_set:
-                    continue
-                if not remaining:
-                    break
-                chosen = random.choice(remaining)
-                remaining.remove(chosen)
-                assignments.append((chosen, cand))
-                used_set.add(cand.id)
-            return assignments
-
-        used = set()
-        proconsul_assignments = assign(proconsul_provinces, consuls, used)
-        propraetor_assignments = assign(propraetor_provinces, praetors, used)
-
-        # 打印分配结果
-        def print_assignments(title, assignments):
-            print(f"\n   {title}:")
-            if not assignments:
-                print("      无行省需要任命")
-                return
-            for prov, cand in assignments:
-                # 计算卸任年份显示
-                last_year = None
-                req_office = 'consul' if title == '执政官行省' else 'praetor'
-                for term in cand.office_history:
-                    if term.office_type == req_office and term.end_turn is not None:
-                        last_year = term.end_turn
-                        break
-                if last_year is not None:
-                    year = self.state.turn.year + (last_year - self.state.turn.turn_number)
-                    year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
-                else:
-                    year_display = "未知"
-                print(f"      → {cand.get_formal_name()} (卸任 {year_display}) 抽中 {prov.name}")
-
-        print_assignments("执政官行省 (Proconsul)", proconsul_assignments)
-        print_assignments("大法官行省 (Propraetor)", propraetor_assignments)
-
-        # 提示未被分配的行省
-        all_provinces_set = set(proconsul_provinces + propraetor_provinces)
-        assigned_provinces = set(p for p, _ in proconsul_assignments + propraetor_assignments)
-        unassigned = all_provinces_set - assigned_provinces
-        if unassigned:
-            for p in unassigned:
-                print(f"      ⚠️ {p.name} 无合格候选人，现任总督留任一年")
-
-        # 构建提案
-        self.proposed_governors = []
-        for prov, cand in proconsul_assignments + propraetor_assignments:
-            self.proposed_governors.append({
-                'province_id': prov.province_id,
-                'new_governor_id': cand.id,
-                'old_governor_id': prov.governor_id,
-                'governor_type': prov.governor_type
-            })
-
-        self.state.log_event(
-            f"总督任命提案收集完成，共 {len(self.proposed_governors)} 项",
-            level=logging.DEBUG,
-            extra={"proposals": [p['province_id'] for p in self.proposed_governors]}
-        )
+    # S5: _execute_governor_appointments and _process_governor_appointments removed — logic migrated to senate_api.assign_governors
 
     def _get_tribune(self) -> Optional['Figure']:
         """获取当前保民官（假设只有一人）"""
@@ -1561,8 +1307,17 @@ class SenateCommand(Command):
         if not consul:
             return
 
-        # 征召军团并指派（会自动打印宣战及征召信息）
-        self._auto_recruit_and_assign_legions_for_war(war, consul_id, action="declare")
+        # S4: 自动征召军团并指派
+        ws = self.state.get_war_system()
+        if ws:
+            recruit_results = ws.auto_recruit_and_assign()
+            if recruit_results:
+                for r in recruit_results:
+                    print(f"      ✅ 征召并指派 {r['legion_name']} 至战区 (theater={r['assigned_to']})")
+            else:
+                print(f"      ℹ️ 无需额外征召军团")
+        else:
+            print(f"      ⚠️ 战争系统不可用，无法征召军团")
         new_presiding = self.state.get_presiding_officer()
         if new_presiding:
             print(f"      元老院新主持人：{new_presiding.name}（官职 {new_presiding.office}）")
@@ -1571,71 +1326,4 @@ class SenateCommand(Command):
     # Land proposals are now handled entirely through senate_api.auto_submit_proposals()
     # and senate_api.resolve_senate(). See wave-02 S3/S4.
 
-    # ===== 在 phase_senate.py 中完善 _auto_recruit_and_assign_legions_for_war =====
-    def _auto_recruit_and_assign_legions_for_war(self, war, consul_id, action="declare"):
-        """
-        自动征召军团并指派给战争，返回 (征召数量, 总花费)
-        action: "declare" 宣战, "takeover" 执政官接管, "restart" 停战恢复
-        """
-        ms = self.state.get_military_system()
-        if not ms:
-            print("      ⚠️ 军事系统不可用，无法征召军团")
-            return 0, 0
-
-        # 检查战争是否已有军团
-        existing_legions = ms.get_legions_for_battle(war.id) if ms else []
-        if existing_legions:
-            if action == "takeover":
-                consul = self.state.get_member(consul_id)
-                consul_name = consul.get_formal_name() if consul else "执政官"
-                print(f"      ✅ 执政官 {consul_name} 接管战争 {war.name}（已有 {len(existing_legions)} 个军团）")
-            return 0, 0
-
-        # 获取应征召的军团数量
-        legions = getattr(war, 'proposed_legions', 0)
-        if legions <= 0:
-            min_leg = self.state.config.get("testing.min_legions", 4)
-            max_leg = self.state.config.get("testing.max_legions", 8)
-            legions = random.randint(min_leg, max_leg)
-            print(f"      ℹ️ 战争未指定军团数，自动分配 {legions} 个")
-
-        available = ms.get_available_legions()
-        recruit_cost = self.state.get_economic_rule("legion_recruit_cost", 10)
-
-        recruit_count = min(legions, len(available))
-        if recruit_count == 0:
-            print("      ⚠️ 没有可用军团，无法征召")
-            return 0, 0
-
-        results = ms.recruit_multiple(recruit_count)
-        recruited_numbers = [r[0] for r in results if r[1]]
-        if not recruited_numbers:
-            print("      ⚠️ 军团征召失败")
-            return 0, 0
-
-        assigned, msg = ms.assign_to_war(recruited_numbers, war.id, consul_id)
-        if assigned <= 0:
-            print(f"      {msg}")
-            return 0, 0
-
-        for num in recruited_numbers:
-            war.add_legion_number(num)
-
-        total_cost = recruit_cost * len(recruited_numbers)
-        consul = self.state.get_member(consul_id)
-        consul_name = consul.get_formal_name() if consul else "执政官"
-
-        if action == "takeover":
-            print(
-                f"      ✅ 执政官 {consul_name} 接管战争 {war.name}，征召 {recruit_count} 个军团，总花费 {total_cost} Talents，国库剩余 {self.state.treasury} Talents")
-        elif action == "restart":
-            print(
-                f"      ✅ 战争 {war.name} 恢复，执政官 {consul_name} 征召 {recruit_count} 个军团，总花费 {total_cost} Talents，国库剩余 {self.state.treasury} Talents")
-        else:  # declare
-            print(f"      ✅ 宣战通过！执政官 {consul_name} 出征，影响力不再计入元老院。")
-            print(
-                f"      ✅ 征召 {recruit_count} 个军团，总花费 {total_cost} Talents，国库剩余 {self.state.treasury} Talents")
-
-        self.state.log_event(
-            f"{'宣战' if action == 'declare' else '接管' if action == 'takeover' else '恢复'} {war.name}，征召 {len(recruited_numbers)} 军团")
-        return recruit_count, total_cost
+    # S5: _auto_recruit_and_assign_legions_for_war removed — logic migrated to war_system.auto_recruit_and_assign
