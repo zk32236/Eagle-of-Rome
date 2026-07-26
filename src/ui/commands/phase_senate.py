@@ -1567,76 +1567,9 @@ class SenateCommand(Command):
         if new_presiding:
             print(f"      元老院新主持人：{new_presiding.name}（官职 {new_presiding.office}）")
 
-    def _process_land_proposals(self, terms, passed_land_acts: List[dict]):
-        """处理土地法案提案，通过的放入 passed_land_acts"""
-        land_rules = self.state.config.get("political_rules.land_proposal", {})
-        submit_chance = land_rules.get("submit_chance", 0.7)
-
-        presiding = self.state.get_presiding_officer()
-        if not presiding:
-            print(f"\n   ⚠️ 无主持人，无法处理土地法案。")
-            return
-
-        proposals = []
-        for faction in self.state.factions.values():
-            for decider in self.land_proposal_deciders:
-                result = decider.decide_proposal(faction.id, self.state)
-                if result:
-                    act_type, percent = result
-                    proposals.append({
-                        'type': act_type,
-                        'percent': percent,
-                        'proposer_faction': faction.id,
-                        'description': self._get_land_act_description(act_type, percent)
-                    })
-
-        if not proposals:
-            print(f"\n   📭 无土地法案提案。")
-            return
-
-        for prop in proposals:
-            if random.random() < submit_chance:
-                print(f"\n   📋 {prop['description']} 由执政官 {presiding.name} 提交元老院表决。")
-                votes_for = 0
-                votes_against = 0
-                total_influence = 0
-
-                for faction in self.state.get_active_factions():
-                    influence = faction.get_senate_influence(self.state)
-                    if influence == 0:
-                        continue
-                    total_influence += influence
-
-                    support = self.vote_decider.decide_vote(prop, faction, self.state)
-                    if support:
-                        votes_for += influence
-                        print(f"          {faction.name} 支持，影响力 {influence}")
-                    else:
-                        votes_against += influence
-                        print(f"          {faction.name} 反对，影响力 {influence}")
-
-                if total_influence == 0:
-                    print(f"          无元老在场，法案未通过。")
-                    continue
-
-                support_ratio = votes_for / total_influence
-                print(f"          总影响力：{total_influence}，支持 {votes_for}，反对 {votes_against}，支持率 {support_ratio:.1%}")
-                if support_ratio > 0.5:
-                    national_land = self.state.get_national_public_land()
-                    amount = int(national_land * prop['percent'])
-                    prop['amount'] = amount
-                    passed_land_acts.append(prop)
-                    print(f"          ✅ 法案通过，等待保民官否决")
-                else:
-                    print(f"          ❌ 法案否决。")
-            else:
-                print(f"\n   ⏳ 执政官 {presiding.name} 决定不提交 {prop['description']}。")
-
-    def _get_land_act_description(self, act_type: str, percent: float) -> str:
-        if act_type == 'distribution':
-            return f"平民分地法案（分配 {percent * 100:.1f}% 国家公地）"
-        else:
-            return f"贵族买地法案（出售 {percent * 100:.1f}% 国家公地）"
+    # _process_land_proposals and _get_land_act_description have been removed.
+    # Land proposals are now handled entirely through senate_api.auto_submit_proposals()
+    # and senate_api.resolve_senate(). See wave-02 S3/S4.
 
     # ===== 在 phase_senate.py 中完善 _auto_recruit_and_assign_legions_for_war =====
     def _auto_recruit_and_assign_legions_for_war(self, war, consul_id, action="declare"):

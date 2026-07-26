@@ -6,10 +6,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from src.api import api_response
 from src.core.game_state import GameState
 from src.core.i18n import i18n
-from src.core.entities.contract import ContractType, ContractStatus
+from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.core.entities.war import WarStatus
 from src.core.service.land_trading_service import LandTradingService
 from src.core.entities.figure import ClassTier, Figure
+from src.core.systems.figure_generation_system import generate_figures as system_generate_figures, generate_market_figures
 
 
 NEXT_PHASE_ID = "population"
@@ -159,25 +160,13 @@ def open_market(state: GameState, player_id: str) -> dict:
 
 
 def _generate_market_figures(state: GameState) -> List[Figure]:
-    new_figures: List[Figure] = []
-    forum_rules = state.config.get("forum_rules", {})
-    count = int(forum_rules.get("new_figures_count", 3) or 3)
-    probs = forum_rules.get("class_probabilities", {})
-    nobile_prob = float(probs.get("nobile", 0.1) or 0.1)
-    eques_prob = float(probs.get("eques", 0.25) or 0.25)
+    """
+    Generate figures for the forum market.
 
-    for _ in range(max(0, count)):
-        tier_roll = random.random()
-        if tier_roll < nobile_prob:
-            fig = Figure.create_nobile(state.allocate_id(), None, age=random.randint(30, 50))
-        elif tier_roll < nobile_prob + eques_prob:
-            fig = Figure.create_eques(state.allocate_id(), None, age=random.randint(25, 40))
-        else:
-            fig = Figure.create_plebeian(state.allocate_id(), None, age=random.randint(20, 35))
-        state.add_member(fig)
-        state.curia.add_figure(fig)
-        new_figures.append(fig)
-    return new_figures
+    Delegates to figure_generation_system.generate_market_figures()
+    to maintain a single source of truth for figure creation.
+    """
+    return generate_market_figures(state)
 
 
 def recruit_figure(state: GameState, player_id: str, figure_id: int, amount: int) -> dict:
@@ -817,3 +806,492 @@ def _triumph_war_rows(state: GameState) -> List[Dict[str, Any]]:
             "soldier_share": war.soldier_share,
         })
     return rows
+
+
+# =====================================================================
+# Wave-01 Forum Init: New Public API — Figure + Contract Generation
+# =====================================================================
+
+
+def generate_figures(state: GameState) -> dict:
+    """
+    Public API: generate all new figures for the forum initialization phase.
+
+    Delegates to: figure_generation_system.generate_figures(state)
+
+    Input:
+        state: GameState — current game state
+
+    Output:
+        dict — api_response(True, ..., data={
+            "figures": [figure_data...]
+        })
+    """
+    try:
+        figures = system_generate_figures(state)
+        figure_list = []
+        for fig in figures:
+            figure_data = {
+                "id": fig.id,
+                "name": fig.get_formal_name(),
+                "class_tier": fig.class_tier.value if hasattr(fig.class_tier, "value") else str(fig.class_tier),
+                "martial": getattr(fig, "martial", 0),
+                "intelligence": getattr(fig, "intelligence", 0),
+                "charisma": getattr(fig, "charisma", 0),
+                "zeal": getattr(fig, "zeal", 0),
+                "age": getattr(fig, "age", 0),
+                "is_hero": False,
+                "hero_type": None,
+            }
+            figure_list.append(figure_data)
+
+        # Detect hero: figure count exceeds configured new_figures_count
+        # or hero_spawned_this_turn was True before generation
+        forum_rules = state.config.get("forum_rules", {})
+        normal_count = int(forum_rules.get("new_figures_count", 3) or 3)
+        if len(figure_list) > normal_count:
+            # Mark the extra figures (heroes) that exceed the normal count
+            for i in range(normal_count, len(figure_list)):
+                figure_list[i]["is_hero"] = True
+                figure_list[i]["hero_type"] = (
+                    "historical"
+                    if len(state.spawned_hero_ids) > 0
+                    else "random"
+                )
+
+        hero_count = sum(1 for fd in figure_list if fd["is_hero"])
+        state.log_event(
+            "forum_api.generate_figures: completed",
+            level=logging.DEBUG,
+            extra={"total_figures": len(figures), "hero_count": hero_count},
+        )
+        return api_response(True, "Figures generated", data={"figures": figure_list})
+    except Exception as e:
+        state.log_event(
+            f"forum_api.generate_figures failed: {e}",
+            level=logging.ERROR,
+            extra={"error": str(e)},
+        )
+        return api_response(False, f"Figure generation failed: {e}")
+
+
+def generate_contracts(state: GameState) -> dict:
+    """
+    Public API: generate all new/renewal contracts for the forum initialization phase.
+
+    Logic (lifted verbatim from CLI phase_forum._generate_contracts()):
+        1. Renew tax contracts (remaining_years == 1, province conquered)
+        2. Renew works contracts (warranty_remaining == 1, province conquered)
+        3. New tax contracts (conquered non-Italy provinces, no existing active/pending/budgeted)
+        4. New works contracts (all conquered provinces including Italy, no existing non-expired/completed)
+        5. Delegate fleet construction to naval_system.generate_construction_contracts()
+        6. Delegate fleet replacement to naval_system.generate_replacement_contracts()
+
+    Input:
+        state: GameState — current game state
+
+    Output:
+        dict — api_response(True, ..., data={"contracts": [contract_data...]})
+    """
+    contracts = []
+    config = state.config
+    land_price = config.get("economic_rules.land_price_per_unit", 10)
+    private_income_rate = config.get("economic_rules.private_land_income_rate", 0.05)
+    province_tax_rate = config.get("economic_rules.province_tax_rate", 0.1)
+    auction_ratio = config.get("economic_rules.tax_auction_ratio", 0.8)
+    infra_rate = config.get("economic_rules.infrastructure_cost_rate", 0.001)
+    budget_margin = config.get("economic_rules.project_budget_margin", 0.2)
+    tax_duration = config.get("economic_rules.tax_contract_duration", 5)
+    works_duration = config.get("economic_rules.works_contract_duration", 3)
+
+    try:
+        # ---------- 1. Renewal contracts (conquered provinces only) ----------
+        for contract in list(state.contracts):
+            # Tax contract renewal (remaining_years == 1)
+            if contract.contract_type == ContractType.TAX_FARMING and contract.status == ContractStatus.ACTIVE:
+                if contract.remaining_years == 1:
+                    province = state.get_province(contract.province_id)
+                    if not province or not province.conquered:
+                        continue
+                    existing = any(
+                        c for c in state.contracts
+                        if c.province_id == contract.province_id
+                        and c.contract_type == ContractType.TAX_FARMING
+                        and c.status == ContractStatus.PENDING
+                    )
+                    if not existing and province.land_public > 0:
+                        land_value = province.land_public * land_price
+                        base_income = int(land_value * private_income_rate)
+                        base_tax = int(base_income * province_tax_rate)
+                        base_cost = int(base_tax * auction_ratio)
+
+                        new_contract = state.create_contract(
+                            ContractType.TAX_FARMING,
+                            province.province_id,
+                            base_cost,
+                            state.turn.turn_number,
+                        )
+                        year = state.turn.year
+                        year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
+                        new_contract.name = f"{province.name}包税权 ({year_display})"
+                        new_contract.expected_profit = base_tax - base_cost
+                        new_contract.duration_years = tax_duration
+                        contracts.append(new_contract)
+                        state.log_event(
+                            f"forum_api: tax contract renewal: {province.name}, contract_id={new_contract.id}",
+                            level=logging.DEBUG,
+                            extra={
+                                "contract_id": new_contract.id,
+                                "province_id": province.province_id,
+                                "base_cost": base_cost,
+                            },
+                        )
+
+            # Works contract renewal (warranty_remaining == 1)
+            elif contract.contract_type == ContractType.PUBLIC_WORKS and contract.status == ContractStatus.COMPLETED:
+                if contract.warranty_remaining == 1:
+                    province = state.get_province(contract.province_id)
+                    if not province or not province.conquered:
+                        continue
+                    existing = any(
+                        c for c in state.contracts
+                        if c.province_id == contract.province_id
+                        and c.contract_type == ContractType.PUBLIC_WORKS
+                        and c.status == ContractStatus.PENDING
+                    )
+                    if not existing and province.land_public > 0:
+                        land_value = province.land_public * land_price
+                        infra_cost = int(land_value * infra_rate)
+                        budget = int(infra_cost * (1 + budget_margin))
+
+                        year = state.turn.year
+                        year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
+                        new_contract = state.create_contract(
+                            ContractType.PUBLIC_WORKS,
+                            province.province_id,
+                            budget,
+                            state.turn.turn_number,
+                        )
+                        new_contract.name = f"{province.name}工程 ({year_display})"
+                        new_contract._original_budget = budget
+                        new_contract.duration_years = works_duration
+                        contracts.append(new_contract)
+                        state.log_event(
+                            f"forum_api: works contract renewal: {province.name}, contract_id={new_contract.id}",
+                            level=logging.DEBUG,
+                            extra={
+                                "contract_id": new_contract.id,
+                                "province_id": province.province_id,
+                                "budget": budget,
+                            },
+                        )
+
+        # ---------- 2. New contracts ----------
+        for province in state.get_all_provinces():
+            # Tax contract: conquered non-Italy provinces only
+            if province.province_id != 0 and province.conquered and province.land_public > 0:
+                has_tax_active = any(
+                    c for c in state.contracts
+                    if c.province_id == province.province_id
+                    and c.contract_type == ContractType.TAX_FARMING
+                    and c.status in (ContractStatus.ACTIVE, ContractStatus.PENDING, ContractStatus.BUDGETED)
+                )
+                if not has_tax_active:
+                    land_value = province.land_public * land_price
+                    base_income = int(land_value * private_income_rate)
+                    base_tax = int(base_income * province_tax_rate)
+                    base_cost = int(base_tax * auction_ratio)
+
+                    contract = state.create_contract(
+                        ContractType.TAX_FARMING,
+                        province.province_id,
+                        base_cost,
+                        state.turn.turn_number,
+                    )
+                    year = state.turn.year
+                    year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
+                    contract.name = f"{province.name}包税权 ({year_display})"
+                    contract.expected_profit = base_tax - base_cost
+                    contract.duration_years = tax_duration
+                    contracts.append(contract)
+                    state.log_event(
+                        f"forum_api: new tax contract: {province.name}, contract_id={contract.id}",
+                        level=logging.DEBUG,
+                        extra={
+                            "contract_id": contract.id,
+                            "province_id": province.province_id,
+                            "base_cost": base_cost,
+                        },
+                    )
+
+            # Works contract: conquered provinces or Italy
+            if (province.conquered or province.province_id == 0) and province.land_public > 0:
+                has_works = any(
+                    c for c in state.contracts
+                    if c.province_id == province.province_id
+                    and c.contract_type == ContractType.PUBLIC_WORKS
+                    and c.status not in (ContractStatus.EXPIRED, ContractStatus.COMPLETED)
+                )
+                if not has_works:
+                    land_value = province.land_public * land_price
+                    infra_cost = int(land_value * infra_rate)
+                    budget = int(infra_cost * (1 + budget_margin))
+
+                    year = state.turn.year
+                    year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
+                    contract = state.create_contract(
+                        ContractType.PUBLIC_WORKS,
+                        province.province_id,
+                        budget,
+                        state.turn.turn_number,
+                    )
+                    contract.name = f"{province.name}工程 ({year_display})"
+                    contract._original_budget = budget
+                    contract.duration_years = works_duration
+                    contracts.append(contract)
+                    state.log_event(
+                        f"forum_api: new works contract: {province.name}, contract_id={contract.id}",
+                        level=logging.DEBUG,
+                        extra={
+                            "contract_id": contract.id,
+                            "province_id": province.province_id,
+                            "budget": budget,
+                        },
+                    )
+
+        # ---------- 3. Fleet construction contracts (via naval_system) ----------
+        fleet_construction_count = 0
+        fleet_replacement_count = 0
+        if state.naval_system:
+            try:
+                construction_contracts = state.naval_system.generate_construction_contracts(
+                    state.turn.turn_number
+                )
+                fleet_construction_count = len(construction_contracts)
+                contracts.extend(construction_contracts)
+            except Exception as e:
+                state.log_event(
+                    f"forum_api: fleet construction delegation failed: {e}",
+                    level=logging.WARNING,
+                    extra={"error": str(e)},
+                )
+
+            try:
+                replacement_contracts = state.naval_system.generate_replacement_contracts(
+                    state.turn.turn_number
+                )
+                fleet_replacement_count = len(replacement_contracts)
+                contracts.extend(replacement_contracts)
+            except Exception as e:
+                state.log_event(
+                    f"forum_api: fleet replacement delegation failed: {e}",
+                    level=logging.WARNING,
+                    extra={"error": str(e)},
+                )
+
+            state.log_event(
+                "forum_api: delegated fleet construction to naval_system",
+                level=logging.DEBUG,
+                extra={
+                    "naval_system": True,
+                    "construction_count": fleet_construction_count,
+                    "replacement_count": fleet_replacement_count,
+                },
+            )
+
+        state.log_event(
+            f"forum_api.generate_contracts: completed",
+            level=logging.DEBUG,
+            extra={"total_contracts": len(contracts)},
+        )
+
+        # Build response data
+        contract_data_list = []
+        for c in contracts:
+            contract_data_list.append({
+                "id": c.id,
+                "name": getattr(c, "name", ""),
+                "contract_type": c.contract_type.value if hasattr(c.contract_type, "value") else str(c.contract_type),
+                "contract_type_label": "包税" if c.contract_type == ContractType.TAX_FARMING else "工程",
+                "province_id": getattr(c, "_province_id", 0),
+                "base_cost": getattr(c, "base_cost", 0),
+                "expected_profit": getattr(c, "expected_profit", 0),
+                "duration_years": getattr(c, "duration_years", 0),
+                "status": c.status.value if hasattr(c.status, "value") else str(c.status),
+                "is_renewal": False,  # Tracked separately if needed
+                "is_fleet": getattr(c, "_is_fleet_construction", False),
+            })
+
+        return api_response(True, "Contracts generated", data={"contracts": contract_data_list})
+
+    except Exception as e:
+        state.log_event(
+            f"forum_api.generate_contracts failed: {e}",
+            level=logging.ERROR,
+            extra={"error": str(e)},
+        )
+        return api_response(False, f"Contract generation failed: {e}")
+
+
+# =====================================================================
+# Wave-02 Province & Land CLI 下沉: C-09c / C-09d
+# =====================================================================
+
+
+def check_province_unrest(state: GameState) -> dict:
+    """
+    Public API: check all provinces for civil unrest and trigger rebellions.
+
+    Delegates to: ProvinceUnrestSystem.check_and_trigger_unrest()
+
+    Input:
+        state: GameState — current game state
+
+    Output:
+        dict — api_response(True, ..., data={
+            "rebellions": [rebellion_data...],
+            "province_updates": [{province_id, name, old_grievance, new_grievance, reason}]
+        })
+    """
+    try:
+        from src.core.systems.province_unrest_system import ProvinceUnrestSystem
+
+        system = ProvinceUnrestSystem(state)
+        result = system.check_and_trigger_unrest()
+
+        rebellions = result.get("rebellions", [])
+        province_updates = result.get("province_updates", [])
+
+        rebellion_list = []
+        for r in rebellions:
+            province = state.get_province(r.rebellion_province_id)
+            province_name = province.name if province else "未知"
+            rebellion_list.append({
+                "id": r.id,
+                "name": r.name,
+                "province_id": r.rebellion_province_id,
+                "province_name": province_name,
+            })
+
+        state.log_event(
+            f"check_province_unrest: {len(state.get_all_provinces())} provinces checked, "
+            f"{len(rebellions)} rebellions triggered",
+            level=logging.DEBUG,
+            extra={
+                "province_count": len(state.get_all_provinces()),
+                "rebellion_count": len(rebellions),
+            },
+        )
+
+        return api_response(True, "Unrest check completed", data={
+            "rebellions": rebellion_list,
+            "province_updates": province_updates,
+        })
+    except Exception as e:
+        state.log_event(
+            f"forum_api.check_province_unrest failed: {e}",
+            level=logging.ERROR,
+            extra={"error": str(e)},
+        )
+        return api_response(False, f"Unrest check failed: {e}")
+
+
+def execute_land_acts(state: GameState) -> dict:
+    """
+    Public API: execute all pending land distribution acts.
+
+    Logic (lifted verbatim from CLI phase_forum._execute_pending_land_acts()
+    and _execute_land_distribution()):
+        1. Retrieve pending_land_acts from game state
+        2. For each 'distribution' act: calculate amount, deduct from
+           national public land, add to Italy private land, reset grievance
+        3. Clear pending land acts
+
+    Input:
+        state: GameState — current game state
+
+    Output:
+        dict — api_response(True, ..., data={
+            "executed_acts": [{act_type, percent, amount, message}...]
+        })
+    """
+    try:
+        acts = state.get_pending_land_acts()
+        if not acts:
+            return api_response(True, "No pending land acts", data={"executed_acts": []})
+
+        land_price = state.get_economic_rule("land_price_per_unit", 10)
+        executed = []
+
+        for act in acts:
+            try:
+                if act.get("type") == "distribution":
+                    result = _execute_land_distribution(state, act, land_price)
+                    executed.append(result)
+                elif act.get("type") == "sale":
+                    # Sale acts set quota in resolve_senate; already handled
+                    executed.append({
+                        "act_type": "sale",
+                        "percent": act.get("percent", 0),
+                        "amount": act.get("amount", 0),
+                        "message": f"Sale quota set: {act.get('amount', 0)} C",
+                    })
+            except Exception as e:
+                state.log_event(
+                    f"execute_land_acts: act failed: {e}",
+                    level=logging.WARNING,
+                    extra={"act": act, "error": str(e)},
+                )
+
+        state.clear_pending_land_acts()
+
+        state.log_event(
+            f"execute_land_acts: completed",
+            level=logging.DEBUG,
+            extra={"executed_count": len(executed)},
+        )
+
+        return api_response(True, "Land acts executed", data={
+            "executed_acts": executed,
+        })
+    except Exception as e:
+        state.log_event(
+            f"forum_api.execute_land_acts failed: {e}",
+            level=logging.ERROR,
+            extra={"error": str(e)},
+        )
+        return api_response(False, f"Land acts execution failed: {e}")
+
+
+def _execute_land_distribution(state: GameState, act: dict, land_price: int) -> dict:
+    """Internal: execute a single land distribution act."""
+    national_land = state.get_national_public_land()
+    percent = act.get("percent", 0)
+    amount = int(national_land * percent)
+    if amount <= 0:
+        return {
+            "act_type": "distribution",
+            "percent": percent,
+            "amount": 0,
+            "message": "Insufficient national public land",
+        }
+
+    state.add_national_public_land(-amount)
+    italy = state.get_province(0)
+    if italy:
+        italy.update_land_type(0, amount)
+        italy.reset_turns_since_last_distribution()
+        italy.set_grievance(0)
+
+    state.log_event(
+        f"Land act distribution: assigned {amount} to province 0 (Italy)",
+        level=logging.DEBUG,
+        extra={"act_type": "distribution", "amount": amount, "province_id": 0},
+    )
+
+    return {
+        "act_type": "distribution",
+        "percent": percent,
+        "amount": amount,
+        "message": f"Assigned {amount} C land to Italy private land",
+    }

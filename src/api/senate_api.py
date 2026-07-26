@@ -586,6 +586,7 @@ def auto_submit_proposals(
             decider_result = decider.decide_proposal(faction.id, state)
             if decider_result:
                 act_type, percent = decider_result
+                proposal_id_ref = None
                 result = propose(
                     state, consul_player_id, "land",
                     bypass_turn_check=True,
@@ -594,6 +595,17 @@ def auto_submit_proposals(
                 )
                 if result["success"]:
                     act_name = "公地出售法案" if act_type == "sale" else "公地分配法案"
+                    proposal_id_ref = result.get("data", {}).get("proposal_id")
+                    state.log_event(
+                        f"Land proposal {proposal_id_ref}: submitted to senate for vote",
+                        level=logging.DEBUG,
+                        extra={
+                            "proposal_id": proposal_id_ref,
+                            "act_type": act_type,
+                            "percent": percent,
+                            "faction_id": faction.id,
+                        },
+                    )
                     created_proposals.append({
                         "type": "land",
                         "act_type": act_type,
@@ -669,6 +681,37 @@ def resolve_senate(
     if not state:
         return api_response(False, "无效的游戏状态")
     result = _political_system(state).resolve_senate(vote_decider, takeover_decider)
+
+    # Add DBUG logging for land proposal resolution results
+    passed_snapshot = result.get("data", {}).get("passed_proposals_snapshot", [])
+    for prop in passed_snapshot:
+        if prop.get("type") == "land":
+            prop_id = prop.get("id")
+            act_type = prop.get("act_type")
+            state.log_event(
+                f"Land proposal {prop_id}: resolution=passed",
+                level=logging.DEBUG,
+                extra={
+                    "proposal_id": prop_id,
+                    "act_type": act_type,
+                    "resolution": "passed",
+                },
+            )
+    rejected_snapshot = result.get("data", {}).get("rejected_proposals_snapshot", [])
+    for prop in rejected_snapshot:
+        if prop.get("type") == "land":
+            prop_id = prop.get("id")
+            act_type = prop.get("act_type")
+            state.log_event(
+                f"Land proposal {prop_id}: resolution=rejected",
+                level=logging.DEBUG,
+                extra={
+                    "proposal_id": prop_id,
+                    "act_type": act_type,
+                    "resolution": "rejected",
+                },
+            )
+
     # Record phase result immediately — before any callback (e.g. _on_refresh)
     # can read it. This eliminates the stale-state window where QML binding
     # sees no senate result during adapter.resolve_senate().

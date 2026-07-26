@@ -204,351 +204,145 @@ class ForumCommand(Command):
     # ==================== 原有功能函数移植 ====================
 
     def _generate_new_figures(self) -> List[Figure]:
-        """生成新人物，包括普通人和英雄，返回新人物列表"""
-        new_figures = []
-        forum_rules = self.state.config.get("forum_rules", {})
-        count = forum_rules.get("new_figures_count", 3)
-        probs = forum_rules.get("class_probabilities", {})
-        nobile_prob = probs.get("nobile", 0.1)
-        eques_prob = probs.get("eques", 0.25)
-        pleb_prob = 1 - nobile_prob - eques_prob
-        if pleb_prob < 0:
-            pleb_prob = 0.65
+        """
+        SHELL METHOD — delegates to forum_api.generate_figures(), prints UI output.
 
-        # 生成普通新人
-        for _ in range(count):
-            tier_roll = random.random()
-            if tier_roll < nobile_prob:
-                fig = Figure.create_nobile(self.state.allocate_id(), None, age=random.randint(30, 50))
-            elif tier_roll < nobile_prob + eques_prob:
-                fig = Figure.create_eques(self.state.allocate_id(), None, age=random.randint(25, 40))
-            else:
-                fig = Figure.create_plebeian(self.state.allocate_id(), None, age=random.randint(20, 35))
-            self.state.add_member(fig)
-            self.state.curia.add_figure(fig)
-            new_figures.append(fig)
+        Old signature kept for backward compatibility. Business logic lives
+        in figure_generation_system.py via forum_api.
+        """
+        self.state.log_event(
+            "phase_forum._generate_new_figures: delegated to forum_api.generate_figures()",
+            level=logging.DEBUG,
+            extra={"delegation": True},
+        )
 
-        # ===== 天降猛男：额外生成英雄 =====
-        if self.state.hero_spawned_this_turn and self.state.hero_to_spawn:
-            hero_info = self.state.hero_to_spawn
-            if hero_info["type"] == "historical":
-                hero = self._create_historical_hero(hero_info["data"])
-            else:
-                hero = self._create_random_mighty_man()
-
-            self.state.add_member(hero)
-            self.state.curia.add_figure(hero)
-            new_figures.append(hero)
-            print(f"      🌟 英雄降临: {hero.get_formal_name()} "
-                  f"(军略 {hero.martial}, 智略 {hero.intelligence}, "
-                  f"魅力 {hero.charisma}, 热诚 {hero.zeal})")
+        result = forum_api.generate_figures(self.state)
+        if not result.get("success", False):
             self.state.log_event(
-                f"天降猛男生成: {hero.get_formal_name()}",
-                extra={"type": "hero_spawn", "figure_id": hero.id}
+                f"phase_forum._generate_new_figures: API call failed: {result.get('message', '')}",
+                level=logging.WARNING,
             )
+            return []
 
-            # 清除标记
-            self.state.hero_spawned_this_turn = False
-            self.state.hero_to_spawn = None
+        figure_data_list = result.get("data", {}).get("figures", [])
+        new_figures = []
+        for fd in figure_data_list:
+            fig = self.state.get_member(fd["id"])
+            if fig:
+                new_figures.append(fig)
+
+        # Print summary (preserving CLI output format)
+        print(f"    📜 {len(new_figures)} 名新人进入广场")
+
+        # Find and print hero info
+        for fd in figure_data_list:
+            if fd.get("is_hero"):
+                fig = self.state.get_member(fd["id"])
+                if fig:
+                    print(f"      🌟 英雄降临: {fig.get_formal_name()} "
+                          f"(军略 {fig.martial}, 智略 {fig.intelligence}, "
+                          f"魅力 {fig.charisma}, 热诚 {fig.zeal})")
+                    self.state.log_event(
+                        f"天降猛男生成: {fig.get_formal_name()}",
+                        extra={"type": "hero_spawn", "figure_id": fig.id},
+                    )
 
         return new_figures
 
-    def _create_historical_hero(self, data: dict) -> Figure:
-        """根据历史英雄数据创建人物"""
-        birth_year = data["birth_year"]
-        current_year = self.state.turn.year
-        # 计算年龄：公元前年份差取绝对值
-        age = abs(current_year - birth_year)
-        figure_id = self.state.allocate_id()
-        hero = Figure(
-            id=figure_id,
-            name=data["name"],
-            age=age,
-            martial=data["martial"],
-            intelligence=data["intelligence"],
-            charisma=data["charisma"],
-            zeal=data["zeal"],
-            family_prestige=data.get("family_prestige", 0)
-        )
-        hero.class_tier = ClassTier.NOBILE
-        self.state.add_spawned_hero_id(data["id"])
-        return hero
-
-    def _create_random_mighty_man(self) -> Figure:
-        """生成随机猛人，属性基于当前存活人物最大值"""
-        living = self.state.get_living_members()
-        if living:
-            max_martial = max(f.martial for f in living)
-            max_intel = max(f.intelligence for f in living)
-            max_charisma = max(f.charisma for f in living)
-            max_zeal = max(f.zeal for f in living)
-        else:
-            # 无存活人物时使用默认值
-            max_martial = max_intel = max_charisma = max_zeal = 5
-
-        # 生成罗马名字
-        praenomen, nomen, cognomen, full_name = RomanNameGenerator.generate_nobile_name()
-        figure_id = self.state.allocate_id()
-        hero = Figure(
-            id=figure_id,
-            name=full_name,
-            age=random.randint(30, 45),
-            martial=max_martial,
-            intelligence=max_intel,
-            charisma=max_charisma,
-            zeal=max_zeal,
-            family_prestige=random.randint(1, 3)
-        )
-        hero.class_tier = ClassTier.NOBILE
-        hero.praenomen = praenomen
-        hero.nomen = nomen
-        hero.cognomen = cognomen
-        return hero
-
     def _generate_contracts(self):
-        """生成新合同（包税、工程、舰队建造），仅对已征服行省生效，意大利本土只生成工程合同"""
-        contracts = []  # 用于记录新生成的合同（可选）
-        config = self.state.config
-        land_price = config.get("economic_rules.land_price_per_unit", 10)
-        private_income_rate = config.get("economic_rules.private_land_income_rate", 0.05)
-        province_tax_rate = config.get("economic_rules.province_tax_rate", 0.1)
-        auction_ratio = config.get("economic_rules.tax_auction_ratio", 0.8)
-        infra_rate = config.get("economic_rules.infrastructure_cost_rate", 0.001)
-        budget_margin = config.get("economic_rules.project_budget_margin", 0.2)
-        tax_duration = config.get("economic_rules.tax_contract_duration", 5)
-        works_duration = config.get("economic_rules.works_contract_duration", 3)
+        """
+        SHELL METHOD — delegates to forum_api.generate_contracts(), prints UI output.
 
-        # ---------- 1. 续约合同（仅针对已征服行省）----------
-        for contract in self.state.contracts:
-            # 包税合同续约（剩余1年时生成新合同）
-            if contract.contract_type == ContractType.TAX_FARMING and contract.status == ContractStatus.ACTIVE:
-                if contract.remaining_years == 1:
-                    province = self.state.get_province(contract.province_id)
-                    if not province or not province.conquered:
-                        continue
-                    existing = any(c for c in self.state.contracts
-                                   if c.province_id == contract.province_id
-                                   and c.contract_type == ContractType.TAX_FARMING
-                                   and c.status == ContractStatus.PENDING)
-                    if not existing and province.land_public > 0:
-                        land_value = province.land_public * land_price
-                        base_income = int(land_value * private_income_rate)
-                        base_tax = int(base_income * province_tax_rate)
-                        base_cost = int(base_tax * auction_ratio)
+        Old signature kept for backward compatibility. Business logic lives
+        in forum_api.py.
+        """
+        self.state.log_event(
+            "phase_forum._generate_contracts: delegated to forum_api.generate_contracts()",
+            level=logging.DEBUG,
+            extra={"delegation": True},
+        )
 
-                        new_contract = self.state.create_contract(
-                            ContractType.TAX_FARMING,
-                            province.province_id,
-                            base_cost,
-                            self.state.turn.turn_number
-                        )
-                        year = self.state.turn.year
-                        year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
-                        new_contract.name = f"{province.name}包税权 ({year_display})"
-                        new_contract.expected_profit = base_tax - base_cost
-                        new_contract.duration_years = tax_duration
-                        contracts.append(new_contract)
+        result = forum_api.generate_contracts(self.state)
+        if not result.get("success", False):
+            self.state.log_event(
+                f"phase_forum._generate_contracts: API call failed: {result.get('message', '')}",
+                level=logging.WARNING,
+            )
+            return []
 
-            # 工程合同续约（质保期剩余1年时生成新合同）
-            elif contract.contract_type == ContractType.PUBLIC_WORKS and contract.status == ContractStatus.COMPLETED:
-                if contract.warranty_remaining == 1:
-                    province = self.state.get_province(contract.province_id)
-                    if not province or not province.conquered:
-                        continue
-                    existing = any(c for c in self.state.contracts
-                                   if c.province_id == contract.province_id
-                                   and c.contract_type == ContractType.PUBLIC_WORKS
-                                   and c.status == ContractStatus.PENDING)
-                    if not existing and province.land_public > 0:
-                        land_value = province.land_public * land_price
-                        infra_cost = int(land_value * infra_rate)
-                        budget = int(infra_cost * (1 + budget_margin))
+        contract_data_list = result.get("data", {}).get("contracts", [])
+        contracts = []
+        for cd in contract_data_list:
+            c = self.state.get_contract(cd["id"])
+            if c:
+                contracts.append(c)
 
-                        year = self.state.turn.year
-                        year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
-                        new_contract = self.state.create_contract(
-                            ContractType.PUBLIC_WORKS,
-                            province.province_id,
-                            budget,
-                            self.state.turn.turn_number
-                        )
-                        new_contract.name = f"{province.name}工程 ({year_display})"
-                        new_contract._original_budget = budget
-                        new_contract.duration_years = works_duration
-                        contracts.append(new_contract)
-
-        # ---------- 2. 全新合同 ----------
-        for province in self.state.get_all_provinces():
-            # 包税合同：仅已征服的非意大利行省
-            if province.province_id != 0 and province.conquered and province.land_public > 0:
-                has_tax_active = any(c for c in self.state.contracts
-                                     if c.province_id == province.province_id
-                                     and c.contract_type == ContractType.TAX_FARMING
-                                     and c.status in (
-                                     ContractStatus.ACTIVE, ContractStatus.PENDING, ContractStatus.BUDGETED))
-                if not has_tax_active:
-                    land_value = province.land_public * land_price
-                    base_income = int(land_value * private_income_rate)
-                    base_tax = int(base_income * province_tax_rate)
-                    base_cost = int(base_tax * auction_ratio)
-
-                    contract = self.state.create_contract(
-                        ContractType.TAX_FARMING,
-                        province.province_id,
-                        base_cost,
-                        self.state.turn.turn_number
-                    )
-                    year = self.state.turn.year
-                    year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
-                    contract.name = f"{province.name}包税权 ({year_display})"
-                    contract.expected_profit = base_tax - base_cost
-                    contract.duration_years = tax_duration
-                    contracts.append(contract)
-
-            # 工程合同：已征服的行省 或 意大利本土
-            if (province.conquered or province.province_id == 0) and province.land_public > 0:
-                has_works = any(c for c in self.state.contracts
-                                if c.province_id == province.province_id
-                                and c.contract_type == ContractType.PUBLIC_WORKS
-                                and c.status not in (ContractStatus.EXPIRED, ContractStatus.COMPLETED))
-                if not has_works:
-                    land_value = province.land_public * land_price
-                    infra_cost = int(land_value * infra_rate)
-                    budget = int(infra_cost * (1 + budget_margin))
-
-                    year = self.state.turn.year
-                    year_display = f"{abs(year)} BC" if year < 0 else f"{year} AD"
-                    contract = self.state.create_contract(
-                        ContractType.PUBLIC_WORKS,
-                        province.province_id,
-                        budget,
-                        self.state.turn.turn_number
-                    )
-                    contract.name = f"{province.name}工程 ({year_display})"
-                    contract._original_budget = budget
-                    contract.duration_years = works_duration
-                    contracts.append(contract)
-
-        # ---------- 3. 舰队建造合同（通过 naval_system）----------
-        if self.state.naval_system:
-            construction_contracts = self.state.naval_system.generate_construction_contracts(
-                self.state.turn.turn_number)
-            if construction_contracts:
-                print(f"\n   ⚓ 检测到海战威胁，生成 {len(construction_contracts)} 个舰队建造合同")
-                sys.stdout.flush()
-            replacement_contracts = self.state.naval_system.generate_replacement_contracts(
-                self.state.turn.turn_number)
-            if replacement_contracts:
-                print(f"\n   ⚓ 罗马舰队不足，生成 {len(replacement_contracts)} 个补充舰队建造合同")
-                sys.stdout.flush()
+        # Print fleet contract summaries (preserving CLI output format)
+        fleet_contracts = [cd for cd in contract_data_list if cd.get("is_fleet")]
+        if fleet_contracts:
+            print(f"\n   ⚓ 检测到海战威胁，生成 {len(fleet_contracts)} 个舰队建造合同")
+            sys.stdout.flush()
 
         return contracts
 
     # ==================== 新增：战争威胁、民变、凯旋等状态更新方法 ====================
 
     def _update_civil_unrest(self):
-        """更新行省民怨（自动升级、合同税率触发、起义检测）"""
-        if not self.state.config.get("enable_threats", True):
-            return
-        base_tax_rate = self.state.get_economic_rule("province_tax_rate", 0.1)
-        italy_unrest_trigger = self.state.config.get("economic_rules.italy_unrest_trigger_turns", 3)
-        # ===== 新增：获取土地价格和私地收入率 =====
-        land_price = self.state.get_economic_rule("land_price_per_unit", 10)
-        private_income_rate = self.state.get_economic_rule("private_land_income_rate", 0.05)
-        # =========================================
-        provinces = self.state.get_all_provinces()
-        if not provinces:
+        """
+        SHELL METHOD — delegates to forum_api.check_province_unrest(), prints UI output.
+
+        Business logic lives in ProvinceUnrestSystem via forum_api.
+        """
+        self.state.log_event(
+            "phase_forum._update_civil_unrest: delegated to forum_api.check_province_unrest()",
+            level=logging.DEBUG,
+            extra={"delegation": True},
+        )
+
+        result = forum_api.check_province_unrest(self.state)
+        if not result.get("success", False):
+            self.state.log_event(
+                f"phase_forum._update_civil_unrest: API call failed: {result.get('message', '')}",
+                level=logging.WARNING,
+            )
             return
 
-        active_contracts = [c for c in self.state.contracts
-                            if c.status == ContractStatus.ACTIVE and c.contract_type == ContractType.TAX_FARMING]
-        province_contracts = {}
-        for contract in active_contracts:
-            pid = contract.province_id
-            if pid == 0:
-                continue
-            province_contracts.setdefault(pid, []).append(contract)
+        data = result.get("data", {})
+        rebellions = data.get("rebellions", [])
+        province_updates = data.get("province_updates", [])
 
-        any_change = False
+        # Print summary with per-province details
         print("\n   📊 行省民变状态：")
+        has_unrest = False
 
-        # 意大利本土处理（省略，保持原样）
-        italy = self.state.get_province(0)
-        if italy:
-            old_grievance = italy.grievance
-            if old_grievance == 0:
-                italy._turns_since_last_land_distribution += 1
-                if italy._turns_since_last_land_distribution >= italy_unrest_trigger:
-                    italy.set_grievance(1)
-                    print(f"      ⚠️ 意大利本土因长期未分地，民怨升至 1 级")
-                    any_change = True
-            elif 0 < old_grievance < 3:
-                italy.set_grievance(old_grievance + 1)
-                print(f"      ⚠️ 意大利本土 民怨升级至 {italy.grievance} 级")
-                if italy.grievance == 3:
-                    print(f"         意大利本土爆发平民起义！政府面临倒台，马上行动！")
-                any_change = True
+        for pu in province_updates:
+            reason = pu.get("reason", "no_change")
+            pname = pu.get("name", "")
+            old_g = pu.get("old_grievance", 0)
+            new_g = pu.get("new_grievance", 0)
 
-        # 行省处理
-        for province in provinces:
-            if province.province_id == 0:
-                continue
+            if reason == "italy_no_distribution":
+                has_unrest = True
+                print(f"      {pname}本土因长期未分地，民怨升至 {new_g} 级")
+            elif reason == "auto_escalation":
+                has_unrest = True
+                print(f"      行省 {pname} 民怨升级至 {new_g} 级")
+            elif reason == "tax_trigger":
+                has_unrest = True
+                print(f"      行省 {pname} 因包税合同税率过高，民怨升至 {new_g} 级")
+            elif reason == "active_rebellion":
+                has_unrest = True
+                print(f"      行省 {pname} 当前民怨 {new_g} 级")
+            elif reason == "just_revolted":
+                has_unrest = True
+                print(f"      行省 {pname} 民怨已达 {new_g} 级，爆发起义！")
 
-            # 起义检测
-            if province.grievance >= 3 and not province.event_flags.get("rebellion_active"):
-                war_system = self.state.get_war_system()
-                if war_system:
-                    rebellion_war = war_system.create_rebellion_war(province)
-                    if war_system.register_rebellion_war(rebellion_war):
-                        province.set_event_flag("rebellion_active", True)
-                        print(f"      ⚔️ 行省 {province.name} 爆发起义！战争 {rebellion_war.name} 已激活。")
-                        self.state.log_event(
-                            f"行省起义：{province.name}",
-                            extra={"type": "rebellion", "province_id": province.province_id}
-                        )
-                        any_change = True
+        for r in rebellions:
+            has_unrest = True
+            print(f"      ⚔️ 行省 {r.get('province_name', '未知')} 爆发起义！战争 {r.get('name')} 已激活。")
 
-            # 自动升级
-            if 0 < province.grievance < 3:
-                province.set_grievance(province.grievance + 1)
-                print(f"      ⚠️ 行省 {province.name} 民怨升级至 {province.grievance} 级")
-                if province.grievance == 3:
-                    print(f"         行省 {province.name} 爆发平民起义！")
-                any_change = True
-
-            # 包税合同实际税率触发民变
-            contracts = province_contracts.get(province.province_id, [])
-            if contracts:
-                for contract in contracts:
-                    # 计算实际税率
-                    land_value = province.land_private * land_price
-                    expected_income = int(land_value * private_income_rate)
-                    if expected_income <= 0:
-                        continue
-                    total_collected = contract.contract_price * (1 + contract.profit_rate)
-                    actual_tax_rate = total_collected / expected_income
-                    if actual_tax_rate > base_tax_rate:
-                        if province.grievance < 1:
-                            province.set_grievance(1)
-                            print(
-                                f"      🔔 行省 {province.name} 因包税合同实际税率 {actual_tax_rate * 100:.1f}% > {base_tax_rate * 100:.1f}%，民怨升至 1 级")
-                            any_change = True
-                        else:
-                            print(
-                                f"      📌 行省 {province.name} 包税合同实际税率 {actual_tax_rate * 100:.1f}%，当前民怨 {province.grievance} 级")
-                    else:
-                        if province.grievance > 0:
-                            province.set_grievance(province.grievance - 1)
-                            print(
-                                f"      🍃 行省 {province.name} 因包税合同实际税率降低，民怨下降至 {province.grievance} 级")
-                            any_change = True
-            else:
-                if province.grievance > 0:
-                    print(f"      ℹ️ 行省 {province.name} 当前民怨 {province.grievance} 级")
-                    any_change = True
-
-        if not any_change:
-            print(f"      所有行省安居乐业，无民变威胁。")
+        if not has_unrest:
+            print("      所有行省安居乐业，无民变威胁。")
 
     def _display_truce_treaties(self):
         """显示待评议的停战草案"""
@@ -1141,58 +935,25 @@ class ForumCommand(Command):
 
     def _do_resolution(self):
         """执行公示结算（先执行土地法案，再结算玩家操作）"""
-        # 先执行待决土地法案
-        self._execute_pending_land_acts()
+        # 先执行待决土地法案（通过 API）
+        land_result = forum_api.execute_land_acts(self.state)
+        if land_result.get("success") and land_result.get("data", {}).get("executed_acts"):
+            print(f"\n   🏞️ 执行土地法案：")
+            for act in land_result["data"]["executed_acts"]:
+                if act["act_type"] == "distribution":
+                    if act["amount"] > 0:
+                        print(f"      ✅ 平民分地 {act['amount']} C 土地"
+                              f"（占国家公地 {act['percent'] * 100:.1f}%），转入意大利私地，民怨重置。")
+                    else:
+                        print(f"      ⚠️ 国家公地不足，无法分配。")
+                elif act["act_type"] == "sale":
+                    print(f"      🏛️ 贵族买地法案已批准，配额 {act.get('amount', 0)} C 待认购")
+
         # 再结算玩家操作
         result = forum_api.resolve_forum(self.state)
         self._print_ui_03_3()
         print(result["message"])
         sys.stdout.flush()
-
-    def _execute_pending_land_acts(self):
-        acts = self.state.get_pending_land_acts()
-        if not acts:
-            return
-        print(f"\n   🏞️ 执行土地法案：")
-        land_price = self.state.get_economic_rule("land_price_per_unit", 10)
-        for act in acts:
-            try:
-                if act['type'] == 'distribution':
-                    self._execute_land_distribution(act, land_price)
-                elif act['type'] == 'sale':
-                    # 卖地法案已经在元老院阶段设置了配额，这里无需处理
-                    # 仅打印提示，避免遗漏
-                    print(f"      🏛️ 贵族买地法案已批准，配额 {act.get('amount', 0)} C 待认购")
-            except Exception as e:
-                print(f"      ⚠️ 执行土地法案异常（已跳过）: {e}", flush=True)
-                logging.exception(f"执行土地法案异常: act={act}")
-                continue
-        self.state.clear_pending_land_acts()
-
-    def _execute_land_distribution(self, act, land_price):
-        try:
-            national_land = self.state.get_national_public_land()
-            # 调试日志：打印法案数据和 national_land
-
-            if 'percent' not in act:
-                raise ValueError("法案缺少 'percent' 字段")
-            percent = act['percent']
-            if not isinstance(percent, (int, float)):
-                raise TypeError(f"percent 类型错误: {type(percent)}")
-            amount = int(national_land * percent)
-            if amount <= 0:
-                print(f"      ⚠️ 国家公地不足，无法分配。")
-                return
-            self.state.add_national_public_land(-amount)
-            italy = self.state.get_province(0)
-            if italy:
-                italy.update_land_type(0, amount)  # 公地不变，私地增加
-                italy.reset_turns_since_last_distribution()
-                italy.set_grievance(0)
-            print(f"      ✅ 平民分地 {amount} C 土地（占国家公地 {percent * 100:.1f}%），转入意大利私地，民怨重置。")
-        except Exception as e:
-            logging.exception(f"执行分地法案异常: act={act}")
-            raise
 
 
     # ==================== 步骤处理函数 ====================

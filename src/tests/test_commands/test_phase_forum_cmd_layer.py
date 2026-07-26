@@ -225,9 +225,9 @@ class TestForumCommand:
 
         # 至少生成一个人物
         assert len(new_figures) > 0
-        # 如果输出不为空，检查内容；如果为空，则通过（可能由于配置导致打印被抑制，但人物已生成）
+        # 输出应为中文信息（shell-ified CLI delegates to forum_api and prints count）
         if output:
-            assert "new figure(s) arrive in the Senate" in output
+            assert "名新人进入广场" in output or "📜" in output
         else:
             # 记录警告但通过
             print("Warning: No output from _generate_new_figures, but figures were generated.")
