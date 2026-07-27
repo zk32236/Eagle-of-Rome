@@ -328,6 +328,10 @@ def convert_battlefield_commanders(state: GameState) -> dict:
     records office history, converts the office, updates influence,
     and updates war.commander_assigned_turn.
 
+    Idempotent: only performs conversion once per population phase.
+    Results are stored in state._phase_results["battlefield_commander_conversion"]
+    so subsequent calls return the same DTO without re-executing.
+
     Returns:
         dict: {
             "converted": [
@@ -343,12 +347,20 @@ def convert_battlefield_commanders(state: GameState) -> dict:
             "total": int,
         }
     """
+    # Idempotent guard: if results already stored, return them
+    # Use isinstance check to distinguish real dict results from MagicMock returns
+    stored = state.get_phase_result("battlefield_commander_conversion")
+    if isinstance(stored, dict) and "converted" in stored:
+        return stored
+
     current_turn = state.turn.turn_number
     war_system = state.get_war_system()
     converted = []
 
     if not war_system:
-        return {"converted": [], "total": 0}
+        result = {"converted": [], "total": 0}
+        state.record_phase_result("battlefield_commander_conversion", result)
+        return result
 
     for figure in state.get_living_members():
         if not figure.is_absent:
@@ -385,4 +397,7 @@ def convert_battlefield_commanders(state: GameState) -> dict:
             "war_id": war.id if war else None,
         })
 
-    return {"converted": converted, "total": len(converted)}
+    result = {"converted": converted, "total": len(converted)}
+    # Persist DTO for GUI consumption
+    state.record_phase_result("battlefield_commander_conversion", result)
+    return result

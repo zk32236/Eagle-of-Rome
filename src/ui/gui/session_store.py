@@ -250,6 +250,14 @@ class GuiSessionStore(QObject):
     def canAdvancePopulation(self) -> bool:
         return self._population_view.get("can_advance", False)
 
+    @Property(dict, notify=populationViewChanged)
+    def populationConversionResult(self) -> Dict[str, Any]:
+        """
+        返回战场指挥官转换结果 DTO（consul→proconsul, praetor→propraetor）。
+        数据来自 state._phase_results，仅展示，不触发转换。
+        """
+        return self._population_view.get("battlefield_commander_conversion", {"converted": [], "total": 0})
+
     @Property(dict, notify=mortalityViewChanged)
     def mortalityResult(self) -> Dict[str, Any]:
         return self._mortality_result

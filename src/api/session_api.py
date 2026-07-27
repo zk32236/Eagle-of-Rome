@@ -253,6 +253,9 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
             "can_complete": can_complete,
             "can_advance": can_advance,
             "field_errors": field_errors,
+            "battlefield_commander_conversion": (
+                state.get_phase_result("battlefield_commander_conversion") or {"converted": [], "total": 0}
+            ) if isinstance(result_data, dict) else {"converted": [], "total": 0},
         }
         return api_response(True, "Population view", data)
     except Exception as e:
@@ -316,6 +319,11 @@ def resolve_population_slice(state: GameState) -> dict:
 
         cand_result = population_api.get_candidates(state)
         candidates_before_resolve = cand_result.get("data", {}) if cand_result.get("success") else {}
+
+        # 转换战场指挥官（consul→proconsul, praetor→propraetor）
+        from src.api.population_api import convert_battlefield_commanders
+        conversion_result = convert_battlefield_commanders(state)
+
         # 结算选举
         resolve_result = population_api.resolve_election(state)
         if not resolve_result:
@@ -330,6 +338,7 @@ def resolve_population_slice(state: GameState) -> dict:
             "faction_influence_before": influence_before,
             "faction_influence_after": influence_after,
             "raw_result": raw_result,
+            "battlefield_commander_conversion": conversion_result,
         }
 
         # Two-step pattern: resolve records result, does NOT mark phase executed

@@ -143,6 +143,50 @@ Rectangle {
             }
         }
 
+        // ---------- 战场指挥官转换结果（只读展示） ----------
+        Rectangle {
+            id: conversionBanner
+            objectName: "populationCommanderConversion"
+            visible: sessionStore.populationResolved && sessionStore.populationConversionResult.total > 0
+            Layout.fillWidth: true
+            Layout.preferredHeight: conversionInner.implicitHeight + 16
+            color: "#F0F0E0"
+            radius: 6
+            border.color: "#B8A880"
+            border.width: 1
+
+            ColumnLayout {
+                id: conversionInner
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 4
+
+                Text {
+                    text: "🔄 战场指挥官转换"
+                    color: "#5A4A2E"
+                    font.pixelSize: 13
+                    font.bold: true
+                }
+
+                Repeater {
+                    model: sessionStore.populationConversionResult.converted || []
+                    delegate: Text {
+                        text: {
+                            var item = modelData
+                            var oldName = item.old_office === "consul" ? "执政官" : "大法官"
+                            var newName = item.new_office === "proconsul" ? "代执政官" : "代大法官"
+                            var warInfo = item.war_id ? "（战争 " + item.war_id + "）" : ""
+                            return "• " + item.name + "：" + oldName + " → " + newName + "，继续指挥" + warInfo
+                        }
+                        color: "#2C1E12"
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                }
+            }
+        }
+
         Text {
             text: "🏛 候选人信息"
             color: "#681B07"
