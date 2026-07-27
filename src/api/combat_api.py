@@ -503,3 +503,258 @@ def advance_combat(state: GameState, viewer_player_id: str) -> dict:
     except Exception as exc:
         logger.exception("advance_combat failed")
         return api_response(False, f"推进战斗阶段失败: {exc}", errors=[str(exc)])
+
+
+# ════════════════════════════════════════════════════════════════════════
+# S1 Combat 共享用例：auto_resolve_combat
+# ════════════════════════════════════════════════════════════════════════
+# 整合 CLI CombatCommand 与 GUI auto_resolve 的公共战斗结算逻辑
+# CLI + GUI 均委托给此唯一实现
+# ════════════════════════════════════════════════════════════════════════
+
+def _generate_peace_treaty(
+    war: War,
+    battle_result: str,
+    state: GameState,
+) -> Optional[Dict]:
+    """
+    根据战斗结果尝试生成停战条约。
+    适配自 CLI _maybe_generate_treaty 逻辑。
+    仅对非决定性结果（非 triumph/disaster）生成条约。
+    """
+    # 决定性结果不生成条约（与 CLI 一致）
+    if battle_result in ("triumph", "disaster"):
+        return None
+
+    from src.core.deciders.impl.auto_peace_treaty_decider import (
+        AutoPeaceTreatyDecider
+    )
+    decider = AutoPeaceTreatyDecider()
+    treaty = decider.decide_treaty(war, battle_result.upper(), state)
+    if treaty is None:
+        return None
+
+    required = {"indemnity", "duration", "generated_turn"}
+    if required - treaty.keys():
+        logger.warning(
+            f"Peace treaty missing required keys for war {war.id}: "
+            f"{required - treaty.keys()}"
+        )
+        return None
+
+    war_system = _war_system(state)
+    if war_system and war_system.enter_truce(war, treaty):
+        state.log_event(
+            f"战争 {war.name} 达成停战草案，赔款 {treaty['indemnity']}，"
+            f"有效期 {treaty['duration']} 回合",
+            extra={
+                "type": "peace_treaty_generated",
+                "war_id": war.id,
+                "result": battle_result,
+                "indemnity": treaty["indemnity"],
+                "duration": treaty["duration"],
+                "generated_turn": treaty["generated_turn"],
+            },
+        )
+        return treaty
+    return None
+
+
+def _process_commanders_returning(state: GameState) -> List[Dict]:
+    """
+    处理已批准停战的指挥官返回罗马。
+    适配自 CLI _process_commanders_returning 逻辑。
+    """
+    ws = _war_system(state)
+    if not ws:
+        return []
+    returned = []
+    current_turn = state.turn.turn_number if state.turn else 0
+    for war in ws.get_truce_wars_with_approved_treaty():
+        commander_id = getattr(war, "original_commander_id", None) or war.commander_id
+        if not commander_id:
+            continue
+        commander = state.get_member(commander_id)
+        if not commander or commander.is_dead:
+            continue
+
+        old_office = getattr(commander, "office", None)
+        if old_office in ("proconsul", "propraetor"):
+            assigned_turn = getattr(war, "commander_assigned_turn", None) or (
+                current_turn - 1
+            )
+            commander.add_office_history(old_office, assigned_turn, current_turn - 1)
+            commander.office = None
+            commander.is_absent = False
+            commander.update_influence()
+            state.log_event(
+                f"指挥官 {commander.name} 返回罗马",
+                extra={
+                    "type": "commander_return",
+                    "figure_id": commander.id,
+                    "war_id": war.id,
+                },
+            )
+            returned.append({
+                "commander_id": commander.id,
+                "commander_name": commander.name,
+                "war_id": war.id,
+                "war_name": war.name,
+                "former_office": old_office,
+            })
+    return returned
+
+
+def _skip_all_unassigned(state: GameState, wars: List) -> None:
+    """
+    将无指挥官战争记录到 phase_data resolved_wars，使其不阻塞 advance。
+    """
+    phase_data = state.get_phase_result("combat") or {}
+    if not isinstance(phase_data, dict):
+        phase_data = {}
+    resolved = list(phase_data.get("resolved_wars", []))
+    for war in wars:
+        if war.id not in resolved:
+            resolved.append(war.id)
+    phase_data["resolved_wars"] = resolved
+    state.record_phase_result("combat", phase_data)
+
+
+def auto_resolve_combat(state: GameState, player_id: str) -> dict:
+    """
+    阶段级公共用例：自动结算所有活跃战争。
+    
+    CLI CombatCommand 与 GUI adapter.auto_resolve_combat 均委托给此函数。
+    Adapter 不再保留 for-loop / 子步骤编排。
+    
+    返回含以下结构的 dict:
+    {
+        "success": bool,
+        "message": str,
+        "data": {
+            "wars_resolved": int,        # 已结算战争数
+            "active_war_count": int,      # 总活跃战争数
+            "skipped_no_commander": int,  # 无指挥官跳过数
+            "battles": [                  # 每场战斗结算详情
+                {
+                    "war_id": str,
+                    "war_name": str,
+                    "result": str,        # GUI 命名 (triumph/victory/...)
+                    "dice": int,
+                    "total_attack": int,
+                    "enemy_defence": int,
+                    "total_score": int,
+                    "losses": int,
+                    "triumph": bool,
+                    "loot": int,
+                    ...
+                }
+            ],
+            "treaties": [Dict],          # 生成的停战条约
+            "commanders_returned": [Dict], # 返回罗马的指挥官
+            "completed": bool,            # combat 阶段是否已完成
+            "next_phase": str,            # 下一阶段 ID
+        }
+    }
+    """
+    try:
+        ws = _war_system(state)
+        if not ws:
+            return api_response(False, "War system not available")
+
+        active_wars = ws.get_active_wars()
+        total_active = len(active_wars)
+
+        if total_active == 0:
+            # 无活跃战争也推进阶段（与 CLI 原始行为一致）
+            adv_result = advance_combat(state, player_id)
+            completed = adv_result.get("success", False)
+            adv_data = adv_result.get("data") or {}
+            next_phase = adv_data.get("next_phase_id", "resolution")
+            return api_response(True, "没有活跃的战争", data={
+                "wars_resolved": 0,
+                "active_war_count": 0,
+                "skipped_no_commander": 0,
+                "battles": [],
+                "treaties": [],
+                "commanders_returned": [],
+                "completed": completed,
+                "next_phase": next_phase,
+            })
+
+        # 分类：有指挥官 vs 无指挥官
+        assigned_wars = [w for w in active_wars if w.commander_id is not None]
+        skipped = total_active - len(assigned_wars)
+
+        if not assigned_wars:
+            # 无指挥官战争：全部标记为已处理，然后推进（与 CLI 一致）
+            _skip_all_unassigned(state, active_wars)
+            adv_result = advance_combat(state, player_id)
+            completed = adv_result.get("success", False)
+            adv_data = adv_result.get("data") or {}
+            next_phase = adv_data.get("next_phase_id", "resolution")
+            return api_response(True, "所有战争均无指挥官，跳过战斗结算", data={
+                "wars_resolved": 0,
+                "active_war_count": total_active,
+                "skipped_no_commander": skipped,
+                "battles": [],
+                "treaties": [],
+                "commanders_returned": [],
+                "completed": completed,
+                "next_phase": next_phase,
+            })
+
+        # 先处理无指挥官战争：标记为已跳过
+        _skip_all_unassigned(state, [w for w in active_wars if w.commander_id is None])
+
+        # 逐场结算
+        battles = []
+        treaties = []
+        for war in assigned_wars:
+            # Select war
+            select_war(state, player_id, war.id)
+
+            # Execute battle (auto 模式跳过玩家校验)
+            action_result = do_combat_action(
+                state, player_id, war.id, "attack", auto=True
+            )
+            if not action_result.get("success"):
+                continue
+
+            battle_data = action_result.get("data", {})
+            battles.append(battle_data)
+
+            # 生成停战条约（CLI 独有逻辑 → 现在属于共享用例）
+            result_str = battle_data.get("result", "")
+            treaty = _generate_peace_treaty(war, result_str, state)
+            if treaty:
+                treaties.append(treaty)
+
+            # Confirm result
+            confirm_battle_result(state, player_id)
+
+        # 处理指挥官返回
+        commanders_returned = _process_commanders_returning(state)
+
+        # 推进战斗阶段
+        advance_result = advance_combat(state, player_id)
+        completed = advance_result.get("success", False)
+        adv_data = advance_result.get("data") or {}
+        next_phase = adv_data.get("next_phase_id", "resolution")
+
+        return api_response(True, f"战斗结算完成，共 {len(battles)} 场战斗", data={
+            "wars_resolved": len(battles),
+            "active_war_count": total_active,
+            "skipped_no_commander": skipped,
+            "battles": battles,
+            "treaties": treaties,
+            "commanders_returned": commanders_returned,
+            "completed": completed,
+            "next_phase": next_phase,
+        })
+
+    except Exception as exc:
+        logger.exception("auto_resolve_combat failed")
+        return api_response(
+            False, f"自动战斗结算失败: {exc}", errors=[str(exc)]
+        )

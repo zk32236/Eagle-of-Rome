@@ -316,47 +316,12 @@ class GuiApiAdapter:
         return self.call(game_api.advance_year, self._state, player_id)
 
     def auto_resolve_combat(self, player_id: str) -> dict:
-        """Auto-resolve all active wars for AI players."""
+        """
+        S1 共享用例：自动结算所有活跃战争。
+        委托给 combat_api.auto_resolve_combat()，Adapter 不再保留 for-loop。
+        """
         from src.api import combat_api
-        try:
-            combat_view = self.get_combat_view(player_id)
-            active_wars = combat_view.get("active_wars", []) if isinstance(combat_view, dict) else []
-
-            if not active_wars:
-                return {
-                    "success": True,
-                    "message": "No active wars to resolve",
-                    "feedback_type": "info",
-                    "feedback_message": "没有活跃的战争",
-                }
-
-            for war_card in active_wars:
-                war_id = war_card["war_id"]
-                select_result = combat_api.select_war(self._state, player_id, war_id)
-                if not select_result.get("success"):
-                    continue
-                action_result = combat_api.do_combat_action(
-                    self._state, player_id, war_id, "attack", auto=True
-                )
-                if not action_result.get("success"):
-                    continue
-                combat_api.confirm_battle_result(self._state, player_id)
-
-            advance_result = combat_api.advance_combat(self._state, player_id)
-
-            if advance_result.get("success") and self._refresh_callback:
-                self._refresh_callback()
-
-            return advance_result
-        except Exception as exc:
-            logger.exception("auto_resolve_combat failed")
-            return {
-                "success": False,
-                "message": f"Auto-resolve combat failed: {exc}",
-                "errors": [str(exc)],
-                "feedback_type": "error",
-                "feedback_message": f"自动战斗失败: {exc}",
-            }
+        return self.call(combat_api.auto_resolve_combat, self._state, player_id)
 
     # -----------------------------------------------------------------------
     # 内部工具

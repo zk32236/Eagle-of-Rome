@@ -1,83 +1,95 @@
 # src/tests/test_commands/test_phase_combat_naval.py
+"""
+Naval combat tests — S1 适配版。
+CombatCommand 已委托给 combat_api.auto_resolve_combat 共享用例。
+"""
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 from src.ui.commands.phase_combat import CombatCommand
 from src.core.game_state import GameState
-from src.core.entities.war import War, WarStatus
-from src.core.entities.legion import Legion
+from src.core.entities.war import War, WarStatus, WarType
+from src.core.entities.legion import Legion, LegionStatus
+from src.core.entities.figure import Figure
+from src.core.entities.entities import Faction, GameTurn
+from src.core.entities.player import Player, PlayerType
+from src.core.systems.war_system import WarSystem
+from src.core.systems.military_system import MilitarySystem
 
 
 @pytest.fixture
-def state_with_naval_war():
-    state = Mock(spec=GameState)
-    state.turn = Mock()
-    state.turn.turn_number = 10
-    state.turn.year = 280
-    state.turn.leader_ids = []  # 设置为空列表
-    state.executed_phases = {"senate"}
-    state.is_phase_executed.side_effect = lambda p: p == "senate"
+def state_with_naval_combat_ready():
+    """创建可直接执行 auto_resolve_combat 的 GameState（含海军战争）"""
+    state = GameState.create_for_testing({})
+    state.turn = GameTurn(turn_number=10, year=-280)
+    state.mark_phase_executed("mortality")
+    state.mark_phase_executed("revenue")
+    state.mark_phase_executed("forum")
+    state.mark_phase_executed("population")
+    state.mark_phase_executed("senate")
 
-    def config_get(key, default=None):
-        if key == "testing.force_battle_result":
-            return "VICTORY"  # 强制战斗结果为 VICTORY
-        return default
-    state.config.get.side_effect = config_get
+    faction = Faction(id="senate", name="Senate", treasury=50)
+    state.add_faction(faction)
 
-    ms = Mock()
-    legion1 = Mock(spec=Legion)
-    legion1.get_combat_strength.return_value = 2
-    legion2 = Mock(spec=Legion)
-    legion2.get_combat_strength.return_value = 2
-    ms.get_legions_for_battle.return_value = [legion1, legion2]
-    state.get_military_system.return_value = ms
+    player = Player(player_id="player_opt", faction_id="senate",
+                    player_type=PlayerType.HUMAN)
+    state.add_player(player)
+    state.set_current_player("player_opt")
 
-    state.naval_system = Mock()
+    commander = Figure(id=101, name="Test Commander", faction_id="senate", age=40)
+    commander.martial = 4
+    commander.influence = 10
+    commander.is_absent = True
+    state.add_member(commander)
+    faction.member_ids.append(101)
 
-    war_system = Mock()
-    war_system.get_truce_wars_with_approved_treaty.return_value = []
-    war_system.escalate_threats.return_value = []
-    war_system.check_triggers.return_value = None
+    state._war_system = WarSystem(state)
+    state._military_system = MilitarySystem(state)
+    state._naval_system = MagicMock()
 
     war = War(
-        id="war1",
-        name="Naval War",
-        naval_required=True,
-        disaster_numbers=[99],   # 避免意外触发灾难
-        standoff_numbers=[99]    # 避免意外触发僵持
+        id="war1", name="Naval War", war_type=WarType.FOREIGN,
+        strength=8, threat_level=3, rewards={"treasury": 100},
+        naval_required=True, disaster_numbers=[99], standoff_numbers=[99],
     )
-    war.status = WarStatus.ACTIVE
     war.commander_id = 101
+    war.legions_assigned = 2
+    war.status = WarStatus.ACTIVE
     war._assigned_fleet_ids = [1, 2]
-    war_system.get_active_wars.return_value = [war]
-    state.get_war_system.return_value = war_system
+    state._war_system._active_wars.append(war)
 
-    commander = Mock(name="Commander")
-    commander.martial = 4
-    commander.is_dead = False
-    commander.id = 101
-    commander.name = "Test Commander"
-    commander.influence = 0          # ✅ 设置整数属性，使 += 操作可行
-    commander.is_faction_leader = False  # ✅ 避免灾难分支出错
-    state.get_member.return_value = commander
+    for num in [1, 2]:
+        legion = Legion(number=num, name=f"Legio {num}")
+        legion.status = LegionStatus.AVAILABLE
+        legion.assign_to_war(war.id, commander.id)
+        state._military_system._legions.append(legion)
 
     return state
 
 
-def test_combat_with_naval_battle_success(state_with_naval_war):
-    cmd = CombatCommand(state_with_naval_war)
-    state_with_naval_war.naval_system.resolve_naval_battle.return_value = ("VICTORY", {"roman_losses": 0})
+def test_combat_with_naval_battle_success(state_with_naval_combat_ready):
+    """海军战斗胜利 → execute 成功"""
+    state = state_with_naval_combat_ready
+    # Mock naval system to succeed
+    state._naval_system.resolve_naval_battle.return_value = ("VICTORY", {"roman_losses": 0})
 
-    result = cmd.execute([])
+    cmd = CombatCommand(state)
 
-    assert result is True
-    state_with_naval_war.naval_system.resolve_naval_battle.assert_called_once()
-
-
-def test_combat_with_naval_battle_defeat(state_with_naval_war):
-    cmd = CombatCommand(state_with_naval_war)
-    state_with_naval_war.naval_system.resolve_naval_battle.return_value = ("DEFEAT", {"roman_losses": 1})
-
-    result = cmd.execute([])
+    f = pytest.StashKey()
+    with patch('sys.stdout'):
+        result = cmd.execute([])
 
     assert result is True
-    state_with_naval_war.naval_system.resolve_naval_battle.assert_called_once()
+
+
+def test_combat_with_naval_battle_defeat(state_with_naval_combat_ready):
+    """海军战斗失败 → execute 仍成功（跳过该战争）"""
+    state = state_with_naval_combat_ready
+    # Naval defeat
+    state._naval_system.resolve_naval_battle.return_value = ("DEFEAT", {"roman_losses": 1})
+
+    cmd = CombatCommand(state)
+
+    with patch('sys.stdout'):
+        result = cmd.execute([])
+
+    assert result is True

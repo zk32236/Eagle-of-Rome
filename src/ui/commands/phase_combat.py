@@ -51,34 +51,79 @@ class CombatCommand(Command):
             self.state.mark_phase_executed("combat")
             return True
 
-        active_wars = war_system.get_active_wars()
+        # ─── S1: 委托给 combat_api.auto_resolve_combat 共享用例 ───
+        from src.api import combat_api
 
-        if not active_wars:
+        # 获取当前玩家 ID
+        current_player = self.state.get_current_player()
+        player_id = current_player.player_id if current_player else ""
+
+        result = combat_api.auto_resolve_combat(self.state, player_id)
+
+        if not result.get("success"):
+            print(f"   ❌ 战斗结算失败: {result.get('message', '')}")
+            return False
+
+        data = result.get("data", {})
+        battles = data.get("battles", [])
+        treaties = data.get("treaties", [])
+        commanders_returned = data.get("commanders_returned", [])
+        active_war_count = data.get("active_war_count", 0)
+        skipped_no_commander = data.get("skipped_no_commander", 0)
+
+        if active_war_count == 0:
             print("   ☮️  No active conflicts - phase skipped")
         else:
-            # 检查未指派指挥官的战争
-            unassigned_wars = [w for w in active_wars if w.commander_id is None]
-            if unassigned_wars:
-                print(f"   ⚠️  {len(unassigned_wars)} war(s) without commanders!")
-                for war in unassigned_wars:
-                    print(f"      • {war.name}")
+            # 无指挥官战争报告
+            if skipped_no_commander > 0:
+                print(f"   ⚠️  {skipped_no_commander} war(s) without commanders!")
                 print(f"   💀 Wars continue without leadership...")
 
-            assigned_wars = [w for w in active_wars if w.commander_id is not None]
-            if not assigned_wars:
-                print("   ⏸️  No wars ready for combat")
+            # 战斗结果
+            if battles:
+                print(f"\n   ⚔️  Resolving {len(battles)} active conflict(s)...")
+                for b in battles:
+                    result_emojis = {
+                        "triumph": "🏆", "victory": "✅",
+                        "draw": "⏸️", "defeat": "❌", "disaster": "💀",
+                    }
+                    emoji = result_emojis.get(b.get("result", ""), "❓")
+                    print(f"\n   ⚔️  {b.get('war_name', 'Unknown')}:")
+                    print(f"      🎲 Dice: {b.get('dice', '?')} | "
+                          f"{emoji} Result: {b.get('result_label', b.get('result', '?'))}")
+                    if b.get("losses", 0) > 0:
+                        print(f"      💀 Legion losses: {b['losses']}")
+                    if b.get("loot", 0) > 0:
+                        print(f"      🏆 Loot: {b['loot']} "
+                              f"(Treasury: {b.get('treasury_share', 0)}"
+                              f", Commander: {b.get('commander_share', 0)})")
+                    if b.get("triumph"):
+                        print(f"      🎉 {b.get('war_name', '')} ends in triumph!")
             else:
-                print(f"\n   ⚔️  Resolving {len(assigned_wars)} active conflict(s)...")
-                for war in assigned_wars:
-                    self._resolve_battle(war_system, war, terms)
+                print("   ⏸️  No wars ready for combat")
 
-        # 处理指挥官返回（无论有无战斗）
-        self._process_commanders_returning(war_system)
+            # 停战条约（防范 Mock 值）
+            for t in treaties:
+                indemnity = t.get('indemnity', 0)
+                duration = t.get('duration', 0)
+                if isinstance(indemnity, (int, float)) and isinstance(duration, (int, float)):
+                    print(f"      📜 War treaty: indemnity {indemnity}, "
+                          f"duration {duration} turns")
+
+        # 指挥官返回
+        for cr in commanders_returned:
+            print(f"      🔄 Commander {cr.get('commander_name', '')} returns to Rome, "
+                  f"relinquishing {cr.get('former_office', '')}")
+
+        completed = data.get("completed", False)
+        next_phase = data.get("next_phase", "resolution")
+        if completed:
+            print(f"\n   ✅ Combat phase complete. Advancing to {next_phase}.")
+        else:
+            print(f"\n   ⏳ Combat phase pending.")
 
         if hasattr(self.state.turn, 'current_phase'):
             self.state.turn.current_phase = "combat"
-
-        self.state.mark_phase_executed("combat")
 
         return True
 
