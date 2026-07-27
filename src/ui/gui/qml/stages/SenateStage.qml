@@ -90,6 +90,39 @@ Rectangle {
         return text.length > 0 ? text : "\u65e0"
     }
 
+    // S4: Governor assignment summary for results display
+    function _governorSummary() {
+        var rows = sessionStore.senateResult.governor_assignments || []
+        if (rows.length === 0) return "\u65e0\u884c\u7701\u9700\u8981\u4efb\u547d\u603b\u7763"
+        var parts = []
+        for (var i = 0; i < rows.length; i++) {
+            parts.push(rows[i].name + "(" + rows[i].province_id + ")")
+        }
+        return parts.join("\uff1b")
+    }
+
+    // S4: Rebellion commander assignment summary for results display
+    function _commanderSummary() {
+        var rows = sessionStore.senateResult.rebellion_commander_assignments || []
+        if (rows.length === 0) return "\u65e0\u8d77\u4e49\u9700\u8981\u6307\u6325\u5b98"
+        var parts = []
+        for (var i = 0; i < rows.length; i++) {
+            parts.push(rows[i].name + "(" + rows[i].rebellion_id + ")")
+        }
+        return parts.join("\uff1b")
+    }
+
+    // S4: Fleet assignment summary for results display
+    function _fleetSummary() {
+        var rows = sessionStore.senateResult.fleet_assignments || []
+        if (rows.length === 0) return "\u65e0"
+        var parts = []
+        for (var i = 0; i < rows.length; i++) {
+            parts.push(rows[i].war_name + "(" + rows[i].total_power + ")")
+        }
+        return parts.join("\uff1b")
+    }
+
     function tribuneActionText() {
         if (sessionStore.canManuallySelectSenateVeto) return "\u786e\u8ba4\u5426\u51b3 \u2192 \u516c\u793a\u7ed3\u679c"
         return "AI\u5224\u5b9a\u5426\u51b3 \u2192 \u516c\u793a\u7ed3\u679c"
@@ -193,7 +226,9 @@ Rectangle {
         Rectangle {
             visible: sessionStore.senateCurrentStep === "results"
             Layout.fillWidth: true
-            Layout.preferredHeight: 118
+            Layout.preferredHeight: 230
+            Layout.minimumHeight: 200
+            Layout.maximumHeight: 320
             color: "#FFF7E9"
             border.color: "#D9AF63"
             border.width: 1
@@ -214,6 +249,46 @@ Rectangle {
                     maximumLineCount: 2
                     elide: Text.ElideRight
                 }
+
+                // S4: Governor assignment results
+                Text {
+                    visible: (sessionStore.senateResult.governor_assignments || []).length > 0
+                    text: "\u2022 \u884c\u7701\u603b\u7763\u4efb\u547d\uff1a" + root._governorSummary()
+                    color: "#2C1E12"
+                    font.pixelSize: 11
+                    font.bold: true
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 3
+                    elide: Text.ElideRight
+                }
+
+                // S4: Rebellion commander assignment results
+                Text {
+                    visible: (sessionStore.senateResult.rebellion_commander_assignments || []).length > 0
+                    text: "\u2022 \u8d77\u4e49\u6307\u6325\u5b98\u4efb\u547d\uff1a" + root._commanderSummary()
+                    color: "#2C1E12"
+                    font.pixelSize: 11
+                    font.bold: true
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 3
+                    elide: Text.ElideRight
+                }
+
+                // S4: Fleet assignment results
+                Text {
+                    visible: (sessionStore.senateResult.fleet_assignments || []).length > 0
+                    text: "\u2022 \u8230\u961f\u6307\u6d3e\uff1a" + root._fleetSummary()
+                    color: "#2C1E12"
+                    font.pixelSize: 11
+                    font.bold: true
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 3
+                    elide: Text.ElideRight
+                }
+
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.fillHeight: true

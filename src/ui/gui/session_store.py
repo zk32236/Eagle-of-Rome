@@ -355,6 +355,16 @@ class GuiSessionStore(QObject):
     def canAdvanceSenate(self) -> bool:
         return self._senate_view.get("can_advance", False)
 
+    @Property(dict, notify=senateViewChanged)
+    def senateResult(self) -> Dict[str, Any]:
+        """
+        Senate settlement result data, including post-settlement operations:
+        - governor_assignments: list of {province_id, governor_id, name, assigned_at}
+        - rebellion_commander_assignments: list of {rebellion_id, commander_id, name, assigned_at}
+        - fleet_assignments: list of {war_id, war_name, fleets, total_power, needed_power}
+        """
+        return self._senate_view.get("senate_result", {}).get("data", {})
+
     # -----------------------------------------------------------------------
     # 收入阶段属性
     # -----------------------------------------------------------------------

@@ -712,18 +712,45 @@ def resolve_senate(
                 },
             )
 
+    # Phase result data — start with core resolve result, then extend with
+    # post-settlement operations so both CLI and GUI paths execute them.
+    phase_data = result.get("data", {}) or {}
+
+    # S4: Fleet assignment — assign available fleets to active naval wars
+    fleet_result = assign_fleets_to_active_wars(state)
+    fleet_data = fleet_result.get("data") or {}
+    if fleet_result.get("success"):
+        assigned_fleets = fleet_data.get("assigned", [])
+        if assigned_fleets:
+            state.log_event(
+                f"resolve_senate: assigned fleets to {len(assigned_fleets)} wars",
+                level=logging.INFO,
+                extra={"assigned_fleets": assigned_fleets},
+            )
+    phase_data["fleet_assignments"] = fleet_data.get("assigned", [])
+
+    # S4: Governor assignment — appoint governors to vacant provinces
+    governor_results = assign_governors(state)
+    phase_data["governor_assignments"] = governor_results
+
+    # S4: Rebellion commander assignment — appoint commanders to active rebellions
+    ws = state.get_war_system()
+    if ws:
+        commander_results = ws.assign_rebellion_commanders()
+        phase_data["rebellion_commander_assignments"] = commander_results
+
     # Record phase result immediately — before any callback (e.g. _on_refresh)
     # can read it. This eliminates the stale-state window where QML binding
     # sees no senate result during adapter.resolve_senate().
     state.record_phase_result("senate", {
         "success": result.get("success", False),
         "message": result.get("message", ""),
-        "data": result.get("data", {}) or {},
+        "data": phase_data,
     })
     return api_response(
         success=result.get("success", False),
         message=result.get("message", ""),
-        data=result.get("data", {}),
+        data=phase_data,
         errors=result.get("errors", []),
     )
 
