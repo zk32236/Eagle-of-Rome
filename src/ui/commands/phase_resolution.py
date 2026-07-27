@@ -8,6 +8,7 @@ from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.ui.utils import get_progress_bar
 from src.core.entities.contract import Contract, ContractType, ContractStatus
+from src.api.resolution_api import execute_resolution
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
@@ -24,35 +25,32 @@ class ResolutionCommand(Command):
         super().__init__(state)
 
     def execute(self, args: List[str]) -> bool:
-        if not self.state.is_phase_executed("combat"):
-            print("⚠️ 必须先执行战斗阶段 (combat)")
+        # 委托给 resolution_api 共享用例
+        result = execute_resolution(self.state)
+
+        if not result["success"]:
+            print(f"⚠️ {result['message']}")
             return False
 
-        if self.state.is_phase_executed("resolution"):
-            print("⚠️ 决议阶段在本回合已执行过")
-            return False
-
+        dto = result.get("data", {})
         terms = TerminologyService.get()
-        print(f"\n--- {terms.phase_resolution} Phase (Year {abs(self.state.turn.year)} BC) ---")
+        year_display = dto.get("year_display", f"{abs(self.state.turn.year)} BC")
+        print(f"\n--- {terms.phase_resolution} Phase ({year_display}) ---")
 
-        # 1. 胜利条件检查（精简打印）
-        self._check_all_conditions(terms)
-        # 2. 和约到期检查（新增）
-        self._check_truce_expiry()
-        # 3. 总督返回处理
-        self._process_governor_return()
+        # 打印胜利条件
+        self._print_victory_conditions(dto)
 
-        # 4. 后台功能（不打印）
-        self._process_contract_expiration(terms, verbose=False)
-        self._prepare_next_year(verbose=False)
-        ms = self.state.get_military_system()
-        if ms:
-            ms.process_legion_recovery(self.state.turn.turn_number)  # 该方法内部已无打印或需修改
+        # 打印军团恢复
+        legion = dto.get("legion_recovery", {})
+        if legion.get("recovered", 0) > 0:
+            print(f"\n   🛡️ 军团恢复: {legion['details']}")
 
-        # 清除本回合生效的事件（天命）
-        self.state.clear_active_events()
-
-        self.state.mark_phase_executed("resolution")
+        # 打印关键事件
+        key_events = dto.get("key_events", [])
+        if key_events:
+            print(f"\n   📋 关键事件:")
+            for evt in key_events:
+                print(f"      • {evt}")
 
         return True
 
@@ -70,23 +68,15 @@ class ResolutionCommand(Command):
         """Shell method — logic moved to GameState.advance_year()"""
         return []
 
-    def _check_all_conditions(self, terms):
-        """检查所有胜利/失败条件，打印简洁信息"""
-        results = self.state.check_victory_conditions()
+    def _print_victory_conditions(self, dto: dict):
+        """从 DTO 打印胜利条件结果"""
+        victory = dto.get("victory", {})
+        conditions = victory.get("conditions", [])
+        summary = victory.get("summary", {})
         print(f"\n   🏆 胜利/失败条件检查:")
-        for cond in results["conditions"]:
-            icon = "💀" if cond["critical"] else "⚠️"
+        for cond in conditions:
+            icon = "💀" if cond.get("critical") else "⚠️"
             print(f"      {icon} {cond['details']}")
-        # 赤字日志（critical 条件已由 check_victory_conditions 内部记录）
-        for cond in results["conditions"]:
-            if cond["type"] == "bankruptcy" and cond["triggered"]:
-                self.state.log_event(
-                    f"国库连续{results['summary']['deficit_limit']}回合赤字，共和覆灭",
-                    extra={"type": "game_over", "reason": "bankruptcy",
-                           "deficit_turns": results["summary"]["deficit_turns"]},
-                    level=logging.CRITICAL
-                )
-        summary = results["summary"]
         if summary.get("top_faction"):
             tf = summary["top_faction"]
             print(f"      📊 元老院主导派系: {tf['name']} ({tf['share']:.1%} 影响力)")

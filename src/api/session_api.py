@@ -514,7 +514,7 @@ def _build_resolution_results(state: GameState) -> dict:
         ):
             legion_status = "destroyed"
 
-    return {
+    result = {
         "governor_transitions": governor_transitions,
         "contracts_expired": expired_count,
         "truce_expired": truce_expired,
@@ -522,6 +522,16 @@ def _build_resolution_results(state: GameState) -> dict:
         "treasury": state.treasury,
         "legion_status": legion_status,
     }
+
+    # S2: 决算结果 DTO（来自 execute_resolution 存储的 phase result）
+    resolution_dto = state.get_phase_result("resolution")
+    if resolution_dto:
+        result["victory"] = resolution_dto.get("victory", {})
+        result["legion_recovery"] = resolution_dto.get("legion_recovery", {})
+        result["key_events"] = resolution_dto.get("key_events", [])
+        result["events_cleared"] = resolution_dto.get("events_cleared", False)
+
+    return result
 
 
 def _empty_resolution_results() -> dict:
@@ -532,6 +542,10 @@ def _empty_resolution_results() -> dict:
         "dominant_faction": None,
         "treasury": 0,
         "legion_status": "unknown",
+        "victory": {"game_over": False, "conditions": [], "summary": {}},
+        "legion_recovery": {"recovered": 0, "recovered_ids": [], "details": ""},
+        "key_events": [],
+        "events_cleared": False,
     }
 
 

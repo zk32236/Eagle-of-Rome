@@ -42,8 +42,11 @@ Rectangle {
         var r = item.result || ""
         if (r === "triumph") return "#2E9D4D"
         if (r === "victory") return "#228B22"
-        if (r === "draw") return "#FF8C00"
-        if (r === "defeat" || r === "disaster") return "#B3261E"
+        if (r === "draw" || r === "standoff") return "#FF8C00"
+        if (r === "defeat") return "#B3261E"
+        if (r === "disaster") return "#8B0000"
+        if (r === "surrender") return "#888888"
+        if (r === "withdraw") return "#AAAAAA"
         return "#2C1E12"
     }
 

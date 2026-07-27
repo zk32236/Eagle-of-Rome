@@ -92,7 +92,7 @@ session_api, gui_query_api
 
 ### 6.3 `GameState.check_victory_conditions() -> dict`
 - **用途：** 决算阶段检查胜利/失败条件（C-08-01）
-- **CLI 来源：** `phase_resolution.py` ~L73-167
+- **CLI 来源：** `phase_resolution.py` → `resolution_api.execute_resolution()`
 - **src（Core 层，非 API 模块，但作为调用链统一入口列于此）**
 - **检查项：**
   1. 国库连续赤字（`treasury_deficit_turns >= national_opex_deficit_limit`）
@@ -103,9 +103,52 @@ session_api, gui_query_api
   6. 元老院主导派系（影响力占比最高派系）
 - **返回：** `{game_over: bool, conditions: [{type, triggered, details, critical}], summary: {top_faction, share}}`
 
+### 6.4 `resolution_api.execute_resolution(state: GameState, player_id: Optional[str] = None) -> dict`
+- **用途：** 决算阶段共享用例（S2），CLI 和 GUI 的唯一结算入口
+- **类型：** 阶段级公共用例
+- **执行顺序：**
+  1. 前置检查（combat 已执行、resolution 未执行）
+  2. `state.check_victory_conditions()` — 胜利条件检查
+  3. `ms.process_legion_recovery(turn_number)` — 军团恢复
+  4. `state.clear_active_events()` — 清除本回合事件
+  5. `state.mark_phase_executed("resolution")` — 标记阶段已执行
+  6. `state.record_phase_result("resolution", dto)` — 记录决算 DTO
+- **不负责：** 推进到下一年度（`advance_year()` 是独立的 Player Command）
+- **CLI 入口：** `ResolutionCommand.execute()` → `resolution_api.execute_resolution()`
+- **GUI 入口：** `session_store._executeResolution()` → `adapter.execute_phase("resolution", ...)` → `game_api.execute_phase()` → `ResolutionCommand.execute()` → `resolution_api.execute_resolution()`
+- **返回（api_response 格式）：**
+  ```python
+  {
+      "success": bool,
+      "message": str,
+      "data": ResolutionResultDTO({
+          "year": int,
+          "year_display": str,
+          "victory": dict,               # check_victory_conditions 的原样结果
+          "legion_recovery": dict,         # {recovered, recovered_ids, details}
+          "key_events": List[str],         # 触发的胜利条件 + 军团恢复事件
+          "events_cleared": bool,
+      })
+  }
+  ```
+- **错误处理：**
+  - `combat_not_executed`: `success=False`
+  - `resolution_already_executed`: `success=False`（幂等保护）
+  - 未知异常: `success=False` + traceback
+
+### 6.5 `ResolutionResultDTO` 展示（ResolutionStage.qml）
+- **数据来源：** `sessionStore.resolutionResults` → `session_api.get_resolution_view()` → `_build_resolution_results()`
+- **新增字段（由 execute_resolution 存储的 phase result 提供）：**
+  - `results.victory` — 胜利/失败条件
+  - `results.legion_recovery` — 军团恢复摘要
+  - `results.key_events` — 关键事件列表
+  - `results.events_cleared` — 事件清除标记
+- **QML 展示：** `ResolutionStage.qml` summaryPanel 底部三个只读行（胜利条件 / 军团恢复 / 关键事件）
+
 ## 7. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.5 | 2026-07-27 | S2: 新增 resolution_api.execute_resolution 共享用例 + ResolutionResultDTO + ResolutionStage 展示区 + CombatStage 颜色补丁 |
 | v1.4 | 2026-07-26 | 新增 population_api.convert_battlefield_commanders / senate_api.auto_vote / GameState.check_victory_conditions（Wave-04 Finale） |
 | v1.3 | 2026-07-26 | 新增 senate_api assign_governors / process_war_takeover + war_system 引用（Wave-03） |
 | v1.2 | 2026-07-26 | 新增 check_province_unrest / execute_land_acts API + 调用链 |

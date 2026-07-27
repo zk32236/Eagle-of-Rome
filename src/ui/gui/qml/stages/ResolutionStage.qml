@@ -428,6 +428,109 @@ Rectangle {
             }
 
             // ══════════════════════════════════════════════════════════════
+            // S2: 决算结果展示区 — 胜利条件 + 军团恢复 + 关键事件
+            // 数据来源：resolutionResults.victory / legion_recovery / key_events
+            // 在 summaryPanel 底部，advance 按钮上方（只读展示）
+            // ══════════════════════════════════════════════════════════════
+
+            Rectangle {
+                visible: sessionStore.resolutionResults.victory !== undefined
+                Layout.fillWidth: true
+                Layout.preferredHeight: 28
+                color: "#FFFFFF"
+                border.color: "#D4A574"
+                border.width: 1
+                radius: 4
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 10
+                    spacing: 8
+
+                    Text {
+                        text: "🏆 胜利条件"
+                        color: "#3A3530"
+                        font.pixelSize: 12
+                    }
+                    Item { Layout.fillWidth: true }
+                    Text {
+                        text: {
+                            var vc = sessionStore.resolutionResults.victory || {}
+                            return vc.game_over ? "🔴 游戏结束" : "🟢 未触发"
+                        }
+                        color: (sessionStore.resolutionResults.victory || {}).game_over ? "#B3261E" : "#228B22"
+                        font.pixelSize: 12
+                        font.bold: true
+                    }
+                }
+            }
+
+            Rectangle {
+                visible: sessionStore.resolutionResults.legion_recovery !== undefined
+                Layout.fillWidth: true
+                Layout.preferredHeight: 28
+                color: "#FFFFFF"
+                border.color: "#D4A574"
+                border.width: 1
+                radius: 4
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 10
+                    spacing: 8
+
+                    Text {
+                        text: "🛡️ 军团恢复"
+                        color: "#3A3530"
+                        font.pixelSize: 12
+                    }
+                    Item { Layout.fillWidth: true }
+                    Text {
+                        text: {
+                            var lr = sessionStore.resolutionResults.legion_recovery || {}
+                            return lr.details || (lr.recovered > 0 ? "已恢复 " + lr.recovered + " 支" : "无")
+                        }
+                        color: (sessionStore.resolutionResults.legion_recovery || {}).recovered > 0 ? "#228B22" : "#766652"
+                        font.pixelSize: 12
+                    }
+                }
+            }
+
+            Rectangle {
+                visible: (sessionStore.resolutionResults.key_events || []).length > 0
+                Layout.fillWidth: true
+                Layout.preferredHeight: 28
+                color: "#FFFFFF"
+                border.color: "#D4A574"
+                border.width: 1
+                radius: 4
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 10
+                    spacing: 8
+
+                    Text {
+                        text: "📋 关键事件"
+                        color: "#3A3530"
+                        font.pixelSize: 12
+                    }
+                    Item { Layout.fillWidth: true }
+                    Text {
+                        text: {
+                            var evts = sessionStore.resolutionResults.key_events || []
+                            return evts.length > 0 ? evts.length + " 项" : "无"
+                        }
+                        color: (sessionStore.resolutionResults.key_events || []).length > 0 ? "#C44A2B" : "#766652"
+                        font.pixelSize: 12
+                    }
+                }
+            }
+
+            // ══════════════════════════════════════════════════════════════
             // Section 5: "进入下一年度" Button — REMOVED
             // Phase advance button is now in ContextPanel.OperationSection
             // (advancePhaseButton) as the single unified control.
