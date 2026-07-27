@@ -423,6 +423,12 @@ Rectangle {
                         Text { anchors.centerIn: parent; text: root.proposalStepDone ? "\u2190 \u6cd5\u6848\u5df2\u63d0\u4ea4" : "\u63d0\u4ea4\u9009\u4e2d\u6cd5\u6848 \u2192 \u79fb\u4ea4\u8868\u51b3"; color: "#2C1E12"; font.pixelSize: 12; font.bold: true }
                         MouseArea { anchors.fill: parent; enabled: parent.enabled; onClicked: sessionStore.doSubmitSenateProposals(root.selectedProposals()) }
                     }
+
+                    // S5: Governor appointment preview panel
+                    GovernorAppointmentPanel {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 160
+                    }
                 }
             }
 

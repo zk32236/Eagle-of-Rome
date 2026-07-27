@@ -184,6 +184,80 @@ def _viewer_has_tribune(state: GameState, viewer_player_id: str) -> bool:
     return bool(viewer and tribune and tribune.faction_id == viewer.faction_id)
 
 
+def _build_governor_appointments(state: GameState) -> dict:
+    """构建总督任命 DTO。
+
+    S5: 遍历所有已征服行省，区分 pending（待分配）和 completed（已有候任总督）。
+    - pending_provinces: 无 governor_designate_id 的行省，含合法候选人列表
+    - completed_provinces: 已有 governor_designate_id 的行省
+    """
+    politics = _political_system(state)
+    all_provinces = [p for p in state.get_all_provinces() if p.conquered and p.province_id != 0]
+
+    pending_provinces = []
+    completed_provinces = []
+    type_names = {"proconsul": "代执政官行省", "propraetor": "代大法官行省"}
+
+    for province in all_provinces:
+        province_id = province.province_id
+        governor_type = province.governor_type
+        designate_id = province.governor_designate_id
+
+        # 当前总督信息
+        current_gov_id = province.governor_id
+        current_gov = state.get_member(current_gov_id) if current_gov_id else None
+        current_gov_info = {"id": current_gov_id, "name": current_gov.get_formal_name()} if current_gov else None
+
+        governor_type_name = type_names.get(governor_type, governor_type)
+
+        if designate_id:
+            designated_gov = state.get_member(designate_id)
+            designated_name = designated_gov.get_formal_name() if designated_gov else str(designate_id)
+            completed_provinces.append({
+                "province_id": province_id,
+                "name": province.name,
+                "governor_type": governor_type,
+                "governor_type_name": governor_type_name,
+                "designated_governor": designated_name,
+                "designated_id": designate_id,
+            })
+        else:
+            # 待分配行省 — 获取合法候选人
+            candidates = []
+            for fig in politics.get_eligible_governor_candidates(governor_type):
+                if politics.is_governor_position_occupied(fig.id):
+                    continue
+                faction = state.get_faction(fig.faction_id)
+                candidates.append({
+                    "id": fig.id,
+                    "name": fig.get_formal_name(),
+                    "faction_id": fig.faction_id,
+                    "faction_name": faction.name if faction else "",
+                    "influence": fig.influence,
+                })
+
+            pending_provinces.append({
+                "province_id": province_id,
+                "name": province.name,
+                "governor_type": governor_type,
+                "governor_type_name": governor_type_name,
+                "current_governor": current_gov_info,
+                "candidates": candidates,
+            })
+
+    # 检查是否已提交（resolve_senate 已执行并产生 assign_governors 结果）
+    senate_result = state.get_phase_result("senate")
+    senate_data = senate_result.get("data", {}) if isinstance(senate_result, dict) else {}
+    has_assignments = bool(senate_data.get("governor_assignments"))
+
+    return {
+        "pending_provinces": pending_provinces,
+        "completed_provinces": completed_provinces,
+        "can_submit": len(pending_provinces) > 0 and not has_assignments,
+        "submitted": has_assignments,
+    }
+
+
 def _passed_proposals_for_veto(state: GameState) -> List[Dict[str, Any]]:
     politics = _political_system(state)
     passed = []
@@ -252,6 +326,7 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         war_threats = info.get("war_threats", [])
         pending_peace_treaties = info.get("pending_peace_treaties", [])
         governor_vacancies = info.get("governor_vacancies", {})
+        governor_appointments = _build_governor_appointments(state)
         pending_contracts = info.get("pending_contracts", [])
 
         senate_result = state.get_phase_result("senate")
@@ -319,6 +394,7 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "war_threats": war_threats,
             "pending_peace_treaties": pending_peace_treaties,
             "governor_vacancies": governor_vacancies,
+            "governor_appointments": governor_appointments,
             "pending_contracts": pending_contracts,
             "proposal_options": proposal_options,
             "submitted_proposals": proposals,

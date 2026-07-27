@@ -331,6 +331,10 @@ class GuiSessionStore(QObject):
     def senateSubmittedProposals(self) -> List[Dict[str, Any]]:
         return self._senate_view.get("submitted_proposals", [])
 
+    @Property(dict, notify=senateViewChanged)
+    def governorAppointments(self) -> Dict[str, Any]:
+        return self._senate_view.get("governor_appointments", {})
+
     @Property(list, notify=senateViewChanged)
     def senateSeatShares(self) -> List[Dict[str, Any]]:
         return self._senate_view.get("seat_shares", [])
