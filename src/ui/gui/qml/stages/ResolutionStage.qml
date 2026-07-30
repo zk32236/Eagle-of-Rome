@@ -3,6 +3,7 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
 import "../i18n"
+import "../components"
 
 /*!
  * \brief ResolutionStage — Phase 7: 决算阶段 (Resolution/Settlement)
@@ -21,6 +22,8 @@ import "../i18n"
 Rectangle {
     id: root
     color: "transparent"
+
+    FactionStyle { id: factionStyle }
 
     // ── Severity color helpers (preserved from original) ──
     function warningColor(level) {
@@ -42,16 +45,6 @@ Rectangle {
         if (level === "warning") return "🟡"
         if (level === "info") return "🔵"
         return "⚪"
-    }
-
-    // ── Faction color helper ──
-    function factionColor(factionName) {
-        if (!factionName) return "#3A3530"
-        var n = factionName.toLowerCase()
-        if (n.indexOf("optimates") >= 0 || n.indexOf("opt") >= 0) return "#8B0000"
-        if (n.indexOf("populares") >= 0 || n.indexOf("pop") >= 0) return "#006400"
-        if (n.indexOf("equites") >= 0 || n.indexOf("equ") >= 0) return "#00008B"
-        return "#3A3530"
     }
 
     // ── Step status helpers (block-style) ──
@@ -325,7 +318,7 @@ Rectangle {
                             var pct = Math.round((df.influence_share || 0) * 100)
                             return (df.name || "无") + " (" + pct + "%)"
                         }
-                        color: factionColor(sessionStore.resolutionSummary.dominant_faction
+                        color: factionStyle.factionColor(sessionStore.resolutionSummary.dominant_faction
                             ? sessionStore.resolutionSummary.dominant_faction.name || "" : "")
                         font.pixelSize: 12
                         font.bold: true

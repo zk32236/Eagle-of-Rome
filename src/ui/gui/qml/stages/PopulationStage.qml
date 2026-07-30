@@ -2,6 +2,8 @@ import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
+import "../components"
+
 Rectangle {
     id: root
     objectName: "populationStageRoot"
@@ -12,6 +14,8 @@ Rectangle {
     property color actionButtonTop: "#FFF9EC"
     property color actionButtonBottom: "#E8D5B8"
     property color actionButtonHover: "#F4DFB8"
+
+    FactionStyle { id: factionStyle }
 
     function officeName(office) {
         var names = {
@@ -36,17 +40,7 @@ Rectangle {
     }
 
     function factionShort(name) {
-        if (name === "Optimates") return "Opt"
-        if (name === "Populares") return "Pop"
-        if (name === "Equites") return "Equ"
-        return name || ""
-    }
-
-    function factionColor(name) {
-        if (name === "Optimates" || name === "Opt") return "#8B0000"
-        if (name === "Populares" || name === "Pop") return "#006400"
-        if (name === "Equites" || name === "Equ") return "#00008B"
-        return "#681B07"
+        return factionStyle.factionShort(name)
     }
 
     function candidatesForOffice(office) {
@@ -290,7 +284,7 @@ Rectangle {
                                     model: rows
                                     Text {
                                         text: root.factionShort(modelData.faction_name)
-                                        color: root.factionColor(modelData.faction_name)
+                                        color: factionStyle.factionColor(modelData.faction_name)
                                         font.pixelSize: 12
                                         font.bold: true
                                     }

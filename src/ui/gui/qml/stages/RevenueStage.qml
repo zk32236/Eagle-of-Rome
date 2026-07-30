@@ -21,6 +21,8 @@ Rectangle {
     objectName: "revenueStage"
     color: "transparent"
 
+    FactionStyle { id: factionStyle }
+
     property var _resultData: (sessionStore.revenueSettledData || {}).data
         || sessionStore.revenueSettledData
         || {}
@@ -28,6 +30,11 @@ Rectangle {
     // Convenience helpers for settled data
     property bool _isSettled: (sessionStore.revenueResult || {}).success
         || !!sessionStore.revenueView.settled_data
+
+    // Get display name for a faction_id from factionStyleMap
+    function factionDisplayName(factionId) {
+        return factionStyle.factionName(factionId)
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -265,14 +272,29 @@ Rectangle {
                         }
                         delegate: Rectangle {
                             Layout.fillWidth: true
-                            height: 24
+                            Layout.preferredHeight: 26
                             color: "transparent"
                             RowLayout {
                                 anchors.fill: parent
-                                Text { text: "  " + modelData.faction_id; color: "#2E251B"; font.pixelSize: 12; Layout.fillWidth: true }
+                                spacing: 4
                                 Text {
-                                    text: "+" + (modelData.stipend + modelData.tax) + " Talents"
-                                    color: "#2C7A2C"; font.pixelSize: 12; font.bold: true
+                                    text: "  " + root.factionDisplayName(modelData.faction_id)
+                                    color: factionStyle.factionColor(modelData.faction_id)
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    text: {
+                                        var stip = modelData.stipend || 0
+                                        var tax = modelData.tax || 0
+                                        var total = modelData.total !== undefined ? modelData.total : (stip + tax)
+                                        return "拨款 +" + stip + " · 会员 +" + tax + " · 合计 +" + total
+                                    }
+                                    color: "#2C7A2C"
+                                    font.pixelSize: 11
+                                    font.bold: true
                                 }
                             }
                         }
@@ -306,12 +328,14 @@ Rectangle {
                         model: _resultData.private_land_rows || []
                         delegate: RowLayout {
                             Layout.fillWidth: true
+                            Layout.preferredHeight: Math.max(20, nameText.implicitHeight + 4)
                             Text {
+                                id: nameText
                                 text: "  " + (modelData.name || ("人物#" + modelData.figure_id))
                                 color: "#2E251B"
                                 font.pixelSize: 12
                                 Layout.fillWidth: true
-                                elide: Text.ElideRight
+                                wrapMode: Text.WrapAnywhere
                             }
                             Text {
                                 text: "+" + (modelData.income || 0) + " Talents"

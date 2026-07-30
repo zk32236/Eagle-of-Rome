@@ -185,9 +185,10 @@ class TestRevenueCommand(unittest.TestCase):
         self.assertIn("国家公地收益", output)
         self.assertIn("派系金库收益", output)
         self.assertIn("元老院派", output)
-        self.assertIn("财政拨款", output)
-        self.assertIn("会员贡献", output)
-        self.assertIn("现有资金", output)
+        self.assertIn("拨款 +10 · 会员 +0 · 合计 +10", output)
+        self.assertIn("拨款 ", output)
+        self.assertIn("会员 ", output)
+        self.assertIn("合计 ", output)
         self.assertIn("地主私人收益", output)
 
     def test_contract_revenue(self):

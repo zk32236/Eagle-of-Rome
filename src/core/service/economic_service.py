@@ -324,7 +324,12 @@ class EconomicService:
                     f"派系津贴: {faction.name} +{stipend}",
                     extra={"type": "faction_stipend", "faction_id": faction_id, "amount": stipend}
                 )
-            faction_rows[faction_id] = {"stipend": stipend, "tax": tax_int, "final": faction.treasury}
+            faction_rows[faction_id] = {
+                "stipend": stipend,
+                "tax": tax_int,
+                "total": stipend + tax_int,
+                "final": faction.treasury,
+            }
         return faction_rows
 
     def _settle_tax_farming_contract(

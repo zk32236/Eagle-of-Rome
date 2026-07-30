@@ -154,28 +154,12 @@ class RevenueCommand(Command):
         factions.sort(key=lambda f: f.name)
 
         print("💰 派系金库收益 (Faction Treasury):")
-        header = "        "
         for f in factions:
-            header += f"{f.name:<12}"
-        print(header)
-
-        row = "财政拨款"
-        for f in factions:
-            stipend = faction_data.get(f.id, {}).get("stipend", 0)
-            row += f"  +{stipend:<10}"
-        print(row)
-
-        row = "会员贡献"
-        for f in factions:
-            tax = faction_data.get(f.id, {}).get("tax", 0)
-            row += f"  +{tax:<10}"
-        print(row)
-
-        row = "现有资金"
-        for f in factions:
-            final = faction_data.get(f.id, {}).get("final", f.treasury)
-            row += f"  {final:<10}"
-        print(row)
+            fd = faction_data.get(f.id, {})
+            stipend = fd.get("stipend", 0)
+            tax = fd.get("tax", 0)
+            total = fd.get("total", stipend + tax)
+            print(f"  拨款 +{stipend} · 会员 +{tax} · 合计 +{total}    {f.name}")
 
     def _print_private_land_table(self, data: List[Dict[str, Any]], terms):
         if not data:

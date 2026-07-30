@@ -140,3 +140,102 @@ def test_execute_mortality_death_event_returns_structured_summary():
     assert event["impacts"][0]["type"] == "figure_death"
     assert event["impacts"][0]["figure_id"] == 1
     assert state.get_member(1).is_dead is True
+    # AC-01: 死亡事件 impact 必须包含 faction_name 字段
+    assert event["impacts"][0]["faction_name"] == "测试派"
+    assert event["impacts"][0]["faction_id"] == "f1"
+
+
+# === AC-01: 死亡事件派系字段 ===
+def test_death_event_impact_contains_faction_name():
+    """死亡事件 impact 中 faction_name 必须存在且匹配死者所属派系"""
+    state = _state_with_player({
+        "mortality_rules": {
+            "event_deck": [{"name": "死神来了", "effect": "death", "weight": 1}],
+            "event_draw_count": 1,
+            "death_count": 2,
+        }
+    })
+    opt = Faction("opt", "Optimates")
+    pop = Faction("pop", "Populares")
+    state.add_faction(opt)
+    state.add_faction(pop)
+    f1 = Figure(10, "Caesar", faction_id="opt", age=50)
+    f2 = Figure(11, "Pompey", faction_id="pop", age=55)
+    state.add_member(f1)
+    state.add_member(f2)
+    opt.member_ids = [10]
+    pop.member_ids = [11]
+
+    response = mortality_api.execute_mortality_phase(state, "p1")
+
+    assert response["success"]
+    event = response["data"]["events"][0]
+    assert event["effect"] == "death"
+    # 每个死者 impact 必须包含 faction_name
+    faction_names_found = set()
+    for imp in event["impacts"]:
+        assert imp["type"] == "figure_death"
+        assert "faction_name" in imp, f"Missing faction_name in impact for {imp['figure_name']}"
+        assert imp["faction_name"] != "", "faction_name must not be empty"
+        faction_names_found.add(imp["faction_name"])
+    # 两个死者应各有正确派系名
+    assert "Optimates" in faction_names_found
+    assert "Populares" in faction_names_found
+
+
+# === AC-02: 非死亡事件不误显示派系 ===
+def test_non_death_event_no_faction_in_impacts():
+    """非死亡事件（丰收/和平/猛男/天灾）不应在 impacts 中包含 faction_name"""
+    from src.core.service.mortality_service import MortalityService
+    from src.core.entities.entities import GameTurn
+    from src.core.entities.province import Province
+
+    state = GameState.create_for_testing({
+        "mortality_rules": {
+            "event_draw_count": 0,
+            "death_count": 0,
+        }
+    })
+    state.turn = GameTurn(turn_number=2, year=-263)
+    state.add_player(Player("p1", "f1", PlayerType.HUMAN))
+    state.set_current_player("p1")
+    # 添加行省支持 disaster/peace 事件
+    state.add_province(Province(10, "Sicilia", total_land=1000, conquered=True))
+
+    service = MortalityService(state)
+
+    # 丰收事件
+    result = service.apply_bountiful_harvest()
+    for imp in result["impacts"]:
+        assert "faction_name" not in imp, f"Bountiful harvest should not have faction_name: {imp}"
+
+    # 和平事件
+    result = service.apply_peace_event()
+    for imp in result["impacts"]:
+        assert "faction_name" not in imp, f"Peace event should not have faction_name: {imp}"
+
+    # 天降猛男 — 需要 year 设定
+    result = service.apply_mighty_man_event()
+    for imp in result["impacts"]:
+        assert "faction_name" not in imp, f"Mighty man event should not have faction_name: {imp}"
+
+    # 天灾 — 需要已征服行省
+    result = service.apply_disaster_event()
+    for imp in result["impacts"]:
+        assert "faction_name" not in imp, f"Disaster event should not have faction_name: {imp}"
+
+
+def test_empty_events_no_faction_leakage():
+    """无死者/无事件时不应产生误导性派系字段"""
+    state = _state_with_player({"mortality_rules": {"event_deck": []}})
+    response = mortality_api.execute_mortality_phase(state, "p1")
+
+    assert response["success"]
+    assert len(response["data"]["events"]) == 1
+    event = response["data"]["events"][0]
+    assert event["effect"] == "none"
+    # 中性事件不应有 faction 字段
+    for imp in event.get("impacts", []):
+        assert "faction_name" not in imp
+    # 无 impacts 时也安全
+    assert len(event.get("impacts", [])) == 0

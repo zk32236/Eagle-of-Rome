@@ -328,3 +328,29 @@ STALEMATE → 赔款 = 0（无赔款）
 |------|------|--------|---------|
 | v1.0 | 2026-07-12 | Document Officer Worker K | 初版创建 |
 | v1.1 | 2026-07-12 | DA Sub-Agent (GLM Audit Fix) | 修复：停战草案赔款公式、召回条件、惩罚范围 |
+| v1.2 | 2026-07-28 | PM (Augustus) | 新增技术债务附录：战斗三动作残桩（scout/defence/attack） |
+
+---
+
+## 附录 A — 已知技术债务
+
+### A.1 战斗三动作残桩（scout / defence / attack）
+
+**引入时间：** Phase 6 Combat full flow (`8b8e26d`)，`S1 重构 (f0126e7)` 保留
+
+**现状：** `combat_api.py` 和 `CombatStage.qml` 包含三种动作骨架：
+
+| 动作 | 状态 | 说明 |
+|:-----|:----:|:------|
+| `attack`（进攻） | ✅ 完整 | 标准战斗执行，`do_combat_action()` → `_compute_combat_result()` → `resolve_war()`，写入 GameState。Product Spec 定义的标准路径 |
+| `scout`（侦查） | ✅ 预览模式 | `do_combat_action(action="scout")` 固定 dice=7 计算并返回预览结果，不写入 GameState。设计正确但未在产品文档中定义 |
+| `defence`（防御） | ⚠️ 残桩 | `do_combat_action(action="defence")` → +2 bias 偏置生效，但 `resolve_war(war_id, victory)` 不接收 action 参数，defence 与 attack 的损失/战利品完全相同。本质上是一个+2 attack，无语义差异 |
+
+**当前 GUI（2026-07-28 Owner 决策）：** 砍回只剩 `attack` 按钮。`scout` 和 `defence` 按钮移除。
+
+**以后正式启用三动作前需完成：**
+- [ ] 产品文档定义三动作的独立语义与平衡规则
+- [ ] `resolve_war()` 新增 action 感知（防御减损失、侦查获情报）
+- [ ] CLI 命令同时暴露三动作
+- [ ] bias 值改为 config 配置（当前硬编码 defence:+2, scout:-1）
+- [ ] 三动作的测试覆盖

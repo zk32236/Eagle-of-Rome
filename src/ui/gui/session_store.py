@@ -72,6 +72,7 @@ class GuiSessionStore(QObject):
         self._feedback_queue: List[Dict[str, str]] = []
         self._forum_ai_processed = False
         self._last_reset_turn: int = 0
+        self._faction_style_map: Dict[str, Any] = {}
 
     # -----------------------------------------------------------------------
     # 初始化
@@ -80,6 +81,7 @@ class GuiSessionStore(QObject):
         """初始化，设置 viewer 并加载第一帧快照"""
         self._viewer_id = viewer_id
         self._refresh_snapshot()
+        self._refresh_faction_style_map()
         self._refresh_mortality_view()
         self._refresh_population_view()
         self._refresh_senate_view()
@@ -572,6 +574,20 @@ class GuiSessionStore(QObject):
         resolved = self._resolution_view.get("resolved", False)
         is_current = self._resolution_view.get("is_current_player", False)
         return resolved and is_current and not self._resolution_resolving and not self._resolution_advancing
+
+    @Property(dict, notify=snapshotChanged)
+    def factionStyleMap(self) -> Dict[str, Any]:
+        """全局派系样式映射，从 faction_api.get_faction_style_map() 加载。"""
+        return self._faction_style_map
+
+    def _refresh_faction_style_map(self):
+        """从 faction_api 加载派系样式映射。"""
+        from src.api import faction_api
+        result = faction_api.get_faction_style_map(self._state)
+        if result.get("success"):
+            self._faction_style_map = result.get("data", {})
+        else:
+            self._faction_style_map = {}
 
     @Property(bool, notify=resolutionAdvancingChanged)
     def isResolutionAdvancing(self) -> bool:
@@ -1346,6 +1362,7 @@ class GuiSessionStore(QObject):
 
     def _refresh_snapshot(self):
         self._snapshot = self._adapter.get_snapshot(self._viewer_id)
+        self._refresh_faction_style_map()
         new_current = self._snapshot.get("current_phase_id", "mortality")
         if not self._selected_phase_id or self._selected_phase_id != new_current:
             self._selected_phase_id = new_current

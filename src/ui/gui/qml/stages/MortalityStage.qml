@@ -13,6 +13,12 @@ import "../i18n"
  * execute button are now distributed to StageDesktop's 4 slots
  * by GameShell. This component fills only StageDesktop.stageContentSlot.
  *
+ * DEV-08: Death events display faction_name for each victim.
+ *   - Iterates ALL impacts (PM G3 F-02)
+ *   - QML-side traversal, no backend change (PM G3 F-01)
+ *   - Only shows faction info for type === "figure_death"
+ *   - Non-death events show no faction info
+ *
  * Layout contract: GUI_LAYOUT_CONTRACT_Phase1_v3.25.1.md §4
  *   StageContentSlot: event area with info-box style
  */
@@ -20,6 +26,20 @@ Rectangle {
     id: root
     objectName: "mortalityStage"
     color: "transparent"
+
+    FactionStyle { id: factionStyle }
+
+    // Filter impacts for figure_death type (supports multiple victims per event)
+    function deathImpacts(impacts) {
+        if (!impacts || !Array.isArray(impacts)) return []
+        var result = []
+        for (var i = 0; i < impacts.length; i++) {
+            if (impacts[i].type === "figure_death") {
+                result.push(impacts[i])
+            }
+        }
+        return result
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -96,43 +116,93 @@ Rectangle {
         }
 
         // Event items.
+        // DEV-08: Each event shows faction_name from ALL figure_death impacts.
         Repeater {
             model: sessionStore.mortalityEvents || []
             delegate: Rectangle {
                 Layout.fillWidth: true
-                height: 34
+                Layout.preferredHeight: _innerCol.implicitHeight + 16
                 color: "#B8FFF9EC"
                 border.color: "#85A8753B"
                 border.width: 1
                 radius: 4
 
-                RowLayout {
+                property var _deathList: root.deathImpacts(modelData.impacts)
+
+                ColumnLayout {
+                    id: _innerCol
                     anchors.fill: parent
                     anchors.leftMargin: 12
                     anchors.rightMargin: 12
-                    spacing: 7
+                    anchors.topMargin: 8
+                    anchors.bottomMargin: 8
+                    spacing: 4
 
-                    Text {
-                        text: modelData.effect === "death" ? "💀" : "⚡"
-                        font.pixelSize: 13
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Text {
-                        text: (modelData.name || "") + (modelData.summary ? "  " + modelData.summary : "")
-                        color: "#2E251B"
-                        font.pixelSize: theme.bodySize
-                        elide: Text.ElideRight
+                    // Event header row: emoji + name + summary
+                    RowLayout {
                         Layout.fillWidth: true
-                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 7
+
+                        Text {
+                            text: modelData.effect === "death" ? "💀" : "⚡"
+                            font.pixelSize: 13
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Text {
+                            text: (modelData.name || "") + (modelData.summary ? "  " + modelData.summary : "")
+                            color: "#2E251B"
+                            font.pixelSize: theme.bodySize
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Text {
+                            text: modelData.summary || ""
+                            color: "#C45151"
+                            font.pixelSize: theme.bodySize
+                            visible: !!modelData.summary && _deathList.length === 0
+                            elide: Text.ElideRight
+                            Layout.maximumWidth: 360
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
                     }
-                    Text {
-                        text: modelData.summary || ""
-                        color: "#C45151"
-                        font.pixelSize: theme.bodySize
-                        visible: !!modelData.summary
-                        elide: Text.ElideRight
-                        Layout.maximumWidth: 360
-                        anchors.verticalCenter: parent.verticalCenter
+
+                    // DEV-08: Display each death victim with faction_name.
+                    // PM G3 F-02: Traverse ALL impacts — no "first item only" logic.
+                    // PM G3 F-01: QML-side traversal, no backend DTO change.
+                    Repeater {
+                        model: _deathList
+
+                        delegate: Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 22
+                            color: "transparent"
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 20
+                                spacing: 6
+
+                                Text {
+                                    text: "💀"
+                                    font.pixelSize: 11
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Text {
+                                    text: modelData.figure_name || ""
+                                    color: factionStyle.factionColor(modelData.faction_id || modelData.faction_name)
+                                    font.pixelSize: theme.bodySize
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Text {
+                                    text: "（" + (modelData.faction_name || "无派系") + "）"
+                                    color: "#766652"
+                                    font.pixelSize: theme.smallSize
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -95,7 +95,38 @@ class Config:
             "disaster_rolls": [2, 3, 4],
             "standoff_rolls": [5, 6, 7, 8, 9]
         },
-        "terminology_preset": "original"
+        "terminology_preset": "original",
+        "faction_style_map": {
+            "opt": {
+                "color": "#8B0000",
+                "name": "Optimates",
+                "name_i18n": "贵族派",
+                "id_display": "Opt",
+                "id_display_i18n": "贵",
+                "order": 1,
+            },
+            "pop": {
+                "color": "#006400",
+                "name": "Populares",
+                "name_i18n": "平民派",
+                "id_display": "Pop",
+                "id_display_i18n": "平",
+                "order": 2,
+            },
+            "equ": {
+                "color": "#00008B",
+                "name": "Equites",
+                "name_i18n": "骑士派",
+                "id_display": "Equ",
+                "id_display_i18n": "骑",
+                "order": 3,
+            },
+        },
+        "faction_style_fallback": {
+            "color": "#3A3530",
+            "name": "未知派系",
+            "id_display": "?",
+        },
     }
 
     def __init__(self, config_path: Optional[str] = None):
