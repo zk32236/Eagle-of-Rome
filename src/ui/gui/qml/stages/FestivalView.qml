@@ -112,18 +112,8 @@ Rectangle {
                     AppButton {
                         text: "确认举办庆典"
                         type: "primary"
-                        enabled: figureTable.selectedRow >= 0 && sessionStore.isCurrentPlayer && sessionStore.canCampaign
-                        onClicked: {
-                            if (figureTable.selectedRow < 0) return
-                            var fig = sessionStore.myFigures[figureTable.selectedRow]
-                            var result = sessionStore.doCampaign(fig.id, amountStepper.value)
-                            if (result.success) {
-                                showFeedback("success", result.message)
-                                figureTable.selectedRow = -1
-                            } else {
-                                showFeedback("error", result.message)
-                            }
-                        }
+                        enabled: false
+                        tooltip: "▶ 请在 CLI 中使用 `campaign all` 或 `campaign <ID> <金额>` 执行庆典"
                     }
                 }
             }

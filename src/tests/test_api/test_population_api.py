@@ -89,7 +89,7 @@ def state_base():
     }
     state = GameState.create_for_testing(config)
     state.turn = GameTurn(turn_number=1, year=-282)
-    state._population_pending = {"campaigns": [], "votes": []}
+    state._population_pending = {"campaigns": [], "votes": [], "committed_batches": set()}
     return state
 
 
@@ -163,6 +163,7 @@ class TestPopulationPending:
         assert state_base.get_population_pending_snapshot() == {
             "campaigns": [],
             "votes": [],
+            "committed_batches": set(),
         }
 
         state_base.record_population_campaign("p1", 1, 10)
@@ -183,6 +184,7 @@ class TestPopulationPending:
         assert state_base.get_population_pending_snapshot() == {
             "campaigns": [],
             "votes": [],
+            "committed_batches": set(),
         }
 
 class TestCampaign:
@@ -668,3 +670,364 @@ class TestResolveElection:
         assert fig1.office == "consul"
         assert fig3.office == "praetor"
         assert fig2.office is None
+
+
+# ========== TestBatchCampaign ==========
+
+class TestBatchCampaign:
+    """测试批量庆典赞助 batch_campaign API"""
+
+    def test_success_single_entry(self, state_normal_mode):
+        """单条合法条目正常提交"""
+        entries = [{"figure_id": 1, "amount": 10}]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is True
+        data = result["data"]
+        assert data["campaign_count"] == 1
+        assert data["total_spent"] == 10
+        assert len(state_normal_mode.get_population_campaigns()) == 1
+
+    def test_success_multiple_entries(self, state_normal_mode):
+        """多条合法条目全部写入"""
+        entries = [
+            {"figure_id": 1, "amount": 10},
+            {"figure_id": 3, "amount": 20},
+        ]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is True
+        data = result["data"]
+        assert data["campaign_count"] == 2
+        assert data["total_spent"] == 30
+        campaigns = state_normal_mode.get_population_campaigns()
+        assert len(campaigns) == 2
+
+    def test_figure_wealth_deducted(self, state_normal_mode):
+        """验证人物财富被正确扣除，人气增加"""
+        fig1 = state_normal_mode.get_member(1)
+        old_wealth = fig1.wealth  # 50
+        old_popularity = fig1.popularity  # 10
+
+        entries = [{"figure_id": 1, "amount": 10}]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is True
+        assert fig1.wealth == old_wealth - 10  # 40
+        assert fig1.popularity == old_popularity + 10  # 20
+
+    def test_invalid_amount_zero(self, state_normal_mode):
+        """amount=0 导致校验失败"""
+        entries = [{"figure_id": 1, "amount": 0}]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    def test_invalid_amount_negative(self, state_normal_mode):
+        """amount 为负数导致校验失败"""
+        entries = [{"figure_id": 1, "amount": -5}]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    def test_amount_exceeds_wealth(self, state_normal_mode):
+        """amount 超过人物财富导致校验失败"""
+        fig1 = state_normal_mode.get_member(1)
+        entries = [{"figure_id": 1, "amount": fig1.wealth + 1}]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    def test_figure_not_found(self, state_normal_mode):
+        """figure_id 不存在导致校验失败"""
+        entries = [{"figure_id": 999, "amount": 10}]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    def test_figure_dead(self, state_normal_mode):
+        """已死亡人物导致校验失败"""
+        fig = state_normal_mode.get_member(1)
+        fig.is_dead = True
+        entries = [{"figure_id": 1, "amount": 10}]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    def test_figure_not_in_faction(self, state_normal_mode):
+        """不属于当前派系的人物导致校验失败"""
+        entries = [{"figure_id": 2, "amount": 10}]  # fig2 belongs to f2, p1 is f1
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    def test_duplicate_figure_id(self, state_normal_mode):
+        """同一批次中重复 figure_id 导致校验失败"""
+        entries = [
+            {"figure_id": 1, "amount": 10},
+            {"figure_id": 1, "amount": 20},
+        ]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        data = result["data"]
+        assert len(data["failed_entries"]) > 0
+        assert any(fe["reason"] == "duplicate figure_id" for fe in data["failed_entries"])
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    def test_empty_entries(self, state_normal_mode):
+        """空数组返回 success 但 campaign_count=0"""
+        result = population_api.batch_campaign(state_normal_mode, "p1", [])
+        assert result["success"] is True
+        data = result["data"]
+        assert data["campaign_count"] == 0
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    def test_mixed_valid_invalid(self, state_normal_mode):
+        """混合合法/非法条目 → 零写入（原子性）"""
+        entries = [
+            {"figure_id": 1, "amount": 10},   # valid
+            {"figure_id": 999, "amount": 10},  # invalid: not found
+        ]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        # 零写入
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    def test_idempotent_same_batch(self, state_normal_mode):
+        """相同签名的幂等保护：第二次调用不重复写入"""
+        entries = [{"figure_id": 1, "amount": 10}]
+
+        # 第一次调用：成功 + 写入
+        result1 = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result1["success"] is True
+        assert len(state_normal_mode.get_population_campaigns()) == 1
+
+        # 第二次调用相同 entries：幂等命中，返回 success 但不追加记录
+        result2 = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result2["success"] is True
+        assert result2["data"]["campaign_count"] == 0
+        assert len(state_normal_mode.get_population_campaigns()) == 1  # 不追加
+
+    def test_different_batch_after_same(self, state_normal_mode):
+        """不同内容的批次不触发幂等守卫"""
+        entries1 = [{"figure_id": 1, "amount": 10}]
+        entries2 = [{"figure_id": 1, "amount": 20}]
+
+        result1 = population_api.batch_campaign(state_normal_mode, "p1", entries1)
+        assert result1["success"] is True
+        assert len(state_normal_mode.get_population_campaigns()) == 1
+
+        # 不同内容：正常写入
+        result2 = population_api.batch_campaign(state_normal_mode, "p1", entries2)
+        assert result2["success"] is True
+        assert result2["data"]["campaign_count"] == 1
+        assert len(state_normal_mode.get_population_campaigns()) == 2
+
+    def test_idempotent_cleared_after_clear(self, state_normal_mode):
+        """清除幂等守卫后可以重新提交"""
+        entries = [{"figure_id": 1, "amount": 10}]
+
+        # 第一次提交
+        population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert len(state_normal_mode.get_population_campaigns()) == 1
+
+        # 清空后
+        state_normal_mode.clear_population_pending()
+        # 幂等守卫也被清除
+        assert len(state_normal_mode.get_committed_batches()) == 0
+
+        # 重新提交
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is True
+        assert result["data"]["campaign_count"] == 1
+        assert len(state_normal_mode.get_population_campaigns()) == 1
+
+    def test_failed_entries_in_data(self, state_normal_mode):
+        """非法输入时返回 failed_entries 细节"""
+        entries = [
+            {"figure_id": 1, "amount": 10},
+            {"figure_id": 999, "amount": 5},
+        ]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        data = result["data"]
+        assert "failed_entries" in data
+        assert len(data["failed_entries"]) == 1
+        assert data["failed_entries"][0]["figure_id"] == 999
+
+    def test_not_current_player(self, state_normal_mode):
+        """非当前玩家调用"""
+        entries = [{"figure_id": 1, "amount": 10}]
+        result = population_api.batch_campaign(state_normal_mode, "p2", entries)
+        assert result["success"] is False
+        assert "不是您的回合" in result["message"]
+
+    def test_amount_at_boundary(self, state_normal_mode):
+        """amount = figure.wealth（花光全部财富）合法"""
+        fig1 = state_normal_mode.get_member(1)
+        entries = [{"figure_id": 1, "amount": fig1.wealth}]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is True
+        assert result["data"]["campaign_count"] == 1
+        # 花光后 wealth=0
+        assert state_normal_mode.get_member(1).wealth == 0
+
+    # ────────── DTO 类型校验（WP-02a SLICE-02R）──────────
+
+    def test_dto_figure_id_float_rejected(self, state_normal_mode):
+        """figure_id 为 float 时被 DTO 校验拒绝"""
+        entries = [{"figure_id": 1.5, "amount": 10}]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        data = result["data"]
+        assert len(data["failed_entries"]) == 1
+        assert "must be int" in data["failed_entries"][0]["reason"]
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    def test_dto_figure_id_string_rejected(self, state_normal_mode):
+        """figure_id 为 string 时被 DTO 校验拒绝"""
+        entries = [{"figure_id": "abc", "amount": 10}]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        data = result["data"]
+        assert len(data["failed_entries"]) == 1
+        assert "must be int" in data["failed_entries"][0]["reason"]
+
+    def test_dto_figure_id_bool_rejected(self, state_normal_mode):
+        """figure_id 为 bool 时被 DTO 校验拒绝（bool 是 int 的子类）"""
+        entries = [{"figure_id": True, "amount": 10}]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        data = result["data"]
+        assert len(data["failed_entries"]) == 1
+        assert "must be int" in data["failed_entries"][0]["reason"]
+
+    def test_dto_amount_float_rejected(self, state_normal_mode):
+        """amount 为 float 时被 DTO 校验拒绝"""
+        entries = [{"figure_id": 1, "amount": 10.5}]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        data = result["data"]
+        assert len(data["failed_entries"]) == 1
+        assert "must be int" in data["failed_entries"][0]["reason"]
+
+    def test_dto_amount_string_rejected(self, state_normal_mode):
+        """amount 为 string 时被 DTO 校验拒绝"""
+        entries = [{"figure_id": 1, "amount": "ten"}]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        data = result["data"]
+        assert len(data["failed_entries"]) == 1
+        assert "must be int" in data["failed_entries"][0]["reason"]
+
+    def test_dto_amount_bool_rejected(self, state_normal_mode):
+        """amount 为 bool 时被 DTO 校验拒绝"""
+        entries = [{"figure_id": 1, "amount": False}]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        data = result["data"]
+        assert len(data["failed_entries"]) == 1
+        assert "must be int" in data["failed_entries"][0]["reason"]
+
+    def test_dto_extra_fields_rejected(self, state_normal_mode):
+        """额外字段被 DTO 校验拒绝"""
+        entries = [{"figure_id": 1, "amount": 10, "extra_field": "nope"}]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        data = result["data"]
+        assert len(data["failed_entries"]) == 1
+        assert "unexpected fields" in data["failed_entries"][0]["reason"]
+
+    def test_dto_entry_not_dict_rejected(self, state_normal_mode):
+        """条目不是 dict 时被 DTO 校验拒绝"""
+        entries = [[1, 10]]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        data = result["data"]
+        assert len(data["failed_entries"]) == 1
+        assert "must be a dict" in data["failed_entries"][0]["reason"]
+
+    def test_dto_entries_not_list_rejected(self, state_normal_mode):
+        """entries 不是 list 时被 DTO 校验拒绝（异常保护）"""
+        result = population_api.batch_campaign(state_normal_mode, "p1", "not_a_list")
+        assert result["success"] is False
+        data = result["data"]
+        assert len(data["failed_entries"]) == 1
+        assert "must be a list" in data["failed_entries"][0]["reason"]
+
+    # ────────── FI-11: 非法顶层 DTO 类型（WP-02a v3 补齐）──────────
+
+    def test_dto_entries_none_rejected(self, state_normal_mode):
+        """entries=None 被结构化 failure 拒绝，不抛 TypeError"""
+        result = population_api.batch_campaign(state_normal_mode, "p1", None)
+        assert result["success"] is False
+        data = result.get("data", {})
+        assert len(data.get("failed_entries", [])) >= 1
+        assert "None" in data["failed_entries"][0]["reason"]
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    def test_dto_entries_string_rejected(self, state_normal_mode):
+        """entries="abc" 被结构化 failure 拒绝"""
+        result = population_api.batch_campaign(state_normal_mode, "p1", "abc")
+        assert result["success"] is False
+        data = result.get("data", {})
+        assert len(data.get("failed_entries", [])) >= 1
+        assert "must be a list" in data["failed_entries"][0]["reason"]
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    def test_dto_entries_int_rejected(self, state_normal_mode):
+        """entries=123 被结构化 failure 拒绝"""
+        result = population_api.batch_campaign(state_normal_mode, "p1", 123)
+        assert result["success"] is False
+        data = result.get("data", {})
+        assert len(data.get("failed_entries", [])) >= 1
+        assert "must be a list" in data["failed_entries"][0]["reason"]
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    def test_dto_entries_dict_rejected(self, state_normal_mode):
+        """entries={} 被结构化 failure 拒绝，不抛裸异常"""
+        result = population_api.batch_campaign(state_normal_mode, "p1", {})
+        assert result["success"] is False
+        data = result.get("data", {})
+        assert len(data.get("failed_entries", [])) >= 1
+        assert "must be a list" in data["failed_entries"][0]["reason"]
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    def test_dto_mixed_type_entries_some_valid_some_invalid(self, state_normal_mode):
+        """混合类型条目：所有非法则整体失败"""
+        entries = [
+            {"figure_id": 1, "amount": 10},      # valid
+            {"figure_id": "two", "amount": 10},   # invalid: string figure_id
+        ]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        data = result["data"]
+        assert len(data["failed_entries"]) == 1
+        # 零写入
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    # ────────── 不可 JSON 序列化 (WP-02a SLICE-04/05) ──────────
+
+    def test_dto_non_json_serializable_rejected(self, state_normal_mode):
+        """不可 JSON 序列化的 entries 容器被拒绝（JSON 容器校验优先）"""
+        class NonSerializable:
+            pass
+        entries = NonSerializable()
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        data = result["data"]
+        assert len(data["failed_entries"]) >= 1
+        assert "must be a list" in data["failed_entries"][0]["reason"]
+        assert len(state_normal_mode.get_population_campaigns()) == 0
+
+    def test_dto_non_json_serializable_object_in_list(self, state_normal_mode):
+        """列表中包含不可 JSON 序列化的 entry 被拒绝"""
+        class CustomObj:
+            pass
+        entries = [
+            {"figure_id": 1, "amount": 10},
+            CustomObj(),
+        ]
+        result = population_api.batch_campaign(state_normal_mode, "p1", entries)
+        assert result["success"] is False
+        data = result["data"]
+        assert len(data["failed_entries"]) == 1
+        assert "must be a dict" in data["failed_entries"][0]["reason"]
+        assert len(state_normal_mode.get_population_campaigns()) == 0

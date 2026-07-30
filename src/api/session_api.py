@@ -208,7 +208,8 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
         current_phase_id = _infer_current_phase_id(state)
         is_population_phase = current_phase_id == "population"
         office_count = len([office for office, rows in candidates.items() if rows])
-        campaign_done = bool(my_campaigns)
+        # WP-02a v3: campaign_done 按 player_id 隔离 (D-12)
+        campaign_done = state.get_batch_completed(viewer_player_id)
         vote_done = office_count > 0 and len(my_votes) >= office_count
         current_step = "results" if resolved else ("vote" if campaign_done else "campaign")
         can_campaign = is_current and is_population_phase and not resolved

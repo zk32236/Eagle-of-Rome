@@ -297,7 +297,7 @@ class PopulationCommand(Command):
 
     def _campaign_all(self, player_id: str, faction_id: str, ratio: float = 1.0):
         """
-        为当前派系的所有候选人举办庆典，花费私库资金的指定比例（向下取整）。
+        为当前派系的所有候选人举办庆典，使用 batch_campaign() 原子提交。
         ratio: 0-1 之间的浮点数，表示使用私库资金的比例，默认1.0。
         """
         # 获取候选人列表
@@ -318,28 +318,43 @@ class PopulationCommand(Command):
             print("   📭 当前无本派系候选人", flush=True)
             return
 
-        success_count = 0
-        total_spent = 0
+        # 构建 batch entries
+        entries = []
+        skipped = []
         for fig_id in own_candidates:
             fig = self.state.get_member(fig_id)
             if not fig or fig.is_dead:
+                skipped.append((fig_id, "人物已死亡"))
                 continue
             amount = int(fig.wealth * ratio)
             if amount <= 0:
-                print(f"   ⚠️ {fig.get_formal_name()} 财富不足或比例为0，跳过", flush=True)
+                skipped.append((fig_id, f"财富不足或比例为0 (wealth={fig.wealth}, ratio={ratio})"))
                 continue
-            result = population_api.campaign(self.state, player_id, fig_id, amount)
-            if result["success"]:
-                success_count += 1
-                total_spent += amount
-                print(f"   ✅ {fig.get_formal_name()}: 花费 {amount} 举办庆典", flush=True)
-            else:
-                print(f"   ❌ {fig.get_formal_name()}: {result['message']}", flush=True)
+            entries.append({"figure_id": fig_id, "amount": amount})
 
-        if success_count == 0:
-            print("   📭 未成功为任何候选人举办庆典", flush=True)
+        if skipped:
+            for fid, reason in skipped:
+                fig = self.state.get_member(fid)
+                name = fig.get_formal_name() if fig else f"ID {fid}"
+                print(f"   ⚠️ {name}: 跳过 - {reason}", flush=True)
+
+        if not entries:
+            print("   📭 未生成任何有效条目，跳过批次提交", flush=True)
+            return
+
+        # 一次 batch 提交
+        result = population_api.batch_campaign(self.state, player_id, entries)
+        if result["success"]:
+            data = result["data"]
+            count = data["campaign_count"]
+            spent = data["total_spent"]
+            for fr in data.get("figure_results", []):
+                fig = self.state.get_member(fr["figure_id"])
+                name = fig.get_formal_name() if fig else f"ID {fr['figure_id']}"
+                print(f"   ✅ {name}: 花费 {fr['amount']} 举办庆典", flush=True)
+            print(f"   🎉 共为 {count} 位候选人举办庆典，总花费 {spent}", flush=True)
         else:
-            print(f"   🎉 共为 {success_count} 位候选人举办庆典，总花费 {total_spent}", flush=True)
+            print(f"   ❌ 批量庆典失败: {result['message']}", flush=True)
 
     def _vote_all(self, player_id: str, faction_id: str):
         """

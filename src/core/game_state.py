@@ -10,7 +10,8 @@ import random
 import logging
 import logging.handlers
 import os
-from typing import Dict, List, Optional, Set, Any
+import threading
+from typing import Dict, List, Optional, Set, Any, Tuple
 from typing import TYPE_CHECKING
 
 from src.core.config import Config
@@ -110,8 +111,12 @@ class GameState:
         # 人口阶段临时存储
         self._population_pending = {
             "campaigns": [],  # 每个元素为 (player_id, figure_id, amount)
-            "votes": []  # 每个元素为 (player_id, office, figure_id)
+            "votes": [],  # 每个元素为 (player_id, office, figure_id)
+            "committed_batches": set(),  # 已提交的批次签名（幂等守卫）
         }
+        # WP-02a v3: runtime guard (不持久化) + 按 player_id 完成状态
+        self._batch_guard_lock = threading.RLock()  # runtime 互斥，不序列化
+        self._batch_completed_by_player: Dict[str, bool] = {}  # player_id → completed
 
         # 元老院阶段临时存储
         self._pending_land_sale_quota: int = 0  # 新增：贵族买地法案待售公地数量
@@ -170,8 +175,11 @@ class GameState:
         self._forum_pending = {k: [] for k in self._forum_pending}
         self._population_pending = {
             "campaigns": [],
-            "votes": []
+            "votes": [],
+            "committed_batches": set(),
         }
+        self._batch_completed_by_player.clear()
+        self._batch_guard_lock = threading.RLock()  # fresh runtime lock, 不序列化
         self._pending_land_sale_quota: int = 0  # 新增：贵族买地法案待售公地数量
         self.clear_senate_pending()
 
@@ -275,6 +283,7 @@ class GameState:
         return {
             "campaigns": self.get_population_campaigns(),
             "votes": self.get_population_votes(),
+            "committed_batches": self.get_committed_batches(),
         }
 
     def clear_population_pending(self) -> None:
@@ -282,7 +291,145 @@ class GameState:
         self._population_pending = {
             "campaigns": [],
             "votes": [],
+            "committed_batches": set(),
         }
+        self._batch_completed_by_player.clear()
+        # 注意：_batch_guard_lock 不在此清空——runtime guard 绝不持久化
+
+    def record_committed_batch(self, signature: str) -> None:
+        """记录已提交的批量批次签名。"""
+        self._population_pending["committed_batches"].add(signature)
+
+    def has_committed_batch(self, signature: str) -> bool:
+        """检查批次签名是否已提交（幂等守卫）。"""
+        return signature in self._population_pending["committed_batches"]
+
+    def remove_committed_batch(self, signature: str) -> None:
+        """移除单个已提交的批次签名（回滚时调用）。"""
+        self._population_pending["committed_batches"].discard(signature)
+
+    def clear_committed_batches(self) -> None:
+        """清除所有已提交的批次签名（在年度推进时一并清理）。"""
+        self._population_pending["committed_batches"].clear()
+
+    def get_committed_batches(self) -> set:
+        """返回已提交批次签名副本。"""
+        return self._population_pending["committed_batches"].copy()
+
+    def truncate_population_campaigns(self, target_len: int) -> None:
+        """截断 campaign 记录到指定长度（回滚时调用）。"""
+        campaigns = self._population_pending["campaigns"]
+        if target_len < 0:
+            target_len = 0
+        while len(campaigns) > target_len:
+            campaigns.pop()
+
+    # ────────── WP-02a v3: runtime guard + 按玩家完成状态 ──────────
+
+    def try_acquire_batch_guard(self) -> bool:
+        """
+        尝试获取运行时互斥守卫（不可序列化）。
+        使用 threading.RLock 保证同一线程可重入。
+        返回 True 表示获取成功，False 表示 BUSY（其他提交进行中）。
+
+        注意：幂等性检查不由本方法负责，由 caller 在获取 guard 前完成。
+        """
+        acquired = self._batch_guard_lock.acquire(blocking=False)
+        if acquired:
+            self.log_event(
+                "BATCH_GUARD: acquired",
+                level=logging.DEBUG
+            )
+        else:
+            self.log_event(
+                "BATCH_GUARD: BUSY, another commit in progress",
+                level=logging.DEBUG
+            )
+        return acquired
+
+    def release_batch_guard(self) -> None:
+        """
+        释放运行时互斥守卫。
+        此方法必须在 finally 块中调用，确保异常路径也释放。
+        """
+        try:
+            self._batch_guard_lock.release()
+            self.log_event(
+                "BATCH_GUARD: released",
+                level=logging.DEBUG
+            )
+        except RuntimeError:
+            # 未持有锁时释放可能抛 RuntimeError，安全忽略
+            pass
+
+    def set_batch_completed(self, player_id: str, value: bool) -> None:
+        """
+        按 player_id 设置批次提交完成状态。
+        D-12: p1 成功不推进 p2。
+        """
+        if value:
+            self._batch_completed_by_player[player_id] = True
+        else:
+            self._batch_completed_by_player.pop(player_id, None)
+        self.log_event(
+            f"batch_completed_by_player[{player_id}]={'True' if value else 'False'}",
+            level=logging.DEBUG
+        )
+
+    def get_batch_completed(self, player_id: str) -> bool:
+        """
+        按 player_id 返回批次提交是否已完成。
+        D-12: 每个玩家独立判断。
+        """
+        return self._batch_completed_by_player.get(player_id, False)
+
+    def clear_all_batch_completed(self) -> None:
+        """清空所有玩家的完成状态（年度推进时调用）。"""
+        self._batch_completed_by_player.clear()
+        self.log_event(
+            "batch_completed_by_player: all cleared",
+            level=logging.DEBUG
+        )
+
+    def snapshot_campaign_figures(
+        self,
+        entries: List[Tuple[int, int, Any]]
+    ) -> Dict[int, Dict[str, int]]:
+        """
+        对即将修改的人物字段拍摄快照。
+        entries: [(figure_id, amount, figure), ...]
+        返回: {figure_id: {wealth, popularity}, ...}
+        只通过公开属性访问，不写私有字段。
+        """
+        snapshots: Dict[int, Dict[str, int]] = {}
+        for fid, amount, figure in entries:
+            snapshots[fid] = {
+                "wealth": figure.wealth,
+                "popularity": figure.popularity,
+            }
+        return snapshots
+
+    def restore_campaign_figures(
+        self,
+        snapshots: Dict[int, Dict[str, int]]
+    ) -> None:
+        """
+        从快照恢复人物字段（回滚时调用）。
+        只通过公开属性写入，不操作私有字段。
+        然后调用 figure.update_influence() 保证影响力一致。
+        """
+        for fid, snap in snapshots.items():
+            figure = self._members.get(fid)
+            if figure is None:
+                continue
+            figure.wealth = snap["wealth"]
+            figure.popularity = snap["popularity"]
+            # 用公开方法重新计算影响力
+            figure.update_influence()
+        self.log_event(
+            f"restore_campaign_figures: restored {len(snapshots)} figures from snapshot",
+            level=logging.DEBUG
+        )
 
     # 广场阶段玩家操作
     def add_forum_action(self, category: str, data) -> None:
@@ -510,7 +657,10 @@ class GameState:
             "_population_pending": {
                 "campaigns": self._population_pending["campaigns"].copy(),
                 "votes": self._population_pending["votes"].copy(),
+                "committed_batches": list(self._population_pending["committed_batches"]),
             },
+            # WP-02a v3: 按 player_id 完成状态（runtime guard 不序列化）
+            "_batch_completed_by_player": self._batch_completed_by_player.copy(),
             # Phase 2 新增字段：curia、forum、senate
             "_curia": self._curia.to_dict() if self._curia else None,
             "_forum_pending": self.get_forum_pending(),
@@ -602,13 +752,29 @@ class GameState:
         self._turn_order = data.get("_turn_order", []).copy()
         self._population_pending = data.get("_population_pending", {
             "campaigns": [],
-            "votes": []
+            "votes": [],
+            "committed_batches": set(),
         })
         # 确保结构完整
         if "campaigns" not in self._population_pending:
             self._population_pending["campaigns"] = []
         if "votes" not in self._population_pending:
             self._population_pending["votes"] = []
+        if "committed_batches" not in self._population_pending:
+            self._population_pending["committed_batches"] = set()
+        elif isinstance(self._population_pending["committed_batches"], list):
+            self._population_pending["committed_batches"] = set(
+                self._population_pending["committed_batches"]
+            )
+
+        # WP-02a v3: 按 player_id 完成状态（runtime guard 不序列化）
+        raw_bcp = data.get("_batch_completed_by_player", {})
+        self._batch_completed_by_player = {}
+        for pid, val in raw_bcp.items():
+            if isinstance(val, bool):
+                self._batch_completed_by_player[pid] = val
+        # guard 永远是全新的 RLock（不持久化）
+        self._batch_guard_lock = threading.RLock()
 
         # Phase 2 新增：恢复 curia
         if data.get("_curia"):
@@ -725,8 +891,11 @@ class GameState:
         }
         instance._population_pending = {
             "campaigns": [],
-            "votes": []
+            "votes": [],
+            "committed_batches": set(),
         }
+        instance._batch_completed_by_player = {}
+        instance._batch_guard_lock = threading.RLock()
         instance._pending_land_sale_quota = 0
         instance._senate_pending = {
             "proposals": [],

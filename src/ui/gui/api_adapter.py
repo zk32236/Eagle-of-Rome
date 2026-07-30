@@ -89,6 +89,13 @@ class GuiApiAdapter:
             self._state, player_id, figure_id, amount
         )
 
+    def batch_campaign(self, player_id: str, entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+        from src.api import population_api
+        return self.call(
+            population_api.batch_campaign,
+            self._state, player_id, entries
+        )
+
     def vote(self, player_id: str, office: str, figure_id: int) -> Dict[str, Any]:
         from src.api import population_api
         return self.call(

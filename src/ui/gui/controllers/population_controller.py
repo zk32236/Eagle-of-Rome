@@ -50,7 +50,10 @@ class PopulationController(QObject):
 
     @Slot(int, int, result=dict)
     def confirmCampaign(self, figure_id: int, amount: int) -> dict:
-        """确认举办庆典"""
+        """确认举办庆典
+        DEPRECATED — 单条目庆典赞助。新代码请使用 doBatchCampaign()。
+        保留用于 CLI 手动操作和测试兼容，但 GUI 不得通过此入口提交。
+        """
         return self._store.doCampaign(figure_id, amount)
 
     # -----------------------------------------------------------------------

@@ -654,10 +654,21 @@ class GuiSessionStore(QObject):
     # -----------------------------------------------------------------------
     @Slot(int, int, result=dict)
     def doCampaign(self, figure_id: int, amount: int) -> dict:
-        """举办庆典"""
+        """举办庆典（单条目，DEPRECATED — 新代码请使用 doBatchCampaign）"""
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
         feedback = self._adapter.campaign(self._viewer_id, figure_id, amount)
+        self._raise_feedback(feedback)
+        if feedback.get("success"):
+            self._refresh_population_view()
+        return feedback
+
+    @Slot(list, result=dict)
+    def doBatchCampaign(self, entries: list) -> dict:
+        """批量庆典赞助——原子提交。entries = [{"figure_id": int, "amount": int}, ...]"""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.batch_campaign(self._viewer_id, entries)
         self._raise_feedback(feedback)
         if feedback.get("success"):
             self._refresh_population_view()

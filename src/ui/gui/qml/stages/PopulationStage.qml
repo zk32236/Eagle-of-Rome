@@ -452,18 +452,18 @@ Rectangle {
                                 onEntered: campaignButton.hovered = true
                                 onExited: campaignButton.hovered = false
                                 onClicked: {
-                                var ok = true
+                                var entries = []
                                 for (var i = 0; i < campaignRepeater.count; i++) {
                                     var item = campaignRepeater.itemAt(i)
                                     if (item && item.amount > 0) {
-                                        var result = sessionStore.doCampaign(item.figureId, item.amount)
-                                        if (!result.success) {
-                                            ok = false
-                                            break
-                                        }
+                                        entries.push({"figure_id": item.figureId, "amount": item.amount})
                                     }
                                 }
-                                if (!ok) {
+                                if (entries.length === 0) {
+                                    return
+                                }
+                                var result = sessionStore.doBatchCampaign(entries)
+                                if (!result.success) {
                                     root.forceActiveFocus()
                                 }
                             }
