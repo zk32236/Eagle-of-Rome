@@ -145,12 +145,47 @@ session_api, gui_query_api
   - `results.events_cleared` — 事件清除标记
 - **QML 展示：** `ResolutionStage.qml` summaryPanel 底部三个只读行（胜利条件 / 军团恢复 / 关键事件）
 
-## 7. 版本日志
+## 7. population_api 新增接口 (WP-02b Vote Batch v2.1)
+
+### 7.1 `population_api.batch_vote(state: GameState, player_id: str, entries: list) -> dict`
+- **用途:** 人口阶段投票批量原子提交（取代逐项 doVote）
+- **内部委托:** `population_service.check_and_commit_vote()` → GameState 事务 API
+- **entries 格式 (v2.1):** `[{"office": str, "figure_id": int}]`；office=合法公职名；figure_id=0=弃权(ABSTAIN, FC-03)
+- **v2.1 变更:** 移除 choice 字段；新增 office 字段（必填）；移除 inline resolve_election（FC-09）
+- **返回:** `api_response(success, message, data={vote_count, offices_voted, already_committed, retryable}, errors=[])`
+- **幂等 (FC-06):** signature = `(player_id, frozenset((office, figure_id) for each entry))`；同签名重复 → `already_committed=true, vote_count=0`
+- **重入/并发 (FC-07):** 同线程重入 → BUSY；并发 → 一个 ACQUIRED 其余 BUSY；guard 使用 threading.Lock（非可重入）
+- **事务:** snapshot → write (via record_population_vote) → marker → completion；异常完整回滚 + guard 释放
+- **前置条件 (FC-01):** batch 必须恰好包含 5 条 entry（每 office 一条）；空/部分 → structured failure, zero write
+- **重复 office (FC-04):** 同批重复 → DUPLICATE_OFFICE structured failure, zero write
+- **结算 (FC-09):** 由 resolve_population_slice() 在所有玩家完成后统一触发；batch_vote 内不触发
+- **调用方:** CLI `phase_population._vote_all()`；旧 GUI `sessionStore.batchVote(entries)` → `api_adapter.batch_vote()` 仅保留兼容，PopulationStage v3.0 正式路径见 §7.3
+
+### 7.2 `session_api.resolve_population_slice(state: GameState) -> dict`
+- **用途:** 人口阶段选举结算统一触发（FC-09 G5-R1）
+- **前置条件:** 所有人类玩家完成投票（AI 玩家自动完成）
+- **未完成:** structured failure (code=VOTE_NOT_ALL_COMPLETE), zero phase result, zero office change
+- **完成:** 调用 resolve_election() → 记录 phase result → 返回 election_results
+
+### 7.3 `session_api.submit_population_votes(state, player_id, selected_by_office) -> dict`（WP-02b v3.0）
+
+- **正式 GUI 调用链:** `PopulationStage.qml submitPopulationVotes(selectedVotes)` → `GuiSessionStore.submitPopulationVotes()` → `api_adapter.submit_population_votes()` → 本用例。
+- **输入:** `selected_by_office` 为 0～5 个选择的 map；key 只能是固定五 office，value 必须是严格正整数。显式 `0`、`null`、`bool`、负数与未知 office 返回 structured failure、zero write。
+- **FC-03 规范化:** Session 按 `consul → censor → praetor → quaestor → tribune` 固定顺序生成恰五条 backend entry；QML 缺失 key 在此物化为 `figure_id=0`。Backend `batch_vote()` 的五条/完整 office 契约不放松。
+- **成功编排:** batch commit → next-player；仍有未完成人类玩家返回 `data.status=awaiting_players`、`awaiting_player_id`、`resolved=false`；全部人类玩家完成时仅调用 `resolve_population_slice()`，返回 `data.status=resolved`、`resolved=true` 与 `election_results`。
+- **失败边界:** `batch_vote()` 失败不 handoff、不 resolve；Adapter/Store 不补 office、不物化 0、不判断全员、不直接调用 `resolve_election()`。
+- **FC-06/07 保持:** backend signature 仍为 `(player_id, frozenset((office, figure_id) ...))`，guard 仍使用 `threading.Lock`；GUI submitting 仅防重复交互，不替代二者。
+
+## 8. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.7 | 2026-08-01 | WP-02b G5-R1: §7 更新至 v2.1（{office, figure_id} DTO, 无 choice, 无 inline resolution, Lock 非可重入, FC-09 前置条件, resolve_population_slice 结算入口）；新增 §7.2 |
+| v1.6 | 2026-07-31 | WP-02b: 新增 population_api.batch_vote() 批量投票原子提交接口 (§7) |
 | v1.5 | 2026-07-27 | S2: 新增 resolution_api.execute_resolution 共享用例 + ResolutionResultDTO + ResolutionStage 展示区 + CombatStage 颜色补丁 |
 | v1.4 | 2026-07-26 | 新增 population_api.convert_battlefield_commanders / senate_api.auto_vote / GameState.check_victory_conditions（Wave-04 Finale） |
 | v1.3 | 2026-07-26 | 新增 senate_api assign_governors / process_war_takeover + war_system 引用（Wave-03） |
 | v1.2 | 2026-07-26 | 新增 check_province_unrest / execute_land_acts API + 调用链 |
 | v1.1 | 2026-07-25 | 新增 generate_figures/generate_contracts API + 调用链说明 |
 | v1.0 | 2026-07-17 | 初版 |
+| v1.8 | 2026-08-01 | EOR20260801-02 B2 Pilot (DA ATTEMPT-1): §7.1 FC-06 signature 从 tuple(sorted(...)) 修正为 frozenset(...)（对齐 Contract Freeze Table FC-06 冻结值）；CI-1 Frozen Value Preservation |
+| v1.9 | 2026-08-02 | WP-02b v3.0: 新增 §7.3 Session selection-map 规范化、awaiting_players/resolved 响应与 PopulationStage → Store → Adapter → Session 正式调用链；旧 GUI batchVote 标记为兼容路径 |

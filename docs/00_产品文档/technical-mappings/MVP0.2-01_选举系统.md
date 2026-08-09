@@ -59,10 +59,23 @@ src/
 ```python
 {
     "campaigns": List[Tuple[str, int, int]],       # [(player_id, figure_id, amount)]
-    "votes":     List[Tuple[str, str, int]],       # [(player_id, office, figure_id)]
-    "committed_batches": Set[str],                 # [新增] 已提交的批量批次签名（幂等守卫）
+    "votes":     List[Tuple[str, str, int]],        # [(player_id, office, figure_id)] v2.1: 移除 choice, 改为 3-tuple
+    "committed_batches": Set[str],                 # 已提交的 campaign 批量批次签名（幂等守卫）
+    "committed_vote_batches": Set[str],            # [WP-02b v2.1] 已提交的 vote 批量批次签名（幂等守卫）
 }
 ```
+
+### ABSTAIN Sentinel（WP-02b v2.1, FC-03）
+
+- **唯一表达：** `figure_id = 0` 表示弃权
+- ABSTAIN entry 持久化写入 vote records（参与 `len(my_votes)` 计算）
+- 在 `resolve_election()` 中，`fig_id == 0` 的条目跳过不计入加权计票
+- 已移除：`choice` 字段（FOR/AGAINST/ABSTAIN）、`figure_id = -1`、省略 entry、`null`
+
+### 按玩家投票完成状态（WP-02b）
+
+- `_vote_completed_by_player: Dict[str, bool]` — 与 campaign 的 `_batch_completed_by_player` 独立隔离
+- p1 完成不推进 p2；p2 失败不回退 p1
 
 ## 5. 配置项
 
@@ -72,6 +85,57 @@ src/
 | `testing.auto_population` | false | 自动模式 |
 | `political_rules.min_ages.*` | 30-42 | 各官职最低年龄 |
 | `political_rules.office_cooldowns.*` | 2-10 | 各官职冷却年数 |
+
+## 7. v2.1 投票批量事务调用链 (WP-02b v2.1)
+
+### 7.1 `batch_vote()` 调用链
+
+```text
+population_api.batch_vote(state, player_id, entries)
+  → DTO 校验: _validate_vote_json_container / _validate_vote_dto_types
+  → Batch 完整性校验 (FC-01): 恰好 5 office, 重复检查 (FC-04)
+  → Entry DTO: {office: str, figure_id: int}, figure_id=0=ABSTAIN (FC-03)
+  → population_service.check_and_commit_vote(state, player_id, validated_entries, signature)
+      ├─ Phase 1: 幂等检查 → state.has_committed_vote_batch(sig)  (FC-06)
+      ├─ Phase 2: Lock guard → state.try_acquire_batch_guard()  (FC-07)
+      ├─ Phase 3: 快照 → state.snapshot_vote_state()
+      ├─ Phase 4: 写入投票记录 → state.record_population_vote(player_id, office, figure_id)
+      │             v2.1: 通过 record_population_vote() 写入，修复 office="" bug
+      ├─ Phase 5: 写入 committed marker → state.record_committed_vote_batch(sig)  (FC-06)
+      ├─ Phase 6: 设置 player completion → state.set_vote_completed(player_id, True)  (FC-05)
+      ├─ 异常回滚: restore_vote_state / remove_committed_vote_batch / set_vote_completed(original)
+      └─ finally: state.release_batch_guard()
+```
+
+> v2.1 关键变更：Phase 7（inline resolve_election）已移除。结算由 `resolve_population_slice()` 在所有玩家完成后统一触发（FC-09）。
+
+### 7.2 Entry DTO v2.1
+
+| 操作 | 方法 |
+|------|------|
+| 设置 | `set_vote_completed(player_id, value)` |
+| 读取 | `get_vote_completed(player_id) → bool` |
+| 清理 | `clear_population_pending()` 同步清空 |
+
+### 7.3 GUI/Session 投票提交调用链（WP-02b v3.0）
+
+```text
+PopulationStage.qml selectedVotes（0～5 个已选 office key）
+  → sessionStore.submitPopulationVotes(selectedVotes)
+  → api_adapter.submit_population_votes(player_id, selected_by_office)
+  → session_api.submit_population_votes(state, player_id, selected_by_office)
+      ├─ 校验 selection map：仅允许已知 office；value 为严格正整数
+      ├─ 按固定五 office 顺序物化 5 条 entry；缺 key → figure_id=0
+      ├─ population_api.batch_vote(...)（后端 FC-01 五条契约不放松）
+      ├─ batch 失败 → 零 handoff、零 resolve
+      ├─ 尚有未完成人类玩家 → handoff；status=awaiting_players
+      └─ 全部人类玩家完成 → resolve_population_slice()；status=resolved
+```
+
+- GUI 不提供显式弃权控件；`figure_id=0` 只由 Session 对缺失 key 物化，QML 不传 `0`、`null`、`choice` 或部分 backend DTO。
+- QML 选择使用 clone-and-reassign 更新 `selectedVotes`，确保属性通知；Store 以 `populationVoteSubmitting` 防重复提交并在 handoff/resolved 后刷新权威视图。
+- 庆典赞助区与投票区使用 `ScrollBar.AsNeeded` 保证内容溢出时可达；这些 UI 行为不替代 backend 幂等、`frozenset` 签名或 `threading.Lock` guard。
+- FC-09 保持：GUI、Store batch 层、Adapter batch 层与 Core 均不直接结算；Session 只通过 `resolve_population_slice()` 进入选举结算。
 
 ## 6. v3 事务/持久化/Guard 调用链 (WP-02a ATTEMPT-3)
 
@@ -87,7 +151,7 @@ population_api.batch_campaign(state, player_id, entries)
       ├─ Phase 1: 幂等检查
       │   └─ state.has_committed_batch(sig) → ALREADY_COMMITTED (零写入 success)
       │
-      ├─ Phase 2: 运行时 RLock guard
+      ├─ Phase 2: 运行时 Lock guard
       │   └─ state.try_acquire_batch_guard() → BATCH_BUSY (结构化 retryable failure)
       │
       ├─ Phase 2b: getter 安全读取 (AC-05b)
@@ -136,8 +200,8 @@ population_api.batch_campaign(state, player_id, entries)
 
 | 属性 | 类型 | 序列化 | 说明 |
 |:-----|:-----|:------:|:-----|
-| `_batch_guard_lock` | `threading.RLock` | ❌ | 运行时互斥，`to_dict()` 不输出；`load_from_dict()` 始终创建新 RLock |
-| `_batch_commit_in_progress` | `bool` | ❌ | 已移除，由 RLock 的 `acquire()`/`release()` 代替 |
+| `_batch_guard_lock` | `threading.Lock` | ❌ | 运行时互斥，`to_dict()` 不输出；`load_from_dict()` 始终创建新 Lock |
+| `_batch_commit_in_progress` | `bool` | ❌ | 已移除，由 Lock 的 `acquire()`/`release()` 代替 |
 
 ### 6.4 Save/Load 行为
 
@@ -148,7 +212,7 @@ to_dict():
 
 load_from_dict(data):
   _batch_completed_by_player = data.get("_batch_completed_by_player", {})
-  _batch_guard_lock = threading.RLock()  # 全新实例，始终未锁定
+  _batch_guard_lock = threading.Lock()  # 全新实例，始终未锁定
 ```
 
 ### 6.5 故障语义
@@ -161,11 +225,16 @@ load_from_dict(data):
 | 非法 DTO | `success=False, failed_entries=[{reason, index, figure_id, amount}]` |
 | 任意写入异常 | 完整回滚 + guard 释放 + 结构化 failure |
 
-## 7. 版本日志
+## 8. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.7 | 2026-08-02 | DA-Exec (WP-02b v3.0) | 新增 §7.3 GUI selection map → Session 固定五条 → handoff/resolve_population_slice 单一调用链；明确无显式弃权控件、clone-and-reassign、submitting 与双区 AsNeeded scrollbar |
+| v1.6 | 2026-08-01 | DA-Exec (WP-02b v2.1) | v2.1 返工：移除 choice 枚举，vote 记录改为 3-tuple；ABSTAIN=figure_id=0 (FC-03)；修复 office="" bug（通过 record_population_vote 写入）；移除 inline resolve_election（FC-09）；新增 FC-01 batch 完整性、FC-04 重复 office 拒绝；更新 §4, §7 |
+| v1.5 | 2026-07-31 | DA-Exec (WP-02b V4 Pro) | 新增 batch_vote() 批量投票原子提交 + ABSTAIN 枚举 + vote completion 按玩家隔离 + check_and_commit_vote() 事务调用链 (§4, §7) |
 | v1.4 | 2026-07-30 | DA-Exec (WP-02a ATTEMPT-3) | 补齐 v3 事务/completion/persistence/guard/save-load/check_and_commit() 调用链 (§6) |
 | v1.3 | 2026-07-30 | DA-Exec (WP-02a) | 新增 `batch_campaign()` 批量原子提交；新增 `committed_batches` 幂等守卫字段 |
 | v1.2 | 2026-07-17 | Audit Sub-Agent | 行数修正 |
 | v1.0 | 2026-07-13 | 初版 | — |
+| v1.6 | 2026-08-01 | DA-Exec (EOR20260801-02 B2 Pilot ATTEMPT-1) | FC-07 冻结值对齐：全文档 RLock → threading.Lock（§5 L100, §6.2 L134, §6.3 表 L183-184, §6.4 序列化 L195）；CI-1 Frozen Value Preservation |
+| v1.8 | 2026-08-09 | DA-Exec (AC-12 M2-BUG3 R2) | §7 实现落地：`set_vote_completed`/`get_vote_completed` API 从设计目标→磁盘实现（game_state.py）；`resolve_population_slice` 增加 once guard（get_phase_result 防重复结算，保全两阶段模式）；`doResolveElection` 调用链切换到 `resolve_population_slice`（FC-09 满足）；turn_order 保持全序（含 AI）供 drain 遍历 |

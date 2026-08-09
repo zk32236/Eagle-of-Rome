@@ -157,17 +157,10 @@ Rectangle {
                     type: "primary"
                     enabled: sessionStore.isCurrentPlayer && sessionStore.canVote
                     onClicked: {
-                        // 简化：使用当前选中官职的第一个候选人
-                        var office = ["consul", "censor", "praetor", "quaestor", "tribune"][voteTab.currentIndex]
-                        var cands = (sessionStore.populationCandidates || []).filter(function(c) { return c.office === office })
-                        if (cands.length > 0) {
-                            var result = sessionStore.doVote(office, cands[0].id)
-                            if (result.success) {
-                                showFeedback("success", result.message)
-                            } else {
-                                showFeedback("error", result.message)
-                            }
-                        }
+                        // ⚠️ DEPRECATED: VoteView.qml 未被任何 Stage 加载。
+                        // 投票请使用 PopulationStage 的 batchVote() 入口（WP-02b AC-07）。
+                        // doVote() 逐项调用已按 AC-07 移除。
+                        showFeedback("error", "VoteView is deprecated. Use PopulationStage batchVote.")
                     }
                 }
             }

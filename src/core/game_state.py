@@ -113,10 +113,12 @@ class GameState:
             "campaigns": [],  # 每个元素为 (player_id, figure_id, amount)
             "votes": [],  # 每个元素为 (player_id, office, figure_id)
             "committed_batches": set(),  # 已提交的批次签名（幂等守卫）
+            "committed_vote_batches": set(),
         }
         # WP-02a v3: runtime guard (不持久化) + 按 player_id 完成状态
-        self._batch_guard_lock = threading.RLock()  # runtime 互斥，不序列化
+        self._batch_guard_lock = threading.Lock()  # runtime 互斥，不序列化
         self._batch_completed_by_player: Dict[str, bool] = {}  # player_id → completed
+        self._vote_completed_by_player: Dict[str, bool] = {}
 
         # 元老院阶段临时存储
         self._pending_land_sale_quota: int = 0  # 新增：贵族买地法案待售公地数量
@@ -177,9 +179,11 @@ class GameState:
             "campaigns": [],
             "votes": [],
             "committed_batches": set(),
+            "committed_vote_batches": set(),
         }
         self._batch_completed_by_player.clear()
-        self._batch_guard_lock = threading.RLock()  # fresh runtime lock, 不序列化
+        self._vote_completed_by_player.clear()
+        self._batch_guard_lock = threading.Lock()  # fresh runtime lock, 不序列化
         self._pending_land_sale_quota: int = 0  # 新增：贵族买地法案待售公地数量
         self.clear_senate_pending()
 
@@ -284,6 +288,7 @@ class GameState:
             "campaigns": self.get_population_campaigns(),
             "votes": self.get_population_votes(),
             "committed_batches": self.get_committed_batches(),
+            "committed_vote_batches": self.get_committed_vote_batches(),
         }
 
     def clear_population_pending(self) -> None:
@@ -292,8 +297,10 @@ class GameState:
             "campaigns": [],
             "votes": [],
             "committed_batches": set(),
+            "committed_vote_batches": set(),
         }
         self._batch_completed_by_player.clear()
+        self._vote_completed_by_player.clear()
         # 注意：_batch_guard_lock 不在此清空——runtime guard 绝不持久化
 
     def record_committed_batch(self, signature: str) -> None:
@@ -316,6 +323,30 @@ class GameState:
         """返回已提交批次签名副本。"""
         return self._population_pending["committed_batches"].copy()
 
+    def has_committed_vote_batch(self, signature) -> bool:
+        return signature in self._population_pending["committed_vote_batches"]
+
+    def record_committed_vote_batch(self, signature) -> None:
+        self._population_pending["committed_vote_batches"].add(signature)
+
+    def remove_committed_vote_batch(self, signature) -> None:
+        self._population_pending["committed_vote_batches"].discard(signature)
+
+    def get_committed_vote_batches(self) -> set:
+        return self._population_pending["committed_vote_batches"].copy()
+
+    def snapshot_vote_state(self) -> list:
+        return self.get_population_votes()
+
+    def restore_vote_state(self, snapshot: list) -> None:
+        self._population_pending["votes"] = list(snapshot)
+
+    def set_vote_completed(self, player_id: str, value: bool) -> None:
+        self._vote_completed_by_player[player_id] = bool(value)
+
+    def get_vote_completed(self, player_id: str) -> bool:
+        return self._vote_completed_by_player.get(player_id, False)
+
     def truncate_population_campaigns(self, target_len: int) -> None:
         """截断 campaign 记录到指定长度（回滚时调用）。"""
         campaigns = self._population_pending["campaigns"]
@@ -326,10 +357,10 @@ class GameState:
 
     # ────────── WP-02a v3: runtime guard + 按玩家完成状态 ──────────
 
-    def try_acquire_batch_guard(self) -> bool:
+    def try_acquire_batch_guard(self, owner: str = "") -> bool:
         """
         尝试获取运行时互斥守卫（不可序列化）。
-        使用 threading.RLock 保证同一线程可重入。
+        使用 threading.Lock 保证包括同一线程在内的并发提交均返回 BUSY。
         返回 True 表示获取成功，False 表示 BUSY（其他提交进行中）。
 
         注意：幂等性检查不由本方法负责，由 caller 在获取 guard 前完成。
@@ -658,9 +689,13 @@ class GameState:
                 "campaigns": self._population_pending["campaigns"].copy(),
                 "votes": self._population_pending["votes"].copy(),
                 "committed_batches": list(self._population_pending["committed_batches"]),
+                "committed_vote_batches": list(
+                    self._population_pending["committed_vote_batches"]
+                ),
             },
             # WP-02a v3: 按 player_id 完成状态（runtime guard 不序列化）
             "_batch_completed_by_player": self._batch_completed_by_player.copy(),
+            "_vote_completed_by_player": self._vote_completed_by_player.copy(),
             # Phase 2 新增字段：curia、forum、senate
             "_curia": self._curia.to_dict() if self._curia else None,
             "_forum_pending": self.get_forum_pending(),
@@ -754,6 +789,7 @@ class GameState:
             "campaigns": [],
             "votes": [],
             "committed_batches": set(),
+            "committed_vote_batches": set(),
         })
         # 确保结构完整
         if "campaigns" not in self._population_pending:
@@ -766,6 +802,9 @@ class GameState:
             self._population_pending["committed_batches"] = set(
                 self._population_pending["committed_batches"]
             )
+        self._population_pending["committed_vote_batches"] = set(
+            self._population_pending.get("committed_vote_batches", [])
+        )
 
         # WP-02a v3: 按 player_id 完成状态（runtime guard 不序列化）
         raw_bcp = data.get("_batch_completed_by_player", {})
@@ -773,8 +812,9 @@ class GameState:
         for pid, val in raw_bcp.items():
             if isinstance(val, bool):
                 self._batch_completed_by_player[pid] = val
-        # guard 永远是全新的 RLock（不持久化）
-        self._batch_guard_lock = threading.RLock()
+        self._vote_completed_by_player = dict(data.get("_vote_completed_by_player", {}))
+        # guard 永远是全新的 Lock（不持久化）
+        self._batch_guard_lock = threading.Lock()
 
         # Phase 2 新增：恢复 curia
         if data.get("_curia"):
@@ -893,9 +933,11 @@ class GameState:
             "campaigns": [],
             "votes": [],
             "committed_batches": set(),
+            "committed_vote_batches": set(),
         }
         instance._batch_completed_by_player = {}
-        instance._batch_guard_lock = threading.RLock()
+        instance._vote_completed_by_player = {}
+        instance._batch_guard_lock = threading.Lock()
         instance._pending_land_sale_quota = 0
         instance._senate_pending = {
             "proposals": [],

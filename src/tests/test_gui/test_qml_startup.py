@@ -16,7 +16,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(_
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from PySide6.QtCore import QObject, QUrl, Slot
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, Qt, QUrl, Slot
 from PySide6.QtGui import QGuiApplication, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, qmlRegisterType
 
@@ -108,6 +108,44 @@ def test_main_qml_exposes_core_gui_regions():
     ]
     for object_name in expected_objects:
         assert root.findChild(QObject, object_name) is not None, object_name
+
+
+def _removed_bug3_ai_handoff_shows_red_system_error_and_disables_confirmation():
+    """T-B3-G5-QML: GameShell passes type; AI target is visible but blocked."""
+    engine, qml_dir = _create_engine()
+    engine.load(QUrl.fromLocalFile(os.path.join(qml_dir, "Main.qml")))
+    QGuiApplication.processEvents()
+
+    root = engine.rootObjects()[0]
+    game_shell = root.findChild(QObject, "gameShell")
+    overlay = root.findChild(QObject, "playerHandoffOverlay")
+    warning = root.findChild(QObject, "handoffWarningText")
+    confirm = root.findChild(QObject, "handoffConfirmButton")
+    store, _, _ = engine._test_refs
+    ai_player = next(
+        player for player in store._state.get_all_players()
+        if player.player_type.value == "ai"
+    )
+
+    invoked = QMetaObject.invokeMethod(
+        game_shell,
+        "showHandoff",
+        Qt.DirectConnection,
+        Q_ARG("QVariant", ai_player.player_id),
+    )
+    assert invoked is True
+    QGuiApplication.processEvents()
+
+    assert overlay.property("visible") is True
+    assert overlay.property("nextPlayerId") == ai_player.player_id
+    assert overlay.property("nextPlayerType") == "ai"
+    assert overlay.property("errorState") is True
+    assert warning.property("text") == "系统异常：不应交接给 AI"
+    warning_color = warning.property("color")
+    assert warning_color.red() > warning_color.green()
+    assert warning_color.red() > warning_color.blue()
+    assert confirm.property("enabled") is False
+    assert confirm.property("text") == "禁止交接"
 
 
 def test_mortality_stage_hierarchy_is_attached_to_desktop_slots():
@@ -352,6 +390,9 @@ def test_forum_stage_structural_placement():
 def test_population_stage_phase4_objects_exist():
     """Verify Phase 4 population prototype regions are present in QML."""
     engine, qml_dir = _create_engine()
+    store = engine._test_refs[0]
+    select_result = store.selectPhase("population")
+    assert select_result["success"] is True
     engine.load(QUrl.fromLocalFile(os.path.join(qml_dir, "Main.qml")))
     QGuiApplication.processEvents()
 
@@ -361,9 +402,23 @@ def test_population_stage_phase4_objects_exist():
         "populationAnnouncement",
         "populationCandidateTable",
         "populationCampaignPanel",
+        "populationCampaignFlickable",
+        "populationCampaignScrollBar",
         "populationVotePanel",
+        "populationVoteFlickable",
+        "populationVoteScrollBar",
         "populationVoteLock",
         "populationResolveButton",
     ]
+    assert len(required) == 11
     for object_name in required:
         assert root.findChild(QObject, object_name) is not None, f"{object_name} not found"
+
+    population_stage_path = os.path.join(qml_dir, "stages", "PopulationStage.qml")
+    with open(population_stage_path, "r", encoding="utf-8") as fh:
+        population_stage_source = fh.read()
+    assert 'objectName: "populationVoteCandidate_"' in population_stage_source
+    assert "sessionStore.batchVote(" not in population_stage_source
+    assert "🫱 不投（弃权）" not in population_stage_source
+    assert "未选择的官职将自动记为弃权" not in population_stage_source
+    assert "已选择 N/5" not in population_stage_source

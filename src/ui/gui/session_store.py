@@ -42,6 +42,7 @@ class GuiSessionStore(QObject):
     phaseChanged = Signal()
     feedbackRaised = Signal(str, str)  # type, message
     handoffRequired = Signal(str)  # next_player_id
+    populationVoteSubmittingChanged = Signal()
 
     def __init__(self, state: GameState, parent=None):
         super().__init__(parent)
@@ -51,6 +52,7 @@ class GuiSessionStore(QObject):
         # 缓存的快照数据（只含 DTO）
         self._snapshot: Dict[str, Any] = {}
         self._population_view: Dict[str, Any] = {}
+        self._population_vote_submitting: bool = False
         self._mortality_view: Dict[str, Any] = {}
         self._senate_view: Dict[str, Any] = {}
         self._revenue_view: Dict[str, Any] = {}
@@ -231,6 +233,10 @@ class GuiSessionStore(QObject):
     @Property(list, notify=populationViewChanged)
     def populationInfluenceAfter(self) -> List[Dict[str, Any]]:
         return self._population_view.get("faction_influence_after", [])
+
+    @Property(bool, notify=populationVoteSubmittingChanged)
+    def populationVoteSubmitting(self) -> bool:
+        return self._population_vote_submitting
 
     @Property(dict, notify=populationViewChanged)
     def myVotes(self) -> Dict[str, int]:
@@ -685,6 +691,34 @@ class GuiSessionStore(QObject):
             self._refresh_population_view()
         return feedback
 
+    @Slot(dict, result=dict)
+    def submitPopulationVotes(self, selections: dict) -> dict:
+        """WP-02b formal QML entry for fixed-five population voting."""
+        if not self._viewer_id:
+            return self._feedback(False, "Not initialized", "error")
+        if self._population_vote_submitting:
+            return self._feedback(False, "投票正在提交，请稍候", "warning")
+        self._population_vote_submitting = True
+        self.populationVoteSubmittingChanged.emit()
+        try:
+            feedback = self._adapter.submit_population_votes(self._viewer_id, dict(selections))
+            self._raise_feedback(feedback)
+            if feedback.get("success"):
+                data = feedback.get("data", {}) or {}
+                awaiting = data.get("awaiting_player_id")
+                if awaiting:
+                    self._viewer_id = awaiting
+                    self.handoffRequired.emit(awaiting)
+                self._refresh_snapshot()
+                self._refresh_population_view()
+                self.phaseChanged.emit()
+            else:
+                self._refresh_population_view()
+            return feedback
+        finally:
+            self._population_vote_submitting = False
+            self.populationVoteSubmittingChanged.emit()
+
     @Slot(result=dict)
     def doCompletePlayer(self) -> dict:
         """完成当前玩家操作，切换下一个玩家"""
@@ -990,6 +1024,20 @@ class GuiSessionStore(QObject):
     # -----------------------------------------------------------------------
     # Forum stage Slot — Advance
     # -----------------------------------------------------------------------
+    @Slot(result=dict)
+    def doExecuteForum(self) -> dict:
+        """Execute the forum settlement without advancing the phase."""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.execute_forum(self._viewer_id)
+        if feedback.get("success"):
+            self._forum_result = feedback.get("data", {}) or {}
+            self._refresh_snapshot()
+            self._refresh_forum_view()
+        self._raise_feedback(feedback)
+        self.forumViewChanged.emit()
+        return feedback
+
     @Slot(result=dict)
     def doAdvanceForum(self) -> dict:
         if not self._viewer_id:

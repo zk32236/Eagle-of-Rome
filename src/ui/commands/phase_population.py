@@ -279,6 +279,9 @@ class PopulationCommand(Command):
                         self._vote_all(player_id, player.faction_id)
                     else:
                         self._handle_vote(args)
+                elif cmd == "batchvote":
+                    # WP-02b: 批量投票入口
+                    self._handle_batch_vote(player_id)
                 elif cmd == "investigate":
                     self._handle_investigate(args)
                 else:
@@ -470,6 +473,37 @@ class PopulationCommand(Command):
             return
         result = population_api.vote(self.state, player_id, office, fig_id)
         print(result["message"], flush=True)
+
+    def _handle_batch_vote(self, player_id: str):
+        """WP-02b v2.1: CLI batch_vote 入口。自动收集全部 5 公职的投票选择并批量提交。"""
+        cand_result = population_api.get_candidates(self.state)
+        if not cand_result.get("success"):
+            print("❌ 无法获取候选人列表", flush=True)
+            return
+        candidates_by_office = cand_result.get("data", {})
+        existing_votes = {}
+        for vote in self.state.get_population_votes():
+            if vote[0] == player_id:
+                existing_votes[vote[1]] = vote[2]
+        entries = []
+        for office, cands in candidates_by_office.items():
+            if office in existing_votes:
+                continue
+            if not cands:
+                # 无候选人 → ABSTAIN (FC-03: figure_id=0)
+                entries.append({"office": office, "figure_id": 0})
+            else:
+                best = cands[0]
+                entries.append({"office": office, "figure_id": best["id"]})
+        if not entries:
+            print("没有需要投票的公职", flush=True)
+            return
+        result = population_api.batch_vote(self.state, player_id, entries)
+        if result.get("success"):
+            data = result.get("data", {})
+            print(f"✅ 批量投票成功：{data.get('vote_count', 0)} 票", flush=True)
+        else:
+            print(f"❌ 批量投票失败：{result.get('message', 'unknown error')}", flush=True)
 
     # ---------- 步骤3：公示环节 ----------
     def _handle_step_2(self):

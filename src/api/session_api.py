@@ -280,6 +280,72 @@ def complete_population_player(state: GameState, player_id: str) -> dict:
         return api_response(False, f"Player completion failed: {e}", errors=[str(e)])
 
 
+_POPULATION_OFFICES = ("consul", "censor", "praetor", "quaestor", "tribune")
+
+
+def submit_population_votes(
+    state: GameState,
+    player_id: str,
+    selection_map: Dict[str, int],
+) -> dict:
+    """Submit the WP-02b fixed-five selection map and orchestrate handoff/resolve."""
+    if not isinstance(selection_map, dict):
+        return api_response(False, "Invalid population vote selection", {}, [{
+            "code": "INVALID_SELECTION_MAP",
+            "message": "selection_map must be a dictionary",
+        }])
+
+    invalid = []
+    for office, figure_id in selection_map.items():
+        if office not in _POPULATION_OFFICES:
+            invalid.append(office)
+        elif isinstance(figure_id, bool) or not isinstance(figure_id, int) or figure_id <= 0:
+            invalid.append(office)
+    if invalid:
+        return api_response(False, "Invalid population vote selection", {}, [{
+            "code": "INVALID_SELECTION_MAP",
+            "message": "Explicit selections must use a known office and positive figure id",
+            "fields": invalid,
+        }])
+
+    entries = [
+        {"office": office, "figure_id": selection_map.get(office, 0)}
+        for office in _POPULATION_OFFICES
+    ]
+    batch_result = population_api.batch_vote(state, player_id, entries)
+    if not batch_result.get("success"):
+        return batch_result
+
+    completion = complete_population_player(state, player_id)
+    if not completion.get("success"):
+        return completion
+
+    incomplete_humans = [
+        player.player_id
+        for player in state.get_all_players()
+        if player.player_type.value == "human"
+        and not state.get_vote_completed(player.player_id)
+    ]
+    if incomplete_humans:
+        awaiting = state.get_current_player()
+        return api_response(True, "Awaiting remaining players", {
+            "status": "awaiting_players",
+            "awaiting_player_id": awaiting.player_id if awaiting else incomplete_humans[0],
+            "resolved": False,
+            "election_results": [],
+        })
+
+    resolved = resolve_population_slice(state)
+    if not resolved.get("success"):
+        return resolved
+    return api_response(True, "Population votes submitted and resolved", {
+        "status": "resolved",
+        "awaiting_player_id": None,
+        "resolved": True,
+        "election_results": resolved.get("data", {}).get("election_results", []),
+    })
+
+
 # ---------------------------------------------------------------------------
 # 5. 人口阶段结算（选举结果）
 # ---------------------------------------------------------------------------
@@ -289,7 +355,17 @@ def resolve_population_slice(state: GameState) -> dict:
     结算人口阶段选举。所有玩家完成后调用。
     返回结构化选举结果，供 GUI 消费。
     """
+    if state.get_phase_result("population") is not None:
+        existing = state.get_phase_result("population")
+        return api_response(True, "Population phase already resolved", {
+            "phase_executed": state.is_phase_executed("population"),
+            "election_results": existing.get("election_results", []) if existing else [],
+        })
     try:
+        marker_workflow_started = any(
+            state.get_vote_completed(player.player_id)
+            for player in state.get_all_players()
+        )
         influence_before = _faction_influence_rows(state)
         # 先让 AI 自动完成（如果还有未完成的玩家）
         from src.ui.processors.auto_player_processor import AutoPlayerProcessor
@@ -317,6 +393,19 @@ def resolve_population_slice(state: GameState) -> dict:
                 state.next_player()
             else:
                 break
+
+        if marker_workflow_started:
+            incomplete = [
+                player.player_id for player in state.get_all_players()
+                if not state.get_vote_completed(player.player_id)
+            ]
+            if incomplete:
+                return api_response(False, "Not all population votes are complete", {
+                    "incomplete_players": incomplete,
+                }, [{
+                    "code": "VOTE_NOT_ALL_COMPLETE",
+                    "message": "All players must complete voting before resolution",
+                }])
 
         cand_result = population_api.get_candidates(state)
         candidates_before_resolve = cand_result.get("data", {}) if cand_result.get("success") else {}

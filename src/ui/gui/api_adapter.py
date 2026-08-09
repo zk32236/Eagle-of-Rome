@@ -115,6 +115,11 @@ class GuiApiAdapter:
         from src.api import session_api
         return self.call(session_api.advance_population_phase, self._state, player_id)
 
+    def submit_population_votes(self, player_id: str, selections: Dict[str, int]) -> Dict[str, Any]:
+        """Delegate the WP-02b fixed-five vote submission use case."""
+        from src.api import session_api
+        return self.call(session_api.submit_population_votes, self._state, player_id, selections)
+
     # -----------------------------------------------------------------------
     # 天命阶段专用 API
     # -----------------------------------------------------------------------
@@ -193,6 +198,10 @@ class GuiApiAdapter:
         return self.call(forum_api.vote_triumph, self._state, player_id, war_id, vote)
 
     def resolve_forum(self) -> Dict[str, Any]:
+        from src.api import forum_api
+        return self.call(forum_api.resolve_forum, self._state)
+
+    def execute_forum(self, player_id: str) -> Dict[str, Any]:
         from src.api import forum_api
         return self.call(forum_api.resolve_forum, self._state)
 

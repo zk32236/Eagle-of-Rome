@@ -359,6 +359,341 @@ def batch_campaign(
     )
 
 
+# ────────── WP-02b v2.1: batch_vote ──────────
+
+VALID_OFFICES = frozenset({"consul", "censor", "praetor", "quaestor", "tribune"})
+
+def batch_vote(
+    state: GameState,
+    player_id: str,
+    entries: List[Dict[str, Any]],
+    bypass_permission: bool = False
+) -> dict:
+    """
+    WP-02b v2.1 批量投票提交——JSON 验证 → DTO 校验 → 业务校验 → Core 原子提交。
+
+    v2.1 变更（vs v1.1）：
+      - Entry DTO: {office: str, figure_id: int}，移除 choice 字段。
+      - ABSTAIN: figure_id=0 (FC-03)。
+      - Batch 完整性：恰好 5 条 entry，每 office 一条 (FC-01)。
+      - 重复 office: structured failure DUPLICATE_OFFICE (FC-04)。
+      - 空 batch: structured failure (FC-01)。
+      - 部分 batch: structured failure (FC-01)。
+      - 不含 resolution（FC-09：由 resolve_population_slice 统一触发）。
+
+    契约：
+    1. JSON 类型验证：entries 必须是 list；拒绝 None/string/dict/int
+    2. DTO 类型校验：office 必须是 str，figure_id 必须是 int（拒绝 bool/float/string）；
+       拒绝 extra fields（如 choice 残留）
+    3. 业务校验：office 合法值；批次完整性（FC-01）；同批无重复 office（FC-04）；
+       figure_id != 0 时 figure 必须存在/存活/是合法候选人（ABSTAIN figure_id=0 跳过）
+    4. 全部合法 → check_and_commit_vote() 原子事务（guard + snapshot + write + rollback）
+    5. BUSY → 结构化 retryable failure
+    6. 幂等 → ALREADY_COMMITTED success
+    """
+    logger = logging.getLogger("EOR-POPULATION")
+
+    state.log_event(
+        f"batch_vote v2.1(entries type={type(entries).__name__}, player_id={player_id})",
+        level=logging.DEBUG
+    )
+
+    # ── 0a. JSON 容器验证（len() / 遍历前） ──
+    json_error = _validate_vote_json_container(entries)
+    if json_error:
+        state.log_event(
+            f"BATCH_VOTE_VALIDATION: JSON container invalid ({json_error[0]['reason']})",
+            level=logging.DEBUG
+        )
+        return api_response(False, "JSON container validation failed", data={
+            "vote_count": 0,
+            "failed_entries": json_error,
+        }, errors=json_error)
+
+    # ── 0b. 空 batch 拒绝（FC-01: empty → structured failure, zero write） ──
+    if not entries:
+        state.log_event(
+            "batch_vote v2.1: empty entries → structured failure (FC-01)",
+            level=logging.DEBUG
+        )
+        return api_response(False, "Empty batch rejected (FC-01)", data={
+            "vote_count": 0,
+        }, errors=[{
+            "code": "INVALID_BATCH",
+            "message": "Batch must contain exactly 5 entries, one per office (FC-01)",
+        }])
+
+    # ── 0c. DTO 类型校验 ──
+    dto_errors = _validate_vote_dto_types(entries)
+    if dto_errors:
+        state.log_event(
+            f"BATCH_VOTE_VALIDATION: DTO type validation failed ({len(dto_errors)} errors)",
+            level=logging.DEBUG
+        )
+        return api_response(False, "DTO type validation failed", data={
+            "vote_count": 0,
+            "failed_entries": dto_errors,
+        }, errors=dto_errors)
+
+    # ── 1. 权限检查 ──
+    bypass = bypass_permission or state.config.get("testing.bypass_player_check", False)
+    if not bypass:
+        if not state.is_current_player(player_id):
+            return api_response(False, i18n.get("error_not_your_turn"))
+
+    player = state.get_player(player_id)
+    if not player:
+        return api_response(False, i18n.get("error_no_current_player"))
+
+    # ── 2. Batch 完整性校验（FC-01: 恰好 5 office，每 office 一条） ──
+    offices_in_batch = set()
+    validated_entries = []
+    batch_errors = []
+
+    for idx, entry in enumerate(entries):
+        office = entry.get("office", "")
+        figure_id = entry.get("figure_id", 0)
+
+        # FC-01: 非法 office 值
+        if office not in VALID_OFFICES:
+            batch_errors.append({
+                "index": idx,
+                "office": office,
+                "figure_id": figure_id,
+                "reason": f"invalid office '{office}'; must be one of {sorted(VALID_OFFICES)}"
+            })
+            continue
+
+        # FC-04: 同批重复 office
+        if office in offices_in_batch:
+            batch_errors.append({
+                "index": idx,
+                "office": office,
+                "figure_id": figure_id,
+                "reason": f"duplicate office '{office}'"
+            })
+            continue
+
+        offices_in_batch.add(office)
+
+        # ABSTAIN (figure_id=0, FC-03): 跳过候选人校验
+        if figure_id == 0:
+            validated_entries.append((office, figure_id))
+            state.log_event(
+                f"BATCH_VOTE_VALIDATION: entry[{idx}] office={office} figure_id=0 (ABSTAIN) | PASS",
+                level=logging.DEBUG
+            )
+            continue
+
+        # figure 存在且存活
+        figure = state.get_member(figure_id)
+        if not figure or figure.is_dead:
+            batch_errors.append({
+                "index": idx,
+                "office": office,
+                "figure_id": figure_id,
+                "reason": "figure not found or dead"
+            })
+            continue
+
+        # figure 是该 office 的合法候选人
+        cand_result = get_candidates(state)
+        candidates = cand_result.get("data", {}) if cand_result.get("success") else {}
+        cand_ids = {c["id"] for c in candidates.get(office, [])}
+        if figure_id not in cand_ids:
+            batch_errors.append({
+                "index": idx,
+                "office": office,
+                "figure_id": figure_id,
+                "reason": f"figure not a candidate for office '{office}'"
+            })
+            continue
+
+        validated_entries.append((office, figure_id))
+        state.log_event(
+            f"BATCH_VOTE_VALIDATION: entry[{idx}] office={office} figure_id={figure_id} | PASS",
+            level=logging.DEBUG
+        )
+
+    # FC-01: 部分 batch 拒绝（缺失 office）
+    if not batch_errors:
+        missing_offices = VALID_OFFICES - offices_in_batch
+        if missing_offices:
+            batch_errors.append({
+                "index": -1,
+                "office": "(batch)",
+                "figure_id": 0,
+                "reason": f"missing offices: {sorted(missing_offices)}; batch must include all 5 offices (FC-01)"
+            })
+
+    # 有错误 → 零写入
+    if batch_errors:
+        code = "DUPLICATE_OFFICE" if any("duplicate office" in e.get("reason", "") for e in batch_errors) else "INVALID_BATCH"
+        state.log_event(
+            f"BATCH_VOTE_SKIP: zero write due to validation failure ({len(batch_errors)} errors, code={code})",
+            level=logging.DEBUG
+        )
+        return api_response(False, "Validation failed, zero writes", data={
+            "vote_count": 0,
+            "failed_entries": batch_errors,
+        }, errors=[{"code": code, "message": e["reason"]} for e in batch_errors])
+
+    # ── 计算批次签名（FC-06 G5-R2: frozen value = (player_id, frozenset((office, figure_id)...))） ──
+    batch_signature = (player_id, frozenset(validated_entries))
+
+    # ── 3. Core 原子提交 ──
+    from src.core.service.population_service import check_and_commit_vote
+    core_result = check_and_commit_vote(
+        state,
+        player_id,
+        validated_entries,
+        batch_signature,
+    )
+
+    if not core_result["success"]:
+        errors = core_result.get("errors", [])
+        is_busy = any(e.get("code") == "BATCH_BUSY" for e in errors)
+        state.log_event(
+            f"BATCH_VOTE_CORE: {'BUSY' if is_busy else 'FAILED'}, errors={errors}",
+            level=logging.WARNING if is_busy else logging.ERROR
+        )
+        data = core_result.get("data", {})
+        return api_response(
+            False,
+            core_result.get("message", "Batch vote failed"),
+            data={
+                "vote_count": 0,
+                "retryable": data.get("retryable", False),
+            },
+            errors=errors,
+        )
+
+    # 幂等成功
+    core_data = core_result.get("data", {})
+    if core_data.get("already_committed"):
+        state.log_event(
+            f"BATCH_VOTE_IDEMPOTENT: already committed (player={player_id})",
+            level=logging.DEBUG
+        )
+        return api_response(
+            True,
+            "Already voted",
+            data={
+                "vote_count": 0,
+                "already_committed": True,
+            }
+        )
+
+    # 正常成功
+    return api_response(
+        True,
+        core_result.get("message", "Votes recorded"),
+        data={
+            "vote_count": core_data.get("vote_count", 0),
+            "offices_voted": core_data.get("offices_voted", []),
+        }
+    )
+
+
+def _validate_vote_json_container(entries: Any) -> List[Dict]:
+    """JSON 容器验证 for batch_vote v2.1。"""
+    if entries is None:
+        return [{"index": -1, "office": "(none)", "figure_id": 0, "reason": "entries is None"}]
+    if isinstance(entries, bool):
+        return [{"index": -1, "office": "(none)", "figure_id": 0, "reason": "entries must be a list, got bool"}]
+    if isinstance(entries, (int, float)):
+        return [{"index": -1, "office": "(none)", "figure_id": 0, "reason": f"entries must be a list, got {type(entries).__name__}"}]
+    if isinstance(entries, str):
+        return [{"index": -1, "office": "(none)", "figure_id": 0, "reason": "entries must be a list, got string"}]
+    if isinstance(entries, dict):
+        return [{"index": -1, "office": "(none)", "figure_id": 0, "reason": "entries must be a list, got dict"}]
+    if not isinstance(entries, list):
+        return [{"index": -1, "office": "(none)", "figure_id": 0, "reason": f"entries must be a list, got {type(entries).__name__}"}]
+    return []
+
+
+def _validate_vote_dto_types(entries: List[Any]) -> List[Dict]:
+    """DTO 类型校验 for batch_vote v2.1 entries: {office, figure_id}。"""
+    errors = []
+
+    if not isinstance(entries, list):
+        return [{"index": -1, "office": "(invalid)", "figure_id": "(invalid)", "reason": "entries must be a list"}]
+
+    for idx, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            errors.append({
+                "index": idx,
+                "office": "(invalid)",
+                "figure_id": "(invalid)",
+                "reason": "entry must be a dict"
+            })
+            continue
+
+        allowed_keys = {"office", "figure_id"}
+        extra_keys = set(entry.keys()) - allowed_keys
+        if extra_keys:
+            errors.append({
+                "index": idx,
+                "office": entry.get("office", "(unknown)"),
+                "figure_id": entry.get("figure_id", "(unknown)"),
+                "reason": f"unexpected fields: {sorted(extra_keys)}"
+            })
+            continue
+
+        # office 字段校验
+        if "office" not in entry:
+            errors.append({
+                "index": idx,
+                "office": "(missing)",
+                "figure_id": entry.get("figure_id", "(unknown)"),
+                "reason": "missing required field 'office'"
+            })
+            continue
+
+        if "figure_id" not in entry:
+            errors.append({
+                "index": idx,
+                "office": entry.get("office", "(unknown)"),
+                "figure_id": "(missing)",
+                "reason": "missing required field 'figure_id'"
+            })
+            continue
+
+        office = entry.get("office")
+        figure_id = entry.get("figure_id")
+
+        if not isinstance(office, str):
+            errors.append({
+                "index": idx,
+                "office": str(office),
+                "figure_id": figure_id,
+                "reason": f"office must be str, got {type(office).__name__}"
+            })
+            continue
+
+        if not isinstance(figure_id, int) or isinstance(figure_id, bool):
+            errors.append({
+                "index": idx,
+                "office": office,
+                "figure_id": figure_id,
+                "reason": f"figure_id must be int, got {type(figure_id).__name__}"
+            })
+            continue
+
+    return errors
+
+
+def _normalize_vote_entries(entries: List[Dict]) -> List[Dict]:
+    """规范化 vote entries v2.1 用于签名计算。按 office 排序。"""
+    normalized = []
+    for entry in entries:
+        normalized.append({
+            "office": str(entry.get("office", "")),
+            "figure_id": int(entry.get("figure_id", 0)),
+        })
+    return sorted(normalized, key=lambda e: e["office"])
+
+
 def _validate_json_container(entries: Any) -> List[Dict]:
     """
     JSON 容器验证：在 len() 或遍历前检查 entries 是否为 list。
@@ -622,6 +957,9 @@ def resolve_election(state: GameState) -> dict:
         office: {c["id"] for c in candidates} for office, candidates in candidates_by_office.items()
     }
     for player_id, office, fig_id in votes:
+        # ABSTAIN skip (FC-03): figure_id=0 不计入加权计票
+        if fig_id == 0:
+            continue
         votes_by_office.setdefault(office, []).append((player_id, fig_id))
 
     # 获取所有存活人物
@@ -681,6 +1019,17 @@ def resolve_election(state: GameState) -> dict:
 
             faction = state.get_faction(winner.faction_id)
             faction_name = faction.name if faction else "无"
+            # ATTEMPT-3 (Owner Option A): per-candidate scores — 来自 L990-998 生产路径
+            candidates_list = []
+            for fig_id, s in sorted(score.items(), key=lambda x: x[1], reverse=True):
+                fig = living_members.get(fig_id)
+                if fig:
+                    candidates_list.append({
+                        "figure_id": fig_id,
+                        "figure_name": fig.get_formal_name(),
+                        "faction_id": fig.faction_id,
+                        "score": s
+                    })
             election_results.append({
                 "office": office,
                 "figure_id": winner.id,
@@ -688,6 +1037,8 @@ def resolve_election(state: GameState) -> dict:
                 "faction_id": winner.faction_id,
                 "faction_name": faction_name,
                 "faction_short_name": faction_name[:3] if faction_name != "无" else "",
+                "score": score.get(winner.id, 0),
+                "candidates": candidates_list,
             })
             results.append(f"      {office.upper()}: {winner.get_formal_name()} ({faction_name})")
             state.log_event(

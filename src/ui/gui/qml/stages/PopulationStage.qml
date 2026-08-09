@@ -74,12 +74,35 @@ Rectangle {
         return 0
     }
 
+    function selectCandidate(office, figureId) {
+        var next = {}
+        var keys = Object.keys(selectedVotes || {})
+        for (var i = 0; i < keys.length; i++) {
+            next[keys[i]] = selectedVotes[keys[i]]
+        }
+        next[office] = figureId
+        root.selectedVotes = next
+    }
+
     function resultForOffice(office) {
         var results = sessionStore.populationElectionResults || []
         for (var i = 0; i < results.length; i++) {
             if (results[i].office === office) return results[i]
         }
         return null
+    }
+
+    function scoreForCandidate(figureId, office) {
+        if (!sessionStore.populationResolved) return undefined
+        var results = sessionStore.populationElectionResults || []
+        for (var i = 0; i < results.length; i++) {
+            if (results[i].office !== office) continue
+            var candidates = results[i].candidates || []
+            for (var j = 0; j < candidates.length; j++) {
+                if (candidates[j].figure_id === figureId) return candidates[j].score
+            }
+        }
+        return undefined
     }
 
     function influenceText(rows) {
@@ -266,9 +289,15 @@ Rectangle {
                                 Repeater {
                                     model: rows
                                     Text {
-                                        text: modelData.name
+                                        text: {
+                                            var name = modelData.name
+                                            if (!sessionStore.populationResolved) return name
+                                            var score = root.scoreForCandidate(modelData.id, modelData.office)
+                                            return score !== undefined ? (name + " · " + score) : name
+                                        }
                                         color: "#1F1A12"
                                         font.pixelSize: 12
+                                        font.bold: sessionStore.populationResolved && root.scoreForCandidate(modelData.id, modelData.office) !== undefined
                                     }
                                 }
                             }
@@ -343,11 +372,21 @@ Rectangle {
                     }
 
                     Flickable {
+                        id: campaignFlickable
+                        objectName: "populationCampaignFlickable"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
                         contentWidth: width
                         contentHeight: campaignRows.implicitHeight + 10
+
+                        ScrollBar.vertical: ScrollBar {
+                            objectName: "populationCampaignScrollBar"
+                            height: campaignFlickable.height
+                            size: campaignFlickable.visibleArea.heightRatio
+                            position: campaignFlickable.visibleArea.yPosition
+                            policy: ScrollBar.AsNeeded
+                        }
 
                         ColumnLayout {
                             id: campaignRows
@@ -508,12 +547,23 @@ Rectangle {
                         Layout.fillHeight: true
 
                         Flickable {
+                            id: voteFlickable
+                            objectName: "populationVoteFlickable"
                             anchors.fill: parent
                             anchors.margins: 10
                             clip: true
                             contentWidth: width
                             contentHeight: voteRows.implicitHeight + 12
+                            boundsBehavior: Flickable.StopAtBounds
                             opacity: campaignSubmitted() ? 1.0 : 0.28
+
+                            ScrollBar.vertical: ScrollBar {
+                                objectName: "populationVoteScrollBar"
+                                height: voteFlickable.height
+                                size: voteFlickable.visibleArea.heightRatio
+                                position: voteFlickable.visibleArea.yPosition
+                                policy: ScrollBar.AsNeeded
+                            }
 
                             Column {
                                 id: voteRows
@@ -535,13 +585,12 @@ Rectangle {
                                         Repeater {
                                             model: rows
                                             delegate: RadioButton {
+                                                objectName: "populationVoteCandidate_" + modelData.office + "_" + modelData.id
                                                 text: modelData.name + " (" + root.factionShort(modelData.faction_name) + ")"
                                                 checked: root.votedFigureId(modelData.office) === modelData.id
                                                 enabled: sessionStore.canVote && campaignSubmitted() && !sessionStore.populationResolved && !sessionStore.myVotes[modelData.office]
                                                 font.pixelSize: 12
-                                                onClicked: {
-                                                    root.selectedVotes[modelData.office] = modelData.id
-                                                }
+                                                onClicked: root.selectCandidate(modelData.office, modelData.id)
                                             }
                                         }
                                     }
@@ -577,7 +626,8 @@ Rectangle {
                             id: resolveButton
                             objectName: "populationResolveButton"
                             property bool hovered: false
-                            property bool buttonEnabled: sessionStore.canVote && campaignSubmitted() && !sessionStore.populationResolved
+                            property bool buttonEnabled: sessionStore.canVote && campaignSubmitted()
+                                && !sessionStore.populationResolved && !sessionStore.populationVoteSubmitting
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
@@ -610,15 +660,10 @@ Rectangle {
                                 onEntered: resolveButton.hovered = true
                                 onExited: resolveButton.hovered = false
                                 onClicked: {
-                                var offices = root.offices
-                                for (var i = 0; i < offices.length; i++) {
-                                    var office = offices[i]
-                                    var selected = root.votedFigureId(office)
-                                    if (selected > 0 && !sessionStore.myVotes[office]) {
-                                        sessionStore.doVote(office, selected)
-                                    }
+                                var result = sessionStore.submitPopulationVotes(root.selectedVotes)
+                                if (!result.success) {
+                                    root.forceActiveFocus()
                                 }
-                                sessionStore.doResolveElection()
                             }
                             }
                         }

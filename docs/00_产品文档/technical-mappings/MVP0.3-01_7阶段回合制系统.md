@@ -45,8 +45,24 @@ advance_year()
 PHASE_SEQUENCE = ["mortality", "revenue", "forum", "population", "senate", "combat", "resolution"]
 ```
 
-## 4. 版本日志
+## 4. 人口阶段（Phase 4）事务细化（WP-02b）
+
+人口阶段包含三个子步骤：campaign（庆典）→ vote（投票）→ results（公示结算）。
+
+### vote 子步骤事务
+
+- **入口:** `population_api.batch_vote()` → `population_service.check_and_commit_vote()`
+- **原子性:** 同一批次所有投票（含弃权 ABSTAIN）全有或全无
+- **按玩家隔离:** `_vote_completed_by_player[player_id]` 独立于 `_batch_completed_by_player`（campaign completion）
+- **幂等:** 同签名重复调用 → ALREADY_COMMITTED 零写入
+- **并发:** Lock guard → BUSY retryable (FC-07 G5-R2: 全路径统一为 threading.Lock, 同线程重入→BUSY)
+- **结算:** 由 `resolve_population_slice()` 在所有玩家完成后统一触发 `resolve_election()`（FC-09）；batch_vote 内不触发结算
+- **GUI:** `sessionStore.batchVote(entries)` → 单批入口，移除旧逐项 doVote 循环
+
+## 5. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.2 | 2026-08-01 | DA-Exec G5-R1 | §4 删除「batch内自动结算」旧说法，对齐 FC-09（resolve_population_slice 统一触发） |
+| v1.1 | 2026-07-31 | DA-Exec (WP-02b V4 Pro) | 新增人口阶段 vote 子步骤事务描述：batch_vote 原子提交 + ABSTAIN + per-player completion + resolution 自动触发 (§4) |
 | v1.0 | 2026-07-12 | Document Officer Worker L | 初版创建 |

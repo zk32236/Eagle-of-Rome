@@ -89,7 +89,7 @@ def state_base():
     }
     state = GameState.create_for_testing(config)
     state.turn = GameTurn(turn_number=1, year=-282)
-    state._population_pending = {"campaigns": [], "votes": [], "committed_batches": set()}
+    state._population_pending = {"campaigns": [], "votes": [], "committed_batches": set(), "committed_vote_batches": set()}
     return state
 
 
@@ -164,6 +164,7 @@ class TestPopulationPending:
             "campaigns": [],
             "votes": [],
             "committed_batches": set(),
+            "committed_vote_batches": set(),
         }
 
         state_base.record_population_campaign("p1", 1, 10)
@@ -185,6 +186,7 @@ class TestPopulationPending:
             "campaigns": [],
             "votes": [],
             "committed_batches": set(),
+            "committed_vote_batches": set(),
         }
 
 class TestCampaign:

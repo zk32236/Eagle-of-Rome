@@ -269,8 +269,12 @@ Rectangle {
                             }
                             Item { Layout.fillWidth: true }
                             Text {
-                                text: GuiText.statusActionable
-                                color: theme.statusSuccess
+                                text: sessionStore.canAdvanceCurrentPhase
+                                    ? GuiText.statusActionable
+                                    : GuiText.statusPlaceholder
+                                color: sessionStore.canAdvanceCurrentPhase
+                                    ? theme.statusSuccess
+                                    : theme.statusWarning
                                 font.pixelSize: theme.bodySize
                                 font.bold: true
                             }
