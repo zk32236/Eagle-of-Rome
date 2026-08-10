@@ -77,3 +77,9 @@ docs/**/.agents/
 
 # Office temporary lock files
 ~$*
+
+# --- BUG3-reopen trial (2026-08-10, Owner S1 decision: zero-delete + gitignore) ---
+# 本地工具/数据，不入库；文档类（docs/99 Archived、GUI_Design_Bible 等）最终归档时收编
+COMMIT_MSG_TEMPLATE.txt
+gui_screenshot_diff.py
+/tests/
