@@ -333,11 +333,26 @@ class TestGuiApiAdapter:
         """
         result = session_api.create_gui_prototype_session(start_phase="population")
         state = result["data"]["state"]
+        human_players = result["data"]["human_players"]
         store = GuiSessionStore(state)
-        store.initialize(result["data"]["human_players"][0])
+        store.initialize(human_players[0])
 
         assert store.selectedPhaseId == "population"
         assert store.populationCurrentStep in {"campaign", "vote"}
+
+        # Complete human votes first (FIX-C fresh HUMAN completion guard requires it;
+        # previously stale marker_workflow_started skipped this check — P0-02)
+        cand_result = session_api.population_api.get_candidates(state)
+        candidates = cand_result.get("data", {}) if cand_result.get("success") else {}
+        selection_map = {
+            office: rows[0]["id"] for office, rows in candidates.items() if rows
+        }
+        submitted = session_api.submit_population_votes(state, human_players[0], selection_map)
+        assert submitted.get("success"), (
+            f"test_session_store_population_resolution: submit failed: "
+            f"{submitted.get('message')}"
+        )
+
         feedback = store.doResolveElection()
 
         assert feedback["success"]

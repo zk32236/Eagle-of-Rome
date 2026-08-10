@@ -155,3 +155,95 @@ class TestBug3MultihumanBoundary:
         
         # 结构断言：HUMAN 数量 ≥ 1
         assert human_count >= 1
+
+    def test_incomplete_human_blocks_resolution_after_ai_drain(self):
+        """T-B3-08: FIX-C fresh HUMAN completion guard.
+        
+        Amendment v1.1-final — Test Amendment.
+        
+        Scenario:
+          HUMAN only votes for 1 office (incomplete)
+          → AI drain succeeds (AI-1, AI-2 vote_completed=True)
+          → BEFORE election resolution: fresh _all_human_population_votes_complete(state) check
+          → predicate returns False (HUMAN missing required offices)
+          → VOTE_NOT_ALL_COMPLETE / retryable=False
+          → No phase_result
+          → HUMAN vote_completed remains False
+        
+        Stale marker bug (old code):
+          marker_workflow_started = False (computed before drain, all players incomplete)
+          → AI drain changes state
+          → marker still False → incomplete check SKIPPED
+          → resolution proceeds with incomplete HUMAN ← BUG!
+        """
+        state, viewer_id, human_players = self.setup_session()
+        assert len(human_players) >= 1
+
+        cand_result = population_api.get_candidates(state)
+        assert cand_result.get("success"), f"Candidate retrieval failed: {cand_result}"
+        candidates = cand_result.get("data", {})
+
+        # Find first available office and vote for it only (partial)
+        partial_office = None
+        partial_figure_id = None
+        for office in ["consul", "censor", "praetor", "quaestor", "tribune"]:
+            rows = candidates.get(office, [])
+            if rows:
+                partial_office = office
+                partial_figure_id = rows[0]["id"]
+                break
+        assert partial_office is not None, "Need at least one office with candidates"
+
+        vresult = population_api.vote(state, viewer_id, partial_office, partial_figure_id)
+        assert vresult.get("success"), f"Partial HUMAN vote failed: {vresult.get('message')}"
+
+        # Verify precondition: HUMAN is incomplete
+        from src.api.session_api import _all_human_population_votes_complete
+        assert not _all_human_population_votes_complete(state), (
+            "Precondition: HUMAN must be incomplete after partial vote"
+        )
+
+        # resolve_population_slice → AI drain succeeds → fresh HUMAN guard
+        result = session_api.resolve_population_slice(state)
+
+        # FIX-C: incomplete HUMAN must block resolution
+        assert not result.get("success"), (
+            f"T-B3-08: incomplete HUMAN must block resolution after AI drain. "
+            f"Actual: success={result.get('success')}, message={result.get('message')}"
+        )
+
+        # Check incomplete players listed (per-player required.issubset, not global predicate)
+        incomplete_players = (result.get("data") or {}).get("incomplete_players", [])
+        assert viewer_id in incomplete_players, (
+            f"T-B3-08: incomplete HUMAN must be listed. "
+            f"Actual incomplete_players: {incomplete_players}"
+        )
+
+        # Check error code（errors 为 str 列表——FIX-R2 格式，兼容 api_adapter）
+        errors = result.get("errors") or []
+        assert any("VOTE_NOT_ALL_COMPLETE" in str(e) for e in errors), (
+            f"T-B3-08: must return VOTE_NOT_ALL_COMPLETE. "
+            f"Actual errors: {errors}"
+        )
+
+        # Verify retryable=False
+        has_retryable_false = False
+        data = result.get("data")
+        if isinstance(data, dict) and data.get("retryable") is False:
+            has_retryable_false = True
+        for e in errors:
+            if isinstance(e, dict) and e.get("retryable") is False:
+                has_retryable_false = True
+        assert has_retryable_false, (
+            f"T-B3-08: must return retryable=False. Actual: {result}"
+        )
+
+        # No phase_result recorded
+        assert state.get_phase_result("population") is None, (
+            "T-B3-08: no phase_result when HUMAN incomplete"
+        )
+
+        # HUMAN vote_completed remains False (not incorrectly marked)
+        assert not state.get_vote_completed(viewer_id), (
+            "T-B3-08: HUMAN vote_completed must remain False"
+        )

@@ -10,6 +10,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
 
 from src.api import session_api
+from src.api import population_api
 from src.core.game_state import GameState
 
 
@@ -267,15 +268,27 @@ class TestSessionApi:
         player_id = human_players[0]
         state.set_current_player(player_id)
 
-        # Step 1: resolve (was done for all AI players via set_current_player above,
-        # but the resolution only works after all human players completed too)
-        # Re-run resolution to exercise the two-step path
-        resolve_result = session_api.resolve_population_slice(state)
-        assert resolve_result["success"]
-        data = resolve_result["data"]
-        assert "election_results" in data
-        assert "faction_influence_before" in data
-        assert "faction_influence_after" in data
+        # Complete human votes first (FIX-C fresh HUMAN completion guard requires it;
+        # previously stale marker_workflow_started skipped this check — P0-02)
+        cand_result = population_api.get_candidates(state)
+        candidates = cand_result.get("data", {}) if cand_result.get("success") else {}
+        selection_map = {
+            office: rows[0]["id"] for office, rows in candidates.items() if rows
+        }
+        submitted = session_api.submit_population_votes(state, player_id, selection_map)
+        assert submitted.get("success"), (
+            f"test_resolve_population_slice_two_step_contract: submit failed: "
+            f"{submitted.get('message')}"
+        )
+
+        # submit_population_votes 在全部 HUMAN 完成后内部已 resolve（两阶段契约 Step 1），
+        # 因此直接验证已解决状态 + phase 未 executed（FIX-C 后不再重复 resolve）。
+        data = submitted.get("data", {})
+        assert data.get("status") == "resolved", (
+            f"test_resolve_population_slice_two_step_contract: submit should have resolved. "
+            f"Actual: {submitted}"
+        )
+        assert isinstance(data.get("election_results"), list)
 
         # Two-step contract: phase NOT executed after resolve
         assert not state.is_phase_executed("population")
@@ -357,6 +370,18 @@ class TestSessionApi:
         human_players = result["data"]["human_players"]
         player_id = human_players[0]
         state.set_current_player(player_id)
+
+        # Complete human votes first (FIX-C fresh HUMAN completion guard)
+        cand_result = population_api.get_candidates(state)
+        candidates = cand_result.get("data", {}) if cand_result.get("success") else {}
+        selection_map = {
+            office: rows[0]["id"] for office, rows in candidates.items() if rows
+        }
+        submitted = session_api.submit_population_votes(state, player_id, selection_map)
+        assert submitted.get("success"), (
+            f"test_advance_population_double_advance_returns_failure: submit failed: "
+            f"{submitted.get('message')}"
+        )
 
         # Resolve
         session_api.resolve_population_slice(state)

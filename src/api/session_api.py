@@ -403,9 +403,55 @@ def _drain_ai_population_turns(state: GameState, auto) -> dict:
                 "reason_code": "AI_DRAIN_INVALID_STATE",
             })
 
+        # === S1 GUARD: candidate retrieval（FIX-A + FIX-2）===
+        try:
+            cand_result = population_api.get_candidates(state)
+        except Exception as exc:
+            return api_response(False, "AI drain: candidate retrieval error", {
+                "processed_players": processed,
+                "failed_player": player.player_id,
+                "retryable": False,
+                "reason_code": "AI_DRAIN_CANDIDATE_RETRIEVAL_ERROR",
+            })
+        if not cand_result.get("success"):
+            return api_response(False, "AI drain: candidate retrieval failed", {
+                "processed_players": processed,
+                "failed_player": player.player_id,
+                "retryable": False,
+                "reason_code": "AI_DRAIN_CANDIDATE_RETRIEVAL_FAILED",
+            })
+        required_offices = {
+            office for office, rows in cand_result.get("data", {}).items() if rows
+        }
+        if not required_offices:
+            return api_response(False, "AI drain: no required offices (empty candidates)", {
+                "processed_players": processed,
+                "failed_player": player.player_id,
+                "retryable": False,
+                "reason_code": "AI_DRAIN_NO_CANDIDATES",
+            })
+        # === END S1 GUARD ===
+
         try:
             auto.process_festival(player.player_id, faction, bypass_permission=True)
             auto.process_vote(player.player_id, faction, bypass_permission=True)
+
+            # === POSTCONDITION VALIDATION (Option C) ===
+            votes_after = {
+                office for vid, office, _fid in state.get_population_votes()
+                if vid == player.player_id
+            }
+            missing = required_offices - votes_after
+            if missing:
+                return api_response(False, "AI drain postcondition: votes not recorded", {
+                    "processed_players": processed,
+                    "failed_player": player.player_id,
+                    "retryable": False,
+                    "reason_code": "AI_DRAIN_POSTCONDITION_FAILED",
+                    "missing_offices": sorted(missing),
+                })
+            # === END POSTCONDITION ===
+
             state.set_vote_completed(player.player_id, True)
             processed.append(player.player_id)
         except Exception as exc:
@@ -433,10 +479,6 @@ def resolve_population_slice(state: GameState) -> dict:
             "election_results": existing.get("election_results", []) if existing else [],
         })
     try:
-        marker_workflow_started = any(
-            state.get_vote_completed(player.player_id)
-            for player in state.get_all_players()
-        )
         influence_before = _faction_influence_rows(state)
         # 先让 AI 自动完成（如果还有未完成的玩家）
         from src.ui.processors.auto_player_processor import AutoPlayerProcessor
@@ -459,18 +501,32 @@ def resolve_population_slice(state: GameState) -> dict:
         if not ai_drain_result.get("success"):
             return ai_drain_result
 
-        if marker_workflow_started:
-            incomplete = [
-                player.player_id for player in state.get_all_players()
-                if not state.get_vote_completed(player.player_id)
+        # === FIX-C: Fresh HUMAN completion guard（Amendment v1.1-final）===
+        # AI drain 完成后，按当前 state 重新判断 HUMAN 是否全部完成。
+        # 使用 Frozen predicate（投票记录覆盖 required offices），
+        # 非 AI drain completion marker（stale）。
+        if not _all_human_population_votes_complete(state):
+            # Per-player 精确判定：用 per-player required.issubset，非全局 predicate
+            from src.api.population_api import get_candidates as _get_candidates
+            cand_r = _get_candidates(state)
+            required = {
+                o for o, rows in (cand_r.get("data", {}) if cand_r.get("success") else {}).items() if rows
+            }
+            votes_by_human = {}
+            for pid, office, _fid in state.get_population_votes():
+                votes_by_human.setdefault(pid, set()).add(office)
+            truly_incomplete = [
+                p.player_id for p in state.get_all_players()
+                if p.player_type.value == "human"
+                and not required.issubset(votes_by_human.get(p.player_id, set()))
             ]
-            if incomplete:
-                return api_response(False, "Not all population votes are complete", {
-                    "incomplete_players": incomplete,
-                }, [{
-                    "code": "VOTE_NOT_ALL_COMPLETE",
-                    "message": "All players must complete voting before resolution",
-                }])
+            return api_response(False, "Not all human population votes are complete", {
+                "incomplete_players": truly_incomplete,
+                "retryable": False,
+            }, [
+                "VOTE_NOT_ALL_COMPLETE: All human players must complete voting before resolution"
+            ])
+        # === END FIX-C ===
 
         cand_result = population_api.get_candidates(state)
         candidates_before_resolve = cand_result.get("data", {}) if cand_result.get("success") else {}

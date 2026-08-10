@@ -889,7 +889,8 @@ def test_fv14_resolve_population_slice_incomplete_blocked(vote_state):
     resolve_result = session_api.resolve_population_slice(state)
     assert resolve_result["success"] is False
     errors = resolve_result.get("errors", [])
-    assert any(e.get("code") == "VOTE_NOT_ALL_COMPLETE" for e in errors), \
+    # errors 为 str 列表（FIX-R2：兼容 api_adapter '; '.join）
+    assert any("VOTE_NOT_ALL_COMPLETE" in str(e) for e in errors), \
         f"Expected VOTE_NOT_ALL_COMPLETE, got {errors}"
 
 
