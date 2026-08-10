@@ -350,6 +350,77 @@ def submit_population_votes(
 # 5. 人口阶段结算（选举结果）
 # ---------------------------------------------------------------------------
 
+def _all_human_population_votes_complete(state: GameState) -> bool:
+    """Return True when every human player has voted for all required offices."""
+    cand_result = population_api.get_candidates(state)
+    candidates = cand_result.get("data", {}) if cand_result.get("success") else {}
+    required_offices = {office for office, rows in candidates.items() if rows}
+    if not required_offices:
+        return False
+
+    votes_by_player: dict = {}
+    for player_id, office, _figure_id in state.get_population_votes():
+        votes_by_player.setdefault(player_id, set()).add(office)
+
+    humans = [p for p in state.get_all_players() if p.player_type.value == "human"]
+    return bool(humans) and all(
+        required_offices.issubset(votes_by_player.get(p.player_id, set()))
+        for p in humans
+    )
+
+
+def _drain_ai_population_turns(state: GameState, auto) -> dict:
+    """唯一 AI drain 实现。遍历所有非 human 玩家，执行 festival → vote →
+    set_vote_completed。completed-AI skip + partial-state preflight fail-closed（FC10）。
+    """
+    processed = []
+
+    for player in state.get_all_players():
+        if player.player_type.value == "human":
+            continue
+        if state.get_vote_completed(player.player_id):
+            continue
+
+        existing_campaign = any(
+            row[0] == player.player_id for row in state.get_population_campaigns()
+        )
+        existing_vote = any(
+            row[0] == player.player_id for row in state.get_population_votes()
+        )
+        if existing_campaign or existing_vote:
+            return api_response(False, "AI population partial state detected", {
+                "processed_players": processed,
+                "failed_player": player.player_id,
+                "retryable": False,
+                "reason_code": "AI_DRAIN_PARTIAL_STATE",
+            })
+
+        faction = state.get_faction(player.faction_id)
+        if not faction:
+            return api_response(False, "AI faction not found", {
+                "failed_player": player.player_id,
+                "retryable": False,
+                "reason_code": "AI_DRAIN_INVALID_STATE",
+            })
+
+        try:
+            auto.process_festival(player.player_id, faction, bypass_permission=True)
+            auto.process_vote(player.player_id, faction, bypass_permission=True)
+            state.set_vote_completed(player.player_id, True)
+            processed.append(player.player_id)
+        except Exception as exc:
+            return api_response(False, f"AI drain failed: {exc}", {
+                "processed_players": processed,
+                "failed_player": player.player_id,
+                "retryable": False,
+                "reason_code": "AI_DRAIN_ERROR",
+            })
+
+    return api_response(True, "AI drain complete", {
+        "processed_players": processed,
+    })
+
+
 def resolve_population_slice(state: GameState) -> dict:
     """
     结算人口阶段选举。所有玩家完成后调用。
@@ -384,15 +455,9 @@ def resolve_population_slice(state: GameState) -> dict:
             festival_decider=AutoFestivalDecider(),
             vote_decider=AutoVoteDecider(),
         )
-        while True:
-            current = state.get_current_player()
-            if not current or current.player_type.value != "human":
-                faction = state.get_faction(current.faction_id) if current and current.faction_id else None
-                auto.process_festival(current.player_id if current else "", faction, bypass_permission=True)
-                auto.process_vote(current.player_id if current else "", faction, bypass_permission=True)
-                state.next_player()
-            else:
-                break
+        ai_drain_result = _drain_ai_population_turns(state, auto)
+        if not ai_drain_result.get("success"):
+            return ai_drain_result
 
         if marker_workflow_started:
             incomplete = [

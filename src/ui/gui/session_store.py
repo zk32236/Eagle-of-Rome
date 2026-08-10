@@ -721,21 +721,32 @@ class GuiSessionStore(QObject):
 
     @Slot(result=dict)
     def doCompletePlayer(self) -> dict:
-        """完成当前玩家操作，切换下一个玩家"""
+        """完成当前玩家的人口阶段操作。
+        全部 HUMAN 完成 → resolve election；否则仅 HUMAN handoff。"""
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
+
+        all_humans_complete = self._adapter.all_human_population_votes_complete()
+
+        if all_humans_complete:
+            # 最后一个 HUMAN 完成后，进入唯一 resolution 入口。
+            feedback = self._adapter.resolve_election()
+            self._raise_feedback(feedback)
+            self._refresh_snapshot()
+            self._refresh_population_view()
+            self._refresh_senate_view()
+            return feedback
+
+        # 仍有 HUMAN 未完成：只在人类之间 handoff。
         feedback = self._adapter.next_player(self._viewer_id)
         self._raise_feedback(feedback)
         if feedback.get("success"):
-            # 检查是否所有人类玩家都已完成
             new_id = feedback.get("data", {}).get("new_player_id")
             if new_id:
                 self._viewer_id = new_id
                 self.handoffRequired.emit(new_id)
             self._refresh_snapshot()
-            self._refresh_mortality_view()
             self._refresh_population_view()
-            self._refresh_senate_view()
         return feedback
 
     @Slot(result=dict)

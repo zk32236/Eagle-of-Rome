@@ -145,7 +145,7 @@ class TestBug3Wp02bDrain:
                 f" submit result: status={result.get('data', {}).get('status')}"
             )
 
-        election_results = pop_result.get("election_results", [])
+        election_results = pop_result.get("data", {}).get("election_results", [])
         assert len(election_results) > 0, (
             "BUG3 未修复：无选举结果记录"
         )

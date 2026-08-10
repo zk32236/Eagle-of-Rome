@@ -1533,12 +1533,11 @@ def test_fv08f_load_path_reentry_busy(vote_state):
 # ========== FC-09 All-Player + One-Time Protection Tests [NEW G5-R2] ==========
 
 def test_fv09_ai_incomplete_blocked_resolve(vote_state):
-    """FC-09 G5-R2 (VERIFY-MATCH): AI 未完成时 resolve_population_slice() 返回结构化 failure。
+    """FC-09 B3-FC05 TA-F1 (AMENDED): resolve auto-drains AI then succeeds。
 
-    构造场景：p1/p2 人类玩家完成投票，ai1 AI 玩家未投票。
-    调用 session_api.resolve_population_slice(state) → 断言返回 failure，
-    错误码 VOTE_NOT_ALL_COMPLETE，incomplete_players 含 ai1，phase 未 executed。
-    直接调用被测入口，非仅检查 marker。
+    BUG3 修复后语义：resolve_population_slice() 内部调用 _drain_ai_population_turns()
+    自动完成 AI 玩家投票 → 全部完成 → 结算成功。
+    旧测试前提作废：原断言 resolve 失败 / VOTE_NOT_ALL_COMPLETE 不再适用。
     """
     from src.core.entities.player import PlayerType, Player
     from src.api import session_api
@@ -1556,28 +1555,35 @@ def test_fv09_ai_incomplete_blocked_resolve(vote_state):
     result2 = batch_vote(state, "p2", entries, bypass_permission=True)
     assert result2["success"] is True
 
-    # AI has NOT voted — verify vote_completed is False
+    # AI has NOT voted — verify vote_completed is False before resolve
     assert state.get_vote_completed("ai1") is False, \
-        "FC-09 G5-R2: AI player must not be vote_completed"
+        "B3-FC05 TA-F1: AI player must not be vote_completed before resolve"
 
     # Verify human players are completed
     assert state.get_vote_completed("p1") is True
     assert state.get_vote_completed("p2") is True
 
-    # FC-09 G5-R2 (VERIFY-MATCH): 实际调用 resolve_population_slice()
+    # B3-FC05 TA-F1: resolve auto-drains AI then succeeds
     resolve_result = session_api.resolve_population_slice(state)
-    assert resolve_result["success"] is False, \
-        "FC-09 G5-R2: resolve must fail when AI player is incomplete"
-    errors = resolve_result.get("errors", [])
-    assert len(errors) > 0, "FC-09 G5-R2: must have error entries"
-    assert any(e.get("code") == "VOTE_NOT_ALL_COMPLETE" for e in errors), \
-        f"FC-09 G5-R2: expected VOTE_NOT_ALL_COMPLETE, got {errors}"
-    incomplete = resolve_result.get("data", {}).get("incomplete_players", [])
-    assert "ai1" in incomplete, \
-        f"FC-09 G5-R2: ai1 must be in incomplete_players, got {incomplete}"
-    # Phase must NOT be executed after blocked resolve
-    assert state.is_phase_executed("population") is False, \
-        "FC-09 G5-R2: phase must not be executed after blocked resolve"
+    assert resolve_result["success"] is True, \
+        f"B3-FC05 TA-F1: resolve must succeed after auto-drain, got errors={resolve_result.get('errors')}"
+
+    # AI must now be auto-completed
+    assert state.get_vote_completed("ai1") is True, \
+        "B3-FC05 TA-F1: AI must be vote_completed after resolve auto-drain"
+
+    # Election results must be present
+    data = resolve_result.get("data", {})
+    election_results = data.get("election_results", [])
+    assert len(election_results) > 0, \
+        f"B3-FC05 TA-F1: resolve must produce election_results, got data={list(data.keys())}"
+
+    # Phase result must be recorded (two-step pattern: result recorded, phase NOT executed)
+    pop_result = state.get_phase_result("population")
+    assert pop_result is not None, \
+        "B3-FC05 TA-F1: phase result must be recorded after resolve"
+    assert pop_result.get("success") is True, \
+        f"B3-FC05 TA-F1: phase result must be success, got {pop_result.get('success')}"
 
 
 def test_fv14c_second_resolve_no_double_settle(vote_state):

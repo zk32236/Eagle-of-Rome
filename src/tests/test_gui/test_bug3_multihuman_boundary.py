@@ -29,30 +29,47 @@ class TestBug3MultihumanBoundary:
         return state, viewer_id, human_players
 
     def test_single_human_no_handoff_after_completion(self):
-        """1H 场景中 HUMAN 完成后不应触发 handoff（无下一 HUMAN）。
-        
-        旧代码预期：RED — doCompletePlayer 的 next_player 取模返回自己，
-                        触发 self-handoff。修复后应直接 resolve。
+        """B3-FC05 TA-F2 (AMENDED): 1H 完成 → resolve 且无 handoffRequired。
+
+        BUG3 修复后：submit_population_votes 在唯一 HUMAN 完成后直接 resolve，
+        不触发 handoff（无下一人类玩家）。走真实 session_api → player_api 路径。
         """
         state, viewer_id, human_players = self.setup_session()
         assert len(human_players) == 1, "本测试仅适用于 1H 场景"
 
-        # 完成投票
+        # 构造五官职选择映射
         cand_result = population_api.get_candidates(state)
         candidates = cand_result.get("data", {})
-        for office, rows in candidates.items():
+        selection_map = {}
+        for office in ["consul", "censor", "praetor", "quaestor", "tribune"]:
+            rows = candidates.get(office, [])
             if rows:
-                population_api.vote(state, viewer_id, office, rows[0]["id"])
+                selection_map[office] = rows[0]["id"]
 
-        # 调用 next_player 模拟 doCompletePlayer 行为
-        new_id = state.next_player()
+        if len(selection_map) < 5:
+            pytest.skip(f"Only {len(selection_map)} offices have candidates, need 5")
 
-        # 新行为期望：1H 场景中不应 handoff 回自己
-        # 旧代码：next_player 在 1-element turn_order 中取模返回同一玩家
-        # 这是 BUG3 的根源 — 应改为 completion predicate 检查后 resolve
-        assert new_id != viewer_id, (
-            f"BUG3 未修复：1H 场景 next_player 返回 {new_id}，等于 viewer {viewer_id}"
-        )
+        # B3-FC05 TA-F2: 经 session_api.submit_population_votes() 真实 completion 路径
+        result = session_api.submit_population_votes(state, viewer_id, selection_map)
+        assert result["success"] is True, \
+            f"B3-FC05 TA-F2: submit must succeed, got errors={result.get('errors')}"
+
+        # 1H 场景：唯一 HUMAN 完成后应直接 resolve（status=resolved），非 awaiting
+        status = result.get("data", {}).get("status")
+        assert status == "resolved", \
+            f"B3-FC05 TA-F2: 1H completion must resolve, got status={status}"
+
+        # 不应发射 handoffRequired（无下一人类玩家）
+        data = result.get("data", {})
+        assert data.get("awaiting_player_id") is None, \
+            f"B3-FC05 TA-F2: no handoff in 1H, got awaiting={data.get('awaiting_player_id')}"
+        assert data.get("resolved") is True, \
+            "B3-FC05 TA-F2: resolved flag must be True"
+
+        # election_results 应存在
+        election_results = data.get("election_results", [])
+        assert len(election_results) > 0, \
+            f"B3-FC05 TA-F2: must have election_results, got {len(election_results)}"
 
     def test_next_player_behavior_with_only_one_human(self):
         """观察 1H 场景中 next_player 行为 — 记录旧代码表现。

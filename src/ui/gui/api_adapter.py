@@ -111,6 +111,11 @@ class GuiApiAdapter:
         from src.api import session_api
         return self.call(session_api.resolve_population_slice, self._state)
 
+    def all_human_population_votes_complete(self) -> bool:
+        """Delegate to session_api._all_human_population_votes_complete."""
+        from src.api import session_api
+        return session_api._all_human_population_votes_complete(self._state)
+
     def advance_population(self, player_id: str) -> Dict[str, Any]:
         from src.api import session_api
         return self.call(session_api.advance_population_phase, self._state, player_id)
