@@ -1,0 +1,17 @@
+======================================================================
+FAIL: test_annual_decay (src.tests.test_commands.test_phase_resolution.TestResolutionCommand)
+测试年度衰减（直接调用方法验证）
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_commands\test_phase_resolution.py", line 220, in test_annual_decay
+    self.assertIn("pop-5", output)  # 10*0.5=5
+AssertionError: 'pop-5' not found in '\n   📉 Annual Decay:\n      Marcus: vets-0, pop-2(-50%), age 41\n      Gaius: pop-1(-50%), age 36\n'
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.015s
+
+FAILED (failures=1)
+
+
+git commit -m "feat: 迁移 Resolution 阶段命令至新框架（指令9）"
+git tag -a v0.4.5-009A -m "MVP0.4.5-009A 基线版本 - 完成sys_registry.py优化"

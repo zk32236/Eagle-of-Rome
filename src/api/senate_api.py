@@ -18,6 +18,7 @@ from src.core.deciders.impl.auto_tribune_veto_decider import AutoTribuneVetoDeci
 from src.core.deciders.tribune_veto_decider import TribuneVetoDecider
 from src.core.entities.contract import ContractType, ContractStatus
 from src.core.entities.figure import Figure
+from src.core.entities.war import WarStatus
 from src.core.game_state import GameState
 from src.core.systems.political_system import PoliticalSystem
 
@@ -182,6 +183,42 @@ def _viewer_has_tribune(state: GameState, viewer_player_id: str) -> bool:
     viewer = state.get_player(viewer_player_id)
     tribune = _current_tribune(state)
     return bool(viewer and tribune and tribune.faction_id == viewer.faction_id)
+
+
+def _viewer_eligible_consul(state: GameState, viewer_player_id: str) -> bool:
+    """判断 viewer 所在派系是否存在存活且在罗马的执政官（DEV-13 权限前置）。"""
+    viewer = state.get_player(viewer_player_id)
+    if not viewer:
+        return False
+    faction = state.get_faction(viewer.faction_id)
+    if not faction:
+        return False
+    for member in faction.get_members(state):
+        if member.office == "consul" and not member.is_absent and not member.is_dead:
+            return True
+    return False
+
+
+def _build_takeover_options(state: GameState) -> List[Dict[str, Any]]:
+    """计算可接管战争列表 [{war_id, name, reason}]（DEV-13 DTO）。"""
+    ws = state.get_war_system()
+    if not ws:
+        return []
+    options = []
+    for war in ws.get_active_wars():
+        if war.rebellion_province_id is not None:
+            continue
+        reason = ""
+        if war.commander_id is not None:
+            old_cmd = state.get_member(war.commander_id)
+            if old_cmd and not old_cmd.is_dead and not (old_cmd.is_absent and old_cmd.office in ("proconsul", "propraetor")):
+                continue  # 已有有效指挥官，不可接管
+            if old_cmd and old_cmd.is_dead:
+                reason = "指挥官已阵亡"
+            elif old_cmd and old_cmd.is_absent:
+                reason = "指挥官离任"
+        options.append({"war_id": war.id, "name": war.name, "reason": reason})
+    return options
 
 
 def _build_governor_appointments(state: GameState) -> dict:
@@ -358,6 +395,8 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         actionable = current_phase_id == "senate" and state.is_current_player(viewer_player_id)
         can_create = actionable and current_step == "proposal" and len(proposal_options) > 0
         viewer_has_tribune = _viewer_has_tribune(state, viewer_player_id)
+        takeover_options = _build_takeover_options(state)
+        can_takeover = actionable and bool(takeover_options) and _viewer_eligible_consul(state, viewer_player_id)
 
         data = {
             "phase_id": "senate",
@@ -391,6 +430,9 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "faction_leaders": info.get("faction_leaders", []),
             "presiding_officer": info.get("presiding_officer"),
             "active_foreign_wars": active_foreign_wars,
+            "takeover_wars": active_foreign_wars,
+            "takeover_options": takeover_options,
+            "can_takeover": can_takeover,
             "war_threats": war_threats,
             "pending_peace_treaties": pending_peace_treaties,
             "governor_vacancies": governor_vacancies,
@@ -410,6 +452,131 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         return api_response(True, "Senate phase view refreshed", data)
     except Exception as exc:
         return api_response(False, f"获取元老院视图失败: {exc}", errors=[str(exc)])
+
+
+def takeover_war(state: GameState, player_id: str, war_id: str) -> dict:
+    """战争接管直接职权（DEV-13）：执政官直接接管指定活跃外战，无需表决。
+
+    后端保证权限与表决链分离（FC-01/02/03/04/05/06/07/09/10）：
+    不创建 proposal、不进入 calculate_vote_result / record_veto / execute_passed_proposal。
+    权限校验（执政官）+ 可执行校验（活跃外战、无有效指挥官）+ 幂等拒绝。
+    """
+    if not state:
+        return api_response(False, "无效的游戏状态")
+
+    # 1. 权限校验
+    if not state.is_current_player(player_id):
+        state.log_event(
+            "战争接管: 权限失败（非当前玩家）",
+            level=logging.DEBUG,
+            extra={"war_id": war_id, "player_id": player_id, "reason": "not_current_player"},
+        )
+        return api_response(False, "当前不是您的回合")
+
+    player = state.get_player(player_id)
+    if not player:
+        state.log_event(
+            "战争接管: 权限失败（玩家不存在）",
+            level=logging.DEBUG,
+            extra={"war_id": war_id, "player_id": player_id, "reason": "player_not_found"},
+        )
+        return api_response(False, "玩家不存在")
+
+    faction = state.get_faction(player.faction_id)
+    if not faction:
+        state.log_event(
+            "战争接管: 权限失败（派系不存在）",
+            level=logging.DEBUG,
+            extra={"war_id": war_id, "player_id": player_id, "reason": "faction_not_found"},
+        )
+        return api_response(False, "派系不存在")
+
+    consul_figure = None
+    for member in faction.get_members(state):
+        if member.office == "consul" and not member.is_absent and not member.is_dead:
+            consul_figure = member
+            break
+    if not consul_figure:
+        state.log_event(
+            "战争接管: 权限失败（无存活且在罗马的执政官）",
+            level=logging.DEBUG,
+            extra={"war_id": war_id, "player_id": player_id, "reason": "no_eligible_consul"},
+        )
+        return api_response(False, "您的派系没有存活且在罗马的执政官，无法接管战争")
+
+    # 2. 可执行校验
+    if not war_id:
+        state.log_event(
+            "战争接管: 拒绝（war_id 缺失）",
+            level=logging.DEBUG,
+            extra={"player_id": player_id, "reason": "missing_war_id"},
+        )
+        return api_response(False, "缺少 war_id")
+
+    ws = state.get_war_system()
+    if not ws:
+        return api_response(False, "战争系统不可用")
+
+    war = ws.get_war_by_id(war_id)
+    if not war:
+        state.log_event(
+            "战争接管: 拒绝（战争不存在）",
+            level=logging.DEBUG,
+            extra={"war_id": war_id, "player_id": player_id, "reason": "war_not_found"},
+        )
+        return api_response(False, "战争不存在")
+
+    if war.status != WarStatus.ACTIVE:
+        state.log_event(
+            "战争接管: 拒绝（非活跃战争）",
+            level=logging.DEBUG,
+            extra={"war_id": war_id, "player_id": player_id, "reason": "war_not_active"},
+        )
+        return api_response(False, "该战争不处于活跃状态")
+
+    if war.rebellion_province_id is not None:
+        state.log_event(
+            "战争接管: 拒绝（起义战争）",
+            level=logging.DEBUG,
+            extra={"war_id": war_id, "player_id": player_id, "reason": "rebellion_war"},
+        )
+        return api_response(False, "起义战争由总督接管，无法由执政官接管")
+
+    # 3. 幂等/重入拒绝：已有有效指挥官
+    if war.commander_id is not None:
+        old_cmd = state.get_member(war.commander_id)
+        if old_cmd and not old_cmd.is_dead and not (old_cmd.is_absent and old_cmd.office in ("proconsul", "propraetor")):
+            state.log_event(
+                "战争接管: 幂等拒绝（已有有效指挥官）",
+                level=logging.DEBUG,
+                extra={"war_id": war_id, "player_id": player_id, "commander_id": war.commander_id, "reason": "already_taken_over"},
+            )
+            return api_response(False, "该战争已有有效指挥官，无法接管")
+
+    # 4. 直接执行（复用 PoliticalSystem 指挥官分配 + 军团招募）
+    politics = _political_system(state)
+    if not politics.execute_war_takeover_direct(war, consul_figure):
+        state.log_event(
+            "战争接管: 拒绝（军团招募失败）",
+            level=logging.DEBUG,
+            extra={"war_id": war_id, "player_id": player_id, "reason": "legion_recruit_failed"},
+        )
+        return api_response(False, "接管失败：军团招募失败")
+
+    state.log_event(
+        "战争接管: 成功",
+        level=logging.DEBUG,
+        extra={"war_id": war_id, "player_id": player_id, "commander_id": consul_figure.id, "legions": list(getattr(war, "legion_numbers", []) or [])},
+    )
+    return api_response(
+        True,
+        "接管战争成功",
+        data={
+            "war_id": war_id,
+            "commander_id": consul_figure.id,
+            "legions": list(getattr(war, "legion_numbers", []) or []),
+        },
+    )
 
 
 def propose(state: GameState, player_id: str, proposal_type: str, bypass_turn_check: bool = False, **kwargs) -> dict:

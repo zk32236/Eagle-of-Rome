@@ -1,0 +1,18 @@
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Program Files/JetBrains/PyCharm Community Edition 2022.2.1/plugins/python-ce/helpers/pycharm/_jb_pytest_runner.py" --path "C:/Users/Kerl/PycharmProjects/Eagle of Rome/src/tests" 
+Testing started at 12:54 pm ...
+Launching pytest with arguments C:/Users/Kerl/PycharmProjects/Eagle of Rome/src/tests --no-header --no-summary -q in C:\Users\Kerl\PycharmProjects\Eagle of Rome
+
+ImportError while loading conftest 'C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\conftest.py'.
+src\tests\conftest.py:13: in <module>
+    from src.core.game_state import GameState
+src\core\game_state.py:17: in <module>
+    from src.core.systems.military_system import MilitarySystem
+src\core\systems\military_system.py:6: in <module>
+    from src.core.game_state import GameState
+E   ImportError: cannot import name 'GameState' from partially initialized module 'src.core.game_state' (most likely due to a circular import) (C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\core\game_state.py)
+
+Process finished with exit code 4
+
+Empty suite
+
+Empty suite

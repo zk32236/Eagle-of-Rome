@@ -1,0 +1,387 @@
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：迁移 Population阶段功能组命令至新框架（指令13）
+
+核心输入：
+
+《EOR Command命令体系架构设计细化文档_V1.2》
+
+《EOR_开发指南.docx》
+
+已迁移的命令参考：func_forum.py（PersuadeCommand）、func_turn_control.py
+
+基线代码：原 src/ui/debug_cli.py 中关于 festival 命令的处理逻辑（_hold_festival 方法，约第300-330行）
+
+已完善的 GameState 类及 Figure 实体（包含 wealth、popularity 属性和 add_popularity 方法）
+
+核心任务：
+
+创建 Population 功能命令文件：
+
+路径：src/ui/commands/func_population.py
+
+该文件应包含一个命令类：FestivalCommand，继承 Command。
+
+元数据定义：
+
+name = "festival"
+
+aliases = []（原基线无别名，可保持）
+
+description = "举办庆典，消耗个人财富增加人气，用法: festival <人物ID> <金额>"
+
+移植业务逻辑：
+
+从原 _hold_festival 方法移植逻辑。
+
+命令接收两个参数 args，应为 [figure_id, amount]。需验证参数个数和类型。
+
+将 figure_id 和 amount 转换为整数，若转换失败则打印错误并返回 False。
+
+使用 self.state.get_member(figure_id) 获取人物对象。若人物不存在或已死亡，打印错误并返回 False。
+
+获取玩家派系：遍历 self.state.factions.values()，找到 is_player == True 的派系。若不存在，打印错误并返回 False。
+
+验证人物是否属于玩家派系：检查 figure.faction_id 是否等于玩家派系 ID。若不属于，打印错误并返回 False。
+
+验证人物财富是否足够：figure.wealth >= amount。若不足，打印错误并返回 False。
+
+扣除财富：figure.wealth -= amount。
+
+增加人气：原基线中人气增加量等于花费金额（1:1）。可调用 figure.add_popularity(amount) 或直接 figure.popularity += amount。建议使用 add_popularity 方法（如果存在）。
+
+打印成功信息，包含人物名称、花费金额、增加的人气、当前人气和财富。
+
+注意：原基线输出格式为：
+
+text
+🎉 {figure.get_formal_name()} holds a festival!
+   Spent {amount} personal funds
+   Gained {amount} popularity
+   Current: {figure.popularity} popularity, {figure.wealth} wealth
+需保持一致。
+
+辅助方法：
+
+可在命令内部实现 _get_player_faction 辅助方法，与 PersuadeCommand 类似。
+
+整数转换使用 try/except。
+
+编写单元测试：
+
+路径：src/tests/test_commands/test_func_population.py
+
+使用 pytest 框架，模拟 GameState、Faction、Figure。
+
+测试用例至少覆盖：
+
+test_festival_success：模拟人物属于玩家派系，财富充足，验证财富减少、人气增加，返回 True。
+
+test_festival_invalid_args：参数个数错误、非数字参数，返回 False。
+
+test_festival_figure_not_found：人物 ID 不存在或已死亡，返回 False。
+
+test_festival_not_player_faction：人物不属于玩家派系，返回 False。
+
+test_festival_insufficient_wealth：人物财富不足，返回 False。
+
+test_festival_no_player_faction：无玩家派系，返回 False。
+
+注意模拟 state.get_member 的返回值，以及人物属性的修改。
+
+手动验证：
+
+运行 python main.py，进入 CLI。
+
+执行 load 加载场景。
+
+使用 status 查看当前人物财富和人气（可临时添加调试输出，或通过后续阶段观察）。
+
+选择一个属于玩家派系且有足够财富的人物，执行 festival <id> <amount>，观察输出是否正确，人物财富减少、人气增加。
+
+测试各种错误场景：人物不存在、不属于玩家派系、财富不足、参数错误等，确保命令不崩溃，提示友好。
+
+验证 help 中显示 festival 命令的描述。
+
+交付物：
+
+src/ui/commands/func_population.py
+
+src/tests/test_commands/test_func_population.py
+
+验收标准：
+
+单元测试通过率 100%。
+
+在 CLI 中执行 festival 命令，输出和行为与原基线完全一致。
+
+代码通过《EOR MVP 0.4.5代码审查Checklist》中 Command 模块的相关检查项。
+
+命令注册正确，help 中能显示该命令的描述。
+
+请在 feature/refactor-0.4.5 分支上操作，完成后提交代码并附上测试结果。如有问题，随时沟通。
+
+豆包（项目经理）
+
+
+单元测试
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m pytest src/tests/test_commands/test_func_population.py -v
+================================================================================================================================================= test session starts =================================================================================================================================================
+platform win32 -- Python 3.10.6, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+collected 9 items
+
+src/tests/test_commands/test_func_population.py::test_festival_success PASSED                                                                                                                                                                                                                                    [ 11%] 
+src/tests/test_commands/test_func_population.py::test_festival_invalid_args_count PASSED                                                                                                                                                                                                                         [ 22%] 
+src/tests/test_commands/test_func_population.py::test_festival_invalid_arg_type PASSED                                                                                                                                                                                                                           [ 33%] 
+src/tests/test_commands/test_func_population.py::test_festival_negative_amount PASSED                                                                                                                                                                                                                            [ 44%] 
+src/tests/test_commands/test_func_population.py::test_festival_figure_not_found PASSED                                                                                                                                                                                                                           [ 55%] 
+src/tests/test_commands/test_func_population.py::test_festival_figure_dead PASSED                                                                                                                                                                                                                                [ 66%] 
+src/tests/test_commands/test_func_population.py::test_festival_no_player_faction PASSED                                                                                                                                                                                                                          [ 77%]
+src/tests/test_commands/test_func_population.py::test_festival_figure_not_in_player_faction PASSED                                                                                                                                                                                                               [ 88%] 
+src/tests/test_commands/test_func_population.py::test_festival_insufficient_wealth PASSED                                                                                                                                                                                                                        [100%] 
+
+================================================================================================================================================== 9 passed in 0.09s ================================================================================================================================================== 
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> 
+
+
+系统测试
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+
+============================================================
+   Eagle of Rome - MVP 0.4.5 (整改后版本)
+============================================================
+项目根目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+Python路径: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src
+============================================================
+[DEBUG] 命令目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands
+[DEBUG] 发现的命令: ['persuade', 'load', 'l', 'festival', 'status', 'sts', 'combat', 'c', 'forum', 'f', 'mortality', 'm', 'next', 'n', 'population', 'p', 'resolution', 'x', 'revenue', 'r', 'senate', 's', 'step', 'turn', 'reload', 'terms', 'exit', 'quit', 'help', 'h']
+
+============================================================
+   Eagle of Rome - Debug CLI (整改后版本)
+============================================================
+输入 'help' 查看可用命令，'exit' 退出游戏
+
+> load
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 3
+  [Draw 1] Number 43...
+     -> No member assigned (safe)
+> r
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   元老院派: +10 Talents
+   平民派: +10 Talents
+
+   📊 State Treasury: 200 Talents
+> f
+
+--- Forum Phase (Year 264 BC) ---
+
+   📢 1 new figure(s) arrive in the Senate:
+      💰 Marcus · Atilius (eques)
+
+   🏛️  Figures in Senate:
+
+      💰 EQUES (1):
+         ID:4 Marcus · Atilius
+            [权3财23人2]
+
+   📜 2 new contract(s) announced:
+      包税: 伊利里亚包税权
+      工程: 水道桥工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 伊利里亚包税权
+            预付:26 年收益:11 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 水道桥工程
+            预算:33 预期利润:6
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+> p
+
+--- Population Phase (Year 264 BC) ---
+   🟢 Treasury: 200 Talents
+
+   🏛️  State of the Republic: Calm
+
+   👥 Population Events:
+      No significant events
+> help
+
+============================================================
+   Eagle of Rome - 可用命令列表
+============================================================
+  combat      (别名: c)          执行战斗阶段 (Combat Phase)
+  exit        (别名: quit)       退出游戏
+  festival                     举办庆典，消耗个人财富增加人气，用法: festival <人物ID> <金额>
+  forum       (别名: f)          执行广场阶段 (Forum Phase)
+  help        (别名: h)          显示所有可用命令的帮助信息
+  load        (别名: l)          加载场景 (默认: mvp_test.json)
+  mortality   (别名: m)          执行天命阶段 (Mortality Phase)
+  next        (别名: n)          推进到下一年。用法: next [force] (force 可跳过未完成阶段检查)
+  persuade                     说服 Curia 中的指定人物加入你的派系，用法: persuade <人物ID>
+  population  (别名: p)          执行人口阶段 (Population Phase)
+  reload                       重新加载配置文件 (data/config/game_config.json)
+  resolution  (别名: x)          执行决议阶段 (Resolution Phase)
+  revenue     (别名: r)          执行税收阶段 (Revenue Phase)
+  senate      (别名: s)          执行元老院阶段 (Senate Phase)
+  status      (别名: sts)        显示当前游戏状态摘要（国库、人物数等）
+  step                         逐步执行回合，每阶段后暂停等待输入
+  terms                        切换术语预设，用法: terms [preset] (预设: original/historical_roman/generic_latin/chinese_historical)
+  turn                         自动执行完整回合（依次执行所有7个阶段）
+============================================================
+输入 'exit' 或 'quit' 退出游戏
+> festival 1 10
+🎉 Marcus Brutus 举办了一场庆典！
+   花费 10 个人资金
+   获得 10 人气
+   当前: 人气 13, 财富 10
+> s
+
+--- Senate Phase (Year 264 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (2 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Marcus · Atilius     (?       ) Age:39 CHA: 5 Prereq:✗ Cooldown:OK → Age 39 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=2y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Marcus · Atilius     (?       ) Age:39 CHA: 5 Prereq:✗ Cooldown:OK → Age 39 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+   Electing PRAETOR (1 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=2y, Prerequisite=Quaestor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Gaius Marius         (平民派     ) Age:35 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Lucius Sulla         (元老院派    ) Age:45 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Marcus · Atilius     (?       ) Age:39 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+      ⚠️  No eligible candidates for praetor!
+      ⚠️  No eligible candidate for praetor
+
+   Electing QUQAESTOR (1 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ Marcus Brutus        (元老院派    ) Age:40 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius Marius         (平民派     ) Age:35 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Lucius Sulla         (元老院派    ) Age:45 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Marcus · Atilius     (?       ) Age:39 STR: 3 Prereq:✓ Cooldown:OK → Eligible
+
+      🏆 TOP 2 CANDIDATES (by STR):
+         1. Marcus · Atilius     (?)
+            STR: 3 | Pop: 2 | Age:39 | History: None
+         2. Marcus Brutus        (元老院派)
+            STR: 0 | Pop:13 | Age:40 | History: None
+
+      🗳️  VOTING RESULTS:
+         Marcus Brutus       :   22 (100.0%) ████████████████████
+         Marcus · Atilius    :    0 (  0.0%) 
+
+      ✓ WINNER: Marcus Brutus (元老院派)
+        Power bonus: +2
+      💰 Marcus Brutus elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      元老院派: Marcus Brutus (Power: 7)
+      平民派: Gaius Marius (Power: 4)
+
+   🎤 Presiding Officer: Marcus Brutus
+
+   📋 Processing 2 pending contract(s)...
+
+   📊 Voting: 伊利里亚包税权
+      Cost: 26 | Expected: 11
+      ⚠️  No eligible Equites candidates
+
+   🏗️ Assigning: 水道桥工程
+      Budget: 33 | Profit: 6
+      ⏳ Awaiting Consul election...
+> c
+
+--- Combat Phase (Year 264 BC) ---
+   ☮️  No war system - phase skipped
+> x
+
+--- Revolution Phase (Year 264 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: 元老院派 (13 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟡 元老院派: MODERATE risk (avg Loyalty: 5.0)
+      🟡 平民派: MODERATE risk (avg Loyalty: 5.0)
+
+==================================================
+   📜 ANNUAL REPORT - Year 264 BC
+==================================================
+
+   💰 Treasury: 200 Talents
+
+   📊 Faction Standings:
+      1. 👑 元老院派: 13 Influence
+      2. 👑 平民派: 4 Influence
+
+   ☮️  Peace prevails
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   📉 Annual Decay:
+      Marcus Brutus: pop-3(-50%), age 41
+      Gaius Marius: pop-1(-50%), age 36
+      Lucius Sulla: pop-1(-50%), age 46
+      Marcus · Atilius: pop-0(-50%), age 40
+> n
+已推进至 263 BC
+
+📅 Year 263 BC:
+   Completed: 0/7 phases
+      ○ Mortality
+      ○ Revenue
+      ○ Forum
+      ○ Population
+      ○ Senate
+      ○ Combat
+      ○ Revolution
+   ⏳ 7 remaining
+> 
+
+git commit -m "feat: 迁移 Population阶段功能组命令至新框架（指令13）"
+git tag -a v0.4.5-013 -m "MVP0.4.5-013 基线版本 - 迁移 Population阶段功能组命令至新框架（指令13）"

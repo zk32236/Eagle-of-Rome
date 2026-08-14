@@ -1,0 +1,32 @@
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+
+============================================================
+   Eagle of Rome - MVP 0.4.5 (整改后版本)
+============================================================
+项目根目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+Python路径: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src
+============================================================
+[DEBUG] 命令目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands
+
+============================================================
+❌ 未预期错误 - 完整堆栈信息:
+============================================================
+============================================================
+错误类型: ValueError
+错误信息: 命令名冲突: 'combat' 已存在于 src.ui.commands.phase_combat
+新命令: src.ui.commands.phase_combat
+============================================================
+
+按 Enter 键退出...Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\main.py", line 37, in main
+    cli = DebugCLI()
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\debug_cli.py", line 33, in __init__
+    self.registry = CommandRegistry(commands_dir)
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands\sys_registry.py", line 36, in __init__
+    self._scan_and_register(commands_dir)
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands\sys_registry.py", line 62, in _scan_and_register
+    self._register(cmd_class)
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands\sys_registry.py", line 129, in _register
+    raise ValueError(
+ValueError: 命令名冲突: 'combat' 已存在于 src.ui.commands.phase_combat
+新命令: src.ui.commands.phase_combat

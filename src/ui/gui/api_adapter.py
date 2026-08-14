@@ -275,6 +275,10 @@ class GuiApiAdapter:
         from src.api import senate_api
         return self.call(senate_api.advance_senate_phase, self._state, player_id)
 
+    def takeover_war(self, player_id: str, war_id: str) -> Dict[str, Any]:
+        from src.api import senate_api
+        return self.call(senate_api.takeover_war, self._state, player_id, war_id)
+
     # -----------------------------------------------------------------------
     # Combat stage API
     # -----------------------------------------------------------------------

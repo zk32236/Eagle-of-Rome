@@ -1,0 +1,292 @@
+"C:\Users\Kerl\PycharmProjects\Eagle of Rome\Scripts\python.exe" "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+🏛️  Eagle of Rome - MVP 0.2 Debug CLI
+Type 'help' for commands, 'exit' to quit
+
+> help
+
+Available Commands:
+  load          - Load MVP test scenario
+  status        - Show current game state
+  revenue       - Execute Revenue Phase
+  mortality (m) - Execute Mortality Phase
+  senate (s)    - Execute Senate Phase
+  next (n)      - Advance to next turn
+  turn          - Execute full turn cycle (Mortality->Senate->Revenue)
+  exit          - Quit game
+        
+
+> load
+✅ Scenario loaded: MVP 0.2 Test - Three Factions
+   Active Senators: 9/300
+   Death bag contains 300 numbers (few hits expected per turn)
+
+Game loaded successfully!
+
+> status
+
+==================================================
+Year: 264 BC (Turn 1)
+Phase: init
+State Treasury: 100 T
+Death Bag: 300 senators remaining
+
+--------------------------------------------------
+FACTIONS & SENATORS:
+
+Optimates (faction_1) - Treasury: 50T
+  [PLAYER CONTROLLED]
+  🟢 Caesar(ID:101)[军5演6影5]
+  🟢 Cicero(ID:102)[军2演9影6]
+  🟢 Pompey(ID:103)[军8演4影7]
+
+Populares (faction_2) - Treasury: 40T
+  🟢 Cato(ID:201)[军3演7影4]
+  🟢 Marius(ID:202)[军9演3影6]
+  🟢 Crassus(ID:203)[军4演5影8]
+
+Equites (faction_3) - Treasury: 45T
+  🟢 Brutus(ID:28)[军4演6影5]
+  🟢 Antony(ID:58)[军7演5影6]
+  🟢 Sulla(ID:122)[军9演3影7]
+
+==================================================
+
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 chit(s) from bag (1-300)...
+Current living senators: 9
+  [Draw 1] Number 106...
+     -> No senator assigned to this number (safe)
+✅ No senators died this year
+
+> senate
+
+--- Senate Phase (Year 264 BC) ---
+🏛️  Presiding Officer: Crassus (faction_2)
+
+=============================================
+[Electing Consul #1]
+
+   🏆 Finalists:
+      1. Crassus (Populares) - Influence: 8
+      2. Pompey (Optimates) - Influence: 7
+
+   🗳️  Voting:
+      Optimates    | 37 votes → Pompey     (support_Optimates)
+      Populares    | 33 votes → Crassus    (support_Populares)
+      Equites      | 32 votes → Pompey     (random_choice)
+      ✅ Pompey wins with 69/102 votes (68%)
+   ✓ Pompey elected (will take office after transition)
+
+=============================================
+[Electing Consul #2]
+
+   🏆 Finalists:
+      1. Crassus (Populares) - Influence: 8
+      2. Sulla (Equites) - Influence: 7
+
+   🗳️  Voting:
+      Optimates    | 37 votes → Sulla      (random_choice)
+      Populares    | 33 votes → Crassus    (support_Populares)
+      Equites      | 32 votes → Sulla      (support_Equites)
+      ✅ Sulla wins with 69/102 votes (68%)
+   ✓ Sulla elected (will take office after transition)
+
+=============================================
+   🏛️  TRANSITION OF POWER
+
+   Incoming Consuls taking office:
+      ↑ Pompey: 7 → 12 (+5 bonus)
+      ↑ Sulla: 7 → 12 (+5 bonus)
+Elected Consuls: ['Pompey', 'Sulla']
+
+> status
+
+==================================================
+Year: 264 BC (Turn 1)
+Phase: senate
+State Treasury: 100 T
+Death Bag: 299 senators remaining
+
+--------------------------------------------------
+FACTIONS & SENATORS:
+
+Optimates (faction_1) - Treasury: 50T
+  [PLAYER CONTROLLED]
+  🟢 Caesar(ID:101)[军5演6影5]
+  🟢 Cicero(ID:102)[军2演9影6]
+  👑 Pompey(ID:103)[军8演4影12]×1 👑
+
+Populares (faction_2) - Treasury: 40T
+  🟢 Cato(ID:201)[军3演7影4]
+  🟢 Marius(ID:202)[军9演3影6]
+  🟢 Crassus(ID:203)[军4演5影8]
+
+Equites (faction_3) - Treasury: 45T
+  🟢 Brutus(ID:28)[军4演6影5]
+  🟢 Antony(ID:58)[军7演5影6]
+  👑 Sulla(ID:122)[军9演3影12]×1 👑
+
+==================================================
+
+> revenue
+
+--- Revenue Phase (Year -264) ---
+State treasury: +100 (Total: 200)
+Optimates treasury: +10
+Populares treasury: +10
+Equites treasury: +10
+
+> status
+
+==================================================
+Year: 264 BC (Turn 1)
+Phase: revenue
+State Treasury: 200 T
+Death Bag: 299 senators remaining
+
+--------------------------------------------------
+FACTIONS & SENATORS:
+
+Optimates (faction_1) - Treasury: 60T
+  [PLAYER CONTROLLED]
+  🟢 Caesar(ID:101)[军5演6影5]
+  🟢 Cicero(ID:102)[军2演9影6]
+  👑 Pompey(ID:103)[军8演4影12]×1 👑
+
+Populares (faction_2) - Treasury: 50T
+  🟢 Cato(ID:201)[军3演7影4]
+  🟢 Marius(ID:202)[军9演3影6]
+  🟢 Crassus(ID:203)[军4演5影8]
+
+Equites (faction_3) - Treasury: 55T
+  🟢 Brutus(ID:28)[军4演6影5]
+  🟢 Antony(ID:58)[军7演5影6]
+  👑 Sulla(ID:122)[军9演3影12]×1 👑
+
+==================================================
+
+> next
+Advanced to Year 263 BC
+
+> status
+
+==================================================
+Year: 263 BC (Turn 2)
+Phase: revenue
+State Treasury: 200 T
+Death Bag: 299 senators remaining
+
+--------------------------------------------------
+FACTIONS & SENATORS:
+
+Optimates (faction_1) - Treasury: 60T
+  [PLAYER CONTROLLED]
+  🟢 Caesar(ID:101)[军5演6影5]
+  🟢 Cicero(ID:102)[军2演9影6]
+  👑 Pompey(ID:103)[军8演4影12]×1 👑
+
+Populares (faction_2) - Treasury: 50T
+  🟢 Cato(ID:201)[军3演7影4]
+  🟢 Marius(ID:202)[军9演3影6]
+  🟢 Crassus(ID:203)[军4演5影8]
+
+Equites (faction_3) - Treasury: 55T
+  🟢 Brutus(ID:28)[军4演6影5]
+  🟢 Antony(ID:58)[军7演5影6]
+  👑 Sulla(ID:122)[军9演3影12]×1 👑
+
+==================================================
+
+> m
+
+--- Mortality Phase (Year 263 BC) ---
+Drawing 1 chit(s) from bag (1-300)...
+Current living senators: 9
+  [Draw 1] Number 79...
+     -> No senator assigned to this number (safe)
+✅ No senators died this year
+
+> s
+
+--- Senate Phase (Year 263 BC) ---
+🏛️  Presiding Officer: Pompey (faction_1)
+   ⭐ Current Consuls: Pompey(影12), Sulla(影12)
+      (Retain +5 influence bonus during this election)
+
+=============================================
+[Electing Consul #1]
+
+   🏆 Finalists:
+      1. Crassus (Populares) - Influence: 8
+      2. Cicero (Optimates) - Influence: 6
+
+   🗳️  Voting:
+      Optimates    | 42 votes → Cicero     (support_Optimates) [incumbent]
+      Populares    | 33 votes → Crassus    (support_Populares)
+      Equites      | 37 votes → Cicero     (random_choice) [incumbent]
+      ✅ Cicero wins with 79/112 votes (71%)
+   ✓ Cicero elected (will take office after transition)
+
+=============================================
+[Electing Consul #2]
+
+   🏆 Finalists:
+      1. Crassus (Populares) - Influence: 8
+      2. Marius (Populares) - Influence: 6
+
+   🗳️  Voting:
+      Optimates    | 42 votes → Marius     (random_choice) [incumbent]
+      Populares    | 33 votes → Crassus    (support_Populares)
+      Equites      | 37 votes → Marius     (random_choice) [incumbent]
+      ✅ Marius wins with 79/112 votes (71%)
+   ✓ Marius elected (will take office after transition)
+
+=============================================
+   🏛️  TRANSITION OF POWER
+
+   Outgoing Consuls stepping down:
+      ↓ Pompey: 12 → 7 (bonus removed)
+      ↓ Sulla: 12 → 7 (bonus removed)
+
+   Incoming Consuls taking office:
+      ↑ Cicero: 6 → 11 (+5 bonus)
+      ↑ Marius: 6 → 11 (+5 bonus)
+Elected Consuls: ['Cicero', 'Marius']
+
+> status
+
+==================================================
+Year: 263 BC (Turn 2)
+Phase: senate
+State Treasury: 200 T
+Death Bag: 298 senators remaining
+
+--------------------------------------------------
+FACTIONS & SENATORS:
+
+Optimates (faction_1) - Treasury: 60T
+  [PLAYER CONTROLLED]
+  🟢 Caesar(ID:101)[军5演6影5]
+  👑 Cicero(ID:102)[军2演9影11]×1 👑
+  🟢 Pompey(ID:103)[军8演4影7]×1
+
+Populares (faction_2) - Treasury: 50T
+  🟢 Cato(ID:201)[军3演7影4]
+  👑 Marius(ID:202)[军9演3影11]×1 👑
+  🟢 Crassus(ID:203)[军4演5影8]
+
+Equites (faction_3) - Treasury: 55T
+  🟢 Brutus(ID:28)[军4演6影5]
+  🟢 Antony(ID:58)[军7演5影6]
+  🟢 Sulla(ID:122)[军9演3影7]×1
+
+==================================================
+
+> exit
+
+Process finished with exit code 0
+
+
+在这一轮测试中，第二执政官的两名候选人来自同一个派系（Populares），这种情况下其他两个派系的票都是投给Populares的候选人，为什么Marius当选，而Crassus落选呢？

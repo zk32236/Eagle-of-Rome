@@ -1,0 +1,61 @@
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m pytest src/tests/test_commands/test_func_contracts.py -v
+================================================================================================================================================= test session starts =================================================================================================================================================
+platform win32 -- Python 3.10.6, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+collected 13 items
+
+src/tests/test_commands/test_func_contracts.py::test_contracts_no_contracts PASSED                                                                                                                                                                                                                               [  7%] 
+src/tests/test_commands/test_func_contracts.py::test_contracts_with_pending PASSED                                                                                                                                                                                                                               [ 15%] 
+src/tests/test_commands/test_func_contracts.py::test_contracts_with_active PASSED                                                                                                                                                                                                                                [ 23%] 
+src/tests/test_commands/test_func_contracts.py::test_contracts_with_completed PASSED                                                                                                                                                                                                                             [ 30%]
+src/tests/test_commands/test_func_contracts.py::test_contracts_with_expired PASSED                                                                                                                                                                                                                               [ 38%] 
+src/tests/test_commands/test_func_contracts.py::test_vote_wrong_args PASSED                                                                                                                                                                                                                                      [ 46%] 
+src/tests/test_commands/test_func_contracts.py::test_vote_invalid_contract_id PASSED                                                                                                                                                                                                                             [ 53%] 
+src/tests/test_commands/test_func_contracts.py::test_vote_contract_not_found PASSED                                                                                                                                                                                                                              [ 61%] 
+src/tests/test_commands/test_func_contracts.py::test_vote_contract_not_pending PASSED                                                                                                                                                                                                                            [ 69%]
+src/tests/test_commands/test_func_contracts.py::test_vote_contract_not_tax_farming PASSED                                                                                                                                                                                                                        [ 76%] 
+src/tests/test_commands/test_func_contracts.py::test_vote_no_candidates PASSED                                                                                                                                                                                                                                   [ 84%] 
+src/tests/test_commands/test_func_contracts.py::test_vote_success FAILED                                                                                                                                                                                                                                         [ 92%]
+src/tests/test_commands/test_func_contracts.py::test_vote_cannot_afford PASSED                                                                                                                                                                                                                                   [100%] 
+
+====================================================================================================================================================== FAILURES ======================================================================================================================================================= 
+__________________________________________________________________________________________________________________________________________________ test_vote_success __________________________________________________________________________________________________________________________________________________ 
+
+mock_input = <MagicMock name='input' id='2093999576768'>, mock_state = <MagicMock spec='GameState' id='2093999733200'>, mock_contract = <MagicMock spec='Contract' id='2093999649312'>, mock_figure = <MagicMock spec='Figure' id='2093999667664'>
+mock_faction = <MagicMock name='mock.get_faction()' spec='Faction' id='2093999663056'>
+
+    @patch('builtins.input')
+    def test_vote_success(mock_input, mock_state, mock_contract, mock_figure, mock_faction):
+        mock_state.contracts = [mock_contract]
+
+        # 正确设置 mock_figure 的 class_tier
+        class_tier_mock = MagicMock()
+        class_tier_mock.value = "eques"
+        mock_figure.class_tier = class_tier_mock
+        mock_figure.id = 101
+        mock_figure.name = "Eques Test"
+        mock_figure.wealth = 100
+        mock_figure.faction_id = "senate"
+
+        # 设置候选人
+        mock_faction.get_members.return_value = [mock_figure]
+        mock_state.factions = {"senate": mock_faction}
+        mock_state.get_faction.return_value = mock_faction
+
+        # 模拟用户选择第一个候选人
+        mock_input.return_value = "1"
+
+        cmd = VoteCommand(mock_state)
+        result = cmd.execute(["contract", "1"])
+
+>       assert result is True
+E       assert False is True
+
+src\tests\test_commands\test_func_contracts.py:190: AssertionError
+------------------------------------------------------------------------------------------------------------------------------------------------ Captured stdout call ------------------------------------------------------------------------------------------------------------------------------------------------- 
+❌ 没有符合资格的骑士候选人
+=============================================================================================================================================== short test summary info =============================================================================================================================================== 
+FAILED src/tests/test_commands/test_func_contracts.py::test_vote_success - assert False is True
+============================================================================================================================================ 1 failed, 12 passed in 0.24s ============================================================================================================================================= 
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> 

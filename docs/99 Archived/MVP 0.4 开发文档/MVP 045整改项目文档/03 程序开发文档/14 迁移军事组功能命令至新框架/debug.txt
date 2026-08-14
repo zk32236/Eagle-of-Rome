@@ -1,0 +1,192 @@
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m pytest src/tests/test_commands/test_func_military.py -v
+================================================================================================================================================= test session starts =================================================================================================================================================
+platform win32 -- Python 3.10.6, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+collected 13 items
+
+src/tests/test_commands/test_func_military.py::test_wars_no_system PASSED                                                                                                                                                                                                                                        [  7%] 
+src/tests/test_commands/test_func_military.py::test_wars_active PASSED                                                                                                                                                                                                                                           [ 15%]
+src/tests/test_commands/test_func_military.py::test_assign_no_system PASSED                                                                                                                                                                                                                                      [ 23%] 
+src/tests/test_commands/test_func_military.py::test_assign_success FAILED                                                                                                                                                                                                                                        [ 30%]
+src/tests/test_commands/test_func_military.py::test_assign_cancel PASSED                                                                                                                                                                                                                                         [ 38%] 
+src/tests/test_commands/test_func_military.py::test_legions_no_system PASSED                                                                                                                                                                                                                                     [ 46%] 
+src/tests/test_commands/test_func_military.py::test_legions_success PASSED                                                                                                                                                                                                                                       [ 53%]
+src/tests/test_commands/test_func_military.py::test_recruit_no_system PASSED                                                                                                                                                                                                                                     [ 61%] 
+src/tests/test_commands/test_func_military.py::test_recruit_single_success PASSED                                                                                                                                                                                                                                [ 69%] 
+src/tests/test_commands/test_func_military.py::test_recruit_batch_success PASSED                                                                                                                                                                                                                                 [ 76%] 
+src/tests/test_commands/test_func_military.py::test_disband_no_system PASSED                                                                                                                                                                                                                                     [ 84%]
+src/tests/test_commands/test_func_military.py::test_disband_single PASSED                                                                                                                                                                                                                                        [ 92%] 
+src/tests/test_commands/test_func_military.py::test_disband_all PASSED                                                                                                                                                                                                                                           [100%]
+
+====================================================================================================================================================== FAILURES ======================================================================================================================================================= 
+_________________________________________________________________________________________________________________________________________________ test_assign_success _________________________________________________________________________________________________________________________________________________ 
+
+mock_input = <MagicMock name='input' id='1682912896112'>, mock_state = <MagicMock spec='GameState' id='1682912754896'>, mock_war = <MagicMock spec='War' id='1682912813760'>, mock_legion = <MagicMock spec='Legion' id='1682912822752'>, mock_figure = <MagicMock spec='Figure' id='1682912888480'>
+
+    @patch('builtins.input')
+    def test_assign_success(mock_input, mock_state, mock_war, mock_legion, mock_figure):
+        ws = mock_state.get_war_system.return_value
+        ms = mock_state.get_military_system.return_value
+        ws.get_active_wars.return_value = [mock_war]
+
+        # 确保战争没有指挥官
+        mock_war.commander_id = None
+
+        # 模拟候选人
+        ms.get_unassigned_legions.return_value = [mock_legion]
+        # 模拟派系成员作为指挥官候选人
+        faction = MagicMock()
+        faction.get_members.return_value = [mock_figure]
+        mock_state.factions.values.return_value = [faction]
+
+        # 模拟输入：选择战争1，指挥官1，军团1，不输入海军
+        mock_input.side_effect = ["1", "1", "1", "0"]
+
+        cmd = AssignCommand(mock_state)
+>       result = cmd.execute([])
+
+src\tests\test_commands\test_func_military.py:127:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <src.ui.commands.func_military.AssignCommand object at 0x00000187D56E6200>, args = []
+
+    def execute(self, args: List[str]) -> bool:
+        ws = self.state.get_war_system()
+        ms = self.state.get_military_system()
+        if not ws or not ms:
+            print("战争系统或军事系统未就绪")
+            return False
+
+        terms = TerminologyService.get()
+
+        # 获取活跃战争
+        active = ws.get_active_wars()
+        if not active:
+            print("没有活跃战争")
+            return False
+
+        # 选择战争
+        print(f"\n选择战争:")
+        war_idx = self._choose_from_list(
+            active,
+            lambda w: f"{w.name} [Str:{w.get_total_strength()}] {'⚓' if w.naval_support_required else ''}"
+        )
+        if war_idx is None:
+            return False
+        selected_war = active[war_idx]
+
+        # 如果已有指挥官，提供增援选项
+        if selected_war.commander_id is not None:
+            commander = self.state.get_member(selected_war.commander_id)
+            print(f"\n   ℹ️  {selected_war.name} 已有指挥官 {commander.name if commander else '未知'}")
+            print(f"   选项: [a] 增援军团 / [r] 替换指挥官 / [c] 取消")
+            option = input("   > ").strip().lower()
+            if option == 'c':
+                return False
+            elif option == 'a':
+                # 仅增援军团
+                available = ms.get_unassigned_legions()
+                if not available:
+                    print("   ❌ 没有可用的军团")
+                    return False
+                print(f"\n   可增援的军团:")
+                for idx, leg in enumerate(available, 1):
+                    vet = "⭐" if leg.is_veteran else ""
+                    print(f"      {idx}. {leg.name}{vet}")
+                choices = input("   输入军团编号（逗号分隔，如 1,2,3）: ").strip()
+                if not choices:
+                    return False
+                try:
+                    indices = [int(x.strip()) - 1 for x in choices.split(',')]
+                    selected = []
+                    for i in indices:
+                        if 0 <= i < len(available):
+                            selected.append(available[i])
+                        else:
+                            print(f"   ⚠️ 忽略无效编号 {i+1}")
+                    if not selected:
+                        return False
+                    legion_numbers = [l.number for l in selected]
+                    assigned, msg = ms.assign_to_war(legion_numbers, selected_war.id, selected_war.commander_id)
+                    print(f"   ✅ {msg}")
+                    return True
+                except ValueError:
+                    print("   ❌ 输入格式错误")
+                    return False
+            elif option != 'r':
+                print("   ❌ 无效选项")
+                return False
+            # 继续替换流程
+
+        # 选择指挥官
+        candidates = []
+        for faction in self.state.factions.values():
+            for member in faction.get_members(self.state):
+                if not member.is_dead and member.is_present:
+                    candidates.append(member)
+        if not candidates:
+            print("没有可用的指挥官")
+            return False
+
+        print(f"\n选择指挥官:")
+        cmd_idx = self._choose_from_list(
+            candidates,
+            lambda c: f"{c.name} (Mil:{c.military}) [{c.faction_id}]"
+        )
+        if cmd_idx is None:
+            return False
+        selected_cmd = candidates[cmd_idx]
+
+        # 选择军团
+        available_legions = ms.get_unassigned_legions()
+        if available_legions:
+            print(f"\n可用军团:")
+            for idx, leg in enumerate(available_legions, 1):
+                vet = "⭐" if leg.is_veteran else ""
+                print(f"  {idx}. {leg.name}{vet}")
+
+            print(f"输入军团编号（逗号分隔，或输入 0 跳过）: ")
+            choices = input("   > ").strip()
+            if choices and choices != '0':
+                try:
+                    indices = [int(x.strip()) - 1 for x in choices.split(',')]
+                    selected_legions = []
+                    for i in indices:
+                        if 0 <= i < len(available_legions):
+                            selected_legions.append(available_legions[i])
+                        else:
+                            print(f"   ⚠️ 忽略无效编号 {i+1}")
+                except ValueError:
+                    print("   ❌ 输入格式错误")
+                    return False
+            else:
+                selected_legions = []
+        else:
+            print("没有可用军团")
+            selected_legions = []
+
+        # 海军
+        fleets = 0
+        if selected_war.naval_support_required:
+            fleet_input = self._input_int("指派舰队数量 (0-5): ", 0, 5)
+            if fleet_input is None:
+                return False
+            fleets = fleet_input
+
+        # 执行指派
+        success = ws.assign_commander(
+            selected_war.id,
+            selected_cmd.id,
+            len(selected_legions),
+            fleets
+        )
+        if success:
+            print(f"\n✅ {selected_cmd.name} 指派至 {selected_war.name}")
+            if selected_legions:
+                legion_numbers = [l.number for l in selected_legions]
+>               assigned, msg = ms.assign_to_war(legion_numbers, selected_war.id, selected_cmd.id)
+E               ValueError: not enough values to unpack (expected 2, got 0)
+
+src\ui\commands\func_military.py:295: ValueError
+------------------------------------------------------------------------------------------------------------------------------------------------ Captured stdout call -----------

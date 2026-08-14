@@ -1,0 +1,168 @@
+【EOR MVP 0.5 开发指令 #1】（DS002接手）
+指令ID：M1-1
+收件人：AI主程序员（DS002）
+主题：创建 Province 和 Contract 实体
+截止时间：2026-02-23 18:00（预计8小时工时）
+
+一、项目背景与接手说明
+欢迎加入 EOR MVP 0.5 开发！本项目基于 MVP 0.4.6 基线代码，采用增量开发模式，所有新增功能不得修改原有核心逻辑。你需在 feature/mvp-0.5 分支上工作，该分支已包含完整的 MVP 0.4.6 代码。
+
+重要文档（请首先阅读，掌握整体设计）：
+
+《EOR MVP 0.5 架构设计总览》：了解模块划分、核心实体关系。
+
+《EOR MVP 0.5 开发架构约束与注意事项》：熟悉编码规范（字段私有、@property、异常处理等）。
+
+本次指令是里程碑M1（实体层增量开发）的第一个子任务，后续还有 M1-2、M1-3，请按顺序完成。
+
+二、核心输入（必读章节）
+文档	需要阅读的章节
+《EOR MVP 0.5 核心实体架构设计文档》	§1.1 Province类（字段定义、方法签名）
+§1.2 Contract类（字段定义、方法签名）
+§2 ERD图（理解关联关系）
+《EOR MVP 0.5 开发架构约束与注意事项》	§1 架构约束清单（字段封装原则）
+§3 代码对接位置清单（确认文件路径）
+三、核心任务
+任务1：实现 Province 类
+文件路径：src/core/entities/entities.py（已有文件，需在其中添加 Province 类）
+
+需求：
+
+根据设计文档 §1.1 实现所有字段（私有）：
+
+_province_id: int
+
+_name: str
+
+_total_land: int
+
+_land_public: int（初始化 = total_land * 0.6）
+
+_land_private: int（初始化 = total_land * 0.4）
+
+_tax_base: int（默认0，后续由配置设置）
+
+_grievance: int（范围0-3，默认0）
+
+_tax_contract_id: Optional[int]（默认None）
+
+_project_contract_id: Optional[int]（默认None）
+
+_has_project: bool（默认False）
+
+为每个字段提供 @property 只读访问器。
+
+实现以下公共方法：
+
+update_land_type(public_change: int, private_change: int) -> None：调整公/私地数量，确保非负。
+
+bind_tax_contract(contract_id: int) -> None：绑定包税权合同，若已绑定则抛出 ValueError。
+
+bind_project_contract(contract_id: int) -> None：绑定公共工程合同，若已绑定则抛出 ValueError，并设置 _has_project = True。
+
+unbind_tax_contract() -> None：解绑包税权合同。
+
+unbind_project_contract() -> None：解绑公共工程合同，并设置 _has_project = False。
+
+set_grievance(value: int) -> None：设置民怨值，范围0-3，超出时抛出 ValueError。
+
+任务2：创建 Contract 实体
+文件路径：src/core/entities/contract.py（新文件）
+
+需求：
+
+定义 ContractType 枚举，包含 TAX 和 PROJECT。
+
+实现 Contract 类，字段如下（私有）：
+
+_contract_id: int
+
+_contract_type: ContractType
+
+_province_id: int
+
+_base_cost: int
+
+_create_turn: int
+
+_is_active: bool（默认False）
+
+_winner_id: Optional[int]（默认None）
+
+_profit_base: int（默认0）
+
+_is_under_execution: bool（默认False）
+
+_complete_turn: Optional[int]（默认None）
+
+为每个字段提供 @property 只读访问器。
+
+实现以下公共方法：
+
+mark_winner(winner_id: int, current_turn: int, profit_base: int) -> None：标记中标，激活合同。若合同已激活则抛出 ValueError。
+
+mark_complete(current_turn: int) -> None：标记合同完成。
+
+terminate() -> None：强制终止合同（用于异常情况）。
+
+四、设计要点提醒
+所有字段必须私有（以下划线开头），外部只能通过 @property 读取，通过公共方法修改。
+
+方法命名：动词开头，清晰表达意图（如 bind_tax_contract，而非 setTaxContract）。
+
+异常处理：在绑定、设置民怨等方法中，当条件不满足时抛出适当的 ValueError。
+
+类型提示：使用 from typing import Optional, List 等提供完整类型注解。
+
+初始化比例：land_public 和 land_private 严格按照 total_land * 0.6 和 total_land * 0.4 计算，取整（int 转换即可）。
+
+不要修改任何原有代码（如已有 Figure 类等），只做新增。
+
+五、交付物清单
+text
+1. src/core/entities/entities.py（已存在，需添加 Province 类）
+2. src/core/entities/contract.py（新文件）
+3. src/core/entities/__init__.py（如不存在则创建空文件，确保包可导入）
+六、验收标准
+可自行编写简单测试验证（无需提交测试文件）：
+python
+# Province 测试
+province = Province(1, "西西里", 1000)
+assert province.land_public == 600
+assert province.land_private == 400
+province.update_land_type(50, -30)
+assert province.land_public == 650
+assert province.land_private == 370
+
+# Contract 测试
+contract = Contract(1, ContractType.TAX, 1, 90, 5)
+assert contract.contract_type == ContractType.TAX
+assert not contract.is_active
+contract.mark_winner(1001, 5, 18)
+assert contract.is_active
+assert contract.winner_id == 1001
+代码审查要点
+所有字段是否私有（下划线开头）
+
+是否提供 @property 访问器
+
+方法命名是否符合规范（动词开头）
+
+异常处理是否合理
+
+类型提示是否完整
+
+无语法错误，模块可正常导入
+
+
+单元测试：
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Program Files/JetBrains/PyCharm Community Edition 2022.2.1/plugins/python-ce/helpers/pycharm/_jb_unittest_runner.py" --path "C:/Users/Kerl/PycharmProjects/Eagle of Rome/src/tests/test_entities" 
+Testing started at 11:50 am ...
+Launching unittests with arguments python -m unittest discover -s C:/Users/Kerl/PycharmProjects/Eagle of Rome/src/tests/test_entities -t C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_entities in C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_entities
+
+
+Ran 19 tests in 0.009s
+
+OK
+
+Process finished with exit code 0

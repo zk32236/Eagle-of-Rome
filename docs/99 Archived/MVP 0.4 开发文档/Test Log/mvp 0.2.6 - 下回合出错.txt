@@ -1,0 +1,154 @@
+"C:\Users\Kerl\PycharmProjects\Eagle of Rome\Scripts\python.exe" "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+   ⚙️  Config loaded: Consulship cooldown = 5 years
+🏛️  Eagle of Rome - MVP 0.2 Debug CLI
+Type 'help' for commands, 'exit' to quit
+
+> help
+
+    Available Commands:
+      load          - Load MVP test scenario
+      status        - Show current game state
+      revenue       - Execute Revenue Phase
+      mortality (m) - Execute Mortality Phase
+      senate (s)    - Execute Senate Phase
+      next (n)      - Advance to next turn
+      turn          - Execute full turn cycle
+      reload        - Hot-reload game_config.json  <-- 新增
+      exit          - Quit game
+        
+
+> load
+   ⚙️  Config loaded: Consulship cooldown = 5 years
+✅ Scenario loaded: MVP 0.2 Test - Three Factions
+   Active Senators: 9/300
+   Death bag contains 300 numbers (few hits expected per turn)
+
+Game loaded successfully!
+
+> status
+
+==================================================
+Year: 264 BC (Turn 1)
+Phase: init
+State Treasury: 100 T
+Death Bag: 300 senators remaining
+
+--------------------------------------------------
+FACTIONS & SENATORS:
+
+Optimates (faction_1) - Treasury: 50T
+  [PLAYER CONTROLLED]
+  🟢 Caesar(ID:101)[军5演6影5]
+  🟢 Cicero(ID:102)[军2演9影6]
+  🟢 Pompey(ID:103)[军8演4影7]
+
+Populares (faction_2) - Treasury: 40T
+  🟢 Cato(ID:201)[军3演7影4]
+  🟢 Marius(ID:202)[军9演3影6]
+  🟢 Crassus(ID:203)[军4演5影8]
+
+Equites (faction_3) - Treasury: 45T
+  🟢 Brutus(ID:71)[军4演6影5]
+  🟢 Antony(ID:249)[军7演5影6]
+  🟢 Sulla(ID:84)[军9演3影7]
+
+==================================================
+
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 chit(s) from bag (1-300)...
+Current living senators: 9
+  [Draw 1] Number 241...
+     -> No senator assigned to this number (safe)
+✅ No senators died this year
+
+> s
+
+--- Senate Phase (Year 264 BC) ---
+🏛️  Presiding Officer: Crassus
+
+=============================================
+[Electing Consul #1]
+   Total living senators: 9
+   Available candidates: 9
+   Ineligible (cooldown): 0
+
+   🏆 Finalists:
+      1. Crassus (Populares) - Influence: 8
+      2. Pompey (Optimates) - Influence: 7
+
+   🗳️  Voting:
+      Optimates    | 37 votes → Pompey     (support_Optimates)
+      Populares    | 33 votes → Crassus    (support_Populares)
+      Equites      | 32 votes → Crassus    (random_choice)
+      ✅ Crassus wins with 65/102 votes (64%)
+   ✓ Crassus elected
+
+=============================================
+[Electing Consul #2]
+   Total living senators: 9
+   Available candidates: 8
+   Ineligible (cooldown): 0
+
+   🏆 Finalists:
+      1. Pompey (Optimates) - Influence: 7
+      2. Sulla (Equites) - Influence: 7
+
+   🗳️  Voting:
+      Optimates    | 37 votes → Pompey     (support_Optimates)
+      Populares    | 33 votes → Pompey     (random_choice)
+      Equites      | 32 votes → Sulla      (support_Equites)
+      ✅ Pompey wins with 70/102 votes (69%)
+   ✓ Pompey elected
+
+=============================================
+   🏛️  TRANSITION OF POWER
+
+   Incoming Consuls taking office:
+      ↑ Crassus: 8 → 13 (+5 bonus)
+      ↑ Pompey: 7 → 12 (+5 bonus)
+
+> status
+
+==================================================
+Year: 264 BC (Turn 1)
+Phase: senate
+State Treasury: 100 T
+Death Bag: 299 senators remaining
+
+--------------------------------------------------
+FACTIONS & SENATORS:
+
+Optimates (faction_1) - Treasury: 50T
+  [PLAYER CONTROLLED]
+  🟢 Caesar(ID:101)[军5演6影5]
+  🟢 Cicero(ID:102)[军2演9影6]
+  👑 Pompey(ID:103)[军8演4影12]×1 👑
+
+Populares (faction_2) - Treasury: 40T
+  🟢 Cato(ID:201)[军3演7影4]
+  🟢 Marius(ID:202)[军9演3影6]
+  👑 Crassus(ID:203)[军4演5影13]×1 👑
+
+Equites (faction_3) - Treasury: 45T
+  🟢 Brutus(ID:71)[军4演6影5]
+  🟢 Antony(ID:249)[军7演5影6]
+  🟢 Sulla(ID:84)[军9演3影7]
+
+==================================================
+
+> revenue
+
+--- Revenue Phase (Year -264) ---
+State treasury: +100 (Total: 200)
+Optimates treasury: +10
+Populares treasury: +10
+Equites treasury: +10
+
+> next
+Error: 'GameTurn' object has no attribute 'advance_year'
+
+> exit
+
+Process finished with exit code 0

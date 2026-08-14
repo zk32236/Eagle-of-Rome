@@ -367,6 +367,14 @@ class GuiSessionStore(QObject):
     def canAdvanceSenate(self) -> bool:
         return self._senate_view.get("can_advance", False)
 
+    @Property(bool, notify=senateViewChanged)
+    def canTakeoverSenateWar(self) -> bool:
+        return self._senate_view.get("can_takeover", False)
+
+    @Property(list, notify=senateViewChanged)
+    def senateTakeoverOptions(self) -> List[Dict[str, Any]]:
+        return self._senate_view.get("takeover_options", [])
+
     @Property(dict, notify=senateViewChanged)
     def senateResult(self) -> Dict[str, Any]:
         """
@@ -1287,6 +1295,19 @@ class GuiSessionStore(QObject):
             if self.currentPlayerId != self._viewer_id:
                 self._adapter.auto_resolve_combat(self._viewer_id)
             # Refresh combat view for all players entering combat phase
+            self._refresh_combat_view()
+        self.senateViewChanged.emit()
+        return feedback
+
+    @Slot(str, result=dict)
+    def doTakeoverWar(self, war_id: str) -> dict:
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.takeover_war(self._viewer_id, war_id)
+        self._raise_feedback(feedback)
+        if feedback.get("success"):
+            self._refresh_snapshot()
+            self._refresh_senate_view()
             self._refresh_combat_view()
         self.senateViewChanged.emit()
         return feedback

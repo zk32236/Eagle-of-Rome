@@ -831,3 +831,47 @@ class PoliticalSystem:
         ms.assign_to_war(recruited_numbers, war.id, consul_id)
         for number in recruited_numbers:
             war.add_legion_number(number)
+
+    def execute_war_takeover_direct(self, war, consul_figure) -> bool:
+        """DEV-13 玩家直接接管：先招募/分配军团，成功后回写 commander（FC-05 原子性）。
+
+        复用 _auto_recruit_and_assign_legions_for_war 招募军团；军团就位后才回写
+        commander/office/is_absent。招募失败 → False，commander 不回写。
+        不触碰 AI 路径 process_war_takeover(decider) 与 resolve_senate。
+        """
+        if not war or not consul_figure:
+            return False
+        ms = self.state.get_military_system()
+        if ms is None:
+            return False
+
+        self._auto_recruit_and_assign_legions_for_war(war, consul_figure.id)
+
+        # 军团招募成功判定：战争已有（或本次新分配）军团
+        if not getattr(war, "legion_numbers", None):
+            self.state.log_event(
+                f"execute_war_takeover_direct: war={war.id} 军团招募失败",
+                level=logging.DEBUG,
+                extra={"war_id": war.id, "reason": "legion_recruit_failed"},
+            )
+            return False
+
+        # 旧指挥官 office 转换（仅当其存活且可被替换：is_absent proconsul/propraetor）
+        old_cmd_id = war.commander_id
+        old_cmd = self.state.get_member(old_cmd_id) if old_cmd_id else None
+        if old_cmd and old_cmd.id != consul_figure.id and not old_cmd.is_dead:
+            old_cmd.is_absent = False
+            if old_cmd.office == "proconsul":
+                old_cmd.office = "ex-consul"
+            elif old_cmd.office == "propraetor":
+                old_cmd.office = "ex-praetor"
+            old_cmd.update_influence()
+
+        war.commander_id = consul_figure.id
+        consul_figure.is_absent = True
+        self.state.log_event(
+            f"战争接管直接执行: war={war.id}, commander={consul_figure.id}",
+            level=logging.INFO,
+            extra={"war_id": war.id, "commander_id": consul_figure.id, "method": "execute_war_takeover_direct"},
+        )
+        return True

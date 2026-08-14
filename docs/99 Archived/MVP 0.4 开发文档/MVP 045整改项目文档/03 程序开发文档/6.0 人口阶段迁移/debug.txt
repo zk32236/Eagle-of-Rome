@@ -1,0 +1,44 @@
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_commands/test_phase_population.py
+
+--- Population Phase (Year 264 BC) ---
+   🟠 Treasury: 0 Talents
+
+   🏛️  State of the Republic: Tense
+
+   👥 Population Events:
+      No significant events
+..
+   🛡️  Legion Review:
+      🔴 Crisis! Must disband 3 Legion(s)
+      ⚫ Legio I disbanded
+      ⚫ Legio I disbanded
+      ⚠️  Could only disband 2/3 Legion(s)
+F....   🔴 Treasury: -10 Talents
+   ⚔️  Active wars: 1
+.   🟢 Treasury: 200 Talents
+.   🟠 Treasury: 40 Talents
+   ⚔️  Active wars: 1
+.   🟡 Treasury: 80 Talents
+.
+======================================================================
+FAIL: test_legion_disbandment_bad_state (src.tests.test_commands.test_phase_population.TestPopulationCommand)
+测试 Bad 状态时强制解散一半军团
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_commands\test_phase_population.py", line 135, in test_legion_disbandment_bad_state
+    self.assertEqual(mock_ms.disband_legion.call_count, 3)
+AssertionError: 2 != 3
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.013s
+
+FAILED (failures=1)
+
+
+
+
+
+git rm src/core/phases/population_phase.py
+git commit -m "chore(cleanup): remove old population_phase.py after migration"
+
+

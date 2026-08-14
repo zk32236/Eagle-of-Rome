@@ -1,0 +1,38 @@
+.EEE
+======================================================================
+ERROR: test_qualification_checks (src.tests.test_commands.test_phase_senate.TestSenateCommand)
+测试资格检查方法
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_commands\test_phase_senate.py", line 316, in test_qualification_checks
+    self.assertTrue(cmd._check_prerequisite(self.fig1, "consul"))   # 有praetor历史
+AttributeError: 'TestSenateCommand' object has no attribute 'fig1'
+
+======================================================================
+ERROR: test_remove_office_holders (src.tests.test_commands.test_phase_senate.TestSenateCommand)
+测试卸任逻辑
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_commands\test_phase_senate.py", line 288, in test_remove_office_holders
+    self.fig1.office = "consul"
+AttributeError: 'TestSenateCommand' object has no attribute 'fig1'
+
+======================================================================
+ERROR: test_seat_standings (src.tests.test_commands.test_phase_senate.TestSenateCommand)
+测试席位占比显示（直接调用私有方法验证输出）
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_commands\test_phase_senate.py", line 265, in test_seat_standings
+    self.fig1.land = 10
+AttributeError: 'TestSenateCommand' object has no attribute 'fig1'
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.054s
+
+FAILED (errors=3)
+
+
+git commit -m "chore(cleanup): 迁移 Senate 阶段命令至新框架（指令7）"
+
+git commit -m "feat: 迁移 Senate 阶段命令至新框架（指令7）"
+git tag -a v0.4.5-007 -m "MVP0.4.5-007 基线版本 - 迁移 Senate 阶段命令至新框架（指令7）"

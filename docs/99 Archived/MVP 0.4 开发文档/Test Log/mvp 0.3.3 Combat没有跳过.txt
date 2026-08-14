@@ -1,0 +1,762 @@
+"C:\Users\Kerl\PycharmProjects\Eagle of Rome\Scripts\python.exe" "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+   📝 Terminology: original
+🏛️  Eagle of Rome - MVP 0.3 Seven Phases
+   Active terms: Senate/Senators/Talents
+   Phase order: mortality → revenue → forum → population → senate → combat → resolution
+Type 'help' for commands, 'exit' to quit
+
+> load
+   📝 Terminology: original
+   📚 War system ready (lazy load)
+✅ Scenario loaded: MVP 0.3 Test - War & Combat
+   Active members: 9/300
+
+✅ Game loaded!
+==================================================
+Year: 264 BC (Turn 1)
+Phase: init
+Treasury: 100 Talents
+--------------------------------------------------
+FACTIONS & MEMBERS:
+
+Optimates (faction_1) - Treasury: 50Talents
+  [PLAYER CONTROLLED]
+  🟢 Caesar(ID:101)[军5演6影5]
+  🟢 Cicero(ID:102)[军2演9影6]
+  🟢 Pompey(ID:103)[军8演4影7]
+
+Populares (faction_2) - Treasury: 40Talents
+  🟢 Cato(ID:201)[军3演7影4]
+  🟢 Marius(ID:202)[军9演3影6]
+  🟢 Crassus(ID:203)[军4演5影8]
+
+Equites (faction_3) - Treasury: 45Talents
+  🟢 Brutus(ID:119)[军4演6影5]
+  🟢 Antony(ID:205)[军7演5影6]
+  🟢 Sulla(ID:256)[军9演3影7]
+==================================================
+
+   Progress: [░░░░░░░] 0/7
+
+> f
+
+--- Forum Phase (Year 264 BC) ---
+   📚 Loaded 5 wars into deck
+
+   🔮 Senate receives warnings:
+      ⚠️  Pyrrhic Invasion may erupt soon!
+
+   ☮️  No active combat
+
+   Progress: [█░░░░░░] 1/7
+
+> turn
+
+############################################################
+ TURN 1 (264 BC)
+ Terms: Senate/Senators/Talents
+############################################################
+
+[2/7] 💀 Mortality...
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 9
+  [Draw 1] Number 59...
+     -> No member assigned (safe)
+✅ No deaths this year
+
+   Progress: [██░░░░░] 2/7
+
+[2/7] 💰 Revenue...
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   Optimates: +10 Talents
+   Populares: +10 Talents
+   Equites: +10 Talents
+   ⚔️  Military system: 10 legions ready
+   ✅ No Legion maintenance needed
+
+   📊 State Treasury: 200 Talents
+
+   🛡️  Legion Status:
+      Available: 10 | Active: 0 | Veteran: 0
+      Assigned to wars: 0
+      Maintenance: 0 Talents/turn
+
+   Progress: [███░░░░] 3/7
+
+[2/7] 👥 Population...
+
+--- Population Phase (Year 264 BC) ---
+   🟢 Treasury: 200 Talents
+   🛡️  Active legions: 0/10
+
+   🏛️  State of the Republic: Calm
+
+   🛡️  Legion Review:
+      🟢 Calm state: 10 Legion(s) available for recruitment
+
+   👥 Population Events:
+      No significant events
+
+   Progress: [████░░░] 4/7
+
+[2/7] 🏛️ Senate...
+
+--- Senate Phase (Year 264 BC) ---
+🏛️  Presiding: Crassus
+
+=============================================
+[Electing Consul #1]
+   Available: 9, Ineligible: 0
+
+   🏆 Candidates:
+      1. Crassus (Populares) - Influence: 8
+      2. Pompey (Optimates) - Influence: 7
+
+   🗳️  Vote:
+      Optimates    | 37 vote → Pompey     (support_Optimates)
+      Populares    | 33 vote → Crassus    (support_Populares)
+      Equites      | 32 vote → Crassus    (random_choice)
+      ✅ Crassus wins with 65/102 (64%)
+   ✓ Crassus elected
+
+=============================================
+[Electing Consul #2]
+   Available: 8, Ineligible: 0
+
+   🏆 Candidates:
+      1. Pompey (Optimates) - Influence: 7
+      2. Sulla (Equites) - Influence: 7
+
+   🗳️  Vote:
+      Optimates    | 37 vote → Pompey     (support_Optimates)
+      Populares    | 33 vote → Sulla      (random_choice)
+      Equites      | 32 vote → Sulla      (support_Equites)
+      ✅ Sulla wins with 65/102 (64%)
+   ✓ Sulla elected
+
+=============================================
+   🏛️  TRANSITION OF CONSULSHIP
+
+   Incoming Consuls:
+      ↑ Crassus: 8 → 13 (+5 bonus)
+      ↑ Sulla: 7 → 12 (+5 bonus)
+
+   Progress: [█████░░] 5/7
+
+[2/7] ⚔️ Combat...
+
+--- Combat Phase (Year 264 BC) ---
+   ☮️  No active conflicts - phase skipped
+
+   Progress: [██████░] 6/7
+
+[2/7] 🔚 Revolution...
+
+--- Revolution Phase (Year 264 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: Populares (23 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟢 Optimates: LOW risk (avg Loyalty: 7.0)
+      🟢 Populares: LOW risk (avg Loyalty: 6.0)
+      🟢 Equites: LOW risk (avg Loyalty: 6.3)
+
+==================================================
+   📜 ANNUAL REPORT - Year 264 BC
+==================================================
+
+   💰 Treasury: 200 Talents
+
+   📊 Faction Standings:
+      1. 👑 Populares: 23 Influence
+      2. 👑 Equites: 23 Influence
+      3.    Optimates: 18 Influence
+
+   ☮️  Peace prevails
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   Progress: [███████] 7/7
+
+############################################################
+ ✅ TURN COMPLETE - All 7 phases executed
+############################################################
+
+> next
+
+📅 Year 263 BC (Turn 2)
+   [Cleared 7 phase locks]
+   ⛔ Ineligible (10y rule): Crassus(1), Sulla(1)
+Advanced to Year 263 BC
+
+📅 Year 263 BC:
+   Completed: 0/7 phases
+      ○ 💀 Mortality
+      ○ 💰 Revenue
+      ○ 📜 Forum
+      ○ 👥 Population
+      ○ 🏛️ Senate
+      ○ ⚔️ Combat
+      ○ 🔚 Revolution
+   ⏳ 7 remaining
+
+> m
+
+--- Mortality Phase (Year 263 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 9
+  [Draw 1] Number 124...
+     -> No member assigned (safe)
+✅ No deaths this year
+
+   Progress: [█░░░░░░] 1/7
+
+> r
+
+--- Revenue Phase (Year 263 BC) ---
+   💰 Base tax: +100 Talents
+   Optimates: +10 Talents
+   Populares: +10 Talents
+   Equites: +10 Talents
+   ✅ No Legion maintenance needed
+
+   📊 State Treasury: 300 Talents
+
+   🛡️  Legion Status:
+      Available: 10 | Active: 0 | Veteran: 0
+      Assigned to wars: 0
+      Maintenance: 0 Talents/turn
+
+   Progress: [██░░░░░] 2/7
+
+> f
+
+--- Forum Phase (Year 263 BC) ---
+   ⚔️  Combat declared: Pyrrhic Invasion!
+      Strength: 12
+⚔️ Combat declared: Pyrrhic Invasion
+
+   ⚔️  Active Combat (1):
+
+      📋 Pyrrhic Invasion 
+         Strength: 12 (base 12) | Duration: New
+         ⚠️  No Commander assigned!
+         💸 Penalties: Unrest+3/turn, 15Talents/turn
+
+   ⚠️  War Penalties:
+      • Unrest +3 from prolonged war
+      • Treasury -15 Talents war expense
+
+   Progress: [███░░░░] 3/7
+
+> p
+
+--- Population Phase (Year 263 BC) ---
+   🟢 Treasury: 300 Talents
+   ⚔️  Active wars: 1
+   🛡️  Active legions: 0/10
+
+   🏛️  State of the Republic: Calm
+
+   🛡️  Legion Review:
+      🟢 Calm state: 10 Legion(s) available for recruitment
+
+   👥 Population Events:
+      📢 Veterans demand land grants
+
+   Progress: [████░░░] 4/7
+
+> s
+
+--- Senate Phase (Year 263 BC) ---
+🏛️  Presiding: Crassus
+   ⭐ Current Consuls: Crassus, Sulla
+
+=============================================
+[Electing Consul #1]
+   Available: 7, Ineligible: 0
+
+   🏆 Candidates:
+      1. Pompey (Optimates) - Influence: 7
+      2. Cicero (Optimates) - Influence: 6
+
+   🗳️  Vote:
+      Optimates    | 37 vote → Pompey     (support_Optimates)
+      Populares    | 38 vote → Pompey     (random_choice) [incumbent]
+      Equites      | 37 vote → Pompey     (random_choice) [incumbent]
+      ✅ Pompey wins with 112/112 (100%)
+   ✓ Pompey elected
+
+=============================================
+[Electing Consul #2]
+   Available: 6, Ineligible: 0
+
+   🏆 Candidates:
+      1. Cicero (Optimates) - Influence: 6
+      2. Marius (Populares) - Influence: 6
+
+   🗳️  Vote:
+      Optimates    | 37 vote → Cicero     (support_Optimates)
+      Populares    | 38 vote → Marius     (support_Populares) [incumbent]
+      Equites      | 37 vote → Cicero     (random_choice) [incumbent]
+      ✅ Cicero wins with 74/112 (66%)
+   ✓ Cicero elected
+
+=============================================
+   🏛️  TRANSITION OF CONSULSHIP
+
+   Outgoing Consuls:
+      ↓ Crassus: 13 → 8 (bonus removed)
+      ↓ Sulla: 12 → 7 (bonus removed)
+
+   Incoming Consuls:
+      ↑ Pompey: 7 → 12 (+5 bonus)
+      ↑ Cicero: 6 → 11 (+5 bonus)
+
+   Progress: [█████░░] 5/7
+
+> c
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+⛔ CANNOT EXECUTE COMBAT
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+   ⚠️  1 war(s) need COMMANDERS:
+      • Pyrrhic Invasion (Str: 12)
+
+   🛡️  REQUIRED ACTIONS (execute in order):
+      1. recruit  - Recruit legions
+      2. assign   - Assign commanders and legions
+
+   After preparation, retry: combat
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+> recruit
+
+📊 Treasury: 300 Talents
+Available Legions: 10
+Recruit cost: 10 Talents each
+
+Mode: [1] Single  [2] Multiple
+Choice (1-2): 2
+How many (1-10)? 10
+
+✅ Recruited 10/10 Legion(s)
+
+   ⏳ Still need: assign commanders/legions
+
+> assign
+
+📊 Available Legions: 10
+   1. Legio I
+   2. Legio II
+   3. Legio III
+   4. Legio IV
+   5. Legio V
+   6. Legio VI
+   7. Legio VII
+   8. Legio VIII
+   9. Legio IX
+   10. Legio X
+
+Select Combat:
+  1. Pyrrhic Invasion (Str: 12)
+
+War # (1-1): 1
+
+Select Commander:
+  1. Caesar (Mil:5)
+  2. Cicero [Consul] (Mil:2)
+  3. Pompey [Consul] (Mil:8)
+  4. Cato (Mil:3)
+  5. Marius (Mil:9)
+  6. Crassus (Mil:4)
+  7. Brutus (Mil:4)
+  8. Antony (Mil:7)
+  9. Sulla (Mil:9)
+
+Commander # (1-9): 1
+
+Select Legions to assign (comma-separated numbers):
+  1. Legio I
+  2. Legio II
+  3. Legio III
+  4. Legio IV
+  5. Legio V
+  6. Legio VI
+  7. Legio VII
+  8. Legio VIII
+  9. Legio IX
+  10. Legio X
+
+Enter numbers (e.g., 1,2,3) or 'all' for all 10: 1,2,3,4
+   🎖️  Commander assigned to Pyrrhic Invasion
+      Forces: 4 Legion, 0 Fleet
+
+✅ Caesar assigned to Pyrrhic Invasion
+   Assigned 4 Legion(s)
+
+   ✅ All wars prepared! Ready for Combat
+
+> c
+
+--- Combat Phase (Year 263 BC) ---
+
+   ⚔️  Resolving 1 active conflict(s)...
+
+   🎯 Battle: Pyrrhic Invasion
+      Enemy Strength: 12
+      🎖️  Commander: Caesar (Mil: 5)
+      🛡️  Forces: 4 Legion(s) (+8)
+         • Legio I [Str:2]
+         • Legio II [Str:2]
+         • Legio III [Str:2]
+         • Legio IV [Str:2]
+      ⚔️  Total Force: 13 vs Enemy 12
+
+      🎲 Dice roll: 9
+      📊 Combat Total: 9 + 13 - 12 = 10
+
+      ✅ RESULT: VICTORY
+      ✓ Victory! Pyrrhic Invasion concluded successfully.
+   ✅ Pyrrhic Invasion resolved! Victory!
+   🎁 Rewards: {'treasury': 80, 'influence': 4, 'unrest_reduction': 4}
+
+   Progress: [██████░] 6/7
+
+> x
+
+--- Revolution Phase (Year 263 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: Optimates (33 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟢 Optimates: LOW risk (avg Loyalty: 7.0)
+      🟢 Populares: LOW risk (avg Loyalty: 6.0)
+      🟢 Equites: LOW risk (avg Loyalty: 6.3)
+
+==================================================
+   📜 ANNUAL REPORT - Year 263 BC
+==================================================
+
+   💰 Treasury: 200 Talents
+
+   📊 Faction Standings:
+      1. 👑 Optimates: 33 Influence
+      2.    Populares: 18 Influence
+      3.    Equites: 18 Influence
+
+   ☮️  Peace prevails
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   Progress: [███████] 7/7
+
+> turn
+⚠️  All phases executed! Use 'next' to advance.
+
+> next
+
+📅 Year 262 BC (Turn 3)
+   [Cleared 7 phase locks]
+   ⛔ Ineligible (10y rule): Cicero(1), Pompey(1), Crassus(2), Sulla(2)
+Advanced to Year 262 BC
+
+📅 Year 262 BC:
+   Completed: 0/7 phases
+      ○ 💀 Mortality
+      ○ 💰 Revenue
+      ○ 📜 Forum
+      ○ 👥 Population
+      ○ 🏛️ Senate
+      ○ ⚔️ Combat
+      ○ 🔚 Revolution
+   ⏳ 7 remaining
+
+> m
+
+--- Mortality Phase (Year 262 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 9
+  [Draw 1] Number 149...
+     -> No member assigned (safe)
+✅ No deaths this year
+
+   Progress: [█░░░░░░] 1/7
+
+> r
+
+--- Revenue Phase (Year 262 BC) ---
+   💰 Base tax: +100 Talents
+   Optimates: +10 Talents
+   Populares: +10 Talents
+   Equites: +10 Talents
+   ✅ Paid 24 Talents for Legion maintenance
+
+   📊 State Treasury: 276 Talents
+
+   🛡️  Legion Status:
+      Available: 0 | Active: 6 | Veteran: 4
+      Assigned to wars: 0
+      Maintenance: 24 Talents/turn
+
+   Progress: [██░░░░░] 2/7
+
+> f
+
+--- Forum Phase (Year 262 BC) ---
+
+   ☮️  No active combat
+
+   Progress: [███░░░░] 3/7
+
+> help
+
+🏛️  Eagle of Rome - Commands (MVP 0.3)
+═══════════════════════════════════════════════════
+  load                    Load scenario
+  status                  Show game state
+
+  Phase Commands (in order):
+    m, mortality          Mortality Phase
+    r, revenue            Revenue Phase  
+    f, forum              Forum Phase
+    p, population         Population Phase
+    s, senate             Senate Phase
+    c, combat             Combat Phase
+    x, resolution         Revolution Phase
+
+  Turn Control:
+    turn                  Auto full turn (all 7 phases)
+    step                  Step-by-step turn
+    n, next               Next turn (requires all 7 phases)
+    n force, next force   Force next turn (skip check)
+
+  War Commands:
+    wars                    Show war status (deck/active/discard)
+    assign                  Interactive commander assignment
+    
+    
+  Military Commands:
+    legions                 Show legion status
+    recruit                 Recruit legions
+    disband                 Disband legions
+
+  Terminology:
+    terms [preset]        Switch: original/historical_roman/generic_latin/chinese_historical
+
+  Other:
+    reload                Reload config
+    exit                  Quit 
+        
+
+> wars
+
+=======================================================
+   ⚔️  Combat Status
+=======================================================
+
+   📚 Deck: 4 war(s) waiting
+
+   ☮️  No active wars
+
+   ♻️  Resolved: 1 war(s)
+=======================================================
+
+> legions
+
+   🛡️  Legion Status:
+      Available: 0 | Active: 6 | Veteran: 4
+      Assigned to wars: 0
+      Maintenance: 24 Talents/turn
+
+   🛡️  Legion Status (10 total):
+      🟢 Legio I⭐ [Cost:3] 
+      🟢 Legio II⭐ [Cost:3] 
+      🟢 Legio III⭐ [Cost:3] 
+      🟢 Legio IV⭐ [Cost:3] 
+      🟢 Legio V  [Cost:2] 
+      🟢 Legio VI  [Cost:2] 
+      🟢 Legio VII  [Cost:2] 
+      🟢 Legio VIII  [Cost:2] 
+      🟢 Legio IX  [Cost:2] 
+      🟢 Legio X  [Cost:2] 
+
+> help
+
+🏛️  Eagle of Rome - Commands (MVP 0.3)
+═══════════════════════════════════════════════════
+  load                    Load scenario
+  status                  Show game state
+
+  Phase Commands (in order):
+    m, mortality          Mortality Phase
+    r, revenue            Revenue Phase  
+    f, forum              Forum Phase
+    p, population         Population Phase
+    s, senate             Senate Phase
+    c, combat             Combat Phase
+    x, resolution         Revolution Phase
+
+  Turn Control:
+    turn                  Auto full turn (all 7 phases)
+    step                  Step-by-step turn
+    n, next               Next turn (requires all 7 phases)
+    n force, next force   Force next turn (skip check)
+
+  War Commands:
+    wars                    Show war status (deck/active/discard)
+    assign                  Interactive commander assignment
+    
+    
+  Military Commands:
+    legions                 Show legion status
+    recruit                 Recruit legions
+    disband                 Disband legions
+
+  Terminology:
+    terms [preset]        Switch: original/historical_roman/generic_latin/chinese_historical
+
+  Other:
+    reload                Reload config
+    exit                  Quit 
+        
+
+> p
+
+--- Population Phase (Year 262 BC) ---
+   🟢 Treasury: 276 Talents
+   🛡️  Active legions: 10/10
+
+   🏛️  State of the Republic: Calm
+
+   🛡️  Legion Review:
+
+   👥 Population Events:
+      No significant events
+
+   Progress: [████░░░] 4/7
+
+> disband
+Error: 'DebugCLI' object has no attribute '_disband_legion_interactive'
+
+> next
+
+⛔ CANNOT ADVANCE
+   Missing phases: Combat, Revolution, Senate
+
+   Options:
+      1. Execute missing phases
+      2. 'next force' to skip
+      3. 'turn' to auto-complete
+
+> s
+
+--- Senate Phase (Year 262 BC) ---
+🏛️  Presiding: Pompey
+   ⭐ Current Consuls: Pompey, Cicero
+
+=============================================
+[Electing Consul #1]
+   Available: 5, Ineligible: 2
+      ⛔ Crassus(2y), Sulla(2y)...
+
+   🏆 Candidates:
+      1. Caesar (Optimates) - Influence: 10
+      2. Marius (Populares) - Influence: 6
+
+   🗳️  Vote:
+      Optimates    | 52 vote → Caesar     (support_Optimates) [incumbent]
+      Populares    | 33 vote → Marius     (support_Populares)
+      Equites      | 32 vote → Marius     (random_choice)
+      ✅ Marius wins with 65/117 (56%)
+   ✓ Marius elected
+
+=============================================
+[Electing Consul #2]
+   Available: 4, Ineligible: 2
+      ⛔ Crassus(2y), Sulla(2y)...
+
+   🏆 Candidates:
+      1. Caesar (Optimates) - Influence: 10
+      2. Antony (Equites) - Influence: 6
+
+   🗳️  Vote:
+      Optimates    | 52 vote → Caesar     (support_Optimates) [incumbent]
+      Populares    | 33 vote → Caesar     (random_choice)
+      Equites      | 32 vote → Antony     (support_Equites)
+      ✅ Caesar wins with 85/117 (73%)
+   ✓ Caesar elected
+
+=============================================
+   🏛️  TRANSITION OF CONSULSHIP
+
+   Outgoing Consuls:
+      ↓ Pompey: 12 → 7 (bonus removed)
+      ↓ Cicero: 11 → 6 (bonus removed)
+
+   Incoming Consuls:
+      ↑ Marius: 6 → 11 (+5 bonus)
+      ↑ Caesar: 10 → 15 (+5 bonus)
+
+   Progress: [█████░░] 5/7
+
+> x
+
+--- Revolution Phase (Year 262 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: Optimates (28 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟢 Optimates: LOW risk (avg Loyalty: 7.0)
+      🟢 Populares: LOW risk (avg Loyalty: 6.0)
+      🟢 Equites: LOW risk (avg Loyalty: 6.3)
+
+==================================================
+   📜 ANNUAL REPORT - Year 262 BC
+==================================================
+
+   💰 Treasury: 276 Talents
+
+   📊 Faction Standings:
+      1. 👑 Optimates: 28 Influence
+      2. 👑 Populares: 23 Influence
+      3.    Equites: 18 Influence
+
+   ☮️  Peace prevails
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   Progress: [██████░] 6/7
+
+> next
+
+⛔ CANNOT ADVANCE
+   Missing phases: Combat
+
+   Options:
+      1. Execute missing phases
+      2. 'next force' to skip
+      3. 'turn' to auto-complete
+
+> 
+两个问题：
+1. 没有活跃战争，但是Combat步骤还是必须执行，不能跳过（此处combat阶段应该无需执行）
+2. disband legion的执行执行失败：> disband
+Error: 'DebugCLI' object has no attribute '_disband_legion_interactive'

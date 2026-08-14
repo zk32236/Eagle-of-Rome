@@ -1,0 +1,44 @@
+2. 自动模式下，公地没有派系认购（和广场阶段问题一并处理）
+
+5. 中标骑士没有显示派系。
+   📊 包税合同:
+      ID: 3
+      中标者: Quintus · Junius · Marius (Unknown)
+      实际税率: 11.4%
+      剩余年限: 5 年
+      年净收入: 6
+
+> 请输入操作(PLAYER player_optimates): vote no
+投票成功：{office} 投给 {name}
+
+正常模式：
+    "bypass_player_check": false,
+    "auto_forum": false,
+    "auto_population": false,
+    "auto_senate": false
+
+全自动模式：
+    "bypass_player_check": false,
+    "auto_forum": false,
+    "auto_population": false,
+    "auto_senate": false
+
+1. 单人模式下，元老院投票阶段不应该需要输入PIN
+
+2. 人口阶段选举时，没有禁止重复投票。
+
+3. 跳过了revenue阶段，f阶段没有检查前置阶段是否完成。
+-------- 以上是已解决问题 ---------
+
+
+
+
+-------- 以上是解决中问题 ----------
+
+
+
+
+
+
+
+

@@ -1,0 +1,837 @@
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：迁移 Senate 阶段命令至新框架（指令7）
+
+核心输入：
+
+《EOR Command命令体系架构设计细化文档_V1.1》
+
+《EOR GameState状态管理架构设计细化文档_V1.1》
+
+《EOR_开发指南.docx》
+
+基线代码：src/core/phases/senate_phase.py（位于 feature/refactor-0.4.5 分支）
+
+已迁移的命令参考：phase_mortality.py、phase_revenue.py、phase_forum.py、phase_population.py
+
+已完善的 GameState 类（包含人物、派系、合同、阶段标记等方法）
+
+核心任务：
+
+创建 Senate 命令文件：
+
+路径：src/ui/commands/phase_senate.py
+
+类名：SenateCommand，继承 Command
+
+元数据：
+
+name = "senate"
+
+aliases = ["s"]
+
+description = "执行元老院阶段 (Senate Phase)"
+
+移植业务逻辑：
+
+从原 senate_phase.py 的 SenatePhase.execute() 方法复制核心逻辑，适配到新命令的 execute(self, args: List[str]) -> bool 中。
+
+关键适配点：
+
+使用 self.state.get_living_members() 获取存活人物列表。
+
+使用 self.state.get_faction() 获取派系。
+
+使用 self.state.get_offices_per_election(office_type) 获取各官职选举人数。
+
+使用 self.state.get_office_cooldown(office_type) 获取冷却期。
+
+使用 self.state.get_presiding_officer() 获取主持人。
+
+使用 self.state.turn.leader_ids 获取当前执政官列表（若 GameState 中 _turn 尚未实现，需先补充 leader_ids 属性或通过公共方法访问）。
+
+使用 self.state.contracts 访问合同列表，并调用合同的相关方法（如 award）。
+
+使用 self.state.log_event() 记录事件。
+
+使用 self.state.is_phase_executed("senate") 检查阶段是否已执行，若已执行则打印提示并返回 False。
+
+执行成功后调用 self.state.mark_phase_executed("senate")。
+
+原代码中的多个私有方法（如 _elect_single_magistrate、_process_pending_contracts、_vote_tax_contract、_assign_works_contract、_show_seat_standings 等）应作为命令的私有方法移植，保持逻辑完整。
+
+注意处理选举逻辑中的人物资格检查（can_hold_office 方法已在 Figure 类中存在，可直接调用）。
+
+合同授予部分需调用 contract.award() 方法，并更新相关人物财富和国库（使用 self.state.add_figure_wealth 和 self.state.add_treasury）。
+
+确保所有打印输出与原基线一致（保留原有的输出格式和 emoji）。
+
+按需补充 GameState 方法：
+
+若在移植过程中发现 GameState 缺少必要的方法（例如获取指定公职的选举人数、冷却期、主持人等），请在 src/core/game_state.py 中添加。
+
+确保 GameState 提供对 turn.leader_ids 的访问（可能需要添加 @property 或在 GameTurn 中实现）。
+
+可能需要添加 get_consuls() 等方法简化操作，但优先复用现有接口。
+
+编写单元测试：
+
+路径：src/tests/test_commands/test_phase_senate.py
+
+测试用例至少覆盖：
+
+test_execute_success：使用模拟的 GameState 设置测试数据（包含派系、人物、合同），验证命令返回 True，且输出包含选举、合同处理等信息。
+
+test_already_executed：先标记阶段已执行，再执行命令，验证返回 False。
+
+test_election_logic：测试选举逻辑，可 Mock 资格检查和投票过程，验证胜出者是否正确。
+
+test_contract_processing：测试包税合同和工程合同的授予逻辑，验证人物财富和国库更新。
+
+test_presiding_officer：测试主持人确定逻辑。
+
+test_seat_standings：测试席位占比显示（可选）。
+
+可使用动态导入或直接导入命令类进行测试，必要时 Mock 随机模块和合同模块。
+
+手动验证：
+
+运行 python main.py，执行 load 加载测试场景，然后输入 senate 或 s，观察输出是否与原版本一致（包括选举过程、合同处理、席位显示等）。
+
+多次执行验证阶段重复执行检查。
+
+清理旧文件：
+
+确认新命令完全替代原功能后，执行 git rm src/core/phases/senate_phase.py 删除原文件。
+
+提交信息：chore(cleanup): remove old senate_phase.py after migration
+
+交付物：
+
+src/ui/commands/phase_senate.py
+
+src/tests/test_commands/test_phase_senate.py
+
+可能修改的 src/core/game_state.py（补充的方法）
+
+删除原 src/core/phases/senate_phase.py 的 Git 操作记录
+
+验收标准：
+
+单元测试通过率 100%。
+
+在 CLI 中执行 senate 命令，输出和行为与原基线完全一致（可通过手动对比验证）。
+
+阶段执行状态检查正常工作：同一回合内重复执行返回 False 并提示。
+
+代码通过《EOR MVP 0.4.5代码审查Checklist》中 Command 模块和 GameState 模块的相关检查项。
+
+无遗留的旧文件（senate_phase.py 已删除）。
+
+
+
+单元测试：
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_commands/test_phase_senate.py
+
+--- Senate Phase (Year 264 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (2 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=10y, Prerequisite=Praetor
+         ❌ senate_noble1        (元老院派    ) Age:45 CHA: 8 Prereq:✓ Cooldown:CD → Cooldown: 3/10 years
+         ✅ senate_noble2        (元老院派    ) Age:42 CHA: 7 Prereq:✓ Cooldown:OK → Eligible
+         ❌ senate_noble3        (元老院派    ) Age:38 CHA: 6 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ❌ senate_eques1        (元老院派    ) Age:35 CHA: 4 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ senate_eques2        (元老院派    ) Age:32 CHA: 3 Prereq:✗ Cooldown:OK → Age 32 < 40
+         ❌ senate_pleb1         (元老院派    ) Age:30 CHA: 2 Prereq:✗ Cooldown:OK → Age 30 < 40
+         ❌ populares_noble1     (平民派     ) Age:45 CHA: 8 Prereq:✓ Cooldown:CD → Cooldown: 3/10 years
+         ✅ populares_noble2     (平民派     ) Age:42 CHA: 7 Prereq:✓ Cooldown:OK → Eligible
+         ❌ populares_noble3     (平民派     ) Age:38 CHA: 6 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ❌ populares_eques1     (平民派     ) Age:35 CHA: 4 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ populares_eques2     (平民派     ) Age:32 CHA: 3 Prereq:✗ Cooldown:OK → Age 32 < 40
+         ❌ populares_pleb1      (平民派     ) Age:30 CHA: 2 Prereq:✗ Cooldown:OK → Age 30 < 40
+         ❌ equites_noble1       (骑士派     ) Age:45 CHA: 8 Prereq:✓ Cooldown:CD → Cooldown: 3/10 years
+         ✅ equites_noble2       (骑士派     ) Age:42 CHA: 7 Prereq:✓ Cooldown:OK → Eligible
+         ❌ equites_noble3       (骑士派     ) Age:38 CHA: 6 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ❌ equites_eques1       (骑士派     ) Age:35 CHA: 4 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ equites_eques2       (骑士派     ) Age:32 CHA: 3 Prereq:✗ Cooldown:OK → Age 32 < 40
+         ❌ equites_pleb1        (骑士派     ) Age:30 CHA: 2 Prereq:✗ Cooldown:OK → Age 30 < 40
+
+      🏆 TOP 3 CANDIDATES (by CHA):
+         1. senate_noble2        (元老院派)
+            CHA: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4)
+         2. populares_noble2     (平民派)
+            CHA: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4)
+         3. equites_noble2       (骑士派)
+            CHA: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4)
+
+      🗳️  VOTING RESULTS:
+         senate_noble2       :   27 ( 33.3%) ██████
+         populares_noble2    :   27 ( 33.3%) ██████
+         equites_noble2      :   27 ( 33.3%) ██████
+
+      ✓ WINNER: senate_noble2 (元老院派)
+        Power bonus: +5
+      🏛️ senate_noble2 elected as consul
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=10y, Prerequisite=Praetor
+         ❌ senate_noble1        (元老院派    ) Age:45 CHA: 8 Prereq:✓ Cooldown:CD → Cooldown: 3/10 years
+         ❌ senate_noble2        (元老院派    ) Age:42 CHA: 7 Prereq:✓ Cooldown:CD → Already holding this office
+         ❌ senate_noble3        (元老院派    ) Age:38 CHA: 6 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ❌ senate_eques1        (元老院派    ) Age:35 CHA: 4 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ senate_eques2        (元老院派    ) Age:32 CHA: 3 Prereq:✗ Cooldown:OK → Age 32 < 40
+         ❌ senate_pleb1         (元老院派    ) Age:30 CHA: 2 Prereq:✗ Cooldown:OK → Age 30 < 40
+         ❌ populares_noble1     (平民派     ) Age:45 CHA: 8 Prereq:✓ Cooldown:CD → Cooldown: 3/10 years
+         ✅ populares_noble2     (平民派     ) Age:42 CHA: 7 Prereq:✓ Cooldown:OK → Eligible
+         ❌ populares_noble3     (平民派     ) Age:38 CHA: 6 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ❌ populares_eques1     (平民派     ) Age:35 CHA: 4 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ populares_eques2     (平民派     ) Age:32 CHA: 3 Prereq:✗ Cooldown:OK → Age 32 < 40
+         ❌ populares_pleb1      (平民派     ) Age:30 CHA: 2 Prereq:✗ Cooldown:OK → Age 30 < 40
+         ❌ equites_noble1       (骑士派     ) Age:45 CHA: 8 Prereq:✓ Cooldown:CD → Cooldown: 3/10 years
+         ✅ equites_noble2       (骑士派     ) Age:42 CHA: 7 Prereq:✓ Cooldown:OK → Eligible
+         ❌ equites_noble3       (骑士派     ) Age:38 CHA: 6 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ❌ equites_eques1       (骑士派     ) Age:35 CHA: 4 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ equites_eques2       (骑士派     ) Age:32 CHA: 3 Prereq:✗ Cooldown:OK → Age 32 < 40
+         ❌ equites_pleb1        (骑士派     ) Age:30 CHA: 2 Prereq:✗ Cooldown:OK → Age 30 < 40
+
+      🏆 TOP 3 CANDIDATES (by CHA):
+         1. populares_noble2     (平民派)
+            CHA: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4)
+         2. equites_noble2       (骑士派)
+            CHA: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4)
+
+      🗳️  VOTING RESULTS:
+         populares_noble2    :   54 ( 66.7%) █████████████
+         equites_noble2      :   27 ( 33.3%) ██████
+      📤 senate_noble2 steps down as consul (power: 0)
+
+      ✓ WINNER: populares_noble2 (平民派)
+        Power bonus: +5
+      🏛️ populares_noble2 elected as consul
+
+   Electing PRAETOR (2 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=5y, Prerequisite=Quaestor
+         ✅ senate_noble1        (元老院派    ) Age:45 MAN: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_noble2        (元老院派    ) Age:42 MAN: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_noble3        (元老院派    ) Age:38 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ senate_eques1        (元老院派    ) Age:35 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ senate_eques2        (元老院派    ) Age:32 MAN: 7 Prereq:✗ Cooldown:OK → Age 32 < 35
+         ❌ senate_pleb1         (元老院派    ) Age:30 MAN: 2 Prereq:✗ Cooldown:OK → Age 30 < 35
+         ✅ populares_noble1     (平民派     ) Age:45 MAN: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble2     (平民派     ) Age:42 MAN: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble3     (平民派     ) Age:38 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ populares_eques1     (平民派     ) Age:35 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ populares_eques2     (平民派     ) Age:32 MAN: 7 Prereq:✗ Cooldown:OK → Age 32 < 35
+         ❌ populares_pleb1      (平民派     ) Age:30 MAN: 2 Prereq:✗ Cooldown:OK → Age 30 < 35
+         ✅ equites_noble1       (骑士派     ) Age:45 MAN: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble2       (骑士派     ) Age:42 MAN: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble3       (骑士派     ) Age:38 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ equites_eques1       (骑士派     ) Age:35 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ equites_eques2       (骑士派     ) Age:32 MAN: 7 Prereq:✗ Cooldown:OK → Age 32 < 35
+         ❌ equites_pleb1        (骑士派     ) Age:30 MAN: 2 Prereq:✗ Cooldown:OK → Age 30 < 35
+
+      🏆 TOP 3 CANDIDATES (by MAN):
+         1. senate_noble2        (元老院派)
+            MAN: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4), consul(1)
+         2. populares_noble2     (平民派)
+            MAN: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4), consul(1)
+         3. equites_noble2       (骑士派)
+            MAN: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4)
+
+      🗳️  VOTING RESULTS:
+         senate_noble2       :   27 ( 33.3%) ██████
+         populares_noble2    :   27 ( 33.3%) ██████
+         equites_noble2      :   27 ( 33.3%) ██████
+
+      ✓ WINNER: senate_noble2 (元老院派)
+        Power bonus: +3
+      ⚖️ senate_noble2 elected as praetor
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=5y, Prerequisite=Quaestor
+         ✅ senate_noble1        (元老院派    ) Age:45 MAN: 6 Prereq:✓ Cooldown:OK → Eligible
+         ❌ senate_noble2        (元老院派    ) Age:42 MAN: 7 Prereq:✓ Cooldown:CD → Already holding this office
+         ✅ senate_noble3        (元老院派    ) Age:38 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ senate_eques1        (元老院派    ) Age:35 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ senate_eques2        (元老院派    ) Age:32 MAN: 7 Prereq:✗ Cooldown:OK → Age 32 < 35
+         ❌ senate_pleb1         (元老院派    ) Age:30 MAN: 2 Prereq:✗ Cooldown:OK → Age 30 < 35
+         ✅ populares_noble1     (平民派     ) Age:45 MAN: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble2     (平民派     ) Age:42 MAN: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble3     (平民派     ) Age:38 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ populares_eques1     (平民派     ) Age:35 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ populares_eques2     (平民派     ) Age:32 MAN: 7 Prereq:✗ Cooldown:OK → Age 32 < 35
+         ❌ populares_pleb1      (平民派     ) Age:30 MAN: 2 Prereq:✗ Cooldown:OK → Age 30 < 35
+         ✅ equites_noble1       (骑士派     ) Age:45 MAN: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble2       (骑士派     ) Age:42 MAN: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble3       (骑士派     ) Age:38 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ equites_eques1       (骑士派     ) Age:35 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ equites_eques2       (骑士派     ) Age:32 MAN: 7 Prereq:✗ Cooldown:OK → Age 32 < 35
+         ❌ equites_pleb1        (骑士派     ) Age:30 MAN: 2 Prereq:✗ Cooldown:OK → Age 30 < 35
+
+      🏆 TOP 3 CANDIDATES (by MAN):
+         1. populares_noble2     (平民派)
+            MAN: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4), consul(1)
+         2. equites_noble2       (骑士派)
+            MAN: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4)
+         3. senate_noble1        (元老院派)
+            MAN: 6 | Pop: 7 | Age:45 | History: quqaestor(-8), praetor(-5), consul(-2)
+
+      🗳️  VOTING RESULTS:
+         populares_noble2    :   27 ( 33.3%) ██████
+         equites_noble2      :   27 ( 33.3%) ██████
+         senate_noble1       :   27 ( 33.3%) ██████
+      📤 senate_noble2 steps down as praetor (power: 0)
+
+      ✓ WINNER: populares_noble2 (平民派)
+        Power bonus: +3
+      ⚖️ populares_noble2 elected as praetor
+
+   Electing QUQAESTOR (2 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ senate_noble1        (元老院派    ) Age:45 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_noble2        (元老院派    ) Age:42 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_noble3        (元老院派    ) Age:38 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_eques1        (元老院派    ) Age:35 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_eques2        (元老院派    ) Age:32 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_pleb1         (元老院派    ) Age:30 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble1     (平民派     ) Age:45 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble2     (平民派     ) Age:42 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble3     (平民派     ) Age:38 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_eques1     (平民派     ) Age:35 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_eques2     (平民派     ) Age:32 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_pleb1      (平民派     ) Age:30 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble1       (骑士派     ) Age:45 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble2       (骑士派     ) Age:42 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble3       (骑士派     ) Age:38 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_eques1       (骑士派     ) Age:35 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_eques2       (骑士派     ) Age:32 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_pleb1        (骑士派     ) Age:30 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+
+      🏆 TOP 3 CANDIDATES (by STR):
+         1. senate_noble3        (元老院派)
+            STR: 7 | Pop: 5 | Age:38 | History: quqaestor(-6)
+         2. populares_noble3     (平民派)
+            STR: 7 | Pop: 5 | Age:38 | History: quqaestor(-6)
+         3. equites_noble3       (骑士派)
+            STR: 7 | Pop: 5 | Age:38 | History: quqaestor(-6)
+
+      🗳️  VOTING RESULTS:
+         senate_noble3       :   27 ( 33.3%) ██████
+         populares_noble3    :   27 ( 33.3%) ██████
+         equites_noble3      :   27 ( 33.3%) ██████
+
+      ✓ WINNER: senate_noble3 (元老院派)
+        Power bonus: +2
+      💰 senate_noble3 elected as quqaestor
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ senate_noble1        (元老院派    ) Age:45 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_noble2        (元老院派    ) Age:42 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ❌ senate_noble3        (元老院派    ) Age:38 STR: 7 Prereq:✓ Cooldown:CD → Already holding this office
+         ✅ senate_eques1        (元老院派    ) Age:35 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_eques2        (元老院派    ) Age:32 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_pleb1         (元老院派    ) Age:30 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble1     (平民派     ) Age:45 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble2     (平民派     ) Age:42 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble3     (平民派     ) Age:38 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_eques1     (平民派     ) Age:35 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_eques2     (平民派     ) Age:32 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_pleb1      (平民派     ) Age:30 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble1       (骑士派     ) Age:45 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble2       (骑士派     ) Age:42 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble3       (骑士派     ) Age:38 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_eques1       (骑士派     ) Age:35 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_eques2       (骑士派     ) Age:32 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_pleb1        (骑士派     ) Age:30 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+
+      🏆 TOP 3 CANDIDATES (by STR):
+         1. populares_noble3     (平民派)
+            STR: 7 | Pop: 5 | Age:38 | History: quqaestor(-6)
+         2. equites_noble3       (骑士派)
+            STR: 7 | Pop: 5 | Age:38 | History: quqaestor(-6)
+         3. senate_noble2        (元老院派)
+            STR: 6 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4), consul(1)
+
+      🗳️  VOTING RESULTS:
+         populares_noble3    :   27 ( 33.3%) ██████
+         equites_noble3      :   27 ( 33.3%) ██████
+         senate_noble2       :   27 ( 33.3%) ██████
+      📤 senate_noble3 steps down as quqaestor (power: 0)
+
+      ✓ WINNER: populares_noble3 (平民派)
+        Power bonus: +2
+      💰 populares_noble3 elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      元老院派: senate_noble1 (Power: 8)
+      平民派: populares_noble2 (Power: 14)
+      骑士派: equites_noble1 (Power: 8)
+
+   🎤 Presiding Officer: populares_noble2
+.....
+--- Senate Phase (Year 264 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (2 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=10y, Prerequisite=Praetor
+         ❌ senate_noble1        (元老院派    ) Age:45 CHA: 8 Prereq:✓ Cooldown:CD → Cooldown: 3/10 years
+         ✅ senate_noble2        (元老院派    ) Age:42 CHA: 7 Prereq:✓ Cooldown:OK → Eligible
+         ❌ senate_noble3        (元老院派    ) Age:38 CHA: 6 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ❌ senate_eques1        (元老院派    ) Age:35 CHA: 4 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ senate_eques2        (元老院派    ) Age:32 CHA: 3 Prereq:✗ Cooldown:OK → Age 32 < 40
+         ❌ senate_pleb1         (元老院派    ) Age:30 CHA: 2 Prereq:✗ Cooldown:OK → Age 30 < 40
+         ❌ populares_noble1     (平民派     ) Age:45 CHA: 8 Prereq:✓ Cooldown:CD → Cooldown: 3/10 years
+         ✅ populares_noble2     (平民派     ) Age:42 CHA: 7 Prereq:✓ Cooldown:OK → Eligible
+         ❌ populares_noble3     (平民派     ) Age:38 CHA: 6 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ❌ populares_eques1     (平民派     ) Age:35 CHA: 4 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ populares_eques2     (平民派     ) Age:32 CHA: 3 Prereq:✗ Cooldown:OK → Age 32 < 40
+         ❌ populares_pleb1      (平民派     ) Age:30 CHA: 2 Prereq:✗ Cooldown:OK → Age 30 < 40
+         ❌ equites_noble1       (骑士派     ) Age:45 CHA: 8 Prereq:✓ Cooldown:CD → Cooldown: 3/10 years
+         ✅ equites_noble2       (骑士派     ) Age:42 CHA: 7 Prereq:✓ Cooldown:OK → Eligible
+         ❌ equites_noble3       (骑士派     ) Age:38 CHA: 6 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ❌ equites_eques1       (骑士派     ) Age:35 CHA: 4 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ equites_eques2       (骑士派     ) Age:32 CHA: 3 Prereq:✗ Cooldown:OK → Age 32 < 40
+         ❌ equites_pleb1        (骑士派     ) Age:30 CHA: 2 Prereq:✗ Cooldown:OK → Age 30 < 40
+
+      🏆 TOP 3 CANDIDATES (by CHA):
+         1. senate_noble2        (元老院派)
+            CHA: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4)
+         2. populares_noble2     (平民派)
+            CHA: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4)
+         3. equites_noble2       (骑士派)
+            CHA: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4)
+
+      🗳️  VOTING RESULTS:
+         senate_noble2       :   27 ( 33.3%) ██████
+         populares_noble2    :   27 ( 33.3%) ██████
+         equites_noble2      :   27 ( 33.3%) ██████
+
+      ✓ WINNER: senate_noble2 (元老院派)
+        Power bonus: +5
+      🏛️ senate_noble2 elected as consul
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=10y, Prerequisite=Praetor
+         ❌ senate_noble1        (元老院派    ) Age:45 CHA: 8 Prereq:✓ Cooldown:CD → Cooldown: 3/10 years
+         ❌ senate_noble2        (元老院派    ) Age:42 CHA: 7 Prereq:✓ Cooldown:CD → Already holding this office
+         ❌ senate_noble3        (元老院派    ) Age:38 CHA: 6 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ❌ senate_eques1        (元老院派    ) Age:35 CHA: 4 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ senate_eques2        (元老院派    ) Age:32 CHA: 3 Prereq:✗ Cooldown:OK → Age 32 < 40
+         ❌ senate_pleb1         (元老院派    ) Age:30 CHA: 2 Prereq:✗ Cooldown:OK → Age 30 < 40
+         ❌ populares_noble1     (平民派     ) Age:45 CHA: 8 Prereq:✓ Cooldown:CD → Cooldown: 3/10 years
+         ✅ populares_noble2     (平民派     ) Age:42 CHA: 7 Prereq:✓ Cooldown:OK → Eligible
+         ❌ populares_noble3     (平民派     ) Age:38 CHA: 6 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ❌ populares_eques1     (平民派     ) Age:35 CHA: 4 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ populares_eques2     (平民派     ) Age:32 CHA: 3 Prereq:✗ Cooldown:OK → Age 32 < 40
+         ❌ populares_pleb1      (平民派     ) Age:30 CHA: 2 Prereq:✗ Cooldown:OK → Age 30 < 40
+         ❌ equites_noble1       (骑士派     ) Age:45 CHA: 8 Prereq:✓ Cooldown:CD → Cooldown: 3/10 years
+         ✅ equites_noble2       (骑士派     ) Age:42 CHA: 7 Prereq:✓ Cooldown:OK → Eligible
+         ❌ equites_noble3       (骑士派     ) Age:38 CHA: 6 Prereq:✗ Cooldown:OK → Age 38 < 40
+         ❌ equites_eques1       (骑士派     ) Age:35 CHA: 4 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ equites_eques2       (骑士派     ) Age:32 CHA: 3 Prereq:✗ Cooldown:OK → Age 32 < 40
+         ❌ equites_pleb1        (骑士派     ) Age:30 CHA: 2 Prereq:✗ Cooldown:OK → Age 30 < 40
+
+      🏆 TOP 3 CANDIDATES (by CHA):
+         1. populares_noble2     (平民派)
+            CHA: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4)
+         2. equites_noble2       (骑士派)
+            CHA: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4)
+
+      🗳️  VOTING RESULTS:
+         populares_noble2    :   54 ( 66.7%) █████████████
+         equites_noble2      :   27 ( 33.3%) ██████
+      📤 senate_noble2 steps down as consul (power: 0)
+
+      ✓ WINNER: populares_noble2 (平民派)
+        Power bonus: +5
+      🏛️ populares_noble2 elected as consul
+
+   Electing PRAETOR (2 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=5y, Prerequisite=Quaestor
+         ✅ senate_noble1        (元老院派    ) Age:45 MAN: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_noble2        (元老院派    ) Age:42 MAN: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_noble3        (元老院派    ) Age:38 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ senate_eques1        (元老院派    ) Age:35 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ senate_eques2        (元老院派    ) Age:32 MAN: 7 Prereq:✗ Cooldown:OK → Age 32 < 35
+         ❌ senate_pleb1         (元老院派    ) Age:30 MAN: 2 Prereq:✗ Cooldown:OK → Age 30 < 35
+         ✅ populares_noble1     (平民派     ) Age:45 MAN: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble2     (平民派     ) Age:42 MAN: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble3     (平民派     ) Age:38 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ populares_eques1     (平民派     ) Age:35 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ populares_eques2     (平民派     ) Age:32 MAN: 7 Prereq:✗ Cooldown:OK → Age 32 < 35
+         ❌ populares_pleb1      (平民派     ) Age:30 MAN: 2 Prereq:✗ Cooldown:OK → Age 30 < 35
+         ✅ equites_noble1       (骑士派     ) Age:45 MAN: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble2       (骑士派     ) Age:42 MAN: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble3       (骑士派     ) Age:38 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ equites_eques1       (骑士派     ) Age:35 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ equites_eques2       (骑士派     ) Age:32 MAN: 7 Prereq:✗ Cooldown:OK → Age 32 < 35
+         ❌ equites_pleb1        (骑士派     ) Age:30 MAN: 2 Prereq:✗ Cooldown:OK → Age 30 < 35
+
+      🏆 TOP 3 CANDIDATES (by MAN):
+         1. senate_noble2        (元老院派)
+            MAN: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4), consul(1)
+         2. populares_noble2     (平民派)
+            MAN: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4), consul(1)
+         3. equites_noble2       (骑士派)
+            MAN: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4)
+
+      🗳️  VOTING RESULTS:
+         senate_noble2       :   27 ( 33.3%) ██████
+         populares_noble2    :   27 ( 33.3%) ██████
+         equites_noble2      :   27 ( 33.3%) ██████
+
+      ✓ WINNER: senate_noble2 (元老院派)
+        Power bonus: +3
+      ⚖️ senate_noble2 elected as praetor
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=5y, Prerequisite=Quaestor
+         ✅ senate_noble1        (元老院派    ) Age:45 MAN: 6 Prereq:✓ Cooldown:OK → Eligible
+         ❌ senate_noble2        (元老院派    ) Age:42 MAN: 7 Prereq:✓ Cooldown:CD → Already holding this office
+         ✅ senate_noble3        (元老院派    ) Age:38 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ senate_eques1        (元老院派    ) Age:35 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ senate_eques2        (元老院派    ) Age:32 MAN: 7 Prereq:✗ Cooldown:OK → Age 32 < 35
+         ❌ senate_pleb1         (元老院派    ) Age:30 MAN: 2 Prereq:✗ Cooldown:OK → Age 30 < 35
+         ✅ populares_noble1     (平民派     ) Age:45 MAN: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble2     (平民派     ) Age:42 MAN: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble3     (平民派     ) Age:38 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ populares_eques1     (平民派     ) Age:35 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ populares_eques2     (平民派     ) Age:32 MAN: 7 Prereq:✗ Cooldown:OK → Age 32 < 35
+         ❌ populares_pleb1      (平民派     ) Age:30 MAN: 2 Prereq:✗ Cooldown:OK → Age 30 < 35
+         ✅ equites_noble1       (骑士派     ) Age:45 MAN: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble2       (骑士派     ) Age:42 MAN: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble3       (骑士派     ) Age:38 MAN: 5 Prereq:✓ Cooldown:OK → Eligible
+         ❌ equites_eques1       (骑士派     ) Age:35 MAN: 8 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ equites_eques2       (骑士派     ) Age:32 MAN: 7 Prereq:✗ Cooldown:OK → Age 32 < 35
+         ❌ equites_pleb1        (骑士派     ) Age:30 MAN: 2 Prereq:✗ Cooldown:OK → Age 30 < 35
+
+      🏆 TOP 3 CANDIDATES (by MAN):
+         1. populares_noble2     (平民派)
+            MAN: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4), consul(1)
+         2. equites_noble2       (骑士派)
+            MAN: 7 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4)
+         3. senate_noble1        (元老院派)
+            MAN: 6 | Pop: 7 | Age:45 | History: quqaestor(-8), praetor(-5), consul(-2)
+
+      🗳️  VOTING RESULTS:
+         populares_noble2    :   27 ( 33.3%) ██████
+         equites_noble2      :   27 ( 33.3%) ██████
+         senate_noble1       :   27 ( 33.3%) ██████
+      📤 senate_noble2 steps down as praetor (power: 0)
+
+      ✓ WINNER: populares_noble2 (平民派)
+        Power bonus: +3
+      ⚖️ populares_noble2 elected as praetor
+
+   Electing QUQAESTOR (2 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ senate_noble1        (元老院派    ) Age:45 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_noble2        (元老院派    ) Age:42 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_noble3        (元老院派    ) Age:38 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_eques1        (元老院派    ) Age:35 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_eques2        (元老院派    ) Age:32 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_pleb1         (元老院派    ) Age:30 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble1     (平民派     ) Age:45 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble2     (平民派     ) Age:42 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble3     (平民派     ) Age:38 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_eques1     (平民派     ) Age:35 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_eques2     (平民派     ) Age:32 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_pleb1      (平民派     ) Age:30 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble1       (骑士派     ) Age:45 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble2       (骑士派     ) Age:42 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble3       (骑士派     ) Age:38 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_eques1       (骑士派     ) Age:35 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_eques2       (骑士派     ) Age:32 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_pleb1        (骑士派     ) Age:30 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+
+      🏆 TOP 3 CANDIDATES (by STR):
+         1. senate_noble3        (元老院派)
+            STR: 7 | Pop: 5 | Age:38 | History: quqaestor(-6)
+         2. populares_noble3     (平民派)
+            STR: 7 | Pop: 5 | Age:38 | History: quqaestor(-6)
+         3. equites_noble3       (骑士派)
+            STR: 7 | Pop: 5 | Age:38 | History: quqaestor(-6)
+
+      🗳️  VOTING RESULTS:
+         senate_noble3       :   27 ( 33.3%) ██████
+         populares_noble3    :   27 ( 33.3%) ██████
+         equites_noble3      :   27 ( 33.3%) ██████
+
+      ✓ WINNER: senate_noble3 (元老院派)
+        Power bonus: +2
+      💰 senate_noble3 elected as quqaestor
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ senate_noble1        (元老院派    ) Age:45 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_noble2        (元老院派    ) Age:42 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ❌ senate_noble3        (元老院派    ) Age:38 STR: 7 Prereq:✓ Cooldown:CD → Already holding this office
+         ✅ senate_eques1        (元老院派    ) Age:35 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_eques2        (元老院派    ) Age:32 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ senate_pleb1         (元老院派    ) Age:30 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble1     (平民派     ) Age:45 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble2     (平民派     ) Age:42 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_noble3     (平民派     ) Age:38 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_eques1     (平民派     ) Age:35 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_eques2     (平民派     ) Age:32 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ populares_pleb1      (平民派     ) Age:30 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble1       (骑士派     ) Age:45 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble2       (骑士派     ) Age:42 STR: 6 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_noble3       (骑士派     ) Age:38 STR: 7 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_eques1       (骑士派     ) Age:35 STR: 4 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_eques2       (骑士派     ) Age:32 STR: 5 Prereq:✓ Cooldown:OK → Eligible
+         ✅ equites_pleb1        (骑士派     ) Age:30 STR: 2 Prereq:✓ Cooldown:OK → Eligible
+
+      🏆 TOP 3 CANDIDATES (by STR):
+         1. populares_noble3     (平民派)
+            STR: 7 | Pop: 5 | Age:38 | History: quqaestor(-6)
+         2. equites_noble3       (骑士派)
+            STR: 7 | Pop: 5 | Age:38 | History: quqaestor(-6)
+         3. senate_noble2        (元老院派)
+            STR: 6 | Pop: 6 | Age:42 | History: quqaestor(-7), praetor(-4), consul(1)
+
+      🗳️  VOTING RESULTS:
+         populares_noble3    :   27 ( 33.3%) ██████
+         equites_noble3      :   27 ( 33.3%) ██████
+         senate_noble2       :   27 ( 33.3%) ██████
+      📤 senate_noble3 steps down as quqaestor (power: 0)
+
+      ✓ WINNER: populares_noble3 (平民派)
+        Power bonus: +2
+      💰 populares_noble3 elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      元老院派: senate_noble1 (Power: 8)
+      平民派: populares_noble2 (Power: 14)
+      骑士派: equites_noble1 (Power: 8)
+
+   🎤 Presiding Officer: populares_noble2
+..      📤 Test Consul steps down as consul (power: 0)
+..
+----------------------------------------------------------------------
+Ran 9 tests in 0.053s
+
+OK
+
+系统测试：
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+
+============================================================
+   Eagle of Rome - MVP 0.4.5 (整改后版本)
+============================================================
+项目根目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+Python路径: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src
+============================================================
+[DEBUG] 命令目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands
+[DEBUG] 发现的命令: ['load', 'l', 'status', 'sts', 'forum', 'f', 'mortality', 'm', 'population', 'p', 'revenue', 'r', 'senate', 's', 'exit', 'quit', 'help', 'h']
+
+============================================================
+   Eagle of Rome - Debug CLI (整改后版本)
+============================================================
+输入 'help' 查看可用命令，'exit' 退出游戏
+
+> load
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+> sts
+
+==================================================
+   📊 游戏状态摘要
+==================================================
+   回合: 第 1 年 (264 BC)
+   国库: 100 塔兰特
+   存活人物: 3 人
+   派系数: 2 个
+==================================================
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 3
+  [Draw 1] Number 129...
+     -> No member assigned (safe)
+> r
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   元老院派: +10 Talents
+   平民派: +10 Talents
+
+   📊 State Treasury: 200 Talents
+> f
+
+--- Forum Phase (Year 264 BC) ---
+
+   📢 1 new figure(s) arrive in the Senate:
+      👤 Octavius (plebeian)
+
+   🏛️  Figures in Senate:
+
+      👤 PLEBEIAN (1):
+         ID:4 Octavius
+            [财5]
+
+   📜 2 new contract(s) announced:
+      包税: 科西嘉包税权
+      工程: 公共浴场工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 科西嘉包税权
+            预付:39 年收益:16 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 公共浴场工程
+            预算:35 预期利润:7
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+> p
+
+--- Population Phase (Year 264 BC) ---
+   🟢 Treasury: 200 Talents
+
+   🏛️  State of the Republic: Calm
+
+   👥 Population Events:
+      📢 Urban unrest in the capital
+> s
+
+--- Senate Phase (Year 264 BC) ---
+
+==================================================
+   🏛️  MAGISTRATE ELECTIONS
+==================================================
+
+   Electing CONSUL (2 seat(s)):
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=10y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Octavius             (?       ) Age:27 CHA: 5 Prereq:✗ Cooldown:OK → Age 27 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+      Checking eligibility for CONSUL:
+      Requirements: Age≥40, Cooldown=10y, Prerequisite=Praetor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Gaius Marius         (平民派     ) Age:35 CHA: 0 Prereq:✗ Cooldown:OK → Age 35 < 40
+         ❌ Lucius Sulla         (元老院派    ) Age:45 CHA: 0 Prereq:✗ Cooldown:OK → Requires prior Praetor service
+         ❌ Octavius             (?       ) Age:27 CHA: 5 Prereq:✗ Cooldown:OK → Age 27 < 40
+      ⚠️  No eligible candidates for consul!
+      ⚠️  No eligible candidate for consul
+
+   Electing PRAETOR (2 seat(s)):
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=5y, Prerequisite=Quaestor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Gaius Marius         (平民派     ) Age:35 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Lucius Sulla         (元老院派    ) Age:45 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Octavius             (?       ) Age:27 MAN: 1 Prereq:✗ Cooldown:OK → Age 27 < 35
+      ⚠️  No eligible candidates for praetor!
+      ⚠️  No eligible candidate for praetor
+
+      Checking eligibility for PRAETOR:
+      Requirements: Age≥35, Cooldown=5y, Prerequisite=Quaestor
+         ❌ Marcus Brutus        (元老院派    ) Age:40 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Gaius Marius         (平民派     ) Age:35 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Lucius Sulla         (元老院派    ) Age:45 MAN: 0 Prereq:✗ Cooldown:OK → Requires prior Quaestor service
+         ❌ Octavius             (?       ) Age:27 MAN: 1 Prereq:✗ Cooldown:OK → Age 27 < 35
+      ⚠️  No eligible candidates for praetor!
+      ⚠️  No eligible candidate for praetor
+
+   Electing QUQAESTOR (2 seat(s)):
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ Marcus Brutus        (元老院派    ) Age:40 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius Marius         (平民派     ) Age:35 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Lucius Sulla         (元老院派    ) Age:45 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Octavius             (?       ) Age:27 STR: 3 Prereq:✓ Cooldown:OK → Age 27 < 30
+
+      🏆 TOP 3 CANDIDATES (by STR):
+         1. Marcus Brutus        (元老院派)
+            STR: 0 | Pop: 3 | Age:40 | History: None
+         2. Gaius Marius         (平民派)
+            STR: 0 | Pop: 5 | Age:35 | History: None
+         3. Lucius Sulla         (元老院派)
+            STR: 0 | Pop: 4 | Age:45 | History: None
+
+      🗳️  VOTING RESULTS:
+         Lucius Sulla        :    7 ( 58.3%) ███████████
+         Gaius Marius        :    5 ( 41.7%) ████████
+         Marcus Brutus       :    0 (  0.0%) 
+
+      ✓ WINNER: Lucius Sulla (元老院派)
+        Power bonus: +2
+      💰 Lucius Sulla elected as quqaestor
+
+      Checking eligibility for QUQAESTOR:
+      Requirements: Age≥30, Cooldown=2y, Prerequisite=None
+         ✅ Marcus Brutus        (元老院派    ) Age:40 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ✅ Gaius Marius         (平民派     ) Age:35 STR: 0 Prereq:✓ Cooldown:OK → Eligible
+         ❌ Lucius Sulla         (元老院派    ) Age:45 STR: 0 Prereq:✓ Cooldown:CD → Already holding this office
+         ❌ Octavius             (?       ) Age:27 STR: 3 Prereq:✓ Cooldown:OK → Age 27 < 30
+
+      🏆 TOP 3 CANDIDATES (by STR):
+         1. Marcus Brutus        (元老院派)
+            STR: 0 | Pop: 3 | Age:40 | History: None
+         2. Gaius Marius         (平民派)
+            STR: 0 | Pop: 5 | Age:35 | History: None
+
+      🗳️  VOTING RESULTS:
+         Marcus Brutus       :    7 ( 58.3%) ███████████
+         Gaius Marius        :    5 ( 41.7%) ████████
+      📤 Lucius Sulla steps down as quqaestor (power: 0)
+
+      ✓ WINNER: Marcus Brutus (元老院派)
+        Power bonus: +2
+      💰 Marcus Brutus elected as quqaestor
+
+   👑 Faction Leaders Updated:
+      元老院派: Marcus Brutus (Power: 7)
+      平民派: Gaius Marius (Power: 4)
+
+   🎤 Presiding Officer: Marcus Brutus
+
+   📋 Processing 2 pending contract(s)...
+
+   📊 Voting: 科西嘉包税权
+      Cost: 39 | Expected: 16
+      ⚠️  No eligible Equites candidates
+
+   🏗️ Assigning: 公共浴场工程
+      Budget: 35 | Profit: 7
+      ⏳ Awaiting Consul election...
+> s
+⚠️ 元老院阶段在本回合已执行过
+> 

@@ -1,0 +1,17 @@
+def get(self, key: str, default=None):
+    """
+    点号路径获取配置值
+    :param key: 点号分隔的键，如 "economic.base_tax"
+    :param default: 若路径不存在返回的默认值
+    """
+    if not key:
+        return default
+    parts = key.split('.')
+    value = self._config  # 当前完整配置字典
+    for part in parts:
+        if not isinstance(value, dict):
+            return default
+        if part not in value:
+            return default
+        value = value[part]
+    return value

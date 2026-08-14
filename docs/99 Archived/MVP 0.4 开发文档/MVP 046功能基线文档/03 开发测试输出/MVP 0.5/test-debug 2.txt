@@ -1,0 +1,1102 @@
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+
+🔄 自动加载默认场景...
+
+============================================================
+                          Eagle of Rome - MVP 0.5           
+============================================================
+游戏简介：基于罗马共和国历史背景的政治策略游戏
+开始年份：280 BC
+国库资金：100 Talents
+罗马领土：意大利(本土), 西西里, 撒丁尼亚, 科西嘉
+============================================================
+输入 'help' 查看可用命令，'exit' 退出游戏
+
+> turn
+
+############################################################
+ 回合 1 (280 BC)
+ 术语: Senate/Senators/Talents
+############################################################
+
+[1/7] Mortality...
+
+--- Mortality Phase (Year 280 BC) ---
+   🎴 事件卡: 死神来了
+   💀 死神选中了 Lucius · Domitius · Sulla (阶级: nobile)
+      💰 Lucius · Domitius · Sulla 的 18 Talents 归入国库
+      🏞️ 当前国家公地: 1000 C (土地回收前)
+      🏞️ 土地回收后国家公地: 1001 C (+1)
+
+   Progress: [▓░░░░░░] 1/7
+
+[2/7] Revenue...
+
+--- Revenue Phase (Year 280 BC) ---
+💰 国家公地收益: 	+200 Talents
+📊 国库现有资金: 	318 Talents
+
+💰 派系金库收益 (Faction Treasury):
+        Equites     Optimates   Populares   
+财政拨款  +10          +10          +10        
+会员贡献  +0           +0           +0         
+现有资金  20          20          20        
+
+======================================================================
+💰 地主私人收益 (Landowners' Private Income)
+======================================================================
+ID    Name                                     Income     Wealth    
+----------------------------------------------------------------------
+1     Quintus · Sulpicius · Marius             1          17        
+3     Manius · Veturius · Naso                 1          16        
+7     Quintus · Valerius · Cicero              1          15        
+9     Lucius · Sulpicius · Longus              1          20        
+13    Lucius · Fabius · Bibulus                1          18        
+14    Publius · Sempronius · Africanus         1          15        
+----------------------------------------------------------------------
+Total                                          6          101       
+======================================================================
+
+   Progress: [▓▓░░░░░] 2/7
+
+[3/7] Forum...
+
+--- Forum Phase (Year 280 BC) ---
+
+	====================== 安民告示 ====================
+   ⚔️ 当前无活跃战争
+
+   📊 行省民变状态：
+      所有行省安居乐业，无民变威胁。
+
+	====================== 人才市场 ====================
+      Optimates 抛弃了 Numerius · Domitius · Cato (军略 2, 智略 5, 魅力 5, 热诚 3)
+      Populares 抛弃了 Lucius · Sulpicius · Longus (军略 6, 智略 8, 魅力 7, 热诚 5)
+      Equites 抛弃了 Lucius · Claudius (军略 4, 智略 6, 魅力 6, 热诚 2)
+      🗑️ 共 3 名人物被抛弃，现已加入广场
+   📢 3 figure(s) left their factions in Rome:
+
+   📢 3 new figure(s) arrive in the Senate:
+      💰 Titus · Manlius · Crassus (eques)(军略 5, 智略 5, 魅力 3, 热诚 2)
+      🏛️ Aulus · Valerius · Bibulus (nobile)(军略 5, 智略 6, 魅力 7, 热诚 2)
+      🏛️ Servius · Valerius · Rufus (nobile)(军略 5, 智略 7, 魅力 8, 热诚 5)
+
+   📢 共 6 名人物在罗马广场可供招募！
+
+   📢 招募出价情况：
+      Servius · Valerius · Rufus 收到出价：Optimates:13
+      Titus · Manlius · Crassus 收到出价：Populares:10
+      Numerius · Domitius · Cato 收到出价：Equites:6
+      ✅ Servius · Valerius · Rufus 加入 Optimates，成交价 13
+      ✅ Titus · Manlius · Crassus 加入 Populares，成交价 10
+      ✅ Numerius · Domitius · Cato 加入 Equites，成交价 6
+   🎉 3 名人物被招募
+
+	====================== 合同拍卖 ====================
+      🏗️ 新意大利工程 (280 BC) 生成
+      📊 新西西里包税权 (280 BC) 生成
+      🏗️ 新西西里工程 (280 BC) 生成
+      📊 新撒丁尼亚包税权 (280 BC) 生成
+      🏗️ 新撒丁尼亚工程 (280 BC) 生成
+      📊 新科西嘉包税权 (280 BC) 生成
+      🏗️ 新科西嘉工程 (280 BC) 生成
+
+   📋 Pending Contracts (等待元老院预算表决):
+
+      📊 Tax Farming:
+         ID:2 西西里包税权 (280 BC)	预付:24 年收益:6 期限:5年
+         ID:4 撒丁尼亚包税权 (280 BC)	预付:19 年收益:5 期限:5年
+         ID:6 科西嘉包税权 (280 BC)	预付:14 年收益:4 期限:5年
+
+      🏗️ Public Works:
+         ID:1 意大利工程 (280 BC)	预算:120 预期利润:0
+         ID:3 西西里工程 (280 BC)	预算:72 预期利润:0
+         ID:5 撒丁尼亚工程 (280 BC)	预算:57 预期利润:0
+         ID:7 科西嘉工程 (280 BC)	预算:43 预期利润:0
+
+   📭 没有待竞标的预算合同。
+
+	====================== 土地交易 ====================
+
+   ⚠️ 自动土地交易失败：Quintus · Sulpicius · Marius → Spurius · Aemilius Spurius · Aemilius cannot afford 39 Talents (has 27)
+
+   Progress: [▓▓▓░░░░] 3/7
+
+[4/7] Population...
+      🗑️ 3 名未被招募的人物已从罗马消失，不知去向。
+
+--- Population Phase (Year 280 BC) ---
+
+==========================================================
+   🏛️  Legions Return Rome from Battlefield
+==========================================================
+
+==========================================================
+   🏛️  ELECTIONS Campaign
+==========================================================
+
+   📊 各派系影响力：		庆典前		庆典后
+      Optimates:		116		141
+      Populares:		72		84
+      Equites:		101		103
+
+      总计花费 39，增加人气 39
+
+
+   📋 选举结果：
+      🏛️ CONSUL: Quintus · Sulpicius · Marius (Optimates)
+      📜 CENSOR: Quintus · Valerius · Cicero (Populares)
+      ⚖ PRAETOR: Publius · Sempronius · Africanus (Equites)
+      💰 QUAESTOR (2 seats): Decimus · Papirius · Cicero(Populares), Titus · Manlius · Crassus(Populares)
+      🛡️ TRIBUNE: Tertius (Optimates)
+
+   📊 各派系影响力（选举后）：
+      Optimates: 201
+      Populares: 154
+      Equites: 133
+
+   Progress: [▓▓▓▓░░░] 4/7
+
+[5/7] Senate...
+
+--- Senate Phase (Year 280 BC) ---
+
+   👑 Faction Leaders Updated:
+      Optimates: Quintus · Sulpicius · Marius (Influence: 94)
+      Populares: Quintus · Valerius · Cicero (Influence: 101)
+      Equites: Publius · Sempronius · Africanus (Influence: 66)
+
+   🎤 Presiding Officer: Quintus · Sulpicius · Marius (consul)
+
+   ⚔️ 没有战争威胁需要处理。
+
+   📋 Budget Proposals:
+
+      📊 意大利工程 (280 BC)
+          Optimates 支持，影响力 174
+          Populares 支持，影响力 139
+          Equites 反对，影响力 130
+          总影响力：443，支持 313，反对 130，支持率 70.7%
+          ✅ 预算通过，状态变为 BUDGETED
+
+      📊 西西里包税权 (280 BC)
+          Optimates 反对，影响力 174
+          Populares 反对，影响力 139
+          Equites 支持，影响力 130
+          总影响力：443，支持 130，反对 313，支持率 29.3%
+          ❌ 预算否决，保持 PENDING
+
+      📊 撒丁尼亚工程 (280 BC)
+          Optimates 支持，影响力 174
+          Populares 反对，影响力 139
+          Equites 反对，影响力 130
+          总影响力：443，支持 174，反对 269，支持率 39.3%
+          ❌ 预算否决，保持 PENDING
+
+      📊 科西嘉工程 (280 BC)
+          Optimates 支持，影响力 174
+          Populares 反对，影响力 139
+          Equites 反对，影响力 130
+          总影响力：443，支持 174，反对 269，支持率 39.3%
+          ❌ 预算否决，保持 PENDING
+
+      📊 西西里工程 (280 BC)
+          Optimates 反对，影响力 174
+          Populares 反对，影响力 139
+          Equites 反对，影响力 130
+          总影响力：443，支持 0，反对 443，支持率 0.0%
+          ❌ 预算否决，保持 PENDING
+
+      📊 撒丁尼亚包税权 (280 BC)
+          Optimates 支持，影响力 174
+          Populares 反对，影响力 139
+          Equites 支持，影响力 130
+          总影响力：443，支持 304，反对 139，支持率 68.6%
+          ✅ 预算通过，状态变为 BUDGETED
+
+   📭 无土地法案提案。
+
+   Progress: [▓▓▓▓▓░░] 5/7
+
+[6/7] Combat...
+
+--- Combat Phase (Year 280 BC) ---
+   ☮️  No active conflicts - phase skipped
+
+[7/7] Revolution...
+
+--- Revolution Phase (Year 280 BC) ---
+
+   🏆 胜利/失败条件检查:
+      📊 元老院主导派系: Optimates (39.3% 影响力)
+
+############################################################
+ ✅ 回合完成 - 所有7个阶段已执行
+############################################################
+> n
+已推进至 279 BC
+
+📅 Year 279 BC:
+   Completed: 0/7 phases
+      ○ Mortality
+      ○ Revenue
+      ○ Forum
+      ○ Population
+      ○ Senate
+      ○ Combat
+      ○ Revolution
+   ⏳ 7 remaining
+> turn
+
+############################################################
+ 回合 2 (279 BC)
+ 术语: Senate/Senators/Talents
+############################################################
+
+[1/7] Mortality...
+
+--- Mortality Phase (Year 279 BC) ---
+   🎴 事件卡: 无妄天灾
+      (效果暂未实现)
+
+   Progress: [▓░░░░░░] 1/7
+
+[2/7] Revenue...
+
+--- Revenue Phase (Year 279 BC) ---
+💰 国家公地收益: 	+200 Talents
+📊 国库现有资金: 	518 Talents
+
+💰 派系金库收益 (Faction Treasury):
+        Equites     Optimates   Populares   
+财政拨款  +10          +10          +10        
+会员贡献  +0           +0           +0         
+现有资金  24          17          20        
+
+======================================================================
+💰 地主私人收益 (Landowners' Private Income)
+======================================================================
+ID    Name                                     Income     Wealth    
+----------------------------------------------------------------------
+1     Quintus · Sulpicius · Marius             1          8         
+3     Manius · Veturius · Naso                 1          15        
+7     Quintus · Valerius · Cicero              1          10        
+13    Lucius · Fabius · Bibulus                1          19        
+14    Publius · Sempronius · Africanus         1          14        
+----------------------------------------------------------------------
+Total                                          5          66        
+======================================================================
+
+   Progress: [▓▓░░░░░] 2/7
+
+[3/7] Forum...
+
+--- Forum Phase (Year 279 BC) ---
+
+	====================== 安民告示 ====================
+   ⚠️ 外交冲突：皮洛士战争 开始威胁罗马
+   ⚔️ 当前无活跃战争
+
+   📊 行省民变状态：
+      所有行省安居乐业，无民变威胁。
+
+	====================== 人才市场 ====================
+      Optimates 抛弃了 Servius · Valerius · Rufus (军略 5, 智略 7, 魅力 8, 热诚 5)
+      Populares 抛弃了 Statius (军略 2, 智略 4, 魅力 4, 热诚 6)
+      Equites 抛弃了 Manius · Domitius (军略 2, 智略 8, 魅力 5, 热诚 3)
+      🗑️ 共 3 名人物被抛弃，现已加入广场
+   📢 3 figure(s) left their factions in Rome:
+
+   📢 3 new figure(s) arrive in the Senate:
+      🏛️ Aulus · Atilius · Buteo (nobile)(军略 5, 智略 4, 魅力 9, 热诚 2)
+      👤 Quartus (plebeian)(军略 3, 智略 1, 魅力 4, 热诚 8)
+      💰 Sextus · Furius · Bibulus (eques)(军略 2, 智略 5, 魅力 5, 热诚 4)
+
+   📢 共 6 名人物在罗马广场可供招募！
+
+   📢 招募出价情况：
+      Manius · Domitius 收到出价：Optimates:11, Populares:19
+      Aulus · Atilius · Buteo 收到出价：Equites:3
+      Statius 收到出价：Equites:8
+      ✅ Manius · Domitius 加入 Populares，成交价 19
+      ✅ Aulus · Atilius · Buteo 加入 Equites，成交价 3
+      ✅ Statius 加入 Equites，成交价 8
+   🎉 3 名人物被招募
+
+	====================== 合同拍卖 ====================
+
+   📋 Pending Contracts (等待元老院预算表决):
+
+      📊 Tax Farming:
+         ID:2 西西里包税权 (280 BC)	预付:24 年收益:6 期限:5年
+         ID:6 科西嘉包税权 (280 BC)	预付:14 年收益:4 期限:5年
+
+      🏗️ Public Works:
+         ID:3 西西里工程 (280 BC)	预算:72 预期利润:0
+         ID:5 撒丁尼亚工程 (280 BC)	预算:57 预期利润:0
+         ID:7 科西嘉工程 (280 BC)	预算:43 预期利润:0
+
+   📜 对已预算合同进行竞标：
+
+      🔔 开始竞标 意大利工程 (280 BC) 预算 120
+         Optimates 的 Manius · Furius 出价 113 (降价 6%)
+         Populares 的 Manius · Domitius 出价 107 (降价 10%)
+         Equites 的 Numerius · Domitius · Cato 出价 98 (降价 18%)
+      ✅ 中标者: Numerius · Domitius · Cato，中标价 98，降价 18%
+
+      🔔 开始竞标 撒丁尼亚包税权 (280 BC) 底价 19
+         Optimates 的 Manius · Furius 财富不足 12 < 22，无法出价
+         Populares 的 Manius · Domitius 出价 21 (加价 11%)
+         Equites 的 Numerius · Domitius · Cato 出价 21 (加价 15%)
+      ✅ 中标者: Manius · Domitius，中标价 21，加价 11%
+
+	====================== 土地交易 ====================
+
+   💱 自动土地交易执行成功：
+      Trade complete: 1 land @ 13/unit = 13 Talents
+         Quintus · Sulpicius · Marius: land 3→2, 
+
+   Progress: [▓▓▓░░░░] 3/7
+
+[4/7] Population...
+      🗑️ 3 名未被招募的人物已从罗马消失，不知去向。
+
+--- Population Phase (Year 279 BC) ---
+
+==========================================================
+   🏛️  Legions Return Rome from Battlefield
+==========================================================
+
+==========================================================
+   🏛️  ELECTIONS Campaign
+==========================================================
+
+   📊 各派系影响力：		庆典前		庆典后
+      Optimates:		138		169
+      Populares:		108		110
+      Equites:		136		167
+
+      总计花费 76，增加人气 76
+
+
+   📋 选举结果：
+      🏛️ CONSUL: Publius · Sempronius · Africanus (Equites)
+      📜 CENSOR: Lucius · Fabius · Bibulus (Equites)
+      ⚖ PRAETOR: Decimus · Papirius · Cicero (Populares)
+      💰 QUAESTOR (2 seats): Aulus · Atilius · Buteo(Equites), Aulus · Calpurnius · Rufus(Optimates)
+      🛡️ TRIBUNE: Manius · Furius (Optimates)
+
+   📊 各派系影响力（选举后）：
+      Optimates: 199
+      Populares: 135
+      Equites: 252
+
+   Progress: [▓▓▓▓░░░] 4/7
+
+[5/7] Senate...
+
+--- Senate Phase (Year 279 BC) ---
+
+   👑 Faction Leaders Updated:
+      Optimates: Quintus · Sulpicius · Marius (Influence: 73)
+      Populares: Quintus · Valerius · Cicero (Influence: 70)
+      Equites: Lucius · Fabius · Bibulus (Influence: 130)
+
+   🎤 Presiding Officer: Publius · Sempronius · Africanus (consul)
+
+   ⚔️ 战争威胁处理（执政官：Publius · Sempronius · Africanus）：
+
+      📋 战争威胁：皮洛士战争
+         威胁等级：1
+         执政官提议宣战，要求批准 6 个军团。
+          Optimates 支持，影响力 156
+          Populares 支持，影响力 126
+          Equites 支持，影响力 239
+          总影响力：521，支持 521，反对 0，支持率 100.0%
+      ✅ 战争 皮洛士战争 已激活，批准军团数 6
+          军事系统可用，国库 518，可用军团数 8
+          计划征召 6 个军团，实际可征召 6 个
+          征召结果：成功 6 个，失败 0 个
+          指派结果：Assigned 6 Legion(s)
+          ✅ 宣战通过！执政官 Publius · Sempronius · Africanus 出征，影响力不再计入元老院。
+          元老院新主持人：Lucius · Fabius · Bibulus（官职 censor）
+
+   📋 Budget Proposals:
+
+      📊 西西里工程 (280 BC)
+          Optimates 反对，影响力 156
+          Populares 反对，影响力 126
+          Equites 反对，影响力 157
+          总影响力：439，支持 0，反对 439，支持率 0.0%
+          ❌ 预算否决，保持 PENDING
+
+      📊 科西嘉工程 (280 BC)
+          Optimates 支持，影响力 156
+          Populares 反对，影响力 126
+          Equites 支持，影响力 157
+          总影响力：439，支持 313，反对 126，支持率 71.3%
+          ✅ 预算通过，状态变为 BUDGETED
+
+      📊 撒丁尼亚工程 (280 BC)
+          Optimates 反对，影响力 156
+          Populares 支持，影响力 126
+          Equites 反对，影响力 157
+          总影响力：439，支持 126，反对 313，支持率 28.7%
+          ❌ 预算否决，保持 PENDING
+
+      📊 科西嘉包税权 (280 BC)
+          Optimates 支持，影响力 156
+          Populares 反对，影响力 126
+          Equites 反对，影响力 157
+          总影响力：439，支持 156，反对 283，支持率 35.5%
+          ❌ 预算否决，保持 PENDING
+
+      📊 西西里包税权 (280 BC)
+          Optimates 支持，影响力 156
+          Populares 反对，影响力 126
+          Equites 反对，影响力 157
+          总影响力：439，支持 156，反对 283，支持率 35.5%
+          ❌ 预算否决，保持 PENDING
+
+   📭 无土地法案提案。
+
+   Progress: [▓▓▓▓▓░░] 5/7
+
+[6/7] Combat...
+
+--- Combat Phase (Year 279 BC) ---
+
+   ⚔️  Resolving 1 active conflict(s)...
+
+   ⚔️  Resolving 皮洛士战争:
+      🎖️  Roma Commander: Publius · Sempronius · Africanus (Mil: 4)
+      🛡️  Roma Forces: 6 Legion(s) (+12)
+
+      ⚔️  Total Force: 16 vs Enemy 8
+
+      🎲 Dice roll: 10
+      📊 Combat Total: 10 + 16 - 8 = 18
+
+      🏆 RESULT: TRIUMPH (0 losses)
+      🎉 Triumph! Publius · Sempronius · Africanus returns in glory!
+
+      📦 战利品分配 (皮洛士战争):
+        总额: 500 塔兰特
+        国库: +250
+        指挥官 Publius · Sempronius · Africanus 私库: +75
+        派系 Equites 金库: +125
+        士兵份额: 50 (将转换为老兵支持)
+   ✅ 皮洛士战争 resolved! Victory!
+   🎁 Rewards: {'treasury': 500, 'influence': 30, 'land': 200, 'family_prestige': 1}
+
+   Progress: [▓▓▓▓▓▓░] 6/7
+
+[7/7] Revolution...
+
+--- Revolution Phase (Year 279 BC) ---
+
+   🏆 胜利/失败条件检查:
+      📊 元老院主导派系: Equites (35.8% 影响力)
+
+############################################################
+ ✅ 回合完成 - 所有7个阶段已执行
+############################################################
+> n
+已推进至 278 BC
+
+📅 Year 278 BC:
+   Completed: 0/7 phases
+      ○ Mortality
+      ○ Revenue
+      ○ Forum
+      ○ Population
+      ○ Senate
+      ○ Combat
+      ○ Revolution
+   ⏳ 7 remaining
+> turn
+
+############################################################
+ 回合 3 (278 BC)
+ 术语: Senate/Senators/Talents
+############################################################
+
+[1/7] Mortality...
+
+--- Mortality Phase (Year 278 BC) ---
+   🎴 事件卡: 死神来了
+   💀 死神选中了 Quintus · Valerius · Cicero (阶级: nobile)
+      💰 Quintus · Valerius · Cicero 的 10 Talents 归入国库
+      🏞️ 当前国家公地: 1201 C (土地回收前)
+      🏞️ 土地回收后国家公地: 1204 C (+3)
+
+   Progress: [▓░░░░░░] 1/7
+
+[2/7] Revenue...
+
+--- Revenue Phase (Year 278 BC) ---
+💰 国家公地收益: 	+241 Talents
+📊 国库现有资金: 	995 Talents
+
+💰 派系金库收益 (Faction Treasury):
+        Equites     Optimates   Populares   
+财政拨款  +10          +10          +10        
+会员贡献  +1           +0           +0         
+现有资金  149         27          11        
+
+======================================================================
+💰 地主私人收益 (Landowners' Private Income)
+======================================================================
+ID    Name                                     Income     Wealth    
+----------------------------------------------------------------------
+1     Quintus · Sulpicius · Marius             1          6         
+3     Manius · Veturius · Naso                 1          5         
+13    Lucius · Fabius · Bibulus                1          2         
+14    Publius · Sempronius · Africanus         1          81        
+----------------------------------------------------------------------
+Total                                          4          94        
+======================================================================
+
+   Progress: [▓▓░░░░░] 2/7
+
+[3/7] Forum...
+
+--- Forum Phase (Year 278 BC) ---
+
+	====================== 安民告示 ====================
+   ⚔️ 当前无活跃战争
+
+   📊 行省民变状态：
+      ⚠️ 意大利本土因长期未分地，民怨升至 1 级
+      🔔 行省 撒丁尼亚 因包税合同税率 11% > 10%，民怨升至 1 级
+   🏆 元老院决定授予 Publius · Sempronius · Africanus 凯旋！未来几年他将获得士兵的拥戴！
+
+	====================== 人才市场 ====================
+      Optimates 抛弃了 Tertius (军略 4, 智略 1, 魅力 3, 热诚 5)
+      Populares 抛弃了 Titus · Manlius · Crassus (军略 5, 智略 5, 魅力 3, 热诚 2)
+      Equites 抛弃了 Lucius · Fisher (军略 2, 智略 3, 魅力 2, 热诚 6)
+      🗑️ 共 3 名人物被抛弃，现已加入广场
+   📢 3 figure(s) left their factions in Rome:
+
+   📢 3 new figure(s) arrive in the Senate:
+      🏛️ Decimus · Cornelius · Cato (nobile)(军略 3, 智略 6, 魅力 9, 热诚 5)
+      💰 Aulus · Tullius · Caesar (eques)(军略 3, 智略 9, 魅力 6, 热诚 1)
+      👤 Statius (plebeian)(军略 1, 智略 2, 魅力 6, 热诚 5)
+
+   📢 共 6 名人物在罗马广场可供招募！
+
+   📢 招募出价情况：
+      Decimus · Cornelius · Cato 收到出价：Optimates:20, Equites:70
+      Aulus · Tullius · Caesar 收到出价：Populares:4
+      Tertius 收到出价：Populares:7
+      ✅ Decimus · Cornelius · Cato 加入 Equites，成交价 70
+      ✅ Aulus · Tullius · Caesar 加入 Populares，成交价 4
+      ✅ Tertius 加入 Populares，成交价 7
+   🎉 3 名人物被招募
+
+	====================== 合同拍卖 ====================
+
+   📋 Pending Contracts (等待元老院预算表决):
+
+      📊 Tax Farming:
+         ID:2 西西里包税权 (280 BC)	预付:24 年收益:6 期限:5年
+         ID:6 科西嘉包税权 (280 BC)	预付:14 年收益:4 期限:5年
+
+      🏗️ Public Works:
+         ID:3 西西里工程 (280 BC)	预算:72 预期利润:0
+         ID:5 撒丁尼亚工程 (280 BC)	预算:57 预期利润:0
+
+   📜 对已预算合同进行竞标：
+
+      🔔 开始竞标 科西嘉工程 (280 BC) 预算 43
+         Optimates 的 Manius · Furius 出价 35 (降价 16%)
+         Populares 的 Manius · Domitius 出价 38 (降价 12%)
+         Equites 的 Numerius · Domitius · Cato 出价 35 (降价 18%)
+      ✅ 中标者: Manius · Furius，中标价 35，降价 16%
+
+	====================== 土地交易 ====================
+
+   ⚠️ 自动土地交易失败：Decimus · Papirius · Cicero → Manius · Furius Manius · Furius cannot afford 11 Talents (has 2)
+
+   Progress: [▓▓▓░░░░] 3/7
+
+[4/7] Population...
+      🗑️ 3 名未被招募的人物已从罗马消失，不知去向。
+
+--- Population Phase (Year 278 BC) ---
+
+==========================================================
+   🏛️  Legions Return Rome from Battlefield
+==========================================================
+      🏛️ Publius · Sempronius · Africanus 的军团举行凯旋式！
+      解散 6 个参与 皮洛士战争 的军团
+
+==========================================================
+   🏛️  ELECTIONS Campaign
+==========================================================
+
+   📊 各派系影响力：		庆典前		庆典后
+      Optimates:		162		151
+      Populares:		56		80
+      Equites:		245		349
+
+      总计花费 139，增加人气 139
+
+
+   📋 选举结果：
+      🏛️ CONSUL: Quintus · Sulpicius · Marius (Optimates)
+      📜 CENSOR: Publius · Sempronius · Africanus (Equites)
+      ⚖ PRAETOR: Aulus · Atilius · Buteo (Equites)
+      💰 QUAESTOR (2 seats): Numerius · Furius · Marius(Populares), Decimus · Cornelius · Cato(Equites)
+      🛡️ TRIBUNE: Numerius · Domitius · Cato (Equites)
+
+   📊 各派系影响力（选举后）：
+      Optimates: 171
+      Populares: 90
+      Equites: 434
+
+   Progress: [▓▓▓▓░░░] 4/7
+
+[5/7] Senate...
+
+--- Senate Phase (Year 278 BC) ---
+
+   👑 Faction Leaders Updated:
+      Optimates: Quintus · Sulpicius · Marius (Influence: 85)
+      Populares: Decimus · Papirius · Cicero (Influence: 38)
+      Equites: Publius · Sempronius · Africanus (Influence: 186)
+
+   🎤 Presiding Officer: Quintus · Sulpicius · Marius (consul)
+
+   ⚔️ 没有战争威胁需要处理。
+
+   📋 Budget Proposals:
+
+      📊 西西里包税权 (280 BC)
+          Optimates 反对，影响力 155
+          Populares 反对，影响力 38
+          Equites 反对，影响力 199
+          总影响力：392，支持 0，反对 392，支持率 0.0%
+          ❌ 预算否决，保持 PENDING
+
+   📭 无土地法案提案。
+
+   Progress: [▓▓▓▓▓░░] 5/7
+
+[6/7] Combat...
+
+--- Combat Phase (Year 278 BC) ---
+   ☮️  No active conflicts - phase skipped
+
+[7/7] Revolution...
+
+--- Revolution Phase (Year 278 BC) ---
+
+   🏆 胜利/失败条件检查:
+      📊 元老院主导派系: Equites (50.8% 影响力)
+
+############################################################
+ ✅ 回合完成 - 所有7个阶段已执行
+############################################################
+> n
+已推进至 277 BC
+
+📅 Year 277 BC:
+   Completed: 0/7 phases
+      ○ Mortality
+      ○ Revenue
+      ○ Forum
+      ○ Population
+      ○ Senate
+      ○ Combat
+      ○ Revolution
+   ⏳ 7 remaining
+> turn
+
+############################################################
+ 回合 4 (277 BC)
+ 术语: Senate/Senators/Talents
+############################################################
+
+[1/7] Mortality...
+
+--- Mortality Phase (Year 277 BC) ---
+   🎴 事件卡: 天降猛男
+      (效果暂未实现)
+
+   Progress: [▓░░░░░░] 1/7
+
+[2/7] Revenue...
+
+--- Revenue Phase (Year 277 BC) ---
+💰 国家公地收益: 	+241 Talents
+📊 国库现有资金: 	1215 Talents
+
+💰 派系金库收益 (Faction Treasury):
+        Equites     Optimates   Populares   
+财政拨款  +10          +10          +10        
+会员贡献  +1           +0           +0         
+现有资金  90          37          10        
+
+======================================================================
+💰 地主私人收益 (Landowners' Private Income)
+======================================================================
+ID    Name                                     Income     Wealth    
+----------------------------------------------------------------------
+1     Quintus · Sulpicius · Marius             1          3         
+3     Manius · Veturius · Naso                 1          2         
+13    Lucius · Fabius · Bibulus                1          3         
+14    Publius · Sempronius · Africanus         1          2         
+----------------------------------------------------------------------
+Total                                          4          10        
+======================================================================
+
+   Progress: [▓▓░░░░░] 2/7
+
+[3/7] Forum...
+
+--- Forum Phase (Year 277 BC) ---
+
+	====================== 安民告示 ====================
+   ⚔️ 当前无活跃战争
+
+   📊 行省民变状态：
+      ⚠️ 意大利本土 民怨升级至 2 级
+      ⚠️ 行省 撒丁尼亚 民怨升级至 2 级
+      📌 行省 撒丁尼亚 包税合同税率 11%，当前民怨 2 级
+
+	====================== 人才市场 ====================
+      Optimates 抛弃了 Aulus · Calpurnius · Rufus (军略 7, 智略 3, 魅力 9, 热诚 2)
+      Populares 抛弃了 Aulus · Tullius · Caesar (军略 3, 智略 9, 魅力 6, 热诚 1)
+      Equites 抛弃了 Lucius · Fabius · Bibulus (军略 3, 智略 6, 魅力 8, 热诚 4)
+      🗑️ 共 3 名人物被抛弃，现已加入广场
+   📢 3 figure(s) left their factions in Rome:
+
+   📢 3 new figure(s) arrive in the Senate:
+      💰 Publius · Fabius · Asiaticus (eques)(军略 4, 智略 7, 魅力 6, 热诚 3)
+      💰 Appius · Licinius (eques)(军略 5, 智略 8, 魅力 3, 热诚 1)
+      🏛️ Decimus · Valerius · Africanus (nobile)(军略 3, 智略 6, 魅力 6, 热诚 6)
+
+   📢 共 6 名人物在罗马广场可供招募！
+
+   📢 招募出价情况：
+      Appius · Licinius 收到出价：Optimates:23, Populares:6
+      Publius · Fabius · Asiaticus 收到出价：Optimates:1, Equites:31
+      ✅ Appius · Licinius 加入 Optimates，成交价 23
+      ✅ Publius · Fabius · Asiaticus 加入 Equites，成交价 31
+   🎉 2 名人物被招募
+
+	====================== 合同拍卖 ====================
+
+   📋 Pending Contracts (等待元老院预算表决):
+
+      📊 Tax Farming:
+         ID:2 西西里包税权 (280 BC)	预付:24 年收益:6 期限:5年
+         ID:6 科西嘉包税权 (280 BC)	预付:14 年收益:4 期限:5年
+
+      🏗️ Public Works:
+         ID:3 西西里工程 (280 BC)	预算:72 预期利润:0
+         ID:5 撒丁尼亚工程 (280 BC)	预算:57 预期利润:0
+
+   📭 没有待竞标的预算合同。
+
+	====================== 土地交易 ====================
+
+   Progress: [▓▓▓░░░░] 3/7
+
+[4/7] Population...
+      🗑️ 4 名未被招募的人物已从罗马消失，不知去向。
+
+--- Population Phase (Year 277 BC) ---
+
+==========================================================
+   🏛️  Legions Return Rome from Battlefield
+==========================================================
+      🏛️ Publius · Sempronius · Africanus 的军团举行凯旋式！
+
+==========================================================
+   🏛️  ELECTIONS Campaign
+==========================================================
+
+   📊 各派系影响力：		庆典前		庆典后
+      Optimates:		115		143
+      Populares:		73		84
+      Equites:		226		235
+
+      总计花费 57，增加人气 57
+
+
+   📋 选举结果：
+      🏛️ CONSUL: Publius · Sempronius · Africanus (Equites)
+      📜 CENSOR: Quintus · Sulpicius · Marius (Optimates)
+      ⚖ PRAETOR: Numerius · Furius · Marius (Populares)
+      💰 QUAESTOR (2 seats): Appius · Licinius(Optimates), Tertius(Populares)
+      🛡️ TRIBUNE: Manius · Furius (Optimates)
+
+   📊 各派系影响力（选举后）：
+      Optimates: 193
+      Populares: 104
+      Equites: 250
+
+   Progress: [▓▓▓▓░░░] 4/7
+
+[5/7] Senate...
+
+--- Senate Phase (Year 277 BC) ---
+
+   👑 Faction Leaders Updated:
+      Optimates: Quintus · Sulpicius · Marius (Influence: 88)
+      Populares: Numerius · Furius · Marius (Influence: 49)
+      Equites: Publius · Sempronius · Africanus (Influence: 135)
+
+   🎤 Presiding Officer: Quintus · Sulpicius · Marius (censor)
+
+   ⚔️ 没有战争威胁需要处理。
+
+   📋 Budget Proposals:
+
+      📊 西西里工程 (280 BC)
+          Optimates 支持，影响力 125
+          Populares 支持，影响力 38
+          Equites 支持，影响力 83
+          总影响力：246，支持 246，反对 0，支持率 100.0%
+          ✅ 预算通过，状态变为 BUDGETED
+
+   📋 贵族买地法案（出售 7.7% 国家公地） 由执政官 Quintus · Sulpicius · Marius 提交元老院表决。
+          Optimates 支持，影响力 125
+          Populares 反对，影响力 38
+          Equites 支持，影响力 83
+          总影响力：246，支持 208，反对 38，支持率 84.6%
+          ✅ 法案通过！
+
+   Progress: [▓▓▓▓▓░░] 5/7
+
+[6/7] Combat...
+
+--- Combat Phase (Year 277 BC) ---
+   ☮️  No active conflicts - phase skipped
+
+[7/7] Revolution...
+
+--- Revolution Phase (Year 277 BC) ---
+
+   🏆 胜利/失败条件检查:
+      📊 元老院主导派系: Optimates (50.8% 影响力)
+
+############################################################
+ ✅ 回合完成 - 所有7个阶段已执行
+############################################################
+> n
+已推进至 276 BC
+
+📅 Year 276 BC:
+   Completed: 0/7 phases
+      ○ Mortality
+      ○ Revenue
+      ○ Forum
+      ○ Population
+      ○ Senate
+      ○ Combat
+      ○ Revolution
+   ⏳ 7 remaining
+> turn
+
+############################################################
+ 回合 5 (276 BC)
+ 术语: Senate/Senators/Talents
+############################################################
+
+[1/7] Mortality...
+
+--- Mortality Phase (Year 276 BC) ---
+   🎴 事件卡: 丰调雨顺
+      (效果暂未实现)
+
+   Progress: [▓░░░░░░] 1/7
+
+[2/7] Revenue...
+
+--- Revenue Phase (Year 276 BC) ---
+💰 国家公地收益: 	+241 Talents
+📊 国库现有资金: 	1442 Talents
+
+💰 派系金库收益 (Faction Treasury):
+        Equites     Optimates   Populares   
+财政拨款  +10          +10          +10        
+会员贡献  +0           +0           +0         
+现有资金  69          24          20        
+
+======================================================================
+💰 地主私人收益 (Landowners' Private Income)
+======================================================================
+ID    Name                                     Income     Wealth    
+----------------------------------------------------------------------
+1     Quintus · Sulpicius · Marius             1          3         
+3     Manius · Veturius · Naso                 1          1         
+14    Publius · Sempronius · Africanus         1          1         
+----------------------------------------------------------------------
+Total                                          3          5         
+======================================================================
+
+   Progress: [▓▓░░░░░] 2/7
+
+[3/7] Forum...
+
+--- Forum Phase (Year 276 BC) ---
+
+	====================== 安民告示 ====================
+   ⚔️ 当前无活跃战争
+
+   📊 行省民变状态：
+      ⚠️ 意大利本土 民怨升级至 3 级
+         意大利本土爆发平民起义！政府面临倒台，马上行动！
+      ⚠️ 行省 撒丁尼亚 民怨升级至 3 级
+         行省 撒丁尼亚 爆发平民起义！
+      📌 行省 撒丁尼亚 包税合同税率 11%，当前民怨 3 级
+
+	====================== 人才市场 ====================
+      Optimates 抛弃了 Manius · Veturius · Naso (军略 5, 智略 8, 魅力 8, 热诚 2)
+      Populares 抛弃了 Spurius · Aemilius (军略 3, 智略 7, 魅力 6, 热诚 3)
+      Equites 抛弃了 Publius · Fabius · Asiaticus (军略 4, 智略 7, 魅力 6, 热诚 3)
+      🗑️ 共 3 名人物被抛弃，现已加入广场
+   📢 3 figure(s) left their factions in Rome:
+
+   📢 3 new figure(s) arrive in the Senate:
+      💰 Numerius · Veturius · Maximus (eques)(军略 5, 智略 7, 魅力 5, 热诚 1)
+      🏛️ Spurius · Licinius · Maximus (nobile)(军略 7, 智略 4, 魅力 8, 热诚 5)
+      🏛️ Titus · Aemilius · Rufus (nobile)(军略 5, 智略 5, 魅力 5, 热诚 5)
+
+   📢 共 6 名人物在罗马广场可供招募！
+
+   📢 招募出价情况：
+      Titus · Aemilius · Rufus 收到出价：Optimates:19
+      Numerius · Veturius · Maximus 收到出价：Populares:5
+      Spurius · Licinius · Maximus 收到出价：Populares:15
+      Spurius · Aemilius 收到出价：Equites:18
+      ✅ Titus · Aemilius · Rufus 加入 Optimates，成交价 19
+      ✅ Numerius · Veturius · Maximus 加入 Populares，成交价 5
+      ✅ Spurius · Licinius · Maximus 加入 Populares，成交价 15
+      ✅ Spurius · Aemilius 加入 Equites，成交价 18
+   🎉 4 名人物被招募
+
+	====================== 合同拍卖 ====================
+
+   📋 Pending Contracts (等待元老院预算表决):
+
+      📊 Tax Farming:
+         ID:2 西西里包税权 (280 BC)	预付:24 年收益:6 期限:5年
+         ID:6 科西嘉包税权 (280 BC)	预付:14 年收益:4 期限:5年
+
+      🏗️ Public Works:
+         ID:5 撒丁尼亚工程 (280 BC)	预算:57 预期利润:0
+
+   📜 对已预算合同进行竞标：
+
+      🔔 开始竞标 西西里工程 (280 BC) 预算 72
+         Optimates 的 Appius · Licinius 出价 65 (降价 9%)
+         Populares 的 Manius · Domitius 出价 59 (降价 17%)
+         Equites 的 Spurius · Aemilius 出价 66 (降价 8%)
+      ✅ 中标者: Manius · Domitius，中标价 59，降价 17%
+
+	====================== 土地交易 ====================
+
+   🏞️ 执行土地法案：
+      🏛️ 贵族买地：出售 93 C 国家公地。
+         Decimus · Cornelius · Cato 购买 1 C，花费 10，剩余土地 92 C
+         Titus · Aemilius · Rufus 购买 3 C，花费 30，剩余土地 89 C
+         Spurius · Licinius · Maximus 购买 2 C，花费 20，剩余土地 87 C
+      [DEBUG] 即将增加国库：60 Talents
+      [DEBUG] 增加后国库：1488 Talents
+      共售出 6 C，国库 +60 Talents，国家公地剩余 1198 C
+
+   ⚠️ 自动土地交易失败：Decimus · Cornelius · Cato → Manius · Furius Manius · Furius cannot afford 11 Talents (has 1)
+
+   Progress: [▓▓▓░░░░] 3/7
+
+[4/7] Population...
+      🗑️ 2 名未被招募的人物已从罗马消失，不知去向。
+
+--- Population Phase (Year 276 BC) ---
+
+==========================================================
+   🏛️  Legions Return Rome from Battlefield
+==========================================================
+      🏛️ Publius · Sempronius · Africanus 的军团举行凯旋式！
+
+==========================================================
+   🏛️  ELECTIONS Campaign
+==========================================================
+
+   📊 各派系影响力：		庆典前		庆典后
+      Optimates:		147		151
+      Populares:		105		113
+      Equites:		215		292
+
+      总计花费 103，增加人气 103
+
+
+   📋 选举结果：
+      🏛️ CONSUL: Aulus · Atilius · Buteo (Equites)
+      📜 CENSOR: Publius · Sempronius · Africanus (Equites)
+      ⚖ PRAETOR: Decimus · Cornelius · Cato (Equites)
+      💰 QUAESTOR (2 seats): Titus · Aemilius · Rufus(Optimates), Spurius · Aemilius(Equites)
+      🛡️ TRIBUNE: Numerius · Domitius · Cato (Equites)
+
+   📊 各派系影响力（选举后）：
+      Optimates: 161
+      Populares: 113
+      Equites: 392
+
+   Progress: [▓▓▓▓░░░] 4/7
+
+[5/7] Senate...
+
+--- Senate Phase (Year 276 BC) ---
+
+   👑 Faction Leaders Updated:
+      Optimates: Titus · Aemilius · Rufus (Influence: 65)
+      Populares: Decimus · Papirius · Cicero (Influence: 41)
+      Equites: Decimus · Cornelius · Cato (Influence: 131)
+
+   🎤 Presiding Officer: Aulus · Atilius · Buteo (consul)
+
+   ⚔️ 没有战争威胁需要处理。
+
+   📋 Budget Proposals:
+
+      📊 西西里包税权 (280 BC)
+          Optimates 支持，影响力 127
+          Populares 反对，影响力 78
+          Equites 反对，影响力 190
+          总影响力：395，支持 127，反对 268，支持率 32.2%
+          ❌ 预算否决，保持 PENDING
+
+   📋 平民分地法案（分配 5.1% 国家公地） 由执政官 Aulus · Atilius · Buteo 提交元老院表决。
+          Optimates 反对，影响力 127
+          Populares 支持，影响力 78
+          Equites 反对，影响力 190
+          总影响力：395，支持 78，反对 317，支持率 19.7%
+          ❌ 法案否决。
+
+   Progress: [▓▓▓▓▓░░] 5/7
+
+[6/7] Combat...
+
+--- Combat Phase (Year 276 BC) ---
+   ☮️  No active conflicts - phase skipped
+
+[7/7] Revolution...
+
+--- Revolution Phase (Year 276 BC) ---
+
+   🏆 胜利/失败条件检查:
+      💀 意大利本土民怨已达3级，若不在本年度内处理，共和国将面临覆灭！
+      📊 元老院主导派系: Equites (48.1% 影响力)
+
+############################################################
+ ✅ 回合完成 - 所有7个阶段已执行
+############################################################
+> exit
+感谢游玩 Eagle of Rome！再见！
+
+Process finished with exit code 0

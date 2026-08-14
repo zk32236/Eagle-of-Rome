@@ -1,0 +1,528 @@
+"C:\Users\Kerl\PycharmProjects\Eagle of Rome\Scripts\python.exe" "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+   📝 Terminology: original
+🏛️  Eagle of Rome - MVP 0.3 Seven Phases
+   Active terms: Senate/Senators/Talents
+   Phase order: mortality → revenue → forum → population → senate → combat → resolution
+Type 'help' for commands, 'exit' to quit
+
+> load
+   📝 Terminology: original
+   📚 War system ready (lazy load)
+✅ Scenario loaded: MVP 0.4 Test - Forum
+   Active figures: 9/300
+   Optimates: 1🏛️ 1💰 1👤
+   Populares: 1🏛️ 1💰 1👤
+   Equites: 1🏛️ 1💰 1👤
+
+✅ Game loaded!
+==================================================
+Year: 264 BC (Turn 1)
+Phase: init
+Treasury: 100 Talents
+--------------------------------------------------
+FACTIONS & MEMBERS:
+
+Optimates (faction_1) - Treasury: 50Talents
+  [PLAYER CONTROLLED]
+  🟢🏛️ Lucius · Veturius · Macedonicus(ID:1)[权6财17人4地2兵0]
+  🟢💰 Spurius · Valerius · Longus(ID:2)[权2财25人1地0兵0]
+  🟢👤 Octavius(ID:3)[权2财4人1地0兵0]
+
+Populares (faction_2) - Treasury: 40Talents
+  🟢🏛️ Sextus · Tullius · Asiaticus(ID:10)[权5财19人5地3兵0]
+  🟢💰 Appius · Valerius(ID:11)[权2财22人2地0兵0]
+  🟢👤 Statius(ID:12)[权0财4人0地0兵0]
+
+Equites (faction_3) - Treasury: 45Talents
+  🟢🏛️ Sextus · Licinius · Pompeius(ID:19)[权4财16人2地2兵0]
+  🟢💰 Titus · Aemilius · Pompeius(ID:20)[权2财18人1地0兵0]
+  🟢👤 Servius · Miller(ID:21)[权1财5人1地0兵0]
+==================================================
+
+   Progress: [░░░░░░░] 0/7
+
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 9
+  [Draw 1] Number 161...
+     -> No member assigned (safe)
+✅ No deaths this year
+
+   Progress: [█░░░░░░] 1/7
+
+> r
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   Optimates: +10 Talents
+   Populares: +10 Talents
+   Equites: +10 Talents
+   ⚔️  Military system: 10 legions ready
+   ✅ No Legion maintenance needed
+
+   📜 Contract Benefit Settlement
+   No active contracts
+
+   📊 State Treasury: 200 Talents
+
+   🛡️  Legion Status:
+      Available: 10 | Active: 0 | Veteran: 0
+      Assigned to wars: 0
+      Maintenance: 0 Talents/turn
+
+   Progress: [██░░░░░] 2/7
+
+> f
+
+--- Forum Phase (Year 264 BC) ---
+
+   📢 2 new figure(s) arrive in the Senate:
+      👤 Sextilis (plebeian)
+      👤 Decius (plebeian)
+
+   🏛️  Figures in Senate:
+
+      👤 PLEBEIAN (2):
+         ID:22 Sextilis
+            [权2财7人2]
+         ID:23 Decius
+            [权2财7]
+
+   📜 2 new contract(s) announced:
+      包税: 西西里包税权
+      工程: 神殿修缮工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 西西里包税权
+            预付:23 年收益:11 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 神殿修缮工程
+            预算:35 预期利润:7
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+
+   Progress: [███░░░░] 3/7
+
+> p
+
+--- Population Phase (Year 264 BC) ---
+   📚 Loaded 5 wars into deck
+   🟢 Treasury: 200 Talents
+   🛡️  Active legions: 0/10
+
+   🏛️  State of the Republic: Calm
+
+   🛡️  Legion Review:
+      🟢 Calm state: 10 Legion(s) available for recruitment
+
+   👥 Population Events:
+      No significant events
+
+   Progress: [████░░░] 4/7
+
+> s
+
+--- Senate Phase (Year 264 BC) ---
+🏛️  Presiding: Lucius · Veturius · Macedonicus
+
+=============================================
+[Electing Consul #1]
+   Available: 11, Ineligible: 0
+
+   🏆 Candidates:
+      1. Lucius · Veturius · Macedonicus - Influence: 6
+      2. Sextus · Tullius · Asiaticus - Influence: 5
+
+   🗳️  Vote:
+      Optimates    | 12 vote → Lucius · Veturius · Macedonicus (support_Optimates)
+      Populares    | 10 vote → Sextus · Tullius · Asiaticus (support_Populares)
+      Equites      |  8 vote → Sextus · Tullius · Asiaticus (random_choice)
+      ✅ Sextus · Tullius · Asiaticus wins with 18/30 (60%)
+   ✓ Sextus · Tullius · Asiaticus elected
+
+=============================================
+[Electing Consul #2]
+   Available: 10, Ineligible: 0
+
+   🏆 Candidates:
+      1. Lucius · Veturius · Macedonicus - Influence: 6
+      2. Sextus · Licinius · Pompeius - Influence: 4
+
+   🗳️  Vote:
+      Optimates    | 12 vote → Lucius · Veturius · Macedonicus (support_Optimates)
+      Populares    | 10 vote → Sextus · Licinius · Pompeius (random_choice)
+      Equites      |  8 vote → Sextus · Licinius · Pompeius (support_Equites)
+      ✅ Sextus · Licinius · Pompeius wins with 18/30 (60%)
+   ✓ Sextus · Licinius · Pompeius elected
+
+=============================================
+   🏛️  TRANSITION OF CONSULSHIP
+
+   Incoming Consuls:
+      ↑ Sextus · Tullius · Asiaticus: 5 → 10 (+5 bonus)
+      ↑ Sextus · Licinius · Pompeius: 4 → 9 (+5 bonus)
+
+=============================================
+   📜 Contract Management
+   Use 'vote contract <id>' to award tax farming contracts
+   Use 'assign works <id> <figure_id>' to assign public works (Consul only)
+
+   Progress: [█████░░] 5/7
+
+> vote contract 1
+   ✅ 西西里包税权 awarded to Appius · Valerius (Knights)
+      Annual benefit: 2 Talents for 5 years
+
+> assign works 2 10
+   ✅ 神殿修缮工程 assigned to Sextus · Tullius · Asiaticus
+      Treasury paid 35 Talents | Annual profit: 3 Talents
+      Remaining treasury: 165 Talents
+
+> c
+
+--- Combat Phase (Year 264 BC) ---
+   ☮️  No active conflicts - phase skipped
+
+   Progress: [██████░] 6/7
+
+> x
+
+--- Revolution Phase (Year 264 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: Populares (12 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟡 Optimates: MODERATE risk (avg Loyalty: 5.0)
+      🟡 Populares: MODERATE risk (avg Loyalty: 5.0)
+      🟡 Equites: MODERATE risk (avg Loyalty: 5.0)
+
+==================================================
+   📜 ANNUAL REPORT - Year 264 BC
+==================================================
+
+   💰 Treasury: 165 Talents
+
+   📊 Faction Standings:
+      1. 👑 Populares: 12 Influence
+      2. 👑 Equites: 12 Influence
+      3.    Optimates: 10 Influence
+
+   ☮️  Peace prevails
+
+==================================================
+
+   📜 Contract Status Cleanup
+   ⚠️  Expired 0 pending contracts | Cleaned 0 invalid active contracts
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   Progress: [███████] 7/7
+
+> n
+
+📅 Year 263 BC (Turn 2)
+   [Cleared 7 phase locks]
+   ⛔ Ineligible (2y rule): Sextus · Tullius · Asiaticus(1), Sextus · Licinius · Pompeius(1)
+Advanced to Year 263 BC
+
+📅 Year 263 BC:
+   Completed: 0/7 phases
+      ○ 💀 Mortality
+      ○ 💰 Revenue
+      ○ 📜 Forum
+      ○ 👥 Population
+      ○ 🏛️ Senate
+      ○ ⚔️ Combat
+      ○ 🔚 Revolution
+   ⏳ 7 remaining
+
+> m
+
+--- Mortality Phase (Year 263 BC) ---
+Drawing 2 number(s) from pool (1-300)...
+Current living: 11
+  [Draw 1] Number 273...
+     -> No member assigned (safe)
+  [Draw 2] Number 129...
+     -> No member assigned (safe)
+✅ No deaths this year
+
+   Progress: [█░░░░░░] 1/7
+
+> r
+
+--- Revenue Phase (Year 263 BC) ---
+   💰 Base tax: +100 Talents
+   Optimates: +10 Talents
+   Populares: +10 Talents
+   Equites: +10 Talents
+   ✅ No Legion maintenance needed
+
+   📜 Contract Benefit Settlement
+   西西里包税权: Appius · Valerius +2 Talents | ⏳ Remaining 4y
+   神殿修缮工程: Sextus · Tullius · Asiaticus +3 Talents | ⏳ Remaining 1y
+
+   📊 State Treasury: 265 Talents
+
+   🛡️  Legion Status:
+      Available: 10 | Active: 0 | Veteran: 0
+      Assigned to wars: 0
+      Maintenance: 0 Talents/turn
+
+   Progress: [██░░░░░] 2/7
+
+> f
+
+--- Forum Phase (Year 263 BC) ---
+
+   📢 2 new figure(s) arrive in the Senate:
+      👤 Numerius · Carpenter (plebeian)
+      👤 Octavius (plebeian)
+
+   🏛️  Figures in Senate:
+
+      👤 PLEBEIAN (4):
+         ID:22 Sextilis
+            [权2财7人2]
+         ID:23 Decius
+            [权2财7]
+         ID:24 Numerius · Carpenter
+            [权1财3]
+         ID:25 Octavius
+            [权2财6人2]
+
+   📜 2 new contract(s) announced:
+      包税: 伊利里亚包税权
+      工程: 神殿修缮工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:3 伊利里亚包税权
+            预付:30 年收益:11 期限:5年
+            💡 Senate Phase: use 'vote contract 3'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:4 神殿修缮工程
+            预算:33 预期利润:6
+            💡 Senate Phase: Consul uses 'assign works 4 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+
+   Progress: [███░░░░] 3/7
+
+> p
+
+--- Population Phase (Year 263 BC) ---
+   🟢 Treasury: 265 Talents
+   🛡️  Active legions: 0/10
+
+   🏛️  State of the Republic: Calm
+
+   🛡️  Legion Review:
+      🟢 Calm state: 10 Legion(s) available for recruitment
+
+   👥 Population Events:
+      No significant events
+
+   Progress: [████░░░] 4/7
+
+> s
+
+--- Senate Phase (Year 263 BC) ---
+🏛️  Presiding: Sextus · Tullius · Asiaticus
+   ⭐ Current Consuls: Sextus · Tullius · Asiaticus, Sextus · Licinius · Pompeius
+
+=============================================
+[Electing Consul #1]
+   Available: 11, Ineligible: 0
+
+   🏆 Candidates:
+      1. Lucius · Veturius · Macedonicus - Influence: 6
+      2. Spurius · Valerius · Longus - Influence: 2
+
+   🗳️  Vote:
+      Optimates    | 12 vote → Lucius · Veturius · Macedonicus (support_Optimates)
+      Populares    | 15 vote → Spurius · Valerius · Longus (random_choice) [incumbent]
+      Equites      | 13 vote → Lucius · Veturius · Macedonicus (random_choice) [incumbent]
+      ✅ Lucius · Veturius · Macedonicus wins with 25/40 (62%)
+   ✓ Lucius · Veturius · Macedonicus elected
+
+=============================================
+[Electing Consul #2]
+   Available: 10, Ineligible: 0
+
+   🏆 Candidates:
+      1. Spurius · Valerius · Longus - Influence: 2
+      2. Octavius - Influence: 2
+
+   🗳️  Vote:
+      Optimates    | 12 vote → Spurius · Valerius · Longus (support_Optimates)
+      Populares    | 15 vote → Spurius · Valerius · Longus (random_choice) [incumbent]
+      Equites      | 13 vote → Spurius · Valerius · Longus (random_choice) [incumbent]
+      ✅ Spurius · Valerius · Longus wins with 40/40 (100%)
+   ✓ Spurius · Valerius · Longus elected
+
+=============================================
+   🏛️  TRANSITION OF CONSULSHIP
+
+   Outgoing Consuls:
+      ↓ Sextus · Tullius · Asiaticus: 10 → 5 (bonus removed)
+      ↓ Sextus · Licinius · Pompeius: 9 → 4 (bonus removed)
+
+   Incoming Consuls:
+      ↑ Lucius · Veturius · Macedonicus: 6 → 11 (+5 bonus)
+      ↑ Spurius · Valerius · Longus: 2 → 7 (+5 bonus)
+
+=============================================
+   📜 Contract Management
+   Use 'vote contract <id>' to award tax farming contracts
+   Use 'assign works <id> <figure_id>' to assign public works (Consul only)
+
+   Progress: [█████░░] 5/7
+
+> vote contract 1
+   ❌ Invalid Talents farming contract 1
+   ❌ Invalid contract command! Use 'help' for usage
+
+> vote contract 3
+   ✅ 伊利里亚包税权 awarded to Spurius · Valerius · Longus (Knights)
+      Annual benefit: 2 Talents for 5 years
+
+> assign works 4 10
+   ✅ 神殿修缮工程 assigned to Sextus · Tullius · Asiaticus
+      Treasury paid 33 Talents | Annual profit: 3 Talents
+      Remaining treasury: 232 Talents
+
+> status
+==================================================
+Year: 263 BC (Turn 2)
+Phase: senate
+Treasury: 232 Talents
+--------------------------------------------------
+FACTIONS & MEMBERS:
+
+Optimates (faction_1) - Treasury: 70Talents
+  [PLAYER CONTROLLED]
+  👑🏛️ Lucius · Veturius · Macedonicus(ID:1)[权11财17人4地2兵0]×1 C
+  👑💰 Spurius · Valerius · Longus(ID:2)[权7财25人1地0兵0]×1 C
+  🟢👤 Octavius(ID:3)[权2财4人1地0兵0]
+
+Populares (faction_2) - Treasury: 60Talents
+  🟢🏛️ Sextus · Tullius · Asiaticus(ID:10)[权5财22人5地3兵0]×1
+  🟢💰 Appius · Valerius(ID:11)[权2财24人2地0兵0]
+  🟢👤 Statius(ID:12)[权0财4人0地0兵0]
+
+Equites (faction_3) - Treasury: 65Talents
+  🟢🏛️ Sextus · Licinius · Pompeius(ID:19)[权4财16人2地2兵0]×1
+  🟢💰 Titus · Aemilius · Pompeius(ID:20)[权2财18人1地0兵0]
+  🟢👤 Servius · Miller(ID:21)[权1财5人1地0兵0]
+==================================================
+
+   📜 Contract Status:
+      Active: 4 (settled in Revenue Phase)
+
+   Progress: [█████░░] 5/7
+
+> x
+
+--- Revolution Phase (Year 263 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: Optimates (20 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟡 Optimates: MODERATE risk (avg Loyalty: 5.0)
+      🟡 Populares: MODERATE risk (avg Loyalty: 5.0)
+      🟡 Equites: MODERATE risk (avg Loyalty: 5.0)
+
+==================================================
+   📜 ANNUAL REPORT - Year 263 BC
+==================================================
+
+   💰 Treasury: 232 Talents
+
+   📊 Faction Standings:
+      1. 👑 Optimates: 20 Influence
+      2.    Populares: 7 Influence
+      3.    Equites: 7 Influence
+
+   ☮️  Peace prevails
+
+==================================================
+
+   📜 Contract Status Cleanup
+   ⚠️  Expired 0 pending contracts | Cleaned 0 invalid active contracts
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   Progress: [██████░] 6/7
+
+> n
+
+   ☮️  No wars - auto-completing Combat
+
+📅 Year 262 BC (Turn 3)
+   [Cleared 7 phase locks]
+   ⛔ Ineligible (2y rule): Lucius · Veturius · Macedonicus(1), Spurius · Valerius · Longus(1)
+Advanced to Year 262 BC
+
+📅 Year 262 BC:
+   Completed: 0/7 phases
+      ○ 💀 Mortality
+      ○ 💰 Revenue
+      ○ 📜 Forum
+      ○ 👥 Population
+      ○ 🏛️ Senate
+      ○ ⚔️ Combat
+      ○ 🔚 Revolution
+   ⏳ 7 remaining
+
+> m
+
+--- Mortality Phase (Year 262 BC) ---
+Drawing 2 number(s) from pool (1-300)...
+Current living: 13
+  [Draw 1] Number 152...
+     -> No member assigned (safe)
+  [Draw 2] Number 81...
+     -> No member assigned (safe)
+✅ No deaths this year
+
+   Progress: [█░░░░░░] 1/7
+
+> r
+
+--- Revenue Phase (Year 262 BC) ---
+   💰 Base tax: +100 Talents
+   Optimates: +10 Talents
+   Populares: +10 Talents
+   Equites: +10 Talents
+   ✅ No Legion maintenance needed
+
+   📜 Contract Benefit Settlement
+   西西里包税权: Appius · Valerius +2 Talents | ⏳ Remaining 3y
+   神殿修缮工程: Sextus · Tullius · Asiaticus +3 Talents | ✅ Completed
+   伊利里亚包税权: Spurius · Valerius · Longus +2 Talents | ⏳ Remaining 4y
+   神殿修缮工程: Sextus · Tullius · Asiaticus +3 Talents | ⏳ Remaining 1y
+
+   📊 State Treasury: 332 Talents
+
+   🛡️  Legion Status:
+      Available: 10 | Active: 0 | Veteran: 0
+      Assigned to wars: 0
+      Maintenance: 0 Talents/turn
+
+   Progress: [██░░░░░] 2/7
+
+> 

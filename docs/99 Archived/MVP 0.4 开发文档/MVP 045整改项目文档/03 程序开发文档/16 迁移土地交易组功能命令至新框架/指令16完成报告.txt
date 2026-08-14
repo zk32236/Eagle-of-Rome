@@ -1,0 +1,312 @@
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：迁移土地交易组功能命令至新框架（指令16）
+
+核心输入：
+
+《EOR Command命令体系架构设计细化文档_V1.2》
+
+《EOR_开发指南.docx》
+
+已迁移的命令参考：func_military.py、func_contracts.py（特别是交互式命令和参数解析方式）
+
+基线代码：原 src/ui/debug_cli.py 中关于土地交易相关命令的处理逻辑：
+
+trade land <seller_id> <buyer_id> <amount>：对应 _trade_land 方法
+
+land price <seller_id> <buyer_id>：对应 _preview_land_price 方法
+
+seats：对应 _show_seat_standings 方法
+
+已完善的 GameState 类及土地交易服务：land_trading_service.py（包含 LandTradingService 类）
+
+核心任务：
+
+创建土地交易功能命令文件：
+
+路径：src/ui/commands/func_land.py
+
+该文件应包含三个命令类：TradeLandCommand、LandPriceCommand、SeatsCommand，均继承 Command。
+
+元数据定义：
+
+TradeLandCommand：
+
+name = "trade_land"（注意原命令为 trade land，但命令名不能包含空格，因此用下划线连接，用户输入仍需为 trade land <seller> <buyer> <amount>。在命令解析时，第一个词是 trade，第二个词是 land 作为参数。因此我们需要一个 TradeCommand 类，然后在 execute 中判断 args[0] == "land"。类似 vote 命令的处理。为了保持一致，这里采用与 vote 相同的策略：创建 TradeCommand，命令名 "trade"，然后在 execute 中解析子命令。
+
+aliases = []
+
+description = "执行土地交易，用法: trade land <卖家ID> <买家ID> <数量>"
+
+LandPriceCommand：
+
+命令名 "land_price"（原命令 land price，类似处理：创建 LandCommand，命令名 "land"，在 execute 中判断 args[0] == "price"。但为了简化，也可单独作为 LandPriceCommand，命令名 "land_price"，但用户输入需为 land_price 不符合习惯。故采用 LandCommand 方式，命令名 "land"，子命令 price。
+
+aliases = []
+
+description = "预览土地交易价格，用法: land price <卖家ID> <买家ID>"
+
+SeatsCommand：
+
+name = "seats"
+
+aliases = []
+
+description = "显示席位占比分布（全国资产、个人席位、派系席位）"
+
+移植业务逻辑：
+
+TradeCommand（处理 trade land）：
+
+命令名 "trade"，在 execute(self, args) 中首先检查 args 长度至少为 4，且 args[0].lower() == "land"，否则打印用法。
+
+解析 args[1] 为卖家ID，args[2] 为买家ID，args[3] 为数量，均为整数。若转换失败则报错。
+
+创建 LandTradingService 实例：service = LandTradingService(self.state)。
+
+调用 service.execute_trade(seller_id, buyer_id, amount)，获取 (success, msg)。
+
+根据 success 打印 msg，并返回 success。
+
+LandCommand（处理 land price）：
+
+命令名 "land"，在 execute(self, args) 中检查 args 长度至少为 3，且 args[0].lower() == "price"，否则打印用法。
+
+解析 args[1] 为卖家ID，args[2] 为买家ID，为整数。
+
+创建 LandTradingService 实例，调用 service.get_trade_preview(seller_id, buyer_id, 1) 获取预览信息（预览1单位价格）。
+
+若预览信息为 None，打印错误；否则按原格式输出价格信息。
+
+SeatsCommand：
+
+从原 _show_seat_standings 方法移植逻辑。
+
+使用 self.state.get_living_members() 获取所有存活人物。
+
+计算全国总资产（土地+私兵），按比例计算个人席位和派系席位。
+
+按照原格式打印排名和派系总计。
+
+注意处理 total_assets == 0 的情况。
+
+辅助方法：
+
+可在文件内定义通用的整数解析辅助函数（如 _parse_int）以避免重复代码。
+
+土地交易服务需要导入 from src.core.service.land_trading_service import LandTradingService。
+
+编写单元测试：
+
+路径：src/tests/test_commands/test_func_land.py
+
+使用 pytest，模拟 GameState 和 LandTradingService。
+
+测试用例至少覆盖：
+
+TradeLandCommand：
+
+test_trade_success：模拟交易成功，验证 execute_trade 被调用并返回 True。
+
+test_trade_invalid_args：参数个数错误、非数字、子命令错误。
+
+test_trade_failure：模拟交易失败（如金额不足），验证返回 False。
+
+LandPriceCommand：
+
+test_land_price_success：预览成功，验证输出包含价格信息。
+
+test_land_price_invalid_args。
+
+SeatsCommand：
+
+test_seats_with_assets：有人物有资产，验证输出包含排名和席位。
+
+test_seats_no_assets：总资产为0，输出相应提示。
+
+注意模拟 LandTradingService 的方法，避免真实操作。
+
+手动验证：
+
+运行 python main.py，load 加载场景。
+
+使用 status 查看人物财富和土地（原 status 不显示土地，可先信任单元测试或临时添加输出）。
+
+执行 land price 1 2 预览价格。
+
+执行 trade land 1 2 5 进行交易（需确保双方存在且有足够土地/财富）。
+
+执行 seats 查看席位分布。
+
+测试各种异常输入。
+
+交付物：
+
+src/ui/commands/func_land.py
+
+src/tests/test_commands/test_func_land.py
+
+验收标准：
+
+单元测试通过率 100%。
+
+在 CLI 中执行 trade land、land price、seats 命令，输出和行为与原基线一致。
+
+代码通过《EOR MVP 0.4.5代码审查Checklist》中 Command 模块的相关检查项。
+
+命令注册正确，help 中显示这三个命令的描述（注意 trade 和 land 作为命令名，但帮助中应说明子命令用法）。
+
+特别说明：
+
+命令名采用 trade 和 land，并在 execute 中根据第一个参数区分子命令。这保持了用户输入习惯（trade land ...、land price ...）。
+
+在 help 中，trade 和 land 的描述应概括其用法，例如：
+
+trade：执行交易，用法: trade land <卖家ID> <买家ID> <数量>
+
+land：土地相关命令，用法: land price <卖家ID> <买家ID>
+
+单元测试中需模拟 LandTradingService，因为该服务可能依赖于 GameState 的具体方法，测试时可用 MagicMock 替代。
+
+请在 feature/refactor-0.4.5 分支上操作，完成后提交代码并附上测试结果。如有问题，随时沟通。
+
+豆包（项目经理）
+
+
+
+单元测试
+
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m pytest src/tests/test_commands/test_func_land.py -v
+================================================================================================================================================= test session starts =================================================================================================================================================
+platform win32 -- Python 3.10.6, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+collected 13 items
+
+src/tests/test_commands/test_func_land.py::test_trade_success PASSED                                                                                                                                                                                                                                             [  7%] 
+src/tests/test_commands/test_func_land.py::test_trade_invalid_args_count PASSED                                                                                                                                                                                                                                  [ 15%] 
+src/tests/test_commands/test_func_land.py::test_trade_wrong_subcommand PASSED                                                                                                                                                                                                                                    [ 23%] 
+src/tests/test_commands/test_func_land.py::test_trade_invalid_ids PASSED                                                                                                                                                                                                                                         [ 30%] 
+src/tests/test_commands/test_func_land.py::test_trade_non_positive_amount PASSED                                                                                                                                                                                                                                 [ 38%]
+src/tests/test_commands/test_func_land.py::test_trade_failure PASSED                                                                                                                                                                                                                                             [ 46%] 
+src/tests/test_commands/test_func_land.py::test_land_price_success PASSED                                                                                                                                                                                                                                        [ 53%] 
+src/tests/test_commands/test_func_land.py::test_land_price_invalid_args_count PASSED                                                                                                                                                                                                                             [ 61%] 
+src/tests/test_commands/test_func_land.py::test_land_price_wrong_subcommand PASSED                                                                                                                                                                                                                               [ 69%] 
+src/tests/test_commands/test_func_land.py::test_land_price_invalid_ids PASSED                                                                                                                                                                                                                                    [ 76%] 
+src/tests/test_commands/test_func_land.py::test_land_price_preview_none PASSED                                                                                                                                                                                                                                   [ 84%] 
+src/tests/test_commands/test_func_land.py::test_seats_with_assets PASSED                                                                                                                                                                                                                                         [ 92%] 
+src/tests/test_commands/test_func_land.py::test_seats_no_assets PASSED                                                                                                                                                                                                                                           [100%]
+
+================================================================================================================================================= 13 passed in 0.11s ================================================================================================================================================== 
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> 
+
+
+系统测试
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+
+============================================================
+   Eagle of Rome - MVP 0.4.5 (整改后版本)
+============================================================
+项目根目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+Python路径: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src
+============================================================
+[DEBUG] 命令目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands
+[DEBUG] 发现的命令: ['contracts', 'vote', 'persuade', 'land', 'seats', 'trade', 'load', 'l', 'assign', 'disband', 'legions', 'recruit', 'wars', 'festival', 'status', 'sts', 'combat', 'c', 'forum', 'f', 'mortality', 'm', 'next', 'n', 'population', 'p', 'resolution', 'x', 'revenue', 'r', 'senate', 's', 'step', 'turn', 'reload', 'terms', 'exit', 'quit', 'help', 'h']
+
+============================================================
+   Eagle of Rome - Debug CLI (整改后版本)
+============================================================
+输入 'help' 查看可用命令，'exit' 退出游戏
+
+> load
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+> help
+
+============================================================
+   Eagle of Rome - 可用命令列表
+============================================================
+  assign                       交互式指派指挥官和军团到战争
+  combat      (别名: c)          执行战斗阶段 (Combat Phase)
+  contracts                    显示所有合同状态（待决、执行中、已完成）
+  disband                      交互式解散军团
+  exit        (别名: quit)       退出游戏
+  festival                     举办庆典，消耗个人财富增加人气，用法: festival <人物ID> <金额>
+  forum       (别名: f)          执行广场阶段 (Forum Phase)
+  help        (别名: h)          显示所有可用命令的帮助信息
+  land                         土地相关命令，用法: land price <卖家ID> <买家ID>
+  legions                      显示军团状态
+  load        (别名: l)          加载场景 (默认: mvp_test.json)
+  mortality   (别名: m)          执行天命阶段 (Mortality Phase)
+  next        (别名: n)          推进到下一年。用法: next [force] (force 可跳过未完成阶段检查)
+  persuade                     说服 Curia 中的指定人物加入你的派系，用法: persuade <人物ID>
+  population  (别名: p)          执行人口阶段 (Population Phase)
+  recruit                      交互式征召军团
+  reload                       重新加载配置文件 (data/config/game_config.json)
+  resolution  (别名: x)          执行决议阶段 (Resolution Phase)
+  revenue     (别名: r)          执行税收阶段 (Revenue Phase)
+  seats                        显示席位占比分布（全国资产、个人席位、派系席位）
+  senate      (别名: s)          执行元老院阶段 (Senate Phase)
+  status      (别名: sts)        显示当前游戏状态摘要（国库、人物数等）
+  step                         逐步执行回合，每阶段后暂停等待输入
+  terms                        切换术语预设，用法: terms [preset] (预设: original/historical_roman/generic_latin/chinese_historical)
+  trade                        执行交易，用法: trade land <卖家ID> <买家ID> <数量>
+  turn                         自动执行完整回合（依次执行所有7个阶段）
+  vote                         投票授予包税合同，用法: vote contract <合同ID>
+  wars                         显示战争状态（牌堆、活跃、弃牌）
+============================================================
+输入 'exit' 或 'quit' 退出游戏
+> trade land 1 2 1
+Marcus Brutus has insufficient land (0 < 1)
+> trade land 2 1 1
+Gaius Marius has insufficient land (0 < 1)
+> trade land 1 3 1
+Marcus Brutus has insufficient land (0 < 1)
+> trade land 3 1 1
+Lucius Sulla has insufficient land (0 < 1)
+> seats
+
+============================================================
+   📊 Senate Seat Distribution (Total 300 seats)
+============================================================
+   No land or veterans to distribute seats
+> land price
+❌ 用法: land price <卖家ID> <买家ID>
+> land price 1 2
+
+   💰 Land Trade Preview:
+      Seller: Marcus Brutus (Land: 0)
+      Buyer:  Gaius Marius (Land: 0)
+      Price:  10 Talents/unit
+      Example: 5 units = 50 Talents
+> land price 2 1
+
+   💰 Land Trade Preview:
+      Seller: Gaius Marius (Land: 0)
+      Buyer:  Marcus Brutus (Land: 0)
+      Price:  10 Talents/unit
+      Example: 5 units = 50 Talents
+> land price 1 3
+
+   💰 Land Trade Preview:
+      Seller: Marcus Brutus (Land: 0)
+      Buyer:  Lucius Sulla (Land: 0)
+      Price:  8 Talents/unit
+      Example: 5 units = 40 Talents
+> land price 3 1
+
+   💰 Land Trade Preview:
+      Seller: Lucius Sulla (Land: 0)
+      Buyer:  Marcus Brutus (Land: 0)
+      Price:  8 Talents/unit
+      Example: 5 units = 40 Talents
+> exit
+感谢游玩 Eagle of Rome！再见！
+
+Process finished with exit code 0
+
+git commit -m "feat: 迁移土地交易组功能命令至新框架（指令16）"
+git tag -a v0.4.5-016 -m "MVP0.4.5-016 基线版本 - 迁移土地交易组功能命令至新框架（指令16）"

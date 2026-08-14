@@ -1033,71 +1033,19 @@ class TestManualTakeover(unittest.TestCase):
         self.state._war_system._active_wars.append(self.war)
 
 
-    @patch('builtins.input')
-    def test_manual_takeover_war(self, mock_input):
-        """测试手动模式下接管外国战争（S3: 委托 senate_api.process_war_takeover）"""
-        mock_input.side_effect = ["next", "propose B01 3", "next", "next"]
-
+    def test_manual_no_takeover_option(self):
+        """测试 CLI 不再将进行中外国战争注册为接管提案选项（AC-01）"""
         cmd = SenateCommand(self.state)
         cmd._auto_mode = False
 
         with io.StringIO() as buf, redirect_stdout(buf):
-            result = cmd.execute([])
+            cmd._print_proposal_options()
             output = buf.getvalue()
 
-        self.assertTrue(result)
-
-        # process_war_takeover 扫描活跃战争并执行接管
-        ws = self.state.get_war_system()
-        war = ws.get_war_by_id("foreign_war")
-        ms = self.state.get_military_system()
-        legions = ms.get_legions_for_battle(war.id)
-
-        # 验证军团已指派（使用配置随机数范围内）
-        self.assertGreaterEqual(len(legions), 1)
-        self.assertIn("战争接管执行", output)
-
-    @patch('builtins.input')
-    def test_manual_takeover_war_with_existing_commander(self, mock_input):
-        """测试接管已有指挥官的战争（新 API 跳过有存活指挥官的战争）"""
-        old_commander = Figure(id=3, name="前执政官", faction_id="optimates", age=45)
-        old_commander.office = "proconsul"
-        old_commander.is_absent = True
-        old_commander.class_tier = ClassTier.NOBILE
-        old_commander.is_dead = False
-        self.state.add_member(old_commander)
-        self.faction.member_ids.append(3)
-        self.war.commander_id = 3
-        self.war.set_commander_assigned_turn(1)
-
-        mock_input.side_effect = ["next", "propose B01 2", "next", "next"]
-
-        cmd = SenateCommand(self.state)
-        cmd._auto_mode = False
-
-        with io.StringIO() as buf, redirect_stdout(buf):
-            result = cmd.execute([])
-            output = buf.getvalue()
-
-        self.assertTrue(result)
-
-        # 新 API 不替换有存活指挥官的战争
-        self.assertIn("接管失败", output)
-
-    @patch('builtins.input')
-    def test_manual_takeover_insufficient_legions(self, mock_input):
-        """测试征召军团（新 API 按配置征召，不超过可用数）"""
-        mock_input.side_effect = ["next", "propose B01 30", "next", "next"]
-
-        cmd = SenateCommand(self.state)
-        cmd._auto_mode = False
-
-        with io.StringIO() as buf, redirect_stdout(buf):
-            result = cmd.execute([])
-            output = buf.getvalue()
-
-        self.assertTrue(result)
-        self.assertIn("战争接管执行", output)
+        proposals_map = getattr(cmd, "_proposals_map", {})
+        for ptype, _params in proposals_map.values():
+            self.assertNotEqual(ptype, "takeover")
+        self.assertNotIn("接管", output)
 
     @patch('builtins.input')
     def test_manual_takeover_invalid_war_id(self, mock_input):
@@ -1137,10 +1085,8 @@ class TestManualTakeover(unittest.TestCase):
         war = self.state.get_war_system().get_war_by_id("foreign_war")
         self.assertIsNone(war.commander_id)
 
-    @patch('builtins.input')
-    def test_manual_takeover_rebellion_war_not_shown(self, mock_input):
-        """测试起义战争不在接管列表中（新 API 跳过起义战争）"""
-        # 创建起义战争
+    def test_manual_rebellion_no_takeover(self):
+        """测试起义战争不产生接管提案选项（AC-01：takeover 已从 CLI 移除）"""
         from src.core.entities.war import WarType
         rebellion_war = War(
             id="rebellion",
@@ -1148,25 +1094,20 @@ class TestManualTakeover(unittest.TestCase):
             war_type=WarType.PROVINCIAL,
             strength=5,
             naval_required=False,
-            rebellion_province_id=1
+            rebellion_province_id=1,
         )
         rebellion_war.status = WarStatus.ACTIVE
         self.state._war_system._active_wars.append(rebellion_war)
-
-        mock_input.side_effect = ["next", "propose B01 3", "next", "next"]
 
         cmd = SenateCommand(self.state)
         cmd._auto_mode = False
 
         with io.StringIO() as buf, redirect_stdout(buf):
-            result = cmd.execute([])
-            output = buf.getvalue()
+            cmd._print_proposal_options()
 
-        self.assertTrue(result)
-        # 接管仅对外国战争执行，起义战争被新 API 跳过
-        self.assertIn("战争接管执行", output)
-        rebellion = self.state.get_war_system().get_war_by_id("rebellion")
-        self.assertIsNone(rebellion.commander_id)
+        proposals_map = getattr(cmd, "_proposals_map", {})
+        for ptype, _params in proposals_map.values():
+            self.assertNotEqual(ptype, "takeover")
 
     @patch('builtins.input')
     def test_manual_war_declaration_with_naval_no_fleet(self, mock_input):

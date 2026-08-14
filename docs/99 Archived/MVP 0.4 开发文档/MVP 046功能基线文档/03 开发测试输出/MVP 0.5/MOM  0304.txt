@@ -1,0 +1,21 @@
+军团disband了，就不available了？
+> legions
+
+   🛡️  Legion Status:
+      Available: 19 | Active: 0 | Disbanded: 6 | Destroyed: 0
+      Assigned to wars: 0
+      Maintenance: 0 Talents/turn
+
+   🛡️  Legion Status (10 total):
+      ⚫ Legio I⭐[Cost:0] 
+      ⚫ Legio II⭐[Cost:0] 
+      ⚫ Legio III⭐[Cost:0] 
+      ⚫ Legio IV⭐[Cost:0] 
+      ⚫ Legio V⭐[Cost:0] 
+      ⚫ Legio VI⭐[Cost:0] 
+      ⚪ Legio VII [Cost:0] 
+      ⚪ Legio VIII [Cost:0] 
+      ⚪ Legio IX [Cost:0] 
+      ⚪ Legio X [Cost:0] 
+      ⚪ Legio 11 [Cost:0] 
+      ⚪ Legio 12 [Cost:0] 

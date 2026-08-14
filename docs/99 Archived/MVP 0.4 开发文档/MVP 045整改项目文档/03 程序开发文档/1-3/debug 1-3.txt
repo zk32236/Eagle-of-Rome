@@ -1,0 +1,40 @@
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_integration/test_cli_basic.py
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+.✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+.✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: nonexistent.json
+   国库: 100 塔兰特
+   存活人物: 3
+F
+======================================================================
+FAIL: test_load_with_nonexistent_file (src.tests.test_integration.test_cli_basic.TestCLIIntegration)
+测试加载不存在的文件应返回 False 且状态不变
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\tests\test_integration\test_cli_basic.py", line 96, in test_load_with_nonexistent_file
+    self.assertFalse(result, "加载不存在文件应返回 False")
+AssertionError: True is not false : 加载不存在文件应返回 False
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.005s
+
+FAILED (failures=1)

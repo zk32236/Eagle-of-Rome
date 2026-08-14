@@ -1,0 +1,265 @@
+【身份：EOR项目主程序员】
+指令接收人：DS001（主程序员）
+指令主题：迁移 Population 阶段命令至新框架（指令6）
+
+核心输入：
+
+《EOR Command命令体系架构设计细化文档_V1.1》
+
+《EOR GameState状态管理架构设计细化文档_V1.1》
+
+《EOR_开发指南.docx》
+
+基线代码：src/core/phases/population_phase.py（位于 feature/refactor-0.4.5 分支）
+
+已迁移的命令参考：phase_mortality.py、phase_revenue.py、phase_forum.py
+
+已完善的 GameState 类（包含国库、军事系统、配置、阶段标记等方法）
+
+核心任务：
+
+创建 Population 命令文件：
+
+路径：src/ui/commands/phase_population.py
+
+类名：PopulationCommand，继承 Command
+
+元数据：
+
+name = "population"
+
+aliases = ["p"]
+
+description = "执行人口阶段 (Population Phase)"
+
+移植业务逻辑：
+
+从原 population_phase.py 的 PopulationPhase.execute() 方法复制核心逻辑，适配到新命令的 execute(self, args: List[str]) -> bool 中。
+
+关键适配点：
+
+使用 self.state.treasury 获取国库金额。
+
+使用 self.state.get_active_wars() 获取活跃战争列表（当前返回空列表，但逻辑中会判断是否有战争，可先保留）。
+
+使用 self.state.get_military_system() 获取军事系统，获取活跃军团数等信息。
+
+使用 self.state.get_economic_rule() 或 self.state.config.get() 获取配置（原代码中无配置硬编码，但可保持原样）。
+
+使用 self.state.is_phase_executed("population") 检查阶段是否已执行，若已执行则打印提示并返回 False。
+
+执行成功后调用 self.state.mark_phase_executed("population")。
+
+原代码中的 _calculate_republic_state、_process_legion_disbandment、_process_population_events 等方法应作为命令的私有方法移植，保持逻辑完整。
+
+确保所有打印输出与原基线一致（保留原有的输出格式和 emoji）。
+
+按需补充 GameState 方法：
+
+若在移植过程中发现 GameState 缺少必要的方法（例如获取军团状态、解散军团等），请在 src/core/game_state.py 中添加。
+
+军团解散逻辑可能需要调用军事系统的 disband_legion 方法，确保 MilitarySystem 类存在相应方法（当前可能为占位，但可先调用，若未实现则在测试中 Mock）。
+
+若需要直接从 GameState 获取军团摘要，可考虑添加辅助方法，但优先使用已有的 get_military_system()。
+
+编写单元测试：
+
+路径：src/tests/test_commands/test_phase_population.py
+
+测试用例至少覆盖：
+
+test_execute_success：验证命令返回 True，且输出包含国家状态信息。
+
+test_already_executed：先标记阶段已执行，再执行命令，验证返回 False。
+
+test_republic_state_calculation：测试不同国库和战争状态下国家状态的计算（可 Mock 国库和战争列表）。
+
+test_legion_disbandment：模拟军事系统，验证解散逻辑（可 Mock get_active_legions 和 disband_legion）。
+
+test_population_events：测试人口事件输出（可 Mock random.random 控制事件触发）。
+
+可使用动态导入或直接导入命令类进行测试，必要时 Mock 军事系统和随机模块。
+
+手动验证：
+
+运行 python main.py，执行 load 加载测试场景，然后输入 population 或 p，观察输出是否与原版本一致（包括国家状态、军团建议、随机事件等）。
+
+多次执行验证阶段重复执行检查。
+
+清理旧文件：
+
+确认新命令完全替代原功能后，执行 git rm src/core/phases/population_phase.py 删除原文件。
+
+提交信息：chore(cleanup): remove old population_phase.py after migration
+
+交付物：
+
+src/ui/commands/phase_population.py
+
+src/tests/test_commands/test_phase_population.py
+
+可能修改的 src/core/game_state.py（补充的方法）
+
+删除原 src/core/phases/population_phase.py 的 Git 操作记录
+
+验收标准：
+
+单元测试通过率 100%。
+
+在 CLI 中执行 population 命令，输出和行为与原基线完全一致（可通过手动对比验证）。
+
+阶段执行状态检查正常工作：同一回合内重复执行返回 False 并提示。
+
+代码通过《EOR MVP 0.4.5代码审查Checklist》中 Command 模块和 GameState 模块的相关检查项。
+
+无遗留的旧文件（population_phase.py 已删除）。
+
+请开始工作，完成后提交代码并附上测试结果。如有问题，随时沟通。
+
+豆包（项目经理）
+
+
+
+单元测试：
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_commands/test_phase_population.py
+
+--- Population Phase (Year 264 BC) ---
+   🟠 Treasury: 0 Talents
+
+   🏛️  State of the Republic: Tense
+
+   👥 Population Events:
+      No significant events
+..
+   🛡️  Legion Review:
+      🔴 Crisis! Must disband 3 Legion(s)
+      ⚫ Legio I disbanded
+      ⚫ Legio I disbanded
+      ⚫ Legio I disbanded
+.....   🔴 Treasury: -10 Talents
+   ⚔️  Active wars: 1
+.   🟢 Treasury: 200 Talents
+.   🟠 Treasury: 40 Talents
+   ⚔️  Active wars: 1
+.   🟡 Treasury: 80 Talents
+.
+----------------------------------------------------------------------
+Ran 11 tests in 0.013s
+
+OK
+
+
+客户端测试：
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+
+============================================================
+   Eagle of Rome - MVP 0.4.5 (整改后版本)
+============================================================
+项目根目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome
+Python路径: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src
+============================================================
+[DEBUG] 命令目录: C:\Users\Kerl\PycharmProjects\Eagle of Rome\src\ui\commands
+[DEBUG] 发现的命令: ['load', 'l', 'status', 's', 'forum', 'f', 'mortality', 'm', 'population', 'p', 'revenue', 'r', 'exit', 'quit', 'help', 'h']
+
+============================================================
+   Eagle of Rome - Debug CLI (整改后版本)
+============================================================
+输入 'help' 查看可用命令，'exit' 退出游戏
+
+> load
+✅ 场景加载完成: 派系 2 个, 人物 3 个
+
+✅ 场景加载成功: mvp_test.json
+   国库: 100 塔兰特
+   存活人物: 3
+> help
+
+============================================================
+   Eagle of Rome - 可用命令列表
+============================================================
+  exit        (别名: quit)       退出游戏
+  forum       (别名: f)          执行广场阶段 (Forum Phase)
+  help        (别名: h)          显示所有可用命令的帮助信息
+  load        (别名: l)          加载场景 (默认: mvp_test.json)
+  mortality   (别名: m)          执行天命阶段 (Mortality Phase)
+  population  (别名: p)          执行人口阶段 (Population Phase)
+  revenue     (别名: r)          执行税收阶段 (Revenue Phase)
+  status      (别名: s)          显示当前游戏状态摘要（国库、人物数等）
+============================================================
+输入 'exit' 或 'quit' 退出游戏
+> status
+
+==================================================
+   📊 游戏状态摘要
+==================================================
+   回合: 第 1 年 (264 BC)
+   国库: 100 塔兰特
+   存活人物: 3 人
+   派系数: 2 个
+==================================================
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 3
+  [Draw 1] Number 90...
+     -> No member assigned (safe)
+> r
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   元老院派: +10 Talents
+   平民派: +10 Talents
+
+   📊 State Treasury: 200 Talents
+> f
+
+--- Forum Phase (Year 264 BC) ---
+
+   📢 2 new figure(s) arrive in the Senate:
+      🏛️ Titus · Calpurnius · Pompeius (nobile)
+      👤 Octavius (plebeian)
+
+   🏛️  Figures in Senate:
+
+      🏛️ NOBILE (1):
+         ID:4 Titus · Calpurnius · Pompeius
+            [权5财18人3] 家族:Calpurnius
+
+      👤 PLEBEIAN (1):
+         ID:5 Octavius
+            [财8人2]
+
+   📜 2 new contract(s) announced:
+      包税: 撒丁尼亚包税权
+      工程: 港口扩建工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 撒丁尼亚包税权
+            预付:28 年收益:25 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 港口扩建工程
+            预算:41 预期利润:8
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+> p
+
+--- Population Phase (Year 264 BC) ---
+   🟢 Treasury: 200 Talents
+
+   🏛️  State of the Republic: Calm
+
+   👥 Population Events:
+      📢 Population growth in rural areas
+> p
+⚠️ 人口阶段在本回合已执行过
+> exit
+感谢游玩 Eagle of Rome！再见！
+
+Process finished with exit code 0

@@ -179,7 +179,7 @@ Rectangle {
         var options = sessionStore.senateProposalOptions || []
         var next = []
         for (var i = 0; i < options.length; i++) {
-            if (i < 3 || options[i].type === "land") next.push(options[i].key)
+            if (options[i].type === "war" || options[i].type === "peace" || options[i].type === "budget") next.push(options[i].key)
         }
         selectedProposalKeys = next
     }
@@ -353,6 +353,78 @@ Rectangle {
                         font.pixelSize: 11
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
+                    }
+
+                    // DEV-13: 战争接管（直接职权，无需表决）
+                    Rectangle {
+                        visible: sessionStore.senateCurrentStep === "proposal"
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 92
+                        radius: 4
+                        color: "#FDF3E0"
+                        border.color: "#E6A542"
+                        border.width: 1
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            spacing: 4
+                            Text {
+                                text: "🛡️ 接管战争 ⚡ 无需表决"
+                                color: "#9A2D0A"
+                                font.pixelSize: 12
+                                font.bold: true
+                            }
+                            Text {
+                                text: "执政官可直接接管进行中的外战，不进入元老院表决。"
+                                color: "#766652"
+                                font.pixelSize: 10
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                            }
+                            Repeater {
+                                model: sessionStore.senateTakeoverOptions || []
+                                delegate: Rectangle {
+                                    Layout.fillWidth: true
+                                    height: 28
+                                    radius: 3
+                                    color: "#FFF7E9"
+                                    border.color: "#D9AF63"
+                                    border.width: 1
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.margins: 4
+                                        spacing: 6
+                                        Text {
+                                            text: (modelData.name || modelData.war_id) + (modelData.reason ? "（" + modelData.reason + "）" : "")
+                                            color: "#2C1E12"
+                                            font.pixelSize: 11
+                                            Layout.fillWidth: true
+                                            elide: Text.ElideRight
+                                        }
+                                        Rectangle {
+                                            Layout.preferredWidth: 52
+                                            Layout.preferredHeight: 20
+                                            radius: 3
+                                            enabled: sessionStore.canTakeoverSenateWar
+                                            opacity: enabled ? 1.0 : 0.45
+                                            color: enabled ? "#D9AA52" : "#D8B16C"
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: "接管"
+                                                color: "#2C1E12"
+                                                font.pixelSize: 11
+                                                font.bold: true
+                                            }
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                enabled: parent.enabled
+                                                onClicked: sessionStore.doTakeoverWar(modelData.war_id)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     ScrollView {
                         Layout.fillWidth: true

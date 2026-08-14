@@ -733,12 +733,6 @@ class SenateCommand(Command):
             print(f"       B{idx:02d} {war['name']}（威胁等级 {war['threat_level']}）")
             idx += 1
 
-        # 新增：进行中的外国战争（接管选项）
-        for war in data.get("active_foreign_wars", []):
-            proposals_map[f"B{idx:02d}"] = ("takeover", {"war_id": war["war_id"]})
-            print(f"       B{idx:02d} 接管 {war['name']}（进行中）")
-            idx += 1
-
         # 停战草案
         for peace in data.get("pending_peace_treaties", []):
             war_obj = ws.get_war_by_id(peace["war_id"]) if ws else None
@@ -890,26 +884,6 @@ class SenateCommand(Command):
             if not player_id:
                 print("❌ 无法获取当前玩家", flush=True)
                 return
-
-        # 特殊处理 takeover：直接执行，不经过 API
-        if proposal_type == "takeover":
-            if len(args) < 2:
-                print("❌ 接管战争需要指定增援军团数量", flush=True)
-                return
-            try:
-                additional_legions = int(args[1])
-            except ValueError:
-                print("❌ 军团数量必须是数字", flush=True)
-                return
-
-            war_id = kwargs["war_id"]
-            # S3: 战争接管 - 委托 senate_api
-            takeover_result = senate_api.process_war_takeover(self.state)
-            if takeover_result.get("takeover_executed"):
-                print(f"✅ 战争接管执行: {takeover_result['result_details']}")
-            else:
-                print(f"❌ 接管失败: {takeover_result.get('result_details', '未知错误')}", flush=True)
-            return
 
         # 调用 API（使用模块级 senate_api 导入）
         result = senate_api.propose(self.state, player_id, proposal_type, bypass_turn_check=True, **kwargs)

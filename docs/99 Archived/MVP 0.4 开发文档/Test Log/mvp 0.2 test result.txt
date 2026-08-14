@@ -1,0 +1,139 @@
+"C:\Users\Kerl\PycharmProjects\Eagle of Rome\Scripts\python.exe" "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+🏛️  Eagle of Rome - MVP 0.2 Debug CLI
+Type 'help' for commands, 'exit' to quit
+
+> help
+
+Available Commands:
+  load          - Load MVP test scenario
+  status        - Show current game state
+  revenue       - Execute Revenue Phase
+  mortality (m) - Execute Mortality Phase
+  senate (s)    - Execute Senate Phase
+  next (n)      - Advance to next turn
+  turn          - Execute full turn cycle (Mortality->Senate->Revenue)
+  exit          - Quit game
+        
+
+> load
+✅ Scenario loaded: MVP 0.2 Test - Three Factions
+   Factions: 3, Senators: 9
+   Year: 264 BC
+
+Game loaded successfully!
+
+> status
+
+==================================================
+Year: 264 BC (Turn 1)
+Phase: init
+State Treasury: 100 T
+Death Bag: 9 senators remaining
+
+--------------------------------------------------
+FACTIONS & SENATORS:
+
+Optimates (faction_1) - Treasury: 50T
+  [PLAYER CONTROLLED]
+  🟢 Caesar(ID:101)[军5演6影5]
+  🟢 Cicero(ID:102)[军2演9影6]
+  🟢 Pompey(ID:103)[军8演4影7]
+
+Populares (faction_2) - Treasury: 40T
+  🟢 Cato(ID:201)[军3演7影4]
+  🟢 Marius(ID:202)[军9演3影6]
+  🟢 Crassus(ID:203)[军4演5影8]
+
+Equites (faction_3) - Treasury: 45T
+  🟢 Brutus(ID:301)[军4演6影5]
+  🟢 Antony(ID:302)[军7演5影6]
+  🟢 Sulla(ID:303)[军9演3影7]
+
+==================================================
+
+> revenue
+
+--- Revenue Phase (Year -264) ---
+State treasury: +100 (Total: 200)
+Optimates treasury: +10
+Populares treasury: +10
+Equites treasury: +10
+
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 3 death chit(s)...
+  💀 Caesar (ID:101) of faction_1 has died!
+     Optimates has 2 senator(s) remaining.
+  💀 Brutus (ID:301) of faction_3 has died!
+     Equites has 2 senator(s) remaining.
+  💀 Pompey (ID:103) of faction_1 has died!
+     Optimates has 1 senator(s) remaining.
+💀 Deaths this year: Caesar, Brutus, Pompey
+
+> s
+
+--- Senate Phase (Year 264 BC) ---
+🏛️  Presiding Officer: Crassus (faction_2)
+Senate convened, HRAO: Crassus
+
+[Electing First Consul]
+   Optimates nominates: Cicero
+   Populares nominates: Crassus
+   Equites nominates: Sulla
+
+   --- Voting ---
+      Optimates: 15 votes -> Cicero
+      Populares: 33 votes -> Crassus
+      Equites: 21 votes -> Sulla
+Failed to elect first consul
+Senate Phase failed!
+
+> n
+Advanced to Year 263 BC
+
+> turn
+
+############################################################
+ STARTING TURN 2
+############################################################
+
+--- Mortality Phase (Year 263 BC) ---
+Drawing 2 death chit(s)...
+  💀 Marius (ID:202) of faction_2 has died!
+     Populares has 2 senator(s) remaining.
+  💀 Cicero (ID:102) of faction_1 has died!
+     Optimates has 0 senator(s) remaining.
+💀 Deaths this year: Marius, Cicero
+
+Press Enter to continue to Senate Phase...
+
+--- Senate Phase (Year 263 BC) ---
+🏛️  Presiding Officer: Crassus (faction_2)
+Senate convened, HRAO: Crassus
+
+[Electing First Consul]
+   Populares nominates: Crassus
+   Equites nominates: Sulla
+
+   --- Voting ---
+      Populares: 24 votes -> Crassus
+      Equites: 21 votes -> Sulla
+Failed to elect first consul
+Senate Phase failed!
+
+Press Enter to continue to Revenue Phase...
+
+--- Revenue Phase (Year -263) ---
+State treasury: +100 (Total: 300)
+Optimates treasury: +10
+Populares treasury: +10
+Equites treasury: +10
+
+############################################################
+ TURN 2 COMPLETED
+############################################################
+
+> exit
+
+Process finished with exit code 0

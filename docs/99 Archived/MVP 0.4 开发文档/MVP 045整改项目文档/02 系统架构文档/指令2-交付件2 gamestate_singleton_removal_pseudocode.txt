@@ -1,0 +1,113 @@
+# GameState单例移除伪代码
+# 文件: gamestate_singleton_removal_pseudocode.txt
+# 说明: 标注多实例隔离关键节点，可直接指导编码
+
+# ========== 原单例实现（基线 - 需删除）==========
+class GameState:
+    _instance = None  # [删除] 类属性，导致全局共享
+    
+    def __new__(cls):  # [删除] 拦截实例化，阻止多实例
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance.reset()
+        return cls._instance  # [删除] 永远返回同一实例
+
+# ========== 新多实例实现（整改后）==========
+class GameState:
+    """
+    游戏状态管理器 - 多实例独立版本
+    关键变更: 删除单例相关代码，支持显式实例化
+    """
+    
+    # [关键节点1] 删除 _instance 类属性，消除全局共享
+    # [关键节点2] 删除 __new__ 方法，恢复默认实例化行为
+    
+    def __init__(self, config_path: Optional[str] = None):
+        """
+        显式实例化 - 每个调用创建独立实例
+        
+        Args:
+            config_path: 配置文件路径，None时使用内置默认配置
+        """
+        # [关键节点3] 所有状态改为实例属性（self._xxx），确保实例隔离
+        self._members: Dict[int, Figure] = {}
+        self._factions: Dict[str, Faction] = {}
+        self._treasury: int = 0
+        self._turn: GameTurn = GameTurn()
+        self._event_log: List[str] = []
+        self._used_ids: Set[int] = set()
+        self._mortality_pool: List[int] = []
+        self._config: Dict[str, Any] = self._load_config(config_path)
+        
+        # [关键节点4] 初始化时调用reset，确保状态一致性
+        self.reset()
+    
+    def reset(self):
+        """重置状态 - 实例方法，仅影响当前实例"""
+        # [关键节点5] 通过self._xxx访问，确保操作的是当前实例
+        self._members.clear()
+        self._factions.clear()
+        self._treasury = 0
+        self._turn = GameTurn()
+        self._event_log.clear()
+        self._used_ids.clear()
+        self._initialize_mortality_pool()
+    
+    @classmethod
+    def create_for_testing(cls, test_config: Dict[str, Any]) -> "GameState":
+        """
+        工厂方法: 创建测试专用实例
+        
+        [关键节点6] 使用__new__绕过__init__，注入测试配置
+        避免测试配置污染生产配置加载逻辑
+        """
+        instance = cls.__new__(cls)  # 创建空实例，不调用__init__
+        instance._members = {}
+        instance._factions = {}
+        instance._treasury = 0
+        instance._turn = GameTurn()
+        instance._event_log = []
+        instance._used_ids = set()
+        instance._mortality_pool = []
+        instance._config = test_config  # 直接注入测试配置
+        instance._initialize_mortality_pool()
+        return instance
+    
+    # [关键节点7] 原有公共方法保留，仅修改内部访问方式为self._xxx
+    # 示例: get_member, add_member, advance_year等全部保留
+    def get_member(self, member_id: int) -> Optional[Figure]:
+        """保留原有方法，仅修改属性访问方式"""
+        return self._members.get(member_id)  # 原: self.members
+    
+    def add_member(self, member: Figure):
+        """保留原有方法，仅修改属性访问方式"""
+        self._used_ids.add(member.id)
+        self._members[member.id] = member  # 原: self.members
+
+# ========== 多实例隔离验证示例 ==========
+"""
+验证场景1: 多实例独立创建
+    state_a = GameState()      # 实例A
+    state_b = GameState()      # 实例B
+    state_a is state_b         # 必须为False（不同实例）
+    state_a._members is state_b._members  # 必须为False（不同字典）
+
+验证场景2: 状态修改隔离
+    state_a._treasury = 100    # 修改A的国库
+    state_b._treasury          # 必须为0（B未受影响）
+
+验证场景3: 测试实例隔离
+    test_state = GameState.create_for_testing({"test": True})
+    prod_state = GameState()   # 生产实例
+    test_state._config         # {"test": True}
+    prod_state._config         # 生产配置（与测试配置不同）
+"""
+
+# ========== 关键设计决策摘要 ==========
+# 1. 删除 _instance 类属性: 消除全局状态共享，支持多实例
+# 2. 删除 __new__ 方法: 恢复Python默认实例化，允许创建多个实例
+# 3. 状态属性私有化: 所有状态改为self._xxx，确保实例级隔离
+# 4. 显式配置注入: __init__接收config_path，支持不同配置实例
+# 5. 测试工厂方法: create_for_testing绕过配置加载，直接注入测试配置
+# 6. 方法完全保留: 所有公共方法保留，仅内部访问方式改为self._xxx
+# 7. 渐进式优化: 不修改业务逻辑，仅调整实例化方式和属性访问

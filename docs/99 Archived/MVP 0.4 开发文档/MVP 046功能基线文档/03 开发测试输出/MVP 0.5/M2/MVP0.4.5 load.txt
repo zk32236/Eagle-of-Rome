@@ -1,0 +1,64 @@
+"C:\Users\Kerl\PycharmProjects\EOR 0.4.5\Scripts\python.exe" "C:/Users/Kerl/PycharmProjects/EOR 0.4.5/main.py" 
+   📝 Terminology: original
+🏛️  Eagle of Rome - MVP 0.4.3 Contract System
+   Active terms: Senate/Senators/Talents
+   Phase order: mortality → revenue → forum → population → senate → combat → resolution
+Type 'help' for commands, 'exit' to quit
+
+> load
+   📝 Terminology: original
+   Optimates: Ex-Consul(Spurius · Plautius · Asiaticus), Ex-Praetor(Titus · Sulpicius), Ex-Quaestor(Appius · Sulpicius · Hispanus)
+   Populares: Ex-Consul(Gnaeus · Junius · Cicero), Ex-Praetor(Publius · Fabius · Rufus), Ex-Quaestor(Spurius · Claudius)
+   Equites: Ex-Consul(Decimus · Domitius · Rufus), Ex-Praetor(Appius · Antonius · Caesar), Ex-Quaestor(Servius · Licinius · Scipio)
+   👑 Optimates leader: Spurius · Veturius · Cicero (Power: 4)
+   👑 Populares leader: Gnaeus · Junius · Cicero (Power: 6)
+   👑 Equites leader: Decimus · Domitius · Rufus (Power: 6)
+
+✅ Scenario loaded: MVP 0.4.5 - Magistrate Elections
+   Year: 264 BC
+   Active figures: 15/300
+   Generation config: 3🏛️ 2💰 1👤 = 6/faction
+
+   Faction Details:
+      Optimates [PLAYER]
+         Members: 3🏛️ 2💰 0👤 | Power: 14 | Leader: Spurius · Veturius · Cicero
+      Populares 
+         Members: 3🏛️ 2💰 0👤 | Power: 22 | Leader: Gnaeus · Junius · Cicero
+      Equites 
+         Members: 3🏛️ 2💰 0👤 | Power: 20 | Leader: Decimus · Domitius · Rufus
+
+
+✅ Game loaded!
+==================================================
+Year: 264 BC (Turn 1)
+Phase: init
+Treasury: 100 Talents
+--------------------------------------------------
+FACTIONS & MEMBERS:
+
+Optimates (optimates) - Treasury: 50Talents
+  [PLAYER CONTROLLED]
+  🟢🏛️ Spurius · Plautius · Asiaticus(ID:1)[权2财17人5地2兵0席2]
+  🟢💰 Titus · Sulpicius(ID:2)[权0财17人3地0兵0席0]
+  🟢💰 Appius · Sulpicius · Hispanus(ID:3)[权0财26人2地0兵0席0]
+  🟢🏛️ Gnaeus · Calpurnius · Crassus(ID:4)[权3财18人5地3兵0席3]
+  👑🏛️ Spurius · Veturius · Cicero(ID:5)[权3财17人4地3兵0席3]
+
+Populares (populares) - Treasury: 50Talents
+  👑🏛️ Gnaeus · Junius · Cicero(ID:6)[权3财16人4地3兵0席3]
+  🟢💰 Publius · Fabius · Rufus(ID:7)[权0财27人2地0兵0席0]
+  🟢💰 Spurius · Claudius(ID:8)[权0财16人2地0兵0席0]
+  🟢🏛️ Numerius · Domitius · Rufus(ID:9)[权4财13人3地4兵0席4]
+  🟢🏛️ Titus · Aemilius · Africanus(ID:10)[权3财17人3地3兵0席3]
+
+Equites (equites) - Treasury: 50Talents
+  👑🏛️ Decimus · Domitius · Rufus(ID:11)[权3财18人4地3兵0席3]
+  🟢💰 Appius · Antonius · Caesar(ID:12)[权0财24人2地0兵0席0]
+  🟢💰 Servius · Licinius · Scipio(ID:13)[权0财27人1地0兵0席0]
+  🟢🏛️ Lucius · Domitius · Crassus(ID:14)[权3财17人3地3兵0席3]
+  🟢🏛️ Servius · Domitius · Marius(ID:15)[权2财20人4地2兵0席2]
+==================================================
+
+   Progress: [░░░░░░░] 0/7
+
+> 

@@ -1,0 +1,15 @@
+PS C:\Users\Kerl\PycharmProjects\Eagle of Rome> py -m unittest src/tests/test_core/test_config.py
+.......⚠️ 配置文件JSON解析错误，使用默认配置: Expecting value: line 1 column 1 (char 0)
+.⚠️ 配置文件不存在，使用默认配置: 配置文件不存在: nonexistent.json
+.⚠️ 配置文件格式错误，使用默认配置: 配置文件内容应为字典，实际为 list
+.....⚠️ 配置文件不存在，使用默认配置: 配置文件不存在: test/path.json
+.⚠️ 配置文件不存在，使用默认配置: 配置文件不存在: c:/windows/system32/config.json
+.⚠️ 配置文件不存在，使用默认配置: 配置文件不存在: C:\Users\Kerl\AppData\Local\Temp\tmphdf2d7_9\test_config.json
+⚠️ 配置重载失败，保持原配置
+.⚠️ 未指定配置文件路径，无法重载
+.✅ 配置重载成功
+..
+----------------------------------------------------------------------
+Ran 20 tests in 0.022s
+
+OK

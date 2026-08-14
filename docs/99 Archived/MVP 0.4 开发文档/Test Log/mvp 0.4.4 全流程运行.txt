@@ -1,0 +1,375 @@
+"C:\Users\Kerl\PycharmProjects\Eagle of Rome\Scripts\python.exe" "C:/Users/Kerl/PycharmProjects/Eagle of Rome/main.py" 
+   📝 Terminology: original
+🏛️  Eagle of Rome - MVP 0.4.3 Contract System
+   Active terms: Senate/Senators/Talents
+   Phase order: mortality → revenue → forum → population → senate → combat → resolution
+Type 'help' for commands, 'exit' to quit
+
+> load
+   📝 Terminology: original
+   📚 War system ready (lazy load)
+✅ Scenario loaded: MVP 0.4 Test - Forum
+   Active figures: 9/300
+   Optimates: 1🏛️ 1💰 1👤
+   Populares: 1🏛️ 1💰 1👤
+   Equites: 1🏛️ 1💰 1👤
+
+✅ Game loaded!
+==================================================
+Year: 264 BC (Turn 1)
+Phase: init
+Treasury: 100 Talents
+--------------------------------------------------
+FACTIONS & MEMBERS:
+
+Optimates (faction_1) - Treasury: 50Talents
+  [PLAYER CONTROLLED]
+  🟢🏛️ Gaius · Veturius · Sulla(ID:1)[权4财11人4地4兵0席4]
+  🟢💰 Appius · Veturius · Cicero(ID:2)[权2财19人1地0兵0席0]
+  🟢👤 Gnaeus · Miller(ID:3)[权1财7人0地0兵0席0]
+
+Populares (faction_2) - Treasury: 40Talents
+  🟢🏛️ Titus · Junius · Africanus(ID:10)[权5财13人3地4兵0席4]
+  🟢💰 Marcus · Licinius · Maximus(ID:11)[权3财23人2地0兵0席0]
+  🟢👤 Tertius(ID:12)[权0财8人0地0兵0席0]
+
+Equites (faction_3) - Treasury: 45Talents
+  🟢🏛️ Lucius · Plautius · Cicero(ID:19)[权3财17人3地2兵0席2]
+  🟢💰 Aulus · Plautius · Marius(ID:20)[权3财16人1地0兵0席0]
+  🟢👤 Salvius(ID:21)[权2财5人1地0兵0席0]
+==================================================
+
+   Progress: [░░░░░░░] 0/7
+
+> m
+
+--- Mortality Phase (Year 264 BC) ---
+Drawing 1 number(s) from pool (1-300)...
+Current living: 9
+  [Draw 1] Number 285...
+     -> No member assigned (safe)
+✅ No deaths this year
+
+   Progress: [█░░░░░░] 1/7
+
+> r
+
+--- Revenue Phase (Year 264 BC) ---
+   💰 Base tax: +100 Talents
+   Optimates: +10 Talents
+   Populares: +10 Talents
+   Equites: +10 Talents
+   ⚔️  Military system: 10 legions ready
+   ✅ No Legion maintenance needed
+
+   📊 State Treasury: 200 Talents
+
+   🛡️  Legion Status:
+      Available: 10 | Active: 0 | Veteran: 0
+      Assigned to wars: 0
+      Maintenance: 0 Talents/turn
+
+   Progress: [██░░░░░] 2/7
+
+> f
+
+--- Forum Phase (Year 264 BC) ---
+
+   📢 2 new figure(s) arrive in the Senate:
+      👤 Manius · Smith (plebeian)
+      💰 Quintus · Sempronius · Rufus (eques)
+
+   🏛️  Figures in Senate:
+
+      💰 EQUES (1):
+         ID:23 Quintus · Sempronius · Rufus
+            [权1财17人1]
+
+      👤 PLEBEIAN (1):
+         ID:22 Manius · Smith
+            [财5]
+
+   📜 2 new contract(s) announced:
+      包税: 撒丁尼亚包税权
+      工程: 公共浴场工程
+
+   📋 Pending Contracts:
+
+      📊 Tax Farming (Senate Vote Required):
+         ID:1 撒丁尼亚包税权
+            预付:39 年收益:12 期限:5年
+            💡 Senate Phase: use 'vote contract 1'
+
+      🏗️ Public Works (Consul Assigns):
+         ID:2 公共浴场工程
+            预算:41 预期利润:8
+            💡 Senate Phase: Consul uses 'assign works 2 <figure_id>'
+
+   💡 Use 'persuade <id>' to recruit figures into your faction.
+   💡 Use 'contracts' to view pending contracts.
+
+   Progress: [███░░░░] 3/7
+
+> p
+
+--- Population Phase (Year 264 BC) ---
+   📚 Loaded 5 wars into deck
+   🟢 Treasury: 200 Talents
+   🛡️  Active legions: 0/10
+
+   🏛️  State of the Republic: Calm
+
+   🛡️  Legion Review:
+      🟢 Calm state: 10 Legion(s) available for recruitment
+
+   👥 Population Events:
+      No significant events
+
+   Progress: [████░░░] 4/7
+
+> s
+
+--- Senate Phase (Year 264 BC) ---
+🏛️  Presiding: Titus · Junius · Africanus
+
+   📊 Senate Seat Distribution (Total 300 seats):
+      National Assets: Land=10, Veterans=0
+      1. Gaius · Veturius · Sulla (Optimates): 120 seats (40.0%) [Land:4 Vet:0]
+      2. Titus · Junius · Africanus (Populares): 120 seats (40.0%) [Land:4 Vet:0]
+      3. Lucius · Plautius · Cicero (Equites): 60 seats (20.0%) [Land:2 Vet:0]
+      4. Appius · Veturius · Cicero (Optimates): 0 seats (0.0%) [Land:0 Vet:0]
+      5. Gnaeus · Miller (Optimates): 0 seats (0.0%) [Land:0 Vet:0]
+      6. Marcus · Licinius · Maximus (Populares): 0 seats (0.0%) [Land:0 Vet:0]
+      7. Tertius (Populares): 0 seats (0.0%) [Land:0 Vet:0]
+      8. Aulus · Plautius · Marius (Equites): 0 seats (0.0%) [Land:0 Vet:0]
+      9. Salvius (Equites): 0 seats (0.0%) [Land:0 Vet:0]
+      10. Manius · Smith (Unknown): 0 seats (0.0%) [Land:0 Vet:0]
+
+   🏛️  Faction Totals:
+      Optimates: 120 seats (40.0%) [Land:4 Vet:0]
+      Populares: 120 seats (40.0%) [Land:4 Vet:0]
+      Equites: 60 seats (20.0%) [Land:2 Vet:0]
+
+   📋 Processing 2 pending contract(s)...
+
+   📊 Voting: 撒丁尼亚包税权
+      Cost: 39 | Expected: 12
+
+      Candidates (Knights):
+         1. Appius · Veturius · Cicero (Optimates) [Wealth:19]
+         2. Marcus · Licinius · Maximus (Populares) [Wealth:23]
+         3. Aulus · Plautius · Marius (Equites) [Wealth:16]
+
+      🗳️  Vote Results:
+         Optimates: 4 votes → Appius · Veturius · Cicero
+         Populares: 4 votes → Marcus · Licinius · Maximus
+         Equites: 2 votes → Aulus · Plautius · Marius
+
+      ✅ Awarded to Marcus · Licinius · Maximus (Populares)
+         Marcus · Licinius · Maximus paid 39 Talents
+         Treasury +39 Talents
+
+   🏗️ Assigning: 公共浴场工程
+      Budget: 41 | Profit: 8
+      ⏳ Awaiting Consul election...
+
+=============================================
+[Electing Consul #1]
+   Available: 11, Ineligible: 0
+
+   🏆 Candidates:
+      1. Gaius · Veturius · Sulla - Influence: 4
+      2. Titus · Junius · Africanus - Influence: 4
+
+   🗳️  Vote:
+      Optimates    | Power:   4 | Voters: Gaius · , Appius ·, Gnaeus · → Gaius · Veturius · Sulla (support_Optimates)
+      Populares    | Power:   4 | Voters: Titus · , Marcus ·, Tertius → Titus · Junius · Africanus (support_Populares)
+      Equites      | Power:   2 | Voters: Lucius ·, Aulus · , Salvius → Gaius · Veturius · Sulla (support_strongest)
+      ✅ Gaius · Veturius · Sulla wins with 6/10 (60%) [Power: 4]
+   ✓ Gaius · Veturius · Sulla elected
+
+=============================================
+[Electing Consul #2]
+   Available: 10, Ineligible: 0
+
+   🏆 Candidates:
+      1. Titus · Junius · Africanus - Influence: 4
+      2. Lucius · Plautius · Cicero - Influence: 2
+
+   🗳️  Vote:
+      Optimates    | Power:   4 | Voters: Gaius · , Appius ·, Gnaeus · → Titus · Junius · Africanus (support_strongest)
+      Populares    | Power:   4 | Voters: Titus · , Marcus ·, Tertius → Titus · Junius · Africanus (support_Populares)
+      Equites      | Power:   2 | Voters: Lucius ·, Aulus · , Salvius → Lucius · Plautius · Cicero (support_Equites)
+      ✅ Titus · Junius · Africanus wins with 8/10 (80%) [Power: 4]
+   ✓ Titus · Junius · Africanus elected
+
+=============================================
+   🏛️  TRANSITION OF CONSULSHIP
+
+   Incoming Consuls:
+      ↑ Gaius · Veturius · Sulla: 4 → 9 (+5 bonus)
+      ↑ Titus · Junius · Africanus: 4 → 9 (+5 bonus)
+
+   Progress: [█████░░] 5/7
+
+> help
+
+🏛️  Eagle of Rome - Commands (MVP 0.4.3)
+═══════════════════════════════════════════════════
+  load                    Load scenario
+  status                  Show game state
+
+  Phase Commands (in order):
+    m, mortality          Mortality Phase
+    r, revenue            Revenue Phase  
+    f, forum              Forum Phase
+    p, population         Population Phase
+    s, senate             Senate Phase
+    c, combat             Combat Phase
+    x, resolution         Revolution Phase
+
+  Turn Control:
+    turn                  Auto full turn (all 7 phases)
+    step                  Step-by-step turn
+    n, next               Next turn (requires all 7 phases)
+    n force, next force   Force next turn (skip check)
+
+  War Commands:
+    wars                    Show war status (deck/active/discard)
+    assign                  Interactive commander assignment
+
+
+  Military Commands:
+    legions                 Show legion status
+    recruit                 Recruit legions
+    disband                 Disband legions
+
+  Forum Commands (MVP 0.4):
+    persuade <id>           Persuade figure to join faction
+    festival <id> <amount>  Hold festival (personal funds → popularity)
+
+  Contract Commands (MVP 0.4.3):
+    contracts               Show all contracts (pending/active/completed)
+    vote contract <id>      Vote to award tax farming contract
+    assign works <cid> <fid> Assign public works to figure (Consul only)
+    
+  Land Trading Commands (MVP 0.4.4):
+    seats                   Show seat share standings
+    trade land <s> <b> <n>  Trade n land from seller to buyer
+    land price <s> <b>      Preview land price between figures
+
+  Terminology:
+    terms [preset]        Switch: original/historical_roman/generic_latin/chinese_historical
+
+  Other:
+    reload                Reload config
+    exit                  Quit 
+        
+
+> contracts
+
+============================================================
+   📜 Senate Contracts
+============================================================
+
+   ⏳ PENDING (Awaiting Senate Action):
+      ID:2 🏗️ Works: 公共浴场工程
+         Cost: 41 | Profit: 8
+         💡 Senate Phase: Consul assigns
+
+   ▶️  ACTIVE:
+      ID:1 📊 Tax: 撒丁尼亚包税权
+         Contractor: Marcus · Licinius · Maximus (Populares)
+         Remaining: 5 years
+         Progress: 0/12
+============================================================
+
+> assign works 2 1
+   ⚠️  Warning: Gaius · Veturius · Sulla is not Knights
+
+   ✅ Works contract assigned!
+      Project: 公共浴场工程
+      Contractor: Gaius · Veturius · Sulla
+      Budget: 41 Talents
+      Expected Profit: 8 Talents
+
+> contracts
+
+============================================================
+   📜 Senate Contracts
+============================================================
+
+   ▶️  ACTIVE:
+      ID:1 📊 Tax: 撒丁尼亚包税权
+         Contractor: Marcus · Licinius · Maximus (Populares)
+         Remaining: 5 years
+         Progress: 0/12
+      ID:2 🏗️ Works: 公共浴场工程
+         Contractor: Gaius · Veturius · Sulla (Optimates)
+         Remaining: 2 years
+         Progress: 0/8
+============================================================
+
+> c
+
+--- Combat Phase (Year 264 BC) ---
+   ☮️  No active conflicts - phase skipped
+
+   Progress: [██████░] 6/7
+
+> x
+
+--- Revolution Phase (Year 264 BC) ---
+
+   🏆 Victory Conditions Check:
+      Leading: Optimates (9 Influence)
+
+   ⚠️  Revolution Risk Assessment:
+      🟡 Optimates: MODERATE risk (avg Loyalty: 5.0)
+      🟡 Populares: MODERATE risk (avg Loyalty: 5.0)
+      🟡 Equites: MODERATE risk (avg Loyalty: 5.0)
+
+   📊 Contract Year Summary:
+      ▶️  Active: 2
+
+==================================================
+   📜 ANNUAL REPORT - Year 264 BC
+==================================================
+
+   💰 Treasury: 239 Talents
+
+   📊 Faction Standings:
+      1. 👑 Optimates: 9 Influence
+      2. 👑 Populares: 9 Influence
+      3.    Equites: 2 Influence
+
+   ☮️  Peace prevails
+
+   📜 Active Contracts: 2 (Annual Revenue: 6)
+
+==================================================
+
+   🔄 Preparing for next year...
+      Phase tracking reset (done in advance_year)
+
+   Progress: [███████] 7/7
+
+> next
+
+📅 Year 263 BC (Turn 2)
+   [Cleared 7 phase locks]
+   ⛔ Ineligible (2y rule): Gaius · Veturius · Sulla(1), Titus · Junius · Africanus(1)
+Advanced to Year 263 BC
+
+📅 Year 263 BC:
+   Completed: 0/7 phases
+      ○ 💀 Mortality
+      ○ 💰 Revenue
+      ○ 📜 Forum
+      ○ 👥 Population
+      ○ 🏛️ Senate
+      ○ ⚔️ Combat
+      ○ 🔚 Revolution
+   ⏳ 7 remaining
+
+> 

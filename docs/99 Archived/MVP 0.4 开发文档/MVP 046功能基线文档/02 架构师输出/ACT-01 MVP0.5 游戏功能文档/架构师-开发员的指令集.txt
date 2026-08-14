@@ -1,0 +1,670 @@
+MVP 0.5 里程碑指令分解策略
+根据您的建议，我将对6个里程碑进行差异化分解：复杂里程碑拆分为2-4个子指令，简单里程碑保持单一指令。每个指令只提供必要的文档章节，减少信息干扰。
+
+一、复杂度评估总览
+里程碑	复杂度	文件数	交互复杂度	分解策略	指令数
+M1：实体层增量开发	🔴 高	5个实体文件	实体间关联复杂，需保证数据一致性	拆分为3个子指令	3
+M2：配置与数据迁移	🟡 中	2个文件	配置加载 + 数据迁移逻辑	单一指令	1
+M3：税收阶段增量逻辑	🔴 高	3个核心文件 + 测试	多个资金结算逻辑，需原子性保证	拆分为3个子指令	3
+M4：广场阶段合同生成	🟡 中	2个文件 + 测试	合同生成逻辑相对独立	单一指令	1
+M5：竞标命令实现	🔴 高	3个命令 + 复杂业务	权限、资金、状态校验，多种异常处理	拆分为3个子指令	3
+M6：状态查询与收尾	🟢 低	2个查询命令 + 测试	只读操作，逻辑简单	单一指令	1
+总计指令数：12个（6个里程碑中，3个复杂拆分为3+3+3=9个，3个简单保持3个，共12个）
+
+二、详细指令分解
+【里程碑M1】实体层增量开发（拆分为3个子指令）
+主指令M1-0：实体层开发全局指引（一次性下达，用于统筹）
+核心输入（仅需阅读以下章节）：
+
+《EOR MVP 0.5 核心实体架构设计文档》 → §1 实体增量定义、§2 ERD图、§3 生命周期
+
+《EOR MVP 0.5 开发架构约束与注意事项》 → §1 架构约束清单、§3 代码对接位置清单
+
+核心任务概述：
+本里程碑分3步完成：
+
+M1-1：创建 Province 和 Contract 实体（新文件）
+
+M1-2：为 Figure 和 Faction 添加增量字段和方法
+
+M1-3：为 GameState 添加行省/合同管理接口，编写单元测试
+
+设计要点（重点提醒）：
+
+所有字段必须私有（_开头），通过 @property 和公共方法访问
+
+保持与原有命名风格一致（动词开头、清晰表达）
+
+ID生成使用 GameState 的计数器，不自作主张
+
+【子指令M1-1】创建 Province 和 Contract 实体
+核心输入：
+
+《EOR MVP 0.5 核心实体架构设计文档》 → §1.1 Province类、§1.2 Contract类
+
+核心任务：
+
+在 src/core/entities/entities.py 中实现 Province 类
+
+包含所有字段和公共方法（update_land_type、bind_xxx、unbind_xxx、set_grievance）
+
+初始化时公/私地比例 6:4
+
+新建 src/core/entities/contract.py，实现：
+
+ContractType 枚举（TAX/PROJECT）
+
+Contract 类（所有字段 + mark_winner、mark_complete、terminate）
+
+交付物：
+
+src/core/entities/entities.py（增量部分）
+
+src/core/entities/contract.py（新文件）
+
+验收标准：
+
+可创建 Province 对象，公/私地计算正确
+
+可创建 Contract 对象，类型枚举正确
+
+所有方法可调用，无语法错误
+
+【子指令M1-2】Figure 和 Faction 增量开发
+核心输入：
+
+《EOR MVP 0.5 核心实体架构设计文档》 → §1.3 Figure类、§1.4 Faction类
+
+核心任务：
+
+在 src/core/entities/figure.py 中：
+
+添加字段：_land_private、_contract_ids、_has_active_contract、_figure_type、_tribute_profit、_project_profit
+
+添加方法：add_contract、remove_contract、settle_contract_profit
+
+添加对应的 @property
+
+在 src/core/entities/entities.py 中（Faction类）：
+
+添加字段：_total_land、_province_owned、_knight_contract_count
+
+添加方法：update_total_land、add_province、update_knight_contract_count
+
+交付物：
+
+src/core/entities/figure.py（增量部分）
+
+src/core/entities/entities.py（Faction增量部分）
+
+验收标准：
+
+Figure 新字段可读写
+
+添加/移除合同后，contract_ids 和 has_active_contract 同步更新
+
+Faction 可正确计算总土地和合同数
+
+【子指令M1-3】GameState 增量接口与单元测试
+核心输入：
+
+《EOR MVP 0.5 核心实体架构设计文档》 → §1.5 GameState类
+
+《EOR MVP 0.5 标准化接口设计文档》 → §1 实体操作接口、§3 状态查询接口
+
+核心任务：
+
+在 src/core/game_state.py 中：
+
+添加字段：_provinces、_contracts、_public_land_total、_contract_id_counter
+
+实现方法：add_province、get_province、get_all_provinces、create_contract、get_contract、get_all_contracts、_update_global_public_land、get_province_contract
+
+编写单元测试 src/tests/test_core/test_entities.py：
+
+测试 Province 创建和更新
+
+测试 Contract 生命周期（创建→中标→完成）
+
+测试 Figure/Faction 增量方法
+
+测试 GameState 行省/合同管理接口
+
+交付物：
+
+src/core/game_state.py（增量部分）
+
+src/tests/test_core/test_entities.py
+
+验收标准：
+
+所有单元测试通过率100%
+
+可通过 GameState 创建和获取行省/合同
+
+ID 自增正确，无重复
+
+【里程碑M2】配置与数据迁移（单一指令）
+指令M2：配置加载与数据迁移
+核心输入：
+
+《罗马鹰旗（EOR）MVP 0.5 详细功能规格说明书》 → §5 数值配置表
+
+《EOR MVP 0.5 开发架构约束与注意事项》 → §2.3 配置热加载、§2.4 数据迁移
+
+核心任务：
+
+在 src/core/config.py 的 DEFAULTS['economic_rules'] 中添加所有新增配置项：
+
+土地收支：private_land_income_per_unit、public_land_rent_per_unit
+
+包税权合同：tax_base_sicily、tax_base_sardinia、tax_contract_profit_rate、tax_contract_exec_turn
+
+公共工程：project_base_cost、project_advance_payment_rate、project_final_payment_rate、project_contract_profit_rate、project_contract_exec_turn
+
+三级资金：initial_treasury、initial_knight_wealth（保留原有配置）
+
+在 src/core/scenario_loader.py 中添加数据迁移逻辑：
+
+加载完所有 Figure 后，遍历并将原有 land 值赋给 land_private，land_public 设为0
+
+添加注释标记 land 字段将在下个版本移除
+
+在场景初始化时创建 Province 实例并注册到 GameState：
+
+根据配置或测试数据创建行省（至少西西里、撒丁岛）
+
+调用 state.add_province()
+
+交付物：
+
+src/core/config.py（增量部分）
+
+src/core/scenario_loader.py（修改后）
+
+验收标准：
+
+可通过 Config.get("economic_rules.private_land_income_per_unit") 读取新配置
+
+加载场景后，人物 land_private 等于原 land 值，land_public 为0
+
+GameState 中至少包含2个行省对象
+
+【里程碑M3】税收阶段增量逻辑（拆分为3个子指令）
+主指令M3-0：税收阶段开发全局指引
+核心输入：
+
+《EOR MVP 0.5 模块调用与业务流程架构文档》 → §1.1 税收阶段调用链、§2.1 公地/私地收支泳道图
+
+《EOR MVP 0.5 标准化接口设计文档》 → §2 业务功能接口
+
+核心任务概述：
+本里程碑分3步完成：
+
+M3-1：实现私地收入和公地租金结算
+
+M3-2：实现合同利润结算
+
+M3-3：整合到税收阶段命令，添加三级资金汇总日志，编写测试
+
+【子指令M3-1】实现私地收入和公地租金结算
+核心输入：
+
+流程文档 §2.1 泳道图
+
+接口文档 §2 process_land_income 接口定义
+
+核心任务：
+在 src/core/game_state.py 中实现：
+
+python
+def process_land_income(self) -> None:
+    """处理私地收入和公地租金"""
+    private_rate = self._config.get("economic_rules.private_land_income_per_unit")
+    public_rate = self._config.get("economic_rules.public_land_rent_per_unit")
+    
+    # 私地收入
+    for member in self.get_living_members():
+        income = member.land_private * private_rate
+        member._wealth += income
+        self.log_event(f"私地收入: {member.name} +{income}")
+    
+    # 公地租金
+    for province in self._provinces.values():
+        rent = province.land_public * public_rate
+        self._treasury += rent
+        self.log_event(f"公地租金: {province.name} +{rent}")
+交付物：
+
+src/core/game_state.py（新增 process_land_income 方法）
+
+验收标准：
+
+方法可执行，无语法错误
+
+执行后人物财富和国库正确增加
+
+【子指令M3-2】实现合同利润结算
+核心输入：
+
+流程文档 §1.1 合同利润结算部分
+
+接口文档 §2 process_contract_revenues 接口定义
+
+核心任务：
+在 src/core/game_state.py 中实现：
+
+python
+def process_contract_revenues(self) -> None:
+    """结算所有执行中合同的利润"""
+    for contract in self._contracts.values():
+        if not contract.is_under_execution:
+            continue
+        
+        # 根据合同类型计算利润
+        if contract.contract_type == ContractType.TAX:
+            profit = contract.profit_base  # 已在中标时计算
+        else:  # PROJECT
+            profit = contract.profit_base
+        
+        # 支付给中标骑士
+        knight = self.get_member(contract.winner_id)
+        if knight:
+            knight.settle_contract_profit(profit)
+            self.log_event(f"合同利润: {knight.name} 合同{contract.contract_id} +{profit}")
+交付物：
+
+src/core/game_state.py（新增 process_contract_revenues 方法）
+
+验收标准：
+
+执行中合同的骑士获得利润
+
+日志记录正确
+
+【子指令M3-3】整合税收阶段命令与测试
+核心输入：
+
+《EOR MVP 0.5 命令系统架构设计文档》 → §4 命令执行流程
+
+规格说明书 §6.2 测试用例 TAX-001~006
+
+核心任务：
+
+修改 src/ui/commands/phase_revenue.py：
+
+在 RevenueCommand.execute() 中按顺序调用：
+
+self.state.process_land_income()
+
+原有基础税收、派系津贴、军团维护（保留）
+
+self.state.process_contract_revenues()
+
+添加三级资金汇总日志
+
+编写单元测试 src/tests/test_commands/test_phase_revenue.py：
+
+测试私地收入计算
+
+测试公地租金计算
+
+测试合同利润结算
+
+测试多合同并行
+
+交付物：
+
+src/ui/commands/phase_revenue.py（修改后）
+
+src/tests/test_commands/test_phase_revenue.py
+
+验收标准：
+
+税收阶段执行后，所有资金变化符合预期
+
+单元测试通过率100%
+
+【里程碑M4】广场阶段合同生成（单一指令）
+指令M4：广场阶段合同生成
+核心输入：
+
+《EOR MVP 0.5 模块调用与业务流程架构文档》 → §1.2 广场阶段调用链、§2.2 包税权拍卖泳道图、§2.3 公共工程招标泳道图
+
+规格说明书 §6.2 测试用例 FOR-001~005
+
+核心任务：
+
+在 src/ui/commands/phase_forum.py 中实现：
+
+python
+def _generate_tax_contracts(self, current_turn: int) -> List[Contract]:
+    """生成包税权合同"""
+    contracts = []
+    for province in self.state.get_all_provinces():
+        if province.tax_contract_id is None:
+            tax_base = self.state._config.get(f"economic_rules.tax_base_{province.name}")
+            contract = self.state.create_contract(
+                ContractType.TAX, province.province_id, tax_base, current_turn
+            )
+            province.bind_tax_contract(contract.contract_id)
+            contracts.append(contract)
+            self.state.log_event(f"生成包税权合同: {province.name} 底价{tax_base}")
+    return contracts
+
+def _generate_project_contracts(self, current_turn: int) -> List[Contract]:
+    """生成公共工程合同（含国库资金检查）"""
+    # 实现逻辑...
+在 ForumCommand.execute() 中依次调用上述方法
+
+编写单元测试 src/tests/test_commands/test_phase_forum.py
+
+交付物：
+
+src/ui/commands/phase_forum.py（修改后）
+
+src/tests/test_commands/test_phase_forum.py
+
+验收标准：
+
+广场阶段执行后，未绑定行省生成对应合同
+
+国库资金不足时，工程合同取消生成
+
+单元测试通过率100%
+
+【里程碑M5】竞标命令实现（拆分为3个子指令）
+主指令M5-0：竞标命令开发全局指引
+核心输入：
+
+《EOR MVP 0.5 命令系统架构设计文档》 → §2 新增命令清单、§5 权限控制
+
+《EOR MVP 0.5 标准化接口设计文档》 → §5 调用示例（含异常处理）
+
+规格说明书 §6.2 测试用例 BID-001~013
+
+核心任务概述：
+本里程碑分3步完成：
+
+M5-1：创建命令文件框架，实现参数解析和基础校验
+
+M5-2：实现包税权竞标逻辑
+
+M5-3：实现公共工程竞标逻辑，编写完整测试
+
+【子指令M5-1】创建命令文件框架
+核心输入：
+
+命令文档 §2 命令定义
+
+核心任务：
+创建 src/ui/commands/func_contracts.py，实现命令类框架：
+
+python
+class BidContractCommand(Command):
+    name = "bid_contract"
+    aliases = ["bid"]
+    description = "竞标合同: bid_contract <合同ID> <出价>"
+    
+    def execute(self, args: List[str]) -> bool:
+        # 参数数量校验
+        if len(args) != 2:
+            print("❌ 参数错误")
+            return False
+        
+        # 参数类型转换
+        try:
+            contract_id = int(args[0])
+            amount = int(args[1])
+        except ValueError:
+            print("❌ 参数必须为整数")
+            return False
+        
+        if amount <= 0:
+            print("❌ 出价必须为正整数")
+            return False
+        
+        # 获取当前人物（需实现辅助方法）
+        player = self._get_current_figure()
+        if not player:
+            return False
+        
+        # 权限校验
+        if player.figure_type != "knight":
+            print("❌ 只有骑士可以竞标合同")
+            return False
+        
+        # 获取合同
+        contract = self.state.get_contract(contract_id)
+        if not contract:
+            print(f"❌ 合同不存在")
+            return False
+        
+        # 状态校验
+        if contract.is_active:
+            print("❌ 合同已中标")
+            return False
+        
+        # 根据类型分发
+        if contract.contract_type == ContractType.TAX:
+            return self._handle_tax_bid(contract, player, amount)
+        else:
+            return self._handle_project_bid(contract, player, amount)
+    
+    def _handle_tax_bid(self, contract, player, amount):
+        # 待实现
+        pass
+    
+    def _handle_project_bid(self, contract, player, amount):
+        # 待实现
+        pass
+    
+    def _get_current_figure(self):
+        # 简化实现：从命令行参数或上下文获取
+        # 本版本先返回第一个骑士用于测试
+        for member in self.state.get_living_members():
+            if member.figure_type == "knight":
+                return member
+        return None
+交付物：
+
+src/ui/commands/func_contracts.py（框架部分）
+
+验收标准：
+
+命令可注册，输入 bid_contract 显示帮助
+
+参数校验通过，类型错误时有提示
+
+【子指令M5-2】实现包税权竞标逻辑
+核心输入：
+
+接口文档 §5 _handle_tax_bid 示例
+
+异常处理示例（含回滚）
+
+核心任务：
+实现 _handle_tax_bid 方法：
+
+python
+def _handle_tax_bid(self, contract, player, amount):
+    """处理包税权竞标（价高者得）"""
+    try:
+        # 校验底价
+        if amount < contract.base_cost:
+            print(f"❌ 出价不得低于底价 {contract.base_cost}")
+            return False
+        
+        # 校验财富
+        if player.wealth < amount:
+            print(f"❌ 个人财富不足，当前 {player.wealth}")
+            return False
+        
+        # 执行资金转移（原子操作）
+        player._wealth -= amount
+        self.state._treasury += amount
+        
+        # 计算利润基数
+        profit_rate = self.state._config.get("economic_rules.tax_contract_profit_rate")
+        profit_base = int(contract.base_cost * profit_rate)
+        
+        # 更新合同状态
+        contract.mark_winner(player.figure_id, self.state.turn, profit_base)
+        
+        # 更新人物关联
+        player.add_contract(contract.contract_id)
+        
+        # 更新行省关联
+        province = self.state.get_province(contract.province_id)
+        province.bind_tax_contract(contract.contract_id)
+        
+        # 记录日志
+        self.state.log_event(
+            f"骑士 {player.name} 以 {amount} 塔兰特中标包税权合同 {contract.contract_id}"
+        )
+        print(f"✅ 竞标成功！")
+        return True
+        
+    except Exception as e:
+        # 回滚逻辑（实际可简化，因异常前操作少）
+        print(f"❌ 竞标失败: {str(e)}")
+        return False
+交付物：
+
+src/ui/commands/func_contracts.py（增量完成）
+
+验收标准：
+
+包税权竞标成功时资金转移正确
+
+各种失败场景（底价不足、财富不足）提示正确
+
+【子指令M5-3】实现公共工程竞标逻辑与完整测试
+核心输入：
+
+接口文档 §5 _handle_project_bid 示例
+
+规格说明书 §6.2 BID-001~013
+
+核心任务：
+
+实现 _handle_project_bid 方法：
+
+python
+def _handle_project_bid(self, contract, player, amount):
+    """处理公共工程竞标（价低者得）"""
+    try:
+        # 校验上限
+        if amount > contract.base_cost:
+            print(f"❌ 出价不得高于招标底价 {contract.base_cost}")
+            return False
+        
+        # 计算预付款
+        advance_rate = self.state._config.get("economic_rules.project_advance_payment_rate")
+        advance = int(contract.base_cost * advance_rate)
+        
+        # 校验国库资金
+        if self.state._treasury < advance:
+            print(f"❌ 国库资金不足支付预付款，需要 {advance}")
+            return False
+        
+        # 执行资金转移
+        self.state._treasury -= advance
+        player._wealth += advance
+        
+        # 计算利润基数
+        profit_rate = self.state._config.get("economic_rules.project_contract_profit_rate")
+        profit_base = int(contract.base_cost * profit_rate)
+        
+        # 更新状态
+        contract.mark_winner(player.figure_id, self.state.turn, profit_base)
+        player.add_contract(contract.contract_id)
+        
+        province = self.state.get_province(contract.province_id)
+        province.bind_project_contract(contract.contract_id)
+        province._has_project = True
+        
+        self.state.log_event(
+            f"骑士 {player.name} 中标工程合同 {contract.contract_id}，获预付款 {advance}"
+        )
+        print(f"✅ 竞标成功！获得预付款 {advance}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ 竞标失败: {str(e)}")
+        return False
+编写单元测试 src/tests/test_commands/test_bid_contract.py：
+
+测试包税权成功/失败场景
+
+测试公共工程成功/失败场景
+
+测试权限控制
+
+测试边界值（出价=底价、出价=0等）
+
+交付物：
+
+src/ui/commands/func_contracts.py（完整）
+
+src/tests/test_commands/test_bid_contract.py
+
+验收标准：
+
+所有 BID 测试用例通过
+
+异常场景处理正确，资金不回滚错误
+
+【里程碑M6】状态查询与收尾（单一指令）
+指令M6：实现状态查询命令与收尾
+核心输入：
+
+《EOR MVP 0.5 命令系统架构设计文档》 → §4.3.2 状态查询输出模板
+
+规格说明书 §6.2 测试用例 INT-005
+
+核心任务：
+
+在 src/ui/commands/func_status.py 中实现：
+
+python
+class StatusContractCommand(Command):
+    name = "status_contract"
+    aliases = ["sc"]
+    description = "查看合同状态: status_contract [all|个人]"
+    
+    def execute(self, args: List[str]) -> bool:
+        # 实现个人/全局合同状态展示
+        pass
+
+class StatusProvinceCommand(Command):
+    name = "status_province"
+    aliases = ["sp"]
+    description = "查看行省状态: status_province [all|<行省ID>]"
+    
+    def execute(self, args: List[str]) -> bool:
+        # 实现行省详情展示
+        pass
+输出格式严格对齐文档要求：
+
+text
+=== 个人持有合同状态 ===
+人物ID/名称：5/西塞罗
+持有合同总数：2
+------------------------
+合同ID:1 | 类型:包税权 | 绑定行省:1西西里 | ...
+编写单元测试 src/tests/test_commands/test_status_commands.py
+
+交付物：
+
+src/ui/commands/func_status.py（完整）
+
+src/tests/test_commands/test_status_commands.py
+
+验收标准：
+
+命令输出格式与文档完全一致
+
+数据正确反映当前状态
+
+单元测试通过率100%

@@ -1,0 +1,55 @@
+C:\Users\Kerl\AppData\Local\Programs\Python\Python310\python.exe "C:/Program Files/JetBrains/PyCharm Community Edition 2022.2.1/plugins/python-ce/helpers/pycharm/_jb_pytest_runner.py" --path "C:/Users/Kerl/PycharmProjects/Eagle of Rome/src/tests/test_core/test_entities.py" 
+Testing started at 1:05 pm ...
+Launching pytest with arguments C:/Users/Kerl/PycharmProjects/Eagle of Rome/src/tests/test_core/test_entities.py --no-header --no-summary -q in C:\Users\Kerl\PycharmProjects\Eagle of Rome
+
+============================= test session starts =============================
+collecting ... collected 5 items
+
+src/tests/test_core/test_entities.py::TestProvince::test_ent_001_province_creation 
+src/tests/test_core/test_entities.py::TestProvince::test_ent_002_update_land_type 
+src/tests/test_core/test_entities.py::TestProvince::test_ent_003_grievance_range 
+src/tests/test_core/test_entities.py::TestContract::test_ent_004_contract_creation PASSED [ 20%]PASSED [ 40%]PASSED [ 60%]FAILED [ 80%]
+src\tests\test_core\test_entities.py:45 (TestContract.test_ent_004_contract_creation)
+self = <tests.test_core.test_entities.TestContract object at 0x00000253039E5090>
+
+    def test_ent_004_contract_creation(self):
+        """ENT-004: Contract创建与类型枚举（使用工厂方法）"""
+        tax_contract = Contract.create_tax_farming(
+            id=1,
+            province="西西里",
+            base_cost=90,
+            expected_profit=150
+        )
+        project_contract = Contract.create_public_works(
+            id=2,
+            project="道路",
+            budget=1000,
+            profit_margin=0.2
+        )
+    
+        assert tax_contract.contract_type == ContractType.TAX_FARMING
+        assert project_contract.contract_type == ContractType.PUBLIC_WORKS
+        assert tax_contract.id == 1
+        assert project_contract.id == 2
+        assert tax_contract.status == ContractStatus.PENDING
+>       assert tax_contract.winner_id is None
+E       AttributeError: 'Contract' object has no attribute 'winner_id'
+
+src\tests\test_core\test_entities.py:66: AttributeError
+PASSED [100%]
+
+
+
+
+
+
+
+
+src/tests/test_core/test_entities.py::TestContract::test_ent_005_contract_mark_winner 
+
+========================= 1 failed, 4 passed in 0.11s =========================
+
+Process finished with exit code 1
+
+
+

@@ -1,0 +1,430 @@
+EOR MVP 0.5 测试工程师指令集（完整版）
+收件人：AI测试工程师
+发件人：项目负责人
+日期：2026-02-22
+版本：V1.0
+对应开发里程碑：M1-M6（6个开发里程碑）
+总指令数：11个测试指令（按里程碑和测试类型分解）
+
+一、测试总体策略
+🎯 测试目标
+功能验证：确保6个里程碑的所有功能符合规格说明书
+
+边界覆盖：覆盖所有异常场景和极端值
+
+数据一致性：验证资金流转、实体关联的准确性
+
+架构合规：确保代码遵守增量原则和封装原则
+
+📋 测试原则
+与开发同步：测试用例编写与开发并行，代码提交后立即测试
+
+自动化优先：核心功能编写 pytest 单元测试
+
+手动探索补充：复杂交互场景辅以手动测试
+
+缺陷闭环：每个缺陷必须经过“发现→报告→修复→回归”流程
+
+🔧 测试环境要求
+Python 3.8+
+
+依赖安装：pip install pytest pytest-cov colorama
+
+代码分支：feature/mvp-0.5（与开发同分支）
+
+二、测试里程碑与开发里程碑对齐表
+测试里程碑	指令ID	测试重点	用例数	依赖开发里程碑	预估工时
+T1 实体层校验	T1-1	Province/Contract实体定义	8	M1完成后	1天
+T2 配置迁移	T2-1	配置加载、数据迁移	4	M2完成后	0.5天
+T3 税收阶段	T3-1	私地收入、公地租金	5	M3-1完成后	1天
+T3-2	合同利润结算	3	M3-2完成后	0.5天
+T3-3	税收阶段整合测试	2	M3-3完成后	0.5天
+T4 广场阶段	T4-1	合同生成逻辑	5	M4完成后	1天
+T5 竞标命令	T5-1	基础功能测试	6	M5-2完成后	1天
+T5-2	边界与异常测试	6	M5-3完成后	1天
+T5-3	缺陷报告与回归	-	M5完成后	0.5天
+T6 状态查询	T6-1	命令输出格式	4	M6完成后	0.5天
+T6-2	全流程集成测试	3	M6完成后	1天
+T7 合规性	T7-1	架构约束检查	6项	贯穿全程	持续
+总计：11个测试指令，预计总工时8天（与开发并行）
+
+三、测试指令集详细内容
+【T1 实体层校验】
+指令T1-1：实体定义与关联关系测试
+核心输入：
+
+《EOR MVP 0.5 核心实体架构设计文档》 → §1 实体增量定义、§2 ERD图
+
+开发已交付代码：entities.py、contract.py、figure.py、game_state.py
+
+测试目标：
+验证所有新增实体（Province、Contract）和增量实体（Figure、Faction、GameState）的字段定义、方法实现、关联关系是否正确。
+
+测试用例表：
+
+用例ID	测试点	前置条件	测试步骤	预期结果
+ENT-001	Province创建与属性初始化	游戏启动前	创建行省对象，总土地1000	land_public=600, land_private=400, grievance=0
+ENT-002	公/私地数量更新	Province对象存在	调用 update_land_type(50, -30)	land_public=650, land_private=370
+ENT-003	民怨值范围限制	Province对象存在	调用 set_grievance(5)	抛出 ValueError
+ENT-004	Contract创建与类型枚举	GameState初始化	创建TAX和PROJECT合同各1个	contract_type正确，ID自增
+ENT-005	合同中标状态变更	合同未激活	调用 mark_winner(1001, 5, 20)	is_active=True, winner_id=1001
+ENT-006	Figure类型与合同管理	Figure对象存在	设置 figure_type='knight'，添加合同ID	figure_type正确，contract_ids包含ID
+ENT-007	Figure合同利润结算	Figure对象存在	调用 settle_contract_profit(50)	wealth增加50
+ENT-008	Faction总土地更新	派系有3名成员，各有私地	调用 update_total_land(members)	total_land = 成员私地和
+测试数据准备：
+
+python
+# tests/fixtures/entity_fixtures.py
+import pytest
+from src.core.entities.entities import Province, Faction
+from src.core.entities.contract import Contract, ContractType
+from src.core.entities.figure import Figure
+
+@pytest.fixture
+def sample_province():
+    return Province(1, "西西里", 1000)
+
+@pytest.fixture
+def sample_knight():
+    figure = Figure(1001, "西塞罗")
+    figure._figure_type = "knight"
+    figure._wealth = 1000
+    figure._land_private = 100
+    return figure
+交付物：
+
+tests/test_core/test_entities.py（包含上述8个测试用例）
+
+tests/fixtures/entity_fixtures.py（测试夹具）
+
+验收标准：
+
+8个测试用例全部通过
+
+测试覆盖率 ≥90%
+
+代码符合 pytest 规范
+
+【T2 配置与数据迁移】
+指令T2-1：配置加载与数据迁移测试
+核心输入：
+
+《罗马鹰旗（EOR）MVP 0.5 详细功能规格说明书》 → §5 数值配置表
+
+开发已交付代码：config.py、scenario_loader.py
+
+测试用例表：
+
+用例ID	测试点	前置条件	测试步骤	预期结果
+CFG-001	新增配置项加载	使用默认配置	读取 economic_rules.private_land_income_per_unit	返回 2
+CFG-002	配置热加载	修改JSON配置文件	调用 Config.reload()	新配置生效
+CFG-003	数据迁移	加载旧版本场景，Figure.land=100	执行场景加载	land_private=100, land_public=0
+CFG-004	行省初始化	游戏启动	检查所有行省对象	每个行省 tax_base 正确赋值
+测试代码框架：
+
+python
+def test_config_loading():
+    config = Config()
+    assert config.get("economic_rules.private_land_income_per_unit") == 2
+
+def test_data_migration(game_state, sample_scenario):
+    # 模拟旧数据
+    figure = Figure(1, "测试")
+    figure._land = 100  # 旧字段
+    game_state._members[1] = figure
+    
+    # 执行迁移（在scenario_loader中）
+    migrate_land_data(game_state)
+    
+    assert figure.land_private == 100
+    assert figure.land_public == 0
+交付物：
+
+tests/test_core/test_config.py
+
+tests/test_core/test_scenario_loader.py（新增迁移测试）
+
+验收标准：
+
+4个测试用例全部通过
+
+数据迁移后旧字段保留，新字段正确
+
+【T3 税收阶段测试】
+指令T3-1：私地收入与公地租金测试
+核心输入：
+
+规格说明书 §6.2 测试用例 TAX-001、TAX-002、TAX-007
+
+开发已交付代码：game_state.py（process_land_income方法）
+
+测试用例表：
+
+用例ID	测试点	前置条件	测试步骤	预期结果
+TAX-001	私地收入计算	Figure.land_private=100, 配置=2	执行 process_land_income()	wealth增加200
+TAX-002	公地租金计算	Province.land_public=600, 配置=1	执行 process_land_income()	国库增加600
+TAX-007	私地收入为0	Figure.land_private=0	执行 process_land_income()	wealth不变
+TAX-008	多人私地收入	3个人，私地分别为100/200/300	执行 process_land_income()	每人收入正确，总和正确
+TAX-009	多行省公地租金	2个行省，公地600+400	执行 process_land_income()	国库增加(600+400)×1=1000
+交付物：
+
+tests/test_core/test_land_income.py
+
+指令T3-2：合同利润结算测试
+核心输入：
+
+规格说明书 §6.2 测试用例 TAX-003、TAX-004、TAX-005
+
+开发已交付代码：game_state.py（process_contract_revenues方法）
+
+测试用例表：
+
+用例ID	测试点	前置条件	测试步骤	预期结果
+TAX-003	包税权利润结算	合同生效中，profit_base=18	执行 process_contract_revenues()	骑士财富增加18
+TAX-004	工程利润结算	合同生效中，profit_base=30	执行 process_contract_revenues()	骑士财富增加30
+TAX-005	多合同利润结算	骑士持有2个生效合同	执行 process_contract_revenues()	财富增加两利润之和
+TAX-010	未生效合同不结算	合同未中标	执行 process_contract_revenues()	财富不变
+交付物：
+
+tests/test_core/test_contract_profit.py
+
+指令T3-3：税收阶段整合测试
+核心输入：
+
+开发已交付代码：phase_revenue.py
+
+规格说明书 §6.2 测试用例 TAX-006
+
+测试用例表：
+
+用例ID	测试点	前置条件	测试步骤	预期结果
+TAX-006	三级资金汇总日志	税收阶段执行完毕	检查事件日志	日志包含收入/支出/余额
+TAX-011	税收阶段完整流程	有私地、公地、生效合同	执行 RevenueCommand	所有资金变化正确
+交付物：
+
+tests/test_commands/test_phase_revenue.py
+
+【T4 广场阶段测试】
+指令T4-1：合同生成逻辑测试
+核心输入：
+
+规格说明书 §6.2 测试用例 FOR-001~005
+
+开发已交付代码：phase_forum.py
+
+测试用例表：
+
+用例ID	测试点	前置条件	测试步骤	预期结果
+FOR-001	包税权合同生成	行省A无包税权合同	执行广场阶段	创建TAX合同，绑定行省A
+FOR-002	已绑定行省不重复生成	行省A已有包税权合同	执行广场阶段	不创建新合同
+FOR-003	公共工程合同生成	行省B无工程合同，国库充足	执行广场阶段	创建PROJECT合同，绑定行省B
+FOR-004	国库资金不足取消工程合同	国库=50，工程预付款需40×2=80	2个待生成工程合同	第一个生成，第二个取消
+FOR-005	合同生成日志	广场阶段执行	查看日志	绿色日志记录合同生成详情
+交付物：
+
+tests/test_commands/test_phase_forum.py
+
+【T5 竞标命令测试】
+指令T5-1：竞标命令基础功能测试
+核心输入：
+
+规格说明书 §6.2 测试用例 BID-001~006
+
+开发已交付代码：func_contracts.py
+
+测试用例表：
+
+用例ID	测试点	前置条件	测试步骤	预期结果
+BID-001	包税权竞标成功	合同ID=1,底价90,骑士财富1000	bid 1 100	财富-100,国库+100,合同中标
+BID-002	包税权竞标失败（出价低于底价）	同BID-001	bid 1 80	返回错误，资金不变
+BID-003	包税权竞标失败（财富不足）	骑士财富50	bid 1 90	返回错误，资金不变
+BID-004	公共工程竞标成功	合同ID=2,底价200,国库100	bid 2 180	国库-40,骑士+40
+BID-005	权限控制（非骑士竞标）	元老尝试竞标	bid 1 100	返回权限错误
+BID-006	合同已中标后重复竞标	合同已激活	再次bid	返回合同已中标错误
+交付物：
+
+tests/test_commands/test_bid_contract_basic.py
+
+指令T5-2：竞标命令边界与异常测试
+核心输入：
+
+规格说明书 §6.2 测试用例 BID-007~013
+
+开发已交付代码：func_contracts.py
+
+测试用例表：
+
+用例ID	测试点	前置条件	测试步骤	预期结果
+BID-007	出价为0	同BID-001	bid 1 0	返回"出价必须为正整数"
+BID-008	出价为负数	同BID-001	bid 1 -10	返回"出价必须为正整数"
+BID-009	参数非整数	-	bid 1 abc	返回"参数必须为整数"
+BID-010	缺少参数	-	bid 1	返回"参数错误"
+BID-011	合同不存在	contract_id=999	bid 999 100	返回"合同不存在"
+BID-012	公共工程国库不足	国库=30,预付款需40	bid 2 180	返回"国库资金不足"
+BID-013	出价等于底价（边界）	底价90，出价90	bid 1 90	成功（边界值）
+交付物：
+
+tests/test_commands/test_bid_contract_edge.py
+
+指令T5-3：缺陷报告与回归测试
+核心任务：
+
+执行完整测试套件：
+
+bash
+pytest tests/test_commands/test_bid_contract_*.py -v --cov=src.ui.commands.func_contracts
+如发现缺陷，按以下模板提交：
+
+text
+## 缺陷报告模板
+
+**缺陷ID**：BUG-竞标-001  
+**发现日期**：2026-02-22  
+**发现人**：测试工程师  
+**模块**：竞标命令 - 包税权  
+**严重等级**：□ P0（阻塞） □ P1（严重） □ P2（一般）  
+
+**描述**：
+[清晰描述问题]
+
+**重现步骤**：
+1. [步骤1]
+2. [步骤2]
+3. [步骤3]
+
+**实际结果**：
+[实际发生的现象]
+
+**预期结果**：
+[应该发生的现象]
+
+**环境信息**：
+- 提交哈希： [git commit id]
+- 测试数据： [使用的测试数据]
+
+**附件**：
+- 日志截图
+- 测试代码
+缺陷修复后执行回归测试：重新运行所有BID测试用例
+
+交付物：
+
+缺陷报告（如有）
+
+回归测试记录（在测试报告中标注）
+
+【T6 状态查询与集成测试】
+指令T6-1：状态查询命令输出格式测试
+核心输入：
+
+《EOR MVP 0.5 命令系统架构设计文档》 → §4.3.2 状态查询输出模板
+
+开发已交付代码：func_status.py
+
+测试用例表：
+
+用例ID	测试点	前置条件	测试步骤	预期结果
+STA-001	个人合同状态格式	骑士持有2个合同	status_contract	输出格式与模板完全一致
+STA-002	全局合同状态格式	有多个合同	status_contract all	显示所有合同信息
+STA-003	单个行省状态格式	行省ID=1	status_province 1	输出格式与模板一致
+STA-004	所有行省状态格式	有2个行省	status_province all	显示汇总和详情
+输出格式验证：
+
+python
+def test_status_contract_format(capsys):
+    # 执行命令
+    cmd = StatusContractCommand(state)
+    cmd.execute([])
+    
+    # 捕获输出
+    captured = capsys.readouterr()
+    output = captured.out
+    
+    # 验证格式
+    assert "=== 个人持有合同状态 ===" in output
+    assert "人物ID/名称：" in output
+    assert "合同ID:" in output
+    assert "类型:包税权" in output or "类型:公共工程" in output
+交付物：
+
+tests/test_commands/test_status_commands.py
+
+指令T6-2：全流程集成测试
+核心输入：
+
+规格说明书 §6.2 测试用例 INT-001~005
+
+测试用例表：
+
+用例ID	测试点	前置条件	测试步骤	预期结果
+INT-001	完整包税权流程	行省A未绑定	广场生成→竞标→税收结算→到期终止	资金流转正确
+INT-002	完整公共工程流程	行省B未绑定	广场生成→竞标→税收结算→到期尾款	资金流转正确
+INT-003	流拍场景	骑士财富均低于底价	广场阶段无人出价	合同流拍，行省未绑定
+INT-004	多合同并行	多个行省同时有合同	执行多回合	各合同独立运行
+INT-005	状态查询验证	有合同进行中	status_contract/status_province	数据与实际情况一致
+测试脚本框架：
+
+python
+def test_full_tax_contract_flow(game_state, sample_province, sample_knight):
+    # 1. 广场阶段生成合同
+    forum_cmd = ForumCommand(game_state)
+    forum_cmd.execute([])
+    
+    # 2. 骑士竞标
+    bid_cmd = BidContractCommand(game_state)
+    bid_cmd.execute(["1", "100"])
+    
+    # 3. 税收阶段结算
+    revenue_cmd = RevenueCommand(game_state)
+    revenue_cmd.execute([])
+    
+    # 4. 验证
+    assert sample_knight.wealth == 1000 - 100 + 18  # 初始-出价+利润
+    assert game_state._treasury == 1000 + 100 + 600  # 初始+拍卖收入+公地租金
+交付物：
+
+tests/test_integration/test_full_flows.py
+
+【T7 架构合规性专项】
+指令T7-1：架构约束检查（贯穿全程）
+检查清单：
+
+检查项	检查方法	通过标准	检查时机
+CHK-001	增量原则	代码diff审查	无修改原有核心逻辑文件	每个PR
+CHK-002	字段封装	代码审查	所有新增字段为私有，提供property	实体提交后
+CHK-003	依赖方向	静态分析	无实体层导入命令层	每周
+CHK-004	命令注册	检查 _commands 字典	新增命令自动注册	命令提交后
+CHK-005	日志统一	代码审查	核心操作调用 log_event()	每个功能
+CHK-006	配置访问	代码审查	使用 Config.get()，非直接字典	配置相关PR
+CHK-007	资金原子性	代码审查+测试	资金操作在try块内，异常回滚	BID测试
+自动化检查脚本：
+
+python
+# tests/test_compliance/test_architecture.py
+
+def test_no_singleton_in_game_state():
+    """检查GameState是否已移除单例"""
+    import inspect
+    from src.core.game_state import GameState
+    
+    source = inspect.getsource(GameState)
+    assert "_instance" not in source
+    assert "__new__" not in source or "Singleton" not in source
+
+def test_fields_are_private():
+    """检查新增实体字段是否为私有"""
+    from src.core.entities.contract import Contract
+    from src.core.entities.entities import Province
+    
+    for cls in [Contract, Province]:
+        for attr_name in dir(cls):
+            if not attr_name.startswith('_') and not callable(getattr(cls, attr_name)):
+                # 允许的公共属性列表
+                allowed = ['contract_id', 'name', 'description']  # 根据实际情况扩展
+                if attr_name not in allowed:
+                    assert False, f"{cls.__name__}.{attr_name} 应为私有字段"
+交付物：
+
+tests/test_compliance/test_architecture.py
+
+每周合规性检查报告（在测试总结中体现）
