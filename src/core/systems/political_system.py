@@ -48,10 +48,13 @@ class PoliticalSystem:
         presiding = self.state.get_presiding_officer()
         presiding_info = None
         if presiding:
+            presiding_faction = self.state.get_faction(presiding.faction_id)
             presiding_info = {
                 "figure_id": presiding.id,
                 "name": presiding.get_formal_name(),
                 "office": presiding.office or "无",
+                "faction_id": presiding.faction_id,
+                "faction_name": presiding_faction.name if presiding_faction else "",
             }
 
         ws = self.state.get_war_system()

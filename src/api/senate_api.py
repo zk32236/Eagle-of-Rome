@@ -83,8 +83,8 @@ def _proposal_label(state: GameState, proposal: Dict[str, Any]) -> str:
     return ptype
 
 
-def _proposal_option(key: str, proposal_type: str, title: str, detail: str, params: Dict[str, Any]) -> Dict[str, Any]:
-    return {
+def _proposal_option(key: str, proposal_type: str, title: str, detail: str, params: Dict[str, Any], **extra: Any) -> Dict[str, Any]:
+    option = {
         "key": key,
         "type": proposal_type,
         "title": title,
@@ -93,15 +93,25 @@ def _proposal_option(key: str, proposal_type: str, title: str, detail: str, para
         "selected": False,
         "enabled": True,
     }
+    option.update(extra)
+    return option
 
 
 def _build_proposal_options(state: GameState, info: Dict[str, Any]) -> List[Dict[str, Any]]:
     options: List[Dict[str, Any]] = []
     for war in info.get("war_threats", []):
+        recruit_cost = state.get_economic_rule("legion_recruit_cost", 4)
+        maintenance_base = state.get_economic_rule("legion_maintenance_base", 8)
+        veteran_bonus = state.get_economic_rule("veteran_maintenance_bonus", 1)
+        veteran_maintenance = maintenance_base + veteran_bonus
+        war_detail = (
+            f"征召 6 个军团；威胁 {war.get('threat_level', 0)}；"
+            f"招募费（一次性）{recruit_cost} T/军团；维护费：新军团 {maintenance_base} T/月，老兵军团 {veteran_maintenance} T/月"
+        )
         options.append(_proposal_option(
             f"war:{war.get('war_id')}", "war",
             f"宣战 — {war.get('name', war.get('war_id'))}",
-            f"征召 6 个军团；威胁 {war.get('threat_level', 0)}",
+            war_detail,
             {"war_id": war.get("war_id"), "legions": 6},
         ))
     for peace in info.get("pending_peace_treaties", []):
@@ -133,6 +143,7 @@ def _build_proposal_options(state: GameState, info: Dict[str, Any]) -> List[Dict
             f"建造合同 — {contract.get('name', contract.get('contract_id'))}",
             f"预算金额 {base_cost} T；预期收益 {contract.get('expected_profit', 0)} T",
             {"contract_id": contract.get("contract_id"), "modified_budget": base_cost},
+            contract_type=contract.get("type", ""),
         ))
     public_land = state.get_national_public_land()
     if public_land > 0:
@@ -140,11 +151,13 @@ def _build_proposal_options(state: GameState, info: Dict[str, Any]) -> List[Dict
             "land:sale", "land", "卖地法案 — 出售国家公地",
             f"出售 10% 国家公地；当前公地 {public_land} C",
             {"act_type": "sale", "percent": 0.10},
+            public_land=public_land,
         ))
         options.append(_proposal_option(
             "land:distribution", "land", "分地法案 — 分配公地给平民",
             f"分配 10% 国家公地；当前公地 {public_land} C",
             {"act_type": "distribution", "percent": 0.10},
+            public_land=public_land,
         ))
     return options
 
@@ -271,6 +284,10 @@ def _build_governor_appointments(state: GameState) -> dict:
                     "faction_id": fig.faction_id,
                     "faction_name": faction.name if faction else "",
                     "influence": fig.influence,
+                    "class_tier": fig.class_tier.name if fig.class_tier else "",
+                    "martial": fig.martial,
+                    "intelligence": fig.intelligence,
+                    "charisma": fig.charisma,
                 })
 
             pending_provinces.append({

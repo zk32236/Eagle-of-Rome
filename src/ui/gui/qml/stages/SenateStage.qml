@@ -145,6 +145,40 @@ Rectangle {
         return GuiText.senateLeaderCount(count)
     }
 
+    // ---- WP-05V V3: 派系色（FC-08 冻结值：Opt=#8B0000 / Pop=#006400 / Equ=#00008B） ----
+
+    function factionColor(factionName) {
+        if (!factionName) return "#2C1E12"
+        if (factionName.indexOf("Optimates") >= 0) return "#8B0000"
+        if (factionName.indexOf("Populares") >= 0) return "#006400"
+        if (factionName.indexOf("Equites") >= 0) return "#00008B"
+        return "#2C1E12"
+    }
+
+    function seatLineRich() {
+        var rows = sessionStore.senateSeatShares || []
+        if (rows.length === 0) return "席位占比：暂无"
+        var parts = []
+        for (var i = 0; i < rows.length; i++) {
+            var name = rows[i].faction_name || rows[i].faction_id || ""
+            var color = factionColor(rows[i].faction_name)
+            parts.push('<font color="' + color + '">' + name + " " + (rows[i].percent || 0) + "%" + "</font>")
+        }
+        return "席位占比：" + parts.join(" · ")
+    }
+
+    function presidingLine() {
+        var po = sessionStore.senatePresidingOfficer || {}
+        var name = po.name || "暂无"
+        var office = po.office || "官职未定"
+        var factionName = po.faction_name || ""
+        var base = "会议主持：" + name + "（" + office + "）"
+        if (factionName.length > 0) {
+            return base + ' · <font color="' + factionColor(factionName) + '">' + factionName + '</font>'
+        }
+        return base
+    }
+
     function seatLine() {
         var rows = sessionStore.senateSeatShares || []
         if (rows.length === 0) return "席位占比：暂无"
@@ -170,7 +204,18 @@ Rectangle {
         var rows = []
         var options = sessionStore.senateProposalOptions || []
         for (var i = 0; i < options.length; i++) {
-            if (hasSelectedProposal(options[i].key)) rows.push(options[i])
+            var o = options[i]
+            if (!hasSelectedProposal(o.key)) continue
+            var overrides = billParams[o.key]
+            if (!overrides) { rows.push(o); continue }
+            var merged = {}
+            for (var k in o) { if (o.hasOwnProperty(k)) merged[k] = o[k] }
+            var p = {}
+            var baseParams = o.params || {}
+            for (var pk in baseParams) { if (baseParams.hasOwnProperty(pk)) p[pk] = baseParams[pk] }
+            for (var ok in overrides) { if (overrides.hasOwnProperty(ok)) p[ok] = overrides[ok] }
+            merged.params = p
+            rows.push(merged)
         }
         return rows
     }
@@ -184,7 +229,79 @@ Rectangle {
         selectedProposalKeys = next
     }
 
-    Component.onCompleted: syncDefaultSelection()
+    // ---- WP-05V V2: accordion 展开状态 + 参数覆盖 ----
+
+    property var expandedBillKeys: []
+    property var billParams: ({})
+
+    function toggleBillExpanded(key) {
+        var next = expandedBillKeys.slice()
+        var pos = next.indexOf(key)
+        if (pos >= 0) next.splice(pos, 1)
+        else next.push(key)
+        expandedBillKeys = next
+    }
+
+    function expandCheckedBills() {
+        expandedBillKeys = selectedProposalKeys.slice()
+    }
+
+    function billParamValue(key, name, fallback) {
+        var o = billParams[key]
+        if (o && o[name] !== undefined) return o[name]
+        return fallback
+    }
+
+    function setBillParam(key, name, value) {
+        var next = {}
+        for (var k in billParams) {
+            if (!billParams.hasOwnProperty(k)) continue
+            var sub = {}
+            for (var n in billParams[k]) { if (billParams[k].hasOwnProperty(n)) sub[n] = billParams[k][n] }
+            next[k] = sub
+        }
+        var target = next[key] || {}
+        target[name] = value
+        next[key] = target
+        billParams = next
+    }
+
+    function warLegionIndex(v) {
+        if (v === 2) return 0
+        if (v === 4) return 1
+        if (v === 6) return 2
+        if (v === 8) return 3
+        return 4
+    }
+
+    function hasZeroValueLandSelection() {
+        var options = sessionStore.senateProposalOptions || []
+        for (var i = 0; i < options.length; i++) {
+            var o = options[i]
+            if (o.type !== "land" || !hasSelectedProposal(o.key)) continue
+            var percent = billParamValue(o.key, "percent", (o.params && o.params.percent) || 0)
+            var publicLand = o.public_land || 0
+            if (percent <= 0 || publicLand <= 0) return true
+        }
+        return false
+    }
+
+    // ---- WP-05V V4: FC-12 表决参数描述（复用 proposal params，回退 label） ----
+    function voteParamDescription(item) {
+        if (!item) return ""
+        if (item.type === "war") return ""  // 后端 _proposal_label 已含「（征召 N 个军团）」，避免重复（G5 识图缺陷）
+        if (item.type === "budget") return ""  // 后端 _proposal_label 已含「（预算 N T）」，避免重复（G5 识图缺陷，与 war 同源）
+        if (item.type === "land") {
+            var actName = item.act_type === "sale" ? "出售" : "分配"
+            return "（" + actName + " " + ((item.percent !== undefined ? item.percent : 0) * 100).toFixed(0) + "% 公地）"
+        }
+        return ""
+    }
+
+    Component.onCompleted: {
+        syncDefaultSelection()
+        expandCheckedBills()
+    }
 
     Connections {
         target: sessionStore
@@ -211,14 +328,14 @@ Rectangle {
                 spacing: 5
                 Text { text: "🏛 元老院议事"; color: "#2C1E12"; font.pixelSize: 13; font.bold: true }
                 Text {
-                    text: "会议主持：" + (sessionStore.senatePresidingOfficer.name ? sessionStore.senatePresidingOfficer.name : "暂无")
-                        + "（" + (sessionStore.senatePresidingOfficer.office || "官职未定") + "）"
+                    text: root.presidingLine()
+                    textFormat: Text.RichText
                     color: "#2C1E12"
                     font.pixelSize: 12
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
                 }
-                Text { text: root.seatLine(); color: "#9A2D0A"; font.pixelSize: 12; font.bold: true; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                Text { text: root.seatLineRich(); textFormat: Text.RichText; color: "#9A2D0A"; font.pixelSize: 12; font.bold: true; Layout.fillWidth: true; wrapMode: Text.Wrap }
                 Text { text: "※ 最终通过法案及政府运作结果将在此展示"; color: "#766652"; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.Wrap }
             }
         }
@@ -226,18 +343,23 @@ Rectangle {
         Rectangle {
             visible: sessionStore.senateCurrentStep === "results"
             Layout.fillWidth: true
-            Layout.preferredHeight: 230
-            Layout.minimumHeight: 200
-            Layout.maximumHeight: 320
+            Layout.preferredHeight: 150
+            Layout.minimumHeight: 110
+            Layout.maximumHeight: 200
             color: "#FFF7E9"
             border.color: "#D9AF63"
             border.width: 1
             radius: 6
+            clip: true
 
-            ColumnLayout {
+            ScrollView {
                 anchors.fill: parent
-                anchors.margins: 10
-                spacing: 6
+                anchors.margins: 4
+                clip: true
+                contentWidth: availableWidth
+                ColumnLayout {
+                    width: parent.width
+                    spacing: 6
                 Text {
                     visible: root.rejectedResultRows().length > 0
                     text: "\u26d4 \u4fdd\u6c11\u5b98\u5426\u51b3 " + root.rejectedResultRows().length + " \u9879\uff1a" + root.rejectedResultText()
@@ -291,7 +413,7 @@ Rectangle {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
+                    Layout.preferredHeight: 84
                     Layout.minimumHeight: 72
                     radius: 4
                     color: "#FFF6E6"
@@ -325,18 +447,20 @@ Rectangle {
                         }
                     }
                 }
+                }
             }
         }
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: sessionStore.senateCurrentStep === "results" ? 330 : 460
-            Layout.minimumHeight: sessionStore.senateCurrentStep === "results" ? 320 : 440
-            Layout.maximumHeight: sessionStore.senateCurrentStep === "results" ? 330 : 460
+            Layout.preferredHeight: sessionStore.senateCurrentStep === "results" ? 200 : 460
+            Layout.minimumHeight: sessionStore.senateCurrentStep === "results" ? 170 : 460
+            Layout.maximumHeight: sessionStore.senateCurrentStep === "results" ? 240 : 460
             spacing: 12
 
             SenateWorkPanel {
                 title: "1  执政官提案 · 配置参数"
+                fpNum: "1"
                 active: sessionStore.senateCurrentStep === "proposal"
                 completed: root.proposalStepDone
                 Layout.fillWidth: true
@@ -437,32 +561,48 @@ Rectangle {
                             Repeater {
                                 model: sessionStore.senateCurrentStep === "proposal" ? (sessionStore.senateProposalOptions || []) : (sessionStore.senateSubmittedProposals || [])
                                 delegate: Rectangle {
+                                    id: billCard
                                     Layout.fillWidth: true
-                                    height: 48
+                                    property bool isProposal: sessionStore.senateCurrentStep === "proposal"
+                                    property bool expanded: isProposal && root.expandedBillKeys.indexOf(modelData.key) >= 0
+                                    property string billKey: (modelData && modelData.key) ? modelData.key : ""
+                                    property real defaultBudget: (modelData.params && modelData.params.modified_budget) ? modelData.params.modified_budget : 20
+                                    property real defaultPercent: (modelData.params && modelData.params.percent) ? modelData.params.percent : 0.10
+                                    Layout.preferredHeight: isProposal
+                                        ? (expanded ? cardColumn.implicitHeight + 12 : headerRow.implicitHeight + 12)
+                                        : 48
+                                    Layout.minimumHeight: 32
                                     radius: 4
                                     color: "#FFF6E6"
                                     border.color: "#E0B56C"
                                     border.width: 1
-                                    RowLayout {
+
+                                    ColumnLayout {
+                                        id: cardColumn
                                         anchors.fill: parent
-                                        anchors.margins: 8
-                                        spacing: 6
-                                        CheckBox {
-                                            visible: sessionStore.senateCurrentStep === "proposal"
-                                            enabled: sessionStore.canCreateSenateProposal
-                                            checked: root.hasSelectedProposal(modelData.key)
-                                            onToggled: root.setProposalSelected(modelData.key, checked)
-                                        }
-                                        Text {
-                                            visible: sessionStore.senateCurrentStep !== "proposal"
-                                            text: "\u2713"
-                                            color: theme.statusSuccess
-                                            font.pixelSize: 13
-                                            font.bold: true
-                                        }
-                                        ColumnLayout {
+                                        anchors.margins: 6
+                                        spacing: 4
+
+                                        RowLayout {
+                                            id: headerRow
                                             Layout.fillWidth: true
-                                            spacing: 1
+                                            spacing: 6
+
+                                            CheckBox {
+                                                visible: isProposal
+                                                enabled: sessionStore.canCreateSenateProposal
+                                                checked: root.hasSelectedProposal(modelData.key)
+                                                onToggled: root.setProposalSelected(modelData.key, checked)
+                                            }
+
+                                            Text {
+                                                visible: !isProposal
+                                                text: "\u2713"
+                                                color: theme.statusSuccess
+                                                font.pixelSize: 13
+                                                font.bold: true
+                                            }
+
                                             Text {
                                                 text: root.proposalTitle(modelData)
                                                 color: "#2C1E12"
@@ -471,13 +611,113 @@ Rectangle {
                                                 Layout.fillWidth: true
                                                 elide: Text.ElideRight
                                             }
+
+                                            Text {
+                                                visible: isProposal
+                                                text: expanded ? "\u25BC" : "\u25B6"
+                                                color: "#766652"
+                                                font.pixelSize: 10
+                                                horizontalAlignment: Text.AlignHCenter
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+
+                                            MouseArea {
+                                                visible: isProposal
+                                                width: 18
+                                                height: 20
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: root.toggleBillExpanded(billKey)
+                                            }
+                                        }
+
+                                        Text {
+                                            visible: !isProposal && root.proposalDetail(modelData).length > 0
+                                            text: root.proposalDetail(modelData)
+                                            color: "#766652"
+                                            font.pixelSize: 10
+                                            Layout.fillWidth: true
+                                            elide: Text.ElideRight
+                                        }
+
+                                        ColumnLayout {
+                                            id: billBody
+                                            visible: isProposal && expanded
+                                            Layout.fillWidth: true
+                                            spacing: 6
+
                                             Text {
                                                 visible: root.proposalDetail(modelData).length > 0
                                                 text: root.proposalDetail(modelData)
                                                 color: "#766652"
                                                 font.pixelSize: 10
                                                 Layout.fillWidth: true
-                                                elide: Text.ElideRight
+                                                wrapMode: Text.Wrap
+                                            }
+
+                                            // FC-01 宣战军团下拉
+                                            RowLayout {
+                                                visible: modelData.type === "war"
+                                                Layout.fillWidth: true
+                                                spacing: 6
+                                                Text { text: "征召军团"; color: "#2C1E12"; font.pixelSize: 11; Layout.preferredWidth: 60 }
+                                                ComboBox {
+                                                    model: [2, 4, 6, 8, 10]
+                                                    currentIndex: root.warLegionIndex(root.billParamValue(billKey, "legions", 6))
+                                                    Layout.fillWidth: true
+                                                    onActivated: root.setBillParam(billKey, "legions", model[currentIndex])
+                                                }
+                                            }
+
+                                            // FC-03/FC-04 预算 slider（PUBLIC_WORKS [20,200] / TAX_FARMING [20,150]）
+                                            ColumnLayout {
+                                                visible: modelData.type === "budget"
+                                                Layout.fillWidth: true
+                                                spacing: 2
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    Text { text: "预算金额"; color: "#2C1E12"; font.pixelSize: 11; Layout.preferredWidth: 60 }
+                                                    Text {
+                                                        text: Math.round(budgetSlider.value) + " T"
+                                                        color: "#9A2D0A"
+                                                        font.pixelSize: 11
+                                                        font.bold: true
+                                                    }
+                                                }
+                                                Slider {
+                                                    id: budgetSlider
+                                                    Layout.fillWidth: true
+                                                    from: 20
+                                                    to: modelData.contract_type === "tax_farming" ? 150 : 200
+                                                    stepSize: 1
+                                                    value: defaultBudget
+                                                    onValueChanged: root.setBillParam(billKey, "modified_budget", Math.round(value))
+                                                }
+                                            }
+
+                                            // FC-05/FC-06 卖地/分地 percent slider + 公地换算
+                                            ColumnLayout {
+                                                visible: modelData.type === "land"
+                                                Layout.fillWidth: true
+                                                spacing: 2
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    Text { text: "土地比例"; color: "#2C1E12"; font.pixelSize: 11; Layout.preferredWidth: 60 }
+                                                    Text {
+                                                        text: (landSlider.value * 100).toFixed(0) + "% = " + Math.floor((modelData.public_land || 0) * landSlider.value) + " C"
+                                                        color: "#9A2D0A"
+                                                        font.pixelSize: 11
+                                                        font.bold: true
+                                                    }
+                                                }
+                                                Slider {
+                                                    id: landSlider
+                                                    Layout.fillWidth: true
+                                                    from: 0.05
+                                                    to: 1.00
+                                                    stepSize: 0.05
+                                                    value: defaultPercent
+                                                    onValueChanged: root.setBillParam(billKey, "percent", value)
+                                                }
                                             }
                                         }
                                     }
@@ -489,7 +729,7 @@ Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 26
                         radius: 4
-                        enabled: sessionStore.canCreateSenateProposal && root.selectedProposalKeys.length > 0
+                        enabled: sessionStore.canCreateSenateProposal && root.selectedProposalKeys.length > 0 && !root.hasZeroValueLandSelection()
                         opacity: enabled ? 1.0 : 0.45
                         gradient: Gradient { GradientStop { position: 0.0; color: "#D9AA52" } GradientStop { position: 1.0; color: "#BC7B28" } }
                         Text { anchors.centerIn: parent; text: root.proposalStepDone ? "\u2190 \u6cd5\u6848\u5df2\u63d0\u4ea4" : "\u63d0\u4ea4\u9009\u4e2d\u6cd5\u6848 \u2192 \u79fb\u4ea4\u8868\u51b3"; color: "#2C1E12"; font.pixelSize: 12; font.bold: true }
@@ -500,12 +740,14 @@ Rectangle {
                     GovernorAppointmentPanel {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 160
+                        visible: sessionStore.senateCurrentStep !== "results"
                     }
                 }
             }
 
             SenateWorkPanel {
                 title: "2  元老院表决"
+                fpNum: "2"
                 active: sessionStore.senateCurrentStep === "senate_vote"
                 completed: sessionStore.senateCurrentStep === "tribune_veto" || sessionStore.senateCurrentStep === "results"
                 Layout.fillWidth: true
@@ -526,7 +768,7 @@ Rectangle {
                             spacing: 6
                             Repeater {
                                 model: sessionStore.senateSubmittedProposals || []
-                                delegate: CheckBox { Layout.fillWidth: true; enabled: sessionStore.senateCurrentStep === "senate_vote"; text: modelData.label || modelData.type; checked: true; font.pixelSize: 12 }
+                                delegate: CheckBox { Layout.fillWidth: true; enabled: sessionStore.senateCurrentStep === "senate_vote"; text: (modelData.label || modelData.type) + root.voteParamDescription(modelData); checked: true; font.pixelSize: 12 }
                             }
                         }
                     }
@@ -541,6 +783,7 @@ Rectangle {
 
             SenateWorkPanel {
                 title: "3  保民官否决"
+                fpNum: "3"
                 active: sessionStore.senateCurrentStep === "tribune_veto"
                 completed: sessionStore.senateCurrentStep === "results"
                 Layout.fillWidth: true
@@ -641,6 +884,7 @@ Rectangle {
 
     component SenateWorkPanel: Rectangle {
         property string title: ""
+        property string fpNum: ""
         property bool active: false
         property bool completed: false
         color: "#FFF7E9"
@@ -654,7 +898,18 @@ Rectangle {
             anchors.top: parent.top
             height: 36
             color: active || completed ? "#8F2506" : "#B98A76"
-            Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.leftMargin: 10; text: title; color: "white"; font.pixelSize: 13; font.bold: true }
+            Rectangle {
+                anchors.left: parent.left
+                anchors.leftMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                width: 20
+                height: 20
+                radius: 10
+                color: "#D9AA52"
+                visible: fpNum.length > 0
+                Text { anchors.centerIn: parent; text: fpNum; color: "#8F2506"; font.pixelSize: 11; font.bold: true }
+            }
+            Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.leftMargin: fpNum.length > 0 ? 38 : 10; text: title; color: "white"; font.pixelSize: 13; font.bold: true }
         }
     }
 

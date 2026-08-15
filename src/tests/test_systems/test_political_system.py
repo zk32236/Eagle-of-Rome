@@ -157,3 +157,30 @@ def test_restore_rejected_peace_uses_war_system_public_method(state):
     assert war not in ws.get_truce_wars()
     assert war.peace_treaty is None
     assert war.commander_id == 1
+
+
+def test_build_initial_info_presiding_officer_has_faction(state):
+    """WP-05V V1 DP-7: 主持 DTO 增补 faction_id / faction_name。"""
+    politics = PoliticalSystem(state)
+    info = politics.build_initial_info()
+    po = info["data"]["presiding_officer"]
+    assert po["figure_id"] == 1
+    assert po["faction_id"] == "optimates"
+    assert po["faction_name"] == "Optimates"
+
+
+def test_build_initial_info_presiding_no_faction_degrades(state):
+    """WP-05V V1 DP-7: 主持无派系时降级 faction_id=None / faction_name=""。"""
+    # 添加一个无派系、更高阶的独裁官作为主持（dictator rank 6 > consul rank 4）
+    dictator = Figure(id=9, name="Dictator", faction_id=None, age=50)
+    dictator.office = "dictator"
+    dictator.class_tier = ClassTier.NOBILE
+    dictator.influence = 200
+    state.add_member(dictator)
+
+    politics = PoliticalSystem(state)
+    info = politics.build_initial_info()
+    po = info["data"]["presiding_officer"]
+    assert po["figure_id"] == 9
+    assert po["faction_id"] is None
+    assert po["faction_name"] == ""

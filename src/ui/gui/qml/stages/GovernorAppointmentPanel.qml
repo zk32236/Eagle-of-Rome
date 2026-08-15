@@ -40,6 +40,23 @@ Rectangle {
         return true
     })()
 
+    // ---- WP-05V V3: 派系色（FC-08 冻结值：Opt=#8B0000 / Pop=#006400 / Equ=#00008B） ----
+    function factionColor(factionName) {
+        if (!factionName) return "#2C1E12"
+        if (factionName.indexOf("Optimates") >= 0) return "#8B0000"
+        if (factionName.indexOf("Populares") >= 0) return "#006400"
+        if (factionName.indexOf("Equites") >= 0) return "#00008B"
+        return "#2C1E12"
+    }
+
+    // ---- WP-05V V4: FC-09 阶级枚举名 → 中文标签 ----
+    function classTierLabel(tier) {
+        if (tier === "NOBILE") return "贵族"
+        if (tier === "EQUES") return "骑士"
+        if (tier === "PLEBEIAN") return "平民"
+        return tier || ""
+    }
+
     // 标题栏
     Rectangle {
         id: titleBar
@@ -53,7 +70,7 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left
             anchors.leftMargin: 10
-            text: submitted ? "\u2705 总督任命 \u2014 已提交" : "\U0001F3DB\uFE0F 总督任命"  // ✅已提交 / 🏛️总督任命
+            text: submitted ? "\u2705 总督任命 \u2014 已提交" : "🏛 总督任命"  // ✅已提交 / 🏛️总督任命（FC-10 移除 VS16）
             color: "white"
             font.pixelSize: 13
             font.bold: true
@@ -106,6 +123,16 @@ Rectangle {
             text: "\u2139\uFE0F 暂无行省信息"  // ℹ️ 暂无行省信息
             color: "#766652"
             font.pixelSize: 12
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+        }
+
+        // === FC-13 合格条件提示 ===
+        Text {
+            visible: !submitted && pendingProvinces.length > 0
+            text: "合格条件：元老院成员，曾任大法官以上官职"
+            color: "#766652"
+            font.pixelSize: 11
             Layout.fillWidth: true
             wrapMode: Text.Wrap
         }
@@ -172,22 +199,21 @@ Rectangle {
                     model: pendingProvinces
                     delegate: Rectangle {
                         Layout.fillWidth: true
-                        height: 48
+                        Layout.preferredHeight: (modelData.candidates || []).length === 0 ? 52 : 52 + (modelData.candidates || []).length * 32
                         radius: 4
-                        color: (modelData.candidates || []).length === 0 ? "#FFF6E6" : "#FFF6E6"
+                        color: "#FFF6E6"
                         border.color: "#E0B56C"
                         border.width: 1
 
-                        RowLayout {
+                        ColumnLayout {
                             anchors.fill: parent
-                            anchors.margins: 8
-                            spacing: 6
+                            anchors.margins: 6
+                            spacing: 3
 
-                            // 行省名称 + 类型
-                            ColumnLayout {
-                                Layout.preferredWidth: parent.width * 0.35
-                                Layout.maximumWidth: 180
-                                spacing: 1
+                            // 行省名称 + 状态指示
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
 
                                 Text {
                                     text: modelData.name || ""
@@ -199,44 +225,77 @@ Rectangle {
                                 }
 
                                 Text {
-                                    text: (modelData.governor_type_name || modelData.governor_type || "")
-                                        + (modelData.current_governor ? " \u00B7 \u5F53\u524D:" + modelData.current_governor.name : "")
+                                    text: (modelData.candidates || []).length > 0 ? "\u23F3 \u7B49\u5F85\u63D0\u4EA4" : ""  // ⏳ 等待提交
                                     color: "#766652"
                                     font.pixelSize: 10
-                                    elide: Text.ElideRight
-                                    Layout.fillWidth: true
+                                    visible: (modelData.candidates || []).length > 0
                                 }
                             }
 
-                            // 候选人下拉 / 无候选人提示
+                            // 行省类型 + 现任总督（整宽换行展示，避免横向裁切）
+                            Text {
+                                text: (modelData.governor_type_name || modelData.governor_type || "")
+                                    + (modelData.current_governor ? " \u00B7 \u5F53\u524D:" + modelData.current_governor.name : "")
+                                color: "#766652"
+                                font.pixelSize: 9
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                            }
+
+                            // 候选人属性只读展示（FUNC-05 保持：无下拉），整宽竖排避免拥挤
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 24
+                                Layout.preferredHeight: (modelData.candidates || []).length === 0 ? 26 : (modelData.candidates || []).length * 34 + 4
+                                Layout.minimumHeight: 26
                                 radius: 3
                                 color: (modelData.candidates || []).length === 0 ? "#FDECD4" : "#FFF7E9"
                                 border.color: (modelData.candidates || []).length === 0 ? "#E6A542" : "#D9AF63"
                                 border.width: 1
 
                                 Text {
+                                    visible: (modelData.candidates || []).length === 0
                                     anchors.centerIn: parent
-                                    text: (modelData.candidates || []).length === 0
-                                          ? "\u26A0\uFE0F 无可用候选人"
-                                          : (modelData.candidates || []).map(function(c) { return c.name + " (" + (c.faction_name || c.faction_id) + ")" }).join(" \u3001")
-                                    color: (modelData.candidates || []).length === 0 ? "#9A2D0A" : "#2C1E12"
+                                    text: "\u26A0\uFE0F 无可用候选人"
+                                    color: "#9A2D0A"
                                     font.pixelSize: 11
-                                    elide: Text.ElideRight
-                                    leftPadding: 5
-                                    rightPadding: 5
-                                    Layout.fillWidth: true
                                 }
-                            }
 
-                            // 状态指示
-                            Text {
-                                text: (modelData.candidates || []).length > 0 ? "\u23F3 \u7B49\u5F85\u63D0\u4EA4" : ""  // ⏳ 等待提交
-                                color: "#766652"
-                                font.pixelSize: 10
-                                visible: (modelData.candidates || []).length > 0
+                                ColumnLayout {
+                                    visible: (modelData.candidates || []).length > 0
+                                    anchors.fill: parent
+                                    anchors.margins: 5
+                                    spacing: 3
+
+                                    Repeater {
+                                        model: modelData.candidates || []
+                                        delegate: ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 1
+
+                                            Text {
+                                                text: '<font color="' + root.factionColor(modelData.faction_name) + '">' + (modelData.name || "") + "</font>"
+                                                    + " \u00B7 " + root.classTierLabel(modelData.class_tier)
+                                                textFormat: Text.RichText
+                                                color: "#2C1E12"
+                                                font.pixelSize: 11
+                                                font.bold: true
+                                                Layout.fillWidth: true
+                                                wrapMode: Text.Wrap
+                                            }
+
+                                            Text {
+                                                text: "\u519B\u7565 " + (modelData.martial !== undefined ? modelData.martial : "\u2014")
+                                                    + " \u00B7 \u667A\u7565 " + (modelData.intelligence !== undefined ? modelData.intelligence : "\u2014")
+                                                    + " \u00B7 \u9B45\u529B " + (modelData.charisma !== undefined ? modelData.charisma : "\u2014")
+                                                    + " \u00B7 \u5F71\u54CD\u529B " + (modelData.influence !== undefined ? modelData.influence : "\u2014")
+                                                color: "#766652"
+                                                font.pixelSize: 10
+                                                Layout.fillWidth: true
+                                                wrapMode: Text.Wrap
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -258,7 +317,7 @@ Rectangle {
             }
             Text {
                 anchors.centerIn: parent
-                text: "\U0001F4E8 提交所有任命"  // 📨
+                text: "📨 提交所有任命"  // 📨
                 color: "#2C1E12"
                 font.pixelSize: 12
                 font.bold: true

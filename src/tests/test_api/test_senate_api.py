@@ -447,3 +447,138 @@ class TestAutoSubmitProposals(unittest.TestCase):
         self.assertIn("peace", types_found)
         # 总督任命依赖候选人选举逻辑，可能因随机性跳过行省
         # budget 和 land 依赖合同/公地数据，不强制断言
+
+
+class TestWP05VWarDetail(unittest.TestCase):
+    """WP-05V V1: DP-4 war 提案费用文案 + P1-1 economic_rules 缺参降级。"""
+
+    def _make_state(self, economic_rules=None):
+        config = {}
+        if economic_rules is not None:
+            config["economic_rules"] = economic_rules
+        return GameState.create_for_testing(config)
+
+    def _war_options(self, state, threat_level=3):
+        info = {"war_threats": [{"war_id": "w1", "name": "测试战争", "threat_level": threat_level}]}
+        options = senate_api._build_proposal_options(state, info)
+        return [o for o in options if o["type"] == "war"]
+
+    def test_war_option_detail_contains_cost_text(self):
+        state = self._make_state({
+            "legion_recruit_cost": 4,
+            "legion_maintenance_base": 8,
+            "veteran_maintenance_bonus": 1,
+        })
+        wars = self._war_options(state)
+        self.assertEqual(len(wars), 1)
+        detail = wars[0]["detail"]
+        self.assertIn("招募费（一次性）4 T", detail)
+        self.assertIn("新军团 8 T", detail)
+        self.assertIn("老兵军团 9 T", detail)
+
+    def test_war_option_detail_missing_economic_rules_degrades(self):
+        state = self._make_state()  # economic_rules 整节缺失
+        wars = self._war_options(state)
+        self.assertEqual(len(wars), 1)
+        detail = wars[0]["detail"]
+        self.assertIn("招募费（一次性）4 T", detail)
+        self.assertIn("新军团 8 T", detail)
+        self.assertIn("老兵军团 9 T", detail)
+
+    def test_war_option_detail_partial_economic_rules_degrades(self):
+        # veteran_maintenance_bonus 缺失 → 默认 1（老兵 = 8 + 1 = 9）
+        state = self._make_state({"legion_recruit_cost": 4, "legion_maintenance_base": 8})
+        wars = self._war_options(state)
+        self.assertEqual(len(wars), 1)
+        detail = wars[0]["detail"]
+        self.assertIn("招募费（一次性）4 T", detail)
+        self.assertIn("新军团 8 T", detail)
+        self.assertIn("老兵军团 9 T", detail)
+
+
+class TestWP05VGovernorCandidateAttrs(unittest.TestCase):
+    """WP-05V V1: DP-6 candidate DTO 四字段（class_tier/martial/intelligence/charisma）。"""
+
+    def test_governor_appointments_candidate_has_4_attrs(self):
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+
+        faction = Faction(id="optimates", name="Optimates", treasury=50)
+        state.add_faction(faction)
+
+        candidate = Figure(id=1, name="候选人", faction_id="optimates", age=50)
+        candidate.class_tier = ClassTier.NOBILE
+        candidate.martial = 7
+        candidate.intelligence = 6
+        candidate.charisma = 5
+        candidate.office = None
+        candidate.office_history.append(type('Term', (), {'office_type': 'consul', 'end_turn': 10})())
+        state.add_member(candidate)
+        faction.member_ids.append(1)
+
+        province = Province(province_id=10, name="西西里", total_land=1000, conquered=True, governor_type="proconsul")
+        state.add_province(province)
+
+        result = senate_api._build_governor_appointments(state)
+        pending = result["pending_provinces"]
+        self.assertEqual(len(pending), 1)
+        candidates = pending[0]["candidates"]
+        self.assertEqual(len(candidates), 1)
+        c = candidates[0]
+        self.assertEqual(c["class_tier"], "NOBILE")
+        self.assertEqual(c["martial"], 7)
+        self.assertEqual(c["intelligence"], 6)
+        self.assertEqual(c["charisma"], 5)
+
+
+class TestWP05VParamsPassthrough(unittest.TestCase):
+    """WP-05V V2: propose_many params 透传 + budget/land 边界契约。"""
+
+    def setUp(self):
+        self.state = GameState.create_for_testing({})
+        self.state.turn = GameTurn(turn_number=1, year=-264)
+        self.faction = Faction(id="optimates", name="Optimates", treasury=50)
+        self.state.add_faction(self.faction)
+        self.consul = Figure(id=1, name="执政官", faction_id="optimates", age=40)
+        self.consul.office = "consul"
+        self.consul.class_tier = ClassTier.NOBILE
+        self.state.add_member(self.consul)
+        self.faction.member_ids.append(1)
+        self.state._players = {
+            "player1": MagicMock(player_id="player1", faction_id="optimates", player_type="human"),
+        }
+        self.state._current_player_id = "player1"
+
+    def test_propose_many_params_passthrough(self):
+        specs = [
+            {"type": "war", "params": {"war_id": "w1", "legions": 8}},
+            {"type": "budget", "params": {"contract_id": 5, "modified_budget": 120}},
+            {"type": "land", "params": {"act_type": "sale", "percent": 0.35}},
+        ]
+        result = senate_api.propose_many(self.state, "player1", specs)
+        self.assertTrue(result["success"])
+        self.assertEqual(len(result["data"]["created"]), 3)
+
+        proposals = self.state.get_senate_proposals()
+        by_type = {p["type"]: p for p in proposals}
+        self.assertEqual(by_type["war"]["war_id"], "w1")
+        self.assertEqual(by_type["war"]["legions"], 8)
+        self.assertEqual(by_type["budget"]["contract_id"], 5)
+        self.assertEqual(by_type["budget"]["modified_budget"], 120)
+        self.assertEqual(by_type["land"]["act_type"], "sale")
+        self.assertEqual(by_type["land"]["percent"], 0.35)
+
+    def test_propose_budget_clamp(self):
+        # 前端 clamp 到 [20,200] 后，后端接收合法边界值并透传存储
+        result = senate_api.propose(self.state, "player1", "budget", contract_id=5, modified_budget=20)
+        self.assertTrue(result["success"])
+        proposals = self.state.get_senate_proposals()
+        self.assertEqual(proposals[0]["modified_budget"], 20)
+
+    def test_propose_land_percent_zero_disabled(self):
+        # percent=0 后端 amount=0 无害（前端禁提交）；后端仍接受并存储 percent=0
+        result = senate_api.propose(self.state, "player1", "land", act_type="sale", percent=0)
+        self.assertTrue(result["success"])
+        proposals = self.state.get_senate_proposals()
+        self.assertEqual(proposals[0]["act_type"], "sale")
+        self.assertEqual(proposals[0]["percent"], 0)
