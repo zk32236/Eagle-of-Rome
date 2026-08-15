@@ -582,3 +582,82 @@ class TestWP05VParamsPassthrough(unittest.TestCase):
         proposals = self.state.get_senate_proposals()
         self.assertEqual(proposals[0]["act_type"], "sale")
         self.assertEqual(proposals[0]["percent"], 0)
+
+
+class TestWP05VGovernorIA(unittest.TestCase):
+    """WP-05V G6 Narrow: FC-14 governor 提案条件存在 + 提交/标签路径（AC-22/23/24 后端）。"""
+
+    def _state_with_province_and_candidate(self):
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+        faction = Faction(id="optimates", name="Optimates", treasury=50)
+        state.add_faction(faction)
+
+        consul = Figure(id=1, name="执政官", faction_id="optimates", age=40)
+        consul.office = "consul"
+        consul.class_tier = ClassTier.NOBILE
+        state.add_member(consul)
+        faction.member_ids.append(1)
+
+        candidate = Figure(id=5, name="前执政官", faction_id="optimates", age=60)
+        candidate.office = None
+        candidate.class_tier = ClassTier.NOBILE
+        candidate.office_history.append(type('Term', (), {'office_type': 'consul', 'end_turn': 10})())
+        state.add_member(candidate)
+        faction.member_ids.append(5)
+
+        province = Province(province_id=10, name="西西里", total_land=1000, conquered=True, governor_type="proconsul")
+        state.add_province(province)
+
+        state._players = {
+            "player1": MagicMock(player_id="player1", faction_id="optimates", player_type="human"),
+        }
+        state._current_player_id = "player1"
+        return state
+
+    def test_no_vacancy_no_governor_option(self):
+        # AC-22 后端：governor_vacancies 空 → 无 type="governor" proposal option
+        state = GameState.create_for_testing({})
+        info = {
+            "war_threats": [],
+            "pending_peace_treaties": [],
+            "governor_vacancies": {},
+            "pending_contracts": [],
+        }
+        options = senate_api._build_proposal_options(state, info)
+        governor_options = [o for o in options if o["type"] == "governor"]
+        self.assertEqual(len(governor_options), 0)
+
+    def test_vacancy_generates_governor_option(self):
+        # AC-23 后端：有 vacancy → 生成 type="governor" proposal（title 纯文本）
+        state = self._state_with_province_and_candidate()
+        info = {
+            "war_threats": [],
+            "pending_peace_treaties": [],
+            "governor_vacancies": {
+                "proconsul": [{"province_id": 10, "province_name": "西西里"}],
+            },
+            "pending_contracts": [],
+        }
+        options = senate_api._build_proposal_options(state, info)
+        governor_options = [o for o in options if o["type"] == "governor"]
+        self.assertEqual(len(governor_options), 1)
+        self.assertEqual(governor_options[0]["title"], "总督任命 — 西西里")
+        self.assertEqual(governor_options[0]["params"]["province_id"], 10)
+        self.assertEqual(governor_options[0]["params"]["candidate_id"], 5)
+
+    def test_propose_governor_and_label(self):
+        # AC-24 后端：勾选 governor → propose("governor") 成功 + label 含行省/候选人
+        state = self._state_with_province_and_candidate()
+        result = senate_api.propose(state, "player1", "governor", province_id=10, candidate_id=5)
+        self.assertTrue(result["success"])
+
+        proposals = state.get_senate_proposals()
+        self.assertEqual(len(proposals), 1)
+        self.assertEqual(proposals[0]["type"], "governor")
+        self.assertEqual(proposals[0]["province_id"], 10)
+        self.assertEqual(proposals[0]["candidate_id"], 5)
+
+        label = senate_api._proposal_label(state, proposals[0])
+        self.assertIn("总督任命", label)
+        self.assertIn("西西里", label)

@@ -155,6 +155,47 @@ Rectangle {
         return "#2C1E12"
     }
 
+    // ---- WP-05V V4 (G6 Narrow): FC-09 阶级枚举名 → 中文标签 ----
+    function classTierLabel(tier) {
+        if (tier === "NOBILE") return "贵族"
+        if (tier === "EQUES") return "骑士"
+        if (tier === "PLEBEIAN") return "平民"
+        return tier || ""
+    }
+
+    // ---- WP-05V G6 Narrow: FC-14 governor 候选人只读信息（复用 governorAppointments DTO） ----
+    function governorCandidateInfo(proposal) {
+        if (!proposal || !proposal.params) return null
+        var provId = proposal.params.province_id
+        var candId = proposal.params.candidate_id
+        var appts = sessionStore.governorAppointments || {}
+        var pending = appts.pending_provinces || []
+        for (var i = 0; i < pending.length; i++) {
+            if (pending[i].province_id !== provId) continue
+            var cands = pending[i].candidates || []
+            for (var j = 0; j < cands.length; j++) {
+                if (cands[j].id === candId) return cands[j]
+            }
+        }
+        return null
+    }
+
+    function governorCandidateNameLine(proposal) {
+        var c = governorCandidateInfo(proposal)
+        if (!c) return ""
+        return '<font color="' + factionColor(c.faction_name) + '">' + (c.name || "") + "</font>"
+            + " · " + classTierLabel(c.class_tier)
+    }
+
+    function governorCandidateAttrsLine(proposal) {
+        var c = governorCandidateInfo(proposal)
+        if (!c) return ""
+        return "\u519B\u7565 " + (c.martial !== undefined ? c.martial : "\u2014")
+            + " \u00B7 \u667A\u7565 " + (c.intelligence !== undefined ? c.intelligence : "\u2014")
+            + " \u00B7 \u9B45\u529B " + (c.charisma !== undefined ? c.charisma : "\u2014")
+            + " \u00B7 \u5F71\u54CD\u529B " + (c.influence !== undefined ? c.influence : "\u2014")
+    }
+
     function seatLineRich() {
         var rows = sessionStore.senateSeatShares || []
         if (rows.length === 0) return "席位占比：暂无"
@@ -719,6 +760,41 @@ Rectangle {
                                                     onValueChanged: root.setBillParam(billKey, "percent", value)
                                                 }
                                             }
+
+                                            // FC-14 + FC-09 + FC-13: governor 候选人只读展示 + 合格条件提示（G6 Narrow）
+                                            ColumnLayout {
+                                                visible: modelData.type === "governor"
+                                                Layout.fillWidth: true
+                                                spacing: 4
+
+                                                Text {
+                                                    text: "合格条件：元老院成员，曾任大法官以上官职"
+                                                    color: "#766652"
+                                                    font.pixelSize: 10
+                                                    Layout.fillWidth: true
+                                                    wrapMode: Text.Wrap
+                                                }
+
+                                                Text {
+                                                    visible: root.governorCandidateNameLine(modelData).length > 0
+                                                    text: root.governorCandidateNameLine(modelData)
+                                                    textFormat: Text.RichText
+                                                    color: "#2C1E12"
+                                                    font.pixelSize: 11
+                                                    font.bold: true
+                                                    Layout.fillWidth: true
+                                                    wrapMode: Text.Wrap
+                                                }
+
+                                                Text {
+                                                    visible: root.governorCandidateAttrsLine(modelData).length > 0
+                                                    text: root.governorCandidateAttrsLine(modelData)
+                                                    color: "#766652"
+                                                    font.pixelSize: 10
+                                                    Layout.fillWidth: true
+                                                    wrapMode: Text.Wrap
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -734,13 +810,6 @@ Rectangle {
                         gradient: Gradient { GradientStop { position: 0.0; color: "#D9AA52" } GradientStop { position: 1.0; color: "#BC7B28" } }
                         Text { anchors.centerIn: parent; text: root.proposalStepDone ? "\u2190 \u6cd5\u6848\u5df2\u63d0\u4ea4" : "\u63d0\u4ea4\u9009\u4e2d\u6cd5\u6848 \u2192 \u79fb\u4ea4\u8868\u51b3"; color: "#2C1E12"; font.pixelSize: 12; font.bold: true }
                         MouseArea { anchors.fill: parent; enabled: parent.enabled; onClicked: sessionStore.doSubmitSenateProposals(root.selectedProposals()) }
-                    }
-
-                    // S5: Governor appointment preview panel
-                    GovernorAppointmentPanel {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 160
-                        visible: sessionStore.senateCurrentStep !== "results"
                     }
                 }
             }

@@ -1,10 +1,10 @@
 """Regression test — WP-05V G5 senate layout fix.
 
-Guards the DA layout fix for the two G5 visual defects:
+Guards the DA layout fix for the G5 visual defect and the G6 Governor IA fix:
 1. Result-state overflow: header + result area + three-column panel must fit
    inside the stageContent slot (no clipping past the container).
-2. Candidate crowding: GovernorAppointmentPanel must be hidden in the results
-   step (redundant with the result summary) so column 1 fits.
+2. Governor standalone panel: must be removed entirely (FC-14 ⑤); governor
+   renders as a proposal list entry, not a standalone container.
 """
 import os
 import sys
@@ -108,10 +108,9 @@ def test_senate_results_layout_fits_stage_content():
         assert y + h <= stage_height + 1, \
             f"column overflows stage: y={y} h={h} stage={stage_height}"
 
-    # Governor panel must be hidden in the results step (redundant with summary).
+    # Governor standalone panel must be removed entirely (FC-14 ⑤); no instance.
     gov_panels = [
         child for child in senate.findChildren(QObject)
         if child.metaObject().className().startswith("GovernorAppointmentPanel")
     ]
-    for panel in gov_panels:
-        assert panel.property("visible") is False, "governor panel should be hidden in results"
+    assert len(gov_panels) == 0, "standalone GovernorAppointmentPanel must be removed"

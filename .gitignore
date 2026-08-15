@@ -83,3 +83,5 @@ docs/**/.agents/
 COMMIT_MSG_TEMPLATE.txt
 gui_screenshot_diff.py
 /tests/
+/src/tests/test_gui/_invoke_probe.py
+/src/tests/test_gui/test_invoke_probe.py
