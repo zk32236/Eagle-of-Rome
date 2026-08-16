@@ -329,6 +329,21 @@ Rectangle {
         // T05.7: Card number I/II/III for battle card framework
         readonly property string cardNumber: cardIndex === 0 ? "I" : (cardIndex === 1 ? "II" : "III")
 
+        // AC-4.3: per-war result object (穿透自 combatAllWarCards[].result)
+        readonly property var cardResult: (warData && warData.result) ? warData.result : null
+        // AC-4.3: result color (presentation only; mirrors root.resultColor, scoped to card)
+        readonly property string cardResultColor: {
+            var r = cardResult ? (cardResult.result || "") : ""
+            if (r === "triumph") return "#2E9D4D"
+            if (r === "victory") return "#228B22"
+            if (r === "draw" || r === "standoff") return "#FF8C00"
+            if (r === "defeat") return "#B3261E"
+            if (r === "disaster") return "#8B0000"
+            if (r === "surrender") return "#888888"
+            if (r === "withdraw") return "#AAAAAA"
+            return "#2C1E12"
+        }
+
         // H2: Threat-colored border (T05.5 preserved)
         readonly property string threatBorderColor: {
             if (isResolved) return "#B0B0B0"
@@ -496,6 +511,50 @@ Rectangle {
                 Layout.leftMargin: 8
                 Layout.rightMargin: 8
                 Layout.topMargin: 2
+            }
+
+            // ── AC-4.3: Resolved state — per-war result summary (result left in card) ──
+            ColumnLayout {
+                visible: !isEmptySlot && isResolved
+                Layout.fillWidth: true
+                Layout.leftMargin: 8
+                Layout.rightMargin: 8
+                Layout.topMargin: 4
+                spacing: 2
+
+                // Result label (胜/败/平)
+                Text {
+                    text: cardResult ? (cardResult.result_label || "") : ""
+                    color: cardResultColor
+                    font.pixelSize: theme.bodySize
+                    font.bold: true
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    elide: Text.ElideRight
+                }
+
+                // Battle stats: 骰子 X/12 · 攻击总值 A vs 敌军防御 B = C
+                Text {
+                    text: cardResult
+                        ? "🎲 骰子: " + (cardResult.dice || 0) + " / 12"
+                          + "  攻击总值: " + (cardResult.total_attack || 0)
+                          + " vs 敌军防御: " + (cardResult.enemy_defence || 0)
+                          + " = " + (cardResult.total_score || 0)
+                        : ""
+                    color: "#2C1E12"
+                    font.pixelSize: theme.smallSize
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
+
+                // Loot: 战利品 L T
+                Text {
+                    visible: cardResult && (cardResult.loot || 0) > 0
+                    text: "📦 战利品: " + (cardResult ? (cardResult.loot || 0) : 0) + " T"
+                    color: "#766652"
+                    font.pixelSize: theme.smallSize
+                    Layout.fillWidth: true
+                }
             }
 
             // Spacer
