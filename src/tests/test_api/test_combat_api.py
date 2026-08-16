@@ -119,6 +119,10 @@ class TestCombatAPI(unittest.TestCase):
         self.assertEqual(first_war["legion_count"], 4)
         self.assertEqual(first_war["total_power"], 14)  # 6 (martial) + 4*2 (legions)
         self.assertEqual(first_war["enemy_power"], 8)  # war.strength
+        # FC-3: DTO 提供 enemy_name（复用 War.name）+ legion_numbers 字段
+        self.assertEqual(first_war["enemy_name"], "Test War 1")
+        self.assertIn("legion_numbers", first_war)
+        self.assertIsInstance(first_war["legion_numbers"], list)
 
         # Verify war card without commander
         second_war = data["active_wars"][1]
@@ -210,6 +214,8 @@ class TestCombatAPI(unittest.TestCase):
         self.assertIn("result", data)
         self.assertIn("dice", data)
         self.assertEqual(data["dice"], 7)
+        # FUNC-03 attack-only: scout retained for compatibility but marked DEPRECATED (B-19)
+        self.assertTrue(data.get("deprecated"), "scout should be marked deprecated")
 
     # ════════════════════════════════════════════════════════════════════
     # Test 9: do_combat_action - defence
@@ -223,6 +229,8 @@ class TestCombatAPI(unittest.TestCase):
         self.assertIn("result", data)
         # Defence gives +2 bonus
         self.assertGreaterEqual(data["total_attack"], 6 + 4 * 2 + 7 + 2)  # martial + legions + dice + bias
+        # FUNC-03 attack-only: defence retained for compatibility but marked DEPRECATED (B-19)
+        self.assertTrue(data.get("deprecated"), "defence should be marked deprecated")
 
     # ════════════════════════════════════════════════════════════════════
     # Test 10: confirm_battle_result - more wars remain
@@ -332,6 +340,125 @@ class TestCombatAPI(unittest.TestCase):
         result = combat_api.advance_combat(self.state, "player_opt")
         self.assertTrue(result["success"])
         self.assertTrue(self.state.is_phase_executed("combat"))
+
+    # ════════════════════════════════════════════════════════════════════
+    # Test 14: attack idempotency (FC-1 AC-1.3) — double-attack must not re-resolve
+    # ════════════════════════════════════════════════════════════════════
+    @patch.object(combat_api.random, "randint")
+    def test_do_combat_attack_idempotent(self, mock_randint):
+        mock_randint.return_value = 8
+        first = combat_api.do_combat_action(self.state, "player_opt", "test_war_1", "attack")
+        self.assertTrue(first["success"])
+        # Second attack on the same war must be rejected (already resolved)
+        second = combat_api.do_combat_action(self.state, "player_opt", "test_war_1", "attack")
+        self.assertFalse(second["success"])
+        self.assertIn("已结算", second.get("message", ""))
+
+    # ════════════════════════════════════════════════════════════════════
+    # Test 15: unknown action rejected (FC-5 AC-5.2 failure path)
+    # ════════════════════════════════════════════════════════════════════
+    def test_do_combat_unknown_action_rejected(self):
+        result = combat_api.do_combat_action(self.state, "player_opt", "test_war_1", "surrender")
+        self.assertFalse(result["success"])
+        self.assertIn("Unknown action", result.get("message", ""))
+
+    # ════════════════════════════════════════════════════════════════════
+    # Test 16/17: scout/defence DEPRECATED (FC-1 AC-1.2 / B-19)
+    # ════════════════════════════════════════════════════════════════════
+    def test_do_combat_scout_deprecated(self):
+        result = combat_api.do_combat_action(self.state, "player_opt", "test_war_1", "scout")
+        self.assertTrue(result["success"])
+        self.assertTrue(result["data"].get("deprecated"), "scout action should be marked deprecated")
+
+    @patch.object(combat_api.random, "randint")
+    def test_do_combat_defence_deprecated(self, mock_randint):
+        mock_randint.return_value = 7
+        result = combat_api.do_combat_action(self.state, "player_opt", "test_war_1", "defence")
+        self.assertTrue(result["success"])
+        self.assertTrue(result["data"].get("deprecated"), "defence action should be marked deprecated")
+
+    # ════════════════════════════════════════════════════════════════════
+    # Test 18: config missing combat_rules → fallback 12/6/-3（FC-2 AC-2.1 降级）
+    # ════════════════════════════════════════════════════════════════════
+    def test_combat_config_missing_fallback(self):
+        # state created via create_for_testing({}) has no combat_rules key
+        self.assertIsNone(self.state.config.get("combat_rules.triumph_threshold"))
+
+        war = War(id="fb_war", name="Fallback War", war_type=WarType.FOREIGN, strength=0)
+        war.legions_assigned = 0
+        war.status = WarStatus.ACTIVE
+        self.state._war_system._active_wars.append(war)
+        # no commander → martial=0, legions=0, enemy=0 → score == dice
+        self.assertEqual(combat_api._compute_combat_result(war, self.state, 12, "attack")["result"], "triumph")
+        self.assertEqual(combat_api._compute_combat_result(war, self.state, 11, "attack")["result"], "victory")
+        self.assertEqual(combat_api._compute_combat_result(war, self.state, -3, "attack")["result"], "draw")
+        self.assertEqual(combat_api._compute_combat_result(war, self.state, -4, "attack")["result"], "defeat")
+
+    # ════════════════════════════════════════════════════════════════════
+    # Test 19/20: Combat DTO enemy_name + legion_numbers（FC-3）
+    # ════════════════════════════════════════════════════════════════════
+    def test_war_card_has_enemy_name(self):
+        """enemy_name == war.name（DTO 别名，不新增实体字段，AC-3.1）"""
+        card = combat_api._war_card(self.war1, self.state)
+        self.assertIn("enemy_name", card)
+        self.assertEqual(card["enemy_name"], self.war1.name)
+
+    def test_war_card_legion_numbers(self):
+        """legion_numbers 字段存在且为 List[int]（AC-3.3）"""
+        self.war1.add_legion_number(3)
+        self.war1.add_legion_number(4)
+        card = combat_api._war_card(self.war1, self.state)
+        self.assertIn("legion_numbers", card)
+        self.assertIsInstance(card["legion_numbers"], list)
+        self.assertEqual(card["legion_numbers"], [3, 4])
+
+    # ════════════════════════════════════════════════════════════════════
+    # Test 21: AC-4.3 逐场结果留卡片内 — per-war result DTO 穿透
+    # ════════════════════════════════════════════════════════════════════
+    @patch.object(combat_api.random, "randint")
+    def test_resolved_war_cards_persist_per_war_result(self, mock_randint):
+        """多场战争逐场结算后，每张结算卡独立保留本场完整 result 对象。"""
+        mock_randint.return_value = 8
+
+        # 逐场结算 war1 → 确认 → war2 → 确认
+        combat_api.do_combat_action(self.state, "player_opt", "test_war_1", "attack")
+        combat_api.confirm_battle_result(self.state, "player_opt")
+        combat_api.do_combat_action(self.state, "player_opt", "test_war_2", "attack")
+        combat_api.confirm_battle_result(self.state, "player_opt")
+
+        view = combat_api.get_combat_view(self.state, "player_opt")
+        self.assertTrue(view["success"])
+        data = view["data"]
+        self.assertEqual(data["current_step"], "advance")
+
+        cards = data["resolved_war_cards"]
+        self.assertEqual(len(cards), 2)
+
+        by_war_id = {c["war_id"]: c for c in cards}
+        self.assertIn("test_war_1", by_war_id)
+        self.assertIn("test_war_2", by_war_id)
+
+        required_fields = (
+            "result", "result_label", "dice", "total_attack",
+            "enemy_defence", "total_score", "loot", "treasury_share",
+            "commander_share", "faction_share", "soldier_share", "losses",
+        )
+
+        for war_id in ("test_war_1", "test_war_2"):
+            card = by_war_id[war_id]
+            self.assertIn("result", card, f"{war_id} card missing result")
+            result = card["result"]
+            self.assertEqual(result["war_id"], war_id)
+            for field in required_fields:
+                self.assertIn(field, result, f"{war_id} result missing {field}")
+
+        # 独立保留：war1 与 war2 的结果互不覆盖，且分类正确
+        self.assertEqual(by_war_id["test_war_1"]["result"]["result"], "triumph")
+        self.assertEqual(by_war_id["test_war_2"]["result"]["result"], "victory")
+        self.assertNotEqual(
+            by_war_id["test_war_1"]["result"]["war_id"],
+            by_war_id["test_war_2"]["result"]["war_id"],
+        )
 
 
 if __name__ == "__main__":

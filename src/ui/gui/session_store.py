@@ -1088,9 +1088,18 @@ class GuiSessionStore(QObject):
 
     @Slot(str, str, result=dict)
     def doCombatAction(self, war_id: str, action: str) -> dict:
-        """Execute a combat action: 'scout', 'defence', 'attack'."""
+        """Execute a combat action. Only 'attack' is supported (FUNC-03 attack-only).
+
+        scout/defence are DEPRECATED: the GUI no longer exposes them, and this
+        Slot hard-rejects any non-attack action as a frontend-side fail-safe.
+        """
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
+        if action != "attack":
+            feedback = self._feedback(False, "仅支持进攻操作（attack）", "error")
+            self._raise_feedback(feedback)
+            self.combatViewChanged.emit()
+            return feedback
         feedback = self._adapter.do_combat_action(self._viewer_id, war_id, action)
         self._raise_feedback(feedback)
         if feedback.get("success"):

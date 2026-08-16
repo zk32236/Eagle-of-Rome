@@ -13,14 +13,6 @@ Rectangle {
         return war && war.has_commander === true && war.commander_id >= 0
     }
 
-    function scoutEnabled() {
-        return root.combatStep === "action" && root.hasCommander(root.selectedWarData)
-    }
-
-    function defenceEnabled() {
-        return root.combatStep === "action" && root.hasCommander(root.selectedWarData)
-    }
-
     function attackEnabled() {
         return root.combatStep === "action"
     }
@@ -144,8 +136,10 @@ Rectangle {
                         Layout.minimumWidth: 140
                         warData: _warData
                         isEmptySlot: _warData === undefined || _warData === null
-                        selectable: root.combatStep === "select"
+                        selectable: false
+                        attackable: (root.combatStep === "select" || root.combatStep === "action")
                             && !isEmptySlot
+                            && _warData !== null && _warData !== undefined
                             && !root.isWarResolved(_warData ? _warData.war_id : -1)
                         isResolved: !isEmptySlot && root.isWarResolved(_warData ? _warData.war_id : -1)
                         onSelected: {
@@ -153,101 +147,28 @@ Rectangle {
                                 sessionStore.doSelectWar(_warData.war_id)
                             }
                         }
-                    }
-                }
-            }
-
-            // Action overlay — only overlays the war grid, NOT the entire body
-            Rectangle {
-                anchors.fill: parent
-                visible: root.combatStep === "action" && root.selectedWarData
-                color: "transparent"
-
-                Rectangle {
-                    anchors.bottom: parent.bottom
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    height: 120
-                    color: "#FFF6E6"
-                    radius: 4
-                    border.color: "#E0B56C"
-                    border.width: 1
-                    clip: true
-
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 10
-                        spacing: 6
-
-                        Text {
-                            text: "🎖️ 指挥官: " + (root.selectedWarData ? root.selectedWarData.commander_name || "无" : "无")
-                                + (root.hasCommander(root.selectedWarData)
-                                    ? " (军略: " + (root.selectedWarData ? root.selectedWarData.commander_martial || 0 : 0) + ")"
-                                    : " (自动战斗)")
-                            color: "#2C1E12"
-                            font.pixelSize: theme.bodySize
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
-                        }
-                        Text {
-                            text: "🛡️ 军团: " + (root.selectedWarData ? root.selectedWarData.legion_count || 0 : 0)
-                                + " | ⚔️ 总战力: " + (root.selectedWarData ? root.selectedWarData.total_power || 0 : 0)
-                                + " vs 🐉 敌军 " + (root.selectedWarData ? root.selectedWarData.enemy_power || 0 : 0)
-                            color: "#2C1E12"
-                            font.pixelSize: theme.bodySize
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
-                        }
-                        Text {
-                            text: "📊 威胁等级: " + (root.selectedWarData ? root.selectedWarData.threat_level || 0 : 0)
-                            color: "#9A2D0A"
-                            font.pixelSize: theme.smallSize
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
-                        }
-
-                        // Action buttons
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Layout.topMargin: 4
-                            spacing: 8
-
-                            ActionButton {
-                                text: "🔍 侦查"
-                                enabled: root.scoutEnabled()
-                                onTriggered: sessionStore.doCombatAction(
-                                    root.selectedWarData.war_id, "scout")
+                        onAttackRequested: {
+                            if (_warData && _warData.war_id) {
+                                sessionStore.doCombatAction(_warData.war_id, "attack")
                             }
-                            ActionButton {
-                                text: "🛡️ 防御"
-                                enabled: root.defenceEnabled()
-                                onTriggered: sessionStore.doCombatAction(
-                                    root.selectedWarData.war_id, "defence")
-                            }
-                            ActionButton {
-                                text: "⚔️ 进攻"
-                                enabled: root.attackEnabled()
-                                onTriggered: sessionStore.doCombatAction(
-                                    root.selectedWarData.war_id, "attack")
-                            }
-                            Item { Layout.fillWidth: true }
                         }
                     }
                 }
             }
         }
 
-        // ── H3: Confirm area (result + advance) — sequential, below warGrid, no overlap ──
+        // ── H3: Confirm area (result) — sequential, below warGrid, no overlap ──
         Rectangle {
             id: confirmArea
-            visible: root.combatStep === "result" || root.combatStep === "advance"
+            visible: root.combatStep === "result"
             Layout.fillWidth: true
-            Layout.preferredHeight: root.combatStep === "result" ? 280 : 52
+            Layout.preferredHeight: 300
             color: "transparent"
             clip: true
 
             // Result content
             Rectangle {
+                id: resultBox
                 anchors.fill: parent
                 visible: root.combatStep === "result"
                 color: "#FFF7E9"
@@ -265,8 +186,8 @@ Rectangle {
 
                     // Result header
                     Text {
-                        text: parent.result ? (parent.result.result_label || "") : ""
-                        color: root.resultColor(parent.result)
+                        text: resultBox.result ? (resultBox.result.result_label || "") : ""
+                        color: root.resultColor(resultBox.result)
                         font.pixelSize: theme.titleSize
                         font.bold: true
                         Layout.fillWidth: true
@@ -276,10 +197,10 @@ Rectangle {
 
                     // Battle stats
                     Text {
-                        text: "🎲 骰子: " + (parent.result ? parent.result.dice || 0 : "") + " / 12"
-                            + "  |  攻击总值: " + (parent.result ? parent.result.total_attack || 0 : 0)
-                            + "  vs  敌军防御: " + (parent.result ? parent.result.enemy_defence || 0 : 0)
-                            + "  =  " + (parent.result ? parent.result.total_score || 0 : 0)
+                        text: "🎲 骰子: " + (resultBox.result ? resultBox.result.dice || 0 : "") + " / 12"
+                            + "  |  攻击总值: " + (resultBox.result ? resultBox.result.total_attack || 0 : 0)
+                            + "  vs  敌军防御: " + (resultBox.result ? resultBox.result.enemy_defence || 0 : 0)
+                            + "  =  " + (resultBox.result ? resultBox.result.total_score || 0 : 0)
                         color: "#2C1E12"
                         font.pixelSize: theme.bodySize
                         Layout.fillWidth: true
@@ -288,9 +209,9 @@ Rectangle {
 
                     // Loot breakdown table
                     Rectangle {
-                        visible: parent.result && parent.result.loot > 0
+                        visible: resultBox.result && resultBox.result.loot > 0
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 130
+                        Layout.preferredHeight: 150
                         color: "#FFF6E6"
                         radius: 4
                         border.color: "#D9AF63"
@@ -308,23 +229,23 @@ Rectangle {
                                 font.pixelSize: theme.bodySize
                             }
 
-                            LootRow { label: "总额"; value: parent.parent.parent.result ? parent.parent.parent.result.loot : 0; bold: true }
-                            LootRow { label: "国库"; value: parent.parent.parent.result ? parent.parent.parent.result.treasury_share : 0; textColor: "#8B2500" }
+                            LootRow { label: "总额"; value: resultBox.result ? resultBox.result.loot : 0; bold: true }
+                            LootRow { label: "国库"; value: resultBox.result ? resultBox.result.treasury_share : 0; textColor: "#8B2500" }
                             LootRow {
-                                visible: parent.parent.parent.result && parent.parent.parent.result.commander_share > 0
+                                visible: resultBox.result && resultBox.result.commander_share > 0
                                 label: "指挥官私库"
-                                value: parent.parent.parent.result ? parent.parent.parent.result.commander_share : 0
+                                value: resultBox.result ? resultBox.result.commander_share : 0
                             }
                             LootRow {
-                                visible: parent.parent.parent.result && parent.parent.parent.result.faction_share > 0
+                                visible: resultBox.result && resultBox.result.faction_share > 0
                                 label: "派系金库"
-                                value: parent.parent.parent.result ? parent.parent.parent.result.faction_share : 0
+                                value: resultBox.result ? resultBox.result.faction_share : 0
                             }
-                            LootRow { label: "士兵份额"; value: parent.parent.parent.result ? parent.parent.parent.result.soldier_share : 0 }
+                            LootRow { label: "士兵份额"; value: resultBox.result ? resultBox.result.soldier_share : 0 }
                             LootRow {
-                                visible: parent.parent.parent.result && parent.parent.parent.result.losses > 0
+                                visible: resultBox.result && resultBox.result.losses > 0
                                 label: "💀 军团损失"
-                                value: parent.parent.parent.result ? parent.parent.parent.result.losses : 0
+                                value: resultBox.result ? resultBox.result.losses : 0
                                 textColor: "#B3261E"
                             }
                         }
@@ -332,9 +253,9 @@ Rectangle {
 
                     // No-loot info
                     Text {
-                        visible: parent.result && parent.result.loot <= 0
+                        visible: resultBox.result && resultBox.result.loot <= 0
                         text: {
-                            var r = parent.result ? parent.result.result : ""
+                            var r = resultBox.result ? resultBox.result.result : ""
                             if (r === "disaster") return "💀 惨败：全军覆没，无战利品"
                             if (r === "defeat") return "😞 战败：被迫撤退，未获得战利品"
                             if (r === "draw") return "🤝 僵持：未能突破敌军防线"
@@ -354,38 +275,6 @@ Rectangle {
                         Layout.preferredWidth: 180
                         onTriggered: {
                             sessionStore.doConfirmBattleResult()
-                        }
-                    }
-                }
-            }
-
-            // Advance content — bottom-aligned banner
-            Rectangle {
-                anchors.fill: parent
-                visible: root.combatStep === "advance"
-                color: "transparent"
-
-                Rectangle {
-                    anchors.fill: parent
-                    color: "#FFF7E9"
-                    border.color: "#2E9D4D"
-                    border.width: 1
-                    radius: 6
-
-                    RowLayout {
-                        anchors.centerIn: parent
-                        spacing: 12
-
-                        Text {
-                            text: "✅ 所有战争已结算"
-                            color: "#2E9D4D"
-                            font.pixelSize: theme.buttonSize
-                            font.bold: true
-                        }
-                        Text {
-                            text: "请使用右侧面板的推进按钮进入决算阶段"
-                            color: "#766652"
-                            font.pixelSize: theme.bodySize
                         }
                     }
                 }
@@ -433,7 +322,9 @@ Rectangle {
         property bool isResolved: false         // H4: new
         property int cardIndex: 0         // T05.7: slot 0/1/2 → I/II/III
         property bool isEmptySlot: false         // T05.5: empty placeholder slot
+        property bool attackable: false         // FC-1: single attack entry in action step
         signal selected(string warId)
+        signal attackRequested(string warId)
 
         // T05.7: Card number I/II/III for battle card framework
         readonly property string cardNumber: cardIndex === 0 ? "I" : (cardIndex === 1 ? "II" : "III")
@@ -519,7 +410,7 @@ Rectangle {
 
             // ── Empty state: centered placeholder ──
             Text {
-                visible: parent.isEmptySlot
+                visible: isEmptySlot
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 verticalAlignment: Text.AlignVCenter
@@ -533,7 +424,7 @@ Rectangle {
             // ── Active state: combat stats ──
             // Commander info
             Text {
-                visible: !parent.isEmptySlot
+                visible: !isEmptySlot && !isResolved
                 text: "🎖️ " + (warData ? (warData.commander_name || "无指挥官") : "")
                 color: isResolved ? "#999999" : "#766652"
                 font.pixelSize: theme.smallSize
@@ -546,7 +437,7 @@ Rectangle {
 
             // H2: Power comparison bar (T05.5 preserved)
             Rectangle {
-                visible: !parent.isEmptySlot && !isResolved
+                visible: !isEmptySlot && !isResolved
                 Layout.fillWidth: true
                 Layout.preferredHeight: 14
                 Layout.leftMargin: 8
@@ -569,7 +460,8 @@ Rectangle {
                 Text {
                     anchors.centerIn: parent
                     text: "⚔ " + (warData ? warData.total_power || 0 : 0)
-                        + " vs " + (warData ? warData.enemy_power || 0 : 0)
+                        + " vs 🐉 " + (warData ? (warData.enemy_name || warData.name || "敌军") : "敌军")
+                        + " (" + (warData ? warData.enemy_power || 0 : 0) + ")"
                     color: "#FFFFFF"
                     font.pixelSize: theme.smallSize
                     font.bold: true
@@ -579,7 +471,7 @@ Rectangle {
 
             // H2: Threat level indicator (T05.5 preserved)
             Text {
-                visible: !parent.isEmptySlot && !isResolved
+                visible: !isEmptySlot && !isResolved
                 text: {
                     var level = (warData && warData.threat_level) || 0
                     if (level >= 8) return "🔴 高威胁"
@@ -589,6 +481,18 @@ Rectangle {
                 color: threatBorderColor
                 font.pixelSize: theme.smallSize
                 font.bold: true
+                Layout.leftMargin: 8
+                Layout.rightMargin: 8
+                Layout.topMargin: 2
+            }
+
+            // FC-3: 军团番号（DTO legion_numbers，不重算）
+            Text {
+                visible: !isEmptySlot && !isResolved
+                    && (warData && warData.legion_numbers ? warData.legion_numbers.length > 0 : false)
+                text: "🏛️ 军团: " + (warData && warData.legion_numbers ? "[" + warData.legion_numbers.join(", ") + "]" : "")
+                color: "#766652"
+                font.pixelSize: theme.smallSize
                 Layout.leftMargin: 8
                 Layout.rightMargin: 8
                 Layout.topMargin: 2
@@ -607,21 +511,25 @@ Rectangle {
 
                 Text {
                     anchors.centerIn: parent
-                    text: selectable ? "⚔️ 点击选择" : (isResolved ? "✓ 已结算" : "")
-                    color: selectable ? "#7A1E0A" : "#766652"
+                    text: attackable ? "⚔️ 发动进攻" : (isResolved ? "✓ 已结算" : "")
+                    color: attackable ? "#B3261E" : "#766652"
                     font.pixelSize: theme.smallSize
-                    font.bold: selectable
+                    font.bold: attackable
                 }
             }
         }
 
         MouseArea {
             anchors.fill: parent
-            enabled: selectable && !isResolved && !isEmptySlot
+            enabled: (selectable || attackable) && !isResolved && !isEmptySlot
             cursorShape: Qt.PointingHandCursor
             onClicked: {
                 if (parent.warData && parent.warData.war_id) {
-                    parent.selected(parent.warData.war_id)
+                    if (parent.attackable) {
+                        parent.attackRequested(parent.warData.war_id)
+                    } else {
+                        parent.selected(parent.warData.war_id)
+                    }
                 }
             }
         }
@@ -692,15 +600,15 @@ Rectangle {
                 text: "• " + label + ":"
                 color: "#766652"
                 font.pixelSize: theme.smallSize
-                font.bold: parent.bold
+                font.bold: bold
                 elide: Text.ElideRight
             }
             Item { Layout.fillWidth: true }
             Text {
                 text: value + " T"
-                color: parent.textColor
+                color: textColor
                 font.pixelSize: theme.smallSize
-                font.bold: parent.bold
+                font.bold: bold
             }
         }
     }

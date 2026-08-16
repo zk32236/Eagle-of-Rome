@@ -54,6 +54,7 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
     return {
         "war_id": war.id,
         "name": war.name,
+        "enemy_name": war.name,  # FC-3: DTO 别名（复用 War.name，非新实体字段）
         "war_type": war.war_type.value,
         "commander_name": commander_name,
         "commander_martial": commander_martial,
@@ -145,17 +146,25 @@ def _compute_combat_result(
     enemy_defence = war.get_total_strength()
     score = total_attack - enemy_defence
 
-    # Result classification
+    # Result classification — thresholds read from Config combat_rules (FC-2 / DEV-04).
+    # Aligned with CLI phase_combat._simplified_crt: TRIUMPH(>=12) / VICTORY(>=6) /
+    # STALEMATE(standoff_roll or -3<=score<6) / DEFEAT(<-3). GUI "draw" == CLI "STALEMATE".
+    triumph_threshold = state.config.get("combat_rules.triumph_threshold", 12)
+    victory_threshold = state.config.get("combat_rules.victory_threshold", 6)
+    defeat_threshold = state.config.get("combat_rules.defeat_threshold", -3)
+
     if war.is_disaster_roll(dice):
         result = "disaster"
-    elif score >= 10:
+    elif score >= triumph_threshold:
         result = "triumph"
-    elif score >= 5:
+    elif score >= victory_threshold:
         result = "victory"
-    elif score >= 0:
+    elif war.is_standoff_roll(dice) or defeat_threshold <= score < victory_threshold:
         result = "draw"
-    else:
+    elif score < defeat_threshold:
         result = "defeat"
+    else:
+        result = "draw"
 
     # Losses
     losses = 0
@@ -219,10 +228,12 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
             selected_war_id = phase_data.get("selected_war_id", "")
             resolved_wars = phase_data.get("resolved_wars", [])
             pending_result = phase_data.get("pending_result", {})
+            war_results = phase_data.get("war_results", {})
         else:
             selected_war_id = ""
             resolved_wars = []
             pending_result = {}
+            war_results = {}
 
         # active_wars naturally shrinks as wars are resolved (status changes to RESOLVED)
         # So all_resolved = True when active_wars is empty
@@ -250,7 +261,13 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
         resolved_war_ids = resolved_wars  # list of war_ids from phase_data
         resolved_wars_full = ws.get_resolved_wars() if ws else []
         relevant_resolved = [w for w in resolved_wars_full if w.id in resolved_war_ids]
-        resolved_war_cards = [_war_card(w, state) for w in relevant_resolved]
+        resolved_war_cards = []
+        for w in relevant_resolved:
+            card = _war_card(w, state)
+            # AC-4.3: 逐场结果留卡片内 — 每张结算卡附本场 result 对象
+            if isinstance(war_results, dict) and w.id in war_results:
+                card["result"] = war_results[w.id]
+            resolved_war_cards.append(card)
 
         # Battle results
         battle_results = []
@@ -348,23 +365,34 @@ def do_combat_action(
         if action not in ("scout", "defence", "attack"):
             return api_response(False, f"Unknown action: {action}")
 
-        # Scout is preview only
+        # Idempotency guard (FC-1 AC-1.3): a war already resolved must not be
+        # re-resolved on double-click / repeated attack signals.
+        if action == "attack":
+            phase_data = state.get_phase_result("combat") or {}
+            resolved = phase_data.get("resolved_wars", []) if isinstance(phase_data, dict) else []
+            if war_id in resolved:
+                return api_response(False, f"该战争已结算: {war_id}")
+
+        # Scout is preview-only (DEPRECATED — FUNC-03 attack-only). Retained for
+        # API compatibility (B-19); the GUI no longer exposes this action.
         if action == "scout":
             preview_dice = 7  # Average dice for preview
             preview_result = _compute_combat_result(war, state, preview_dice, "scout")
+            data = _build_battle_result(
+                war, state,
+                dice=preview_result["dice"],
+                total_attack=preview_result["total_attack"],
+                enemy_defence=preview_result["enemy_defence"],
+                result=preview_result["result"],
+                loot=preview_result["loot"],
+                losses=preview_result["losses"],
+                triumph=preview_result["triumph"],
+            )
+            data["deprecated"] = True
             return api_response(
                 True,
-                f"侦查预览 — {war.name}",
-                data=_build_battle_result(
-                    war, state,
-                    dice=preview_result["dice"],
-                    total_attack=preview_result["total_attack"],
-                    enemy_defence=preview_result["enemy_defence"],
-                    result=preview_result["result"],
-                    loot=preview_result["loot"],
-                    losses=preview_result["losses"],
-                    triumph=preview_result["triumph"],
-                ),
+                f"侦查预览（已弃用）— {war.name}",
+                data=data,
             )
 
         # Roll dice
@@ -408,6 +436,11 @@ def do_combat_action(
             triumph=result_data["triumph"],
         )
 
+        # Defence is DEPRECATED (FUNC-03 attack-only). Retained for API
+        # compatibility (B-19); the GUI no longer exposes this action.
+        if action == "defence":
+            battle_result["deprecated"] = True
+
         # Store in phase data
         phase_data = state.get_phase_result("combat") or {}
         if not isinstance(phase_data, dict):
@@ -418,6 +451,12 @@ def do_combat_action(
             resolved.append(war_id)
         phase_data["resolved_wars"] = resolved
         phase_data["selected_war_id"] = war_id  # Keep selected for result display
+        # AC-4.3: per-war result 持久化 — 按 war_id 累积，不被下一场覆盖 / 确认后不清空
+        war_results = phase_data.get("war_results", {})
+        if not isinstance(war_results, dict):
+            war_results = {}
+        war_results[war_id] = battle_result
+        phase_data["war_results"] = war_results
         state.record_phase_result("combat", phase_data)
 
         return api_response(
