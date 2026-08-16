@@ -645,7 +645,7 @@ class GuiSessionStore(QObject):
         "resolution": {
             "can_attr": "canAdvanceResolution",
             "slot": "doAdvanceResolution",
-            "label": "\u23ed\ufe0f 推进到下一回合",
+            "label": "\u23ed\ufe0f 进入下一年度",
         },
     }
 

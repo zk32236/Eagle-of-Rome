@@ -24,7 +24,10 @@ def mock_state():
     state.executed_phases = set()
     state.turn.turn_number = 1
     state.turn.year = -264
-    state.advance_year = MagicMock()
+    # 当前玩家（CLI next 通过 get_current_player 推导 player_id）
+    current_player = MagicMock()
+    current_player.player_id = "p1"
+    state.get_current_player.return_value = current_player
     # 模拟 config.get 返回合理数值，避免阶段命令内部出错（备用）
     state.config.get.return_value = 1
     state.get_living_members.return_value = []  # 避免除零错误
@@ -49,48 +52,54 @@ def mock_phase_commands(monkeypatch):
 
 # ========== NextCommand 测试 ==========
 
-def test_next_success_all_done(mock_state):
-    """所有阶段已执行，next 应推进回合"""
-    mock_state.is_phase_executed.return_value = True
-    # 设置 executed_phases 包含所有阶段
-    mock_state.executed_phases = set(PHASE_SEQUENCE)
+def test_next_routes_through_game_api(mock_state):
+    """next 命令通过 game_api.advance_year 唯一写入口推进（FC-01 收敛证明）"""
     cmd = NextCommand(mock_state)
+    with patch("src.api.game_api.advance_year") as mock_advance:
+        mock_advance.return_value = {"success": True, "message": "已推进至 263 BC", "data": {"year_display": "263 BC"}}
+        result = cmd.execute([])
+        assert result is True
+        mock_advance.assert_called_once_with(mock_state, "p1", False)
 
-    result = cmd.execute([])
 
-    assert result is True
-    mock_state.advance_year.assert_called_once()
+def test_next_success_all_done(mock_state):
+    """next 通过 game_api.advance_year 唯一写入口推进（FC-01）"""
+    cmd = NextCommand(mock_state)
+    with patch("src.api.game_api.advance_year") as mock_advance:
+        mock_advance.return_value = {"success": True, "message": "已推进至 263 BC", "data": {"year_display": "263 BC"}}
+        result = cmd.execute([])
+        assert result is True
+        mock_advance.assert_called_once_with(mock_state, "p1", False)
 
 
 def test_next_missing_phases_no_force(mock_state):
-    """有阶段未执行，无 force，返回 False"""
-    # 默认 executed_phases 为空
+    """resolution 未执行且无 force → game_api 拒绝，next 返回 False"""
     cmd = NextCommand(mock_state)
-
-    result = cmd.execute([])
-
-    assert result is False
-    mock_state.advance_year.assert_not_called()
+    with patch("src.api.game_api.advance_year") as mock_advance:
+        mock_advance.return_value = {"success": False, "message": "必须先执行决议阶段 (resolution)", "errors": ["resolution_not_executed"]}
+        result = cmd.execute([])
+        assert result is False
+        mock_advance.assert_called_once_with(mock_state, "p1", False)
 
 
 def test_next_force(mock_state):
-    """有阶段未执行但有 force，应推进"""
+    """force 参数透传给 game_api.advance_year（调试逃生门）"""
     cmd = NextCommand(mock_state)
-
-    result = cmd.execute(["force"])
-
-    assert result is True
-    mock_state.advance_year.assert_called_once()
+    with patch("src.api.game_api.advance_year") as mock_advance:
+        mock_advance.return_value = {"success": True, "message": "已推进至 263 BC", "data": {"year_display": "263 BC"}}
+        result = cmd.execute(["force"])
+        assert result is True
+        mock_advance.assert_called_once_with(mock_state, "p1", True)
 
 
 def test_next_force_case_insensitive(mock_state):
     """force 参数不区分大小写"""
     cmd = NextCommand(mock_state)
-
-    result = cmd.execute(["FORCE"])
-
-    assert result is True
-    mock_state.advance_year.assert_called_once()
+    with patch("src.api.game_api.advance_year") as mock_advance:
+        mock_advance.return_value = {"success": True, "message": "已推进至 263 BC", "data": {"year_display": "263 BC"}}
+        result = cmd.execute(["FORCE"])
+        assert result is True
+        mock_advance.assert_called_once_with(mock_state, "p1", True)
 
 
 # ========== TurnCommand 测试 ==========
@@ -225,6 +234,9 @@ def test_next_clears_curia():
     # 标记所有阶段已执行，以便 next 允许推进
     for phase in ["mortality", "revenue", "forum", "population", "senate", "combat", "resolution"]:
         state.mark_phase_executed(phase)
+
+    # next 改走 game_api.advance_year 唯一写入口（FC-01），需要当前玩家或 bypass
+    state.config._config["testing"] = {"bypass_player_check": True}
 
     cmd = NextCommand(state)
     result = cmd.execute([])

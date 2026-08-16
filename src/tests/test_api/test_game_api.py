@@ -29,6 +29,8 @@ def mock_state():
     state.config.get.return_value = False
     # 阶段执行状态：默认未执行
     state.is_phase_executed.return_value = False
+    # 年度推进重入 guard 默认未占用（FC-04）
+    state._year_advance_in_progress = False
     return state
 
 def test_get_status_summary(mock_state):
@@ -128,6 +130,7 @@ def test_execute_turn_not_current_player(mock_state):
 def test_advance_year(mock_state):
     """测试 advance_year 推进回合"""
     mock_state.is_current_player.return_value = True
+    mock_state.is_phase_executed.return_value = True  # resolution 已执行（前置通过）
     mock_state.turn = MagicMock()
     mock_state.turn.get_year_display.return_value = "281 BC"
     result = game_api.advance_year(mock_state, "player1")

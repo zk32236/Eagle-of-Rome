@@ -156,13 +156,22 @@ class TestResolutionViewSuccess:
             "annual_decay", "next_year",
         ]
         expected_displays = [
-            "总督返回", "合同到期", "风险检查", "年度衰减", "推进下一年度",
+            "总督返回", "合同到期", "风险检查", "年度衰减", "决算完成",
         ]
         for i, step in enumerate(steps):
             assert step["step"] == i + 1
             assert step["name"] == expected_names[i]
             assert step["display"] == expected_displays[i]
             assert step["status"] == "completed"
+
+    def test_resolution_step5_display_name(self):
+        """步骤 5 display =「决算完成」（语义修正：不与「推进下一年度」混滑）"""
+        state, viewer_id = _make_minimal_state()
+        result = session_api.get_resolution_view(state, viewer_id)
+        steps = result["data"]["step_statuses"]
+        step5 = next(s for s in steps if s["step"] == 5)
+        assert step5["name"] == "next_year"
+        assert step5["display"] == "决算完成"
 
 
 # ===========================================================================

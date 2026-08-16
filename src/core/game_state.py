@@ -36,6 +36,7 @@ class GameState:
 
     MAX_MEMBER_ID = 300
     _log_filename = None  # 新增：存储本次运行生成的日志文件名（所有实例共享）
+    _year_advance_in_progress: bool = False  # FC-04 年度推进重入 guard（瞬态，不持久化 FC-10）
 
     def __init__(self, config_path: Optional[str] = None):
         # 创建配置实例
@@ -61,6 +62,9 @@ class GameState:
         # 阶段执行跟踪
         self._executed_phases: Set[str] = set()
         self._phase_results: Dict[str, Any] = {}
+
+        # 年度推进重入 guard（FC-04，瞬态，不持久化 FC-10）
+        self._year_advance_in_progress: bool = False
 
         # MVP 0.5 新增字段
         self._provinces: Dict[int, Province] = {}
@@ -151,6 +155,7 @@ class GameState:
         self._contracts.clear()
         self._executed_phases.clear()
         self._phase_results.clear()
+        self._year_advance_in_progress = False
 
         # MVP 0.5 重置新增字段
         self._provinces.clear()
@@ -885,6 +890,7 @@ class GameState:
         instance._contracts = []
         instance._executed_phases = set()
         instance._phase_results = {}
+        instance._year_advance_in_progress = False
         instance._initialize_mortality_pool()
 
         # MVP 0.5 新增字段
@@ -1248,43 +1254,90 @@ class GameState:
     # ========== 回合管理 ==========
 
     def advance_year(self):
-        """推进到下一年"""
+        """推进到下一年（commit-last 原子化，FC-05/FC-06）。
+
+        Phase A（结算副作用，可失败）→ Phase B（COMMIT，原子，最后一步）。
+
+        - A3（年度衰减 + age+1）/ A4（临时影响力衰减）为非幂等（累计衰减），
+          在 Phase A 前对 get_living_members() 的
+          {age, influence, temp_influence(含任务), popularity, veterans} 做快照；
+          Phase A 任一异常 → 恢复快照 → 抛回 use-case（game_api.advance_year）。
+        - A1/A2/A5/A6/A7 为幂等结算（重试安全），无需回滚。
+
+        本方法为「模型原语」，约定仅由 use-case（game_api.advance_year）在满足
+        resolution 前置后调用（FC-01）；测试可直接调用以验证原子性。
+        """
+        # Phase A 前快照（仅非幂等项 A3/A4 涉及的 member 字段）
+        snapshot = {}
+        for member in self.get_living_members():
+            snapshot[member.id] = {
+                "age": member.age,
+                "influence": member.influence,
+                "temp_influence_tasks": copy.deepcopy(
+                    getattr(member, "_temp_influence_tasks", [])
+                ),
+                "popularity": member.popularity,
+                "veterans": member.veterans,
+            }
+
+        decay_rates = {"veterans": 0.20, "popularity": 0.50}
+        try:
+            # Phase A（结算副作用）
+            # A1 curia 清理（幂等）
+            self._cleanup_curia()
+
+            # A2 pending 清理（幂等）
+            self.clear_population_pending()
+            self.clear_forum_pending()
+            self.clear_senate_pending()
+            self.clear_pending_land_acts()
+
+            # A3 年度衰减 + age+1（非幂等）
+            for member in self.get_living_members():
+                member.apply_annual_decay(decay_rates)
+                member.age += 1
+
+            # A4 临时影响力衰减（非幂等）
+            for member in self.get_living_members():
+                if member.get_temp_influence() > 0:
+                    member.decay_temp_influence_tasks()
+                    member.update_influence()
+
+            # A5 合同过期处理（幂等）
+            self.process_contract_expiration()
+
+            # A6 总督交接处理（幂等）
+            self.process_governor_transitions()
+
+            # A7 和约到期处理（幂等）
+            self.process_truce_expiry()
+        except Exception:
+            # 回滚非幂等项（A3/A4）：恢复 member 衰减相关字段
+            for member in self.get_living_members():
+                snap = snapshot.get(member.id)
+                if snap is None:
+                    continue
+                member.age = snap["age"]
+                member.influence = snap["influence"]
+                member._temp_influence_tasks = copy.deepcopy(snap["temp_influence_tasks"])
+                member.popularity = snap["popularity"]
+                member.veterans = snap["veterans"]
+            self.log_event(
+                "advance_year 结算异常，已回滚非幂等项（年份未推进）",
+                level=logging.ERROR
+            )
+            raise
+
+        # Phase B（COMMIT，原子，最后一步，B1-B3 无异常点）
+        # B1 turn.advance_year（turn_number+1, year+1，纯字段自增）
         if self._turn:
             self._turn.advance_year()
+        # B2 消费 resolution token（幂等）
         self._executed_phases.clear()
+        # B3 清空 phase_results
         self._phase_results.clear()
 
-        # P0: curia 清理
-        self._cleanup_curia()
-
-        # P0: 清空所有阶段临时数据
-        self.clear_population_pending()
-        self.clear_forum_pending()
-        self.clear_senate_pending()
-        self.clear_pending_land_acts()
-
-        # P0: 年度衰减（含年龄递增 — 由 advance_year 统一处理）
-        decay_rates = {"veterans": 0.20, "popularity": 0.50}
-        for member in self.get_living_members():
-            member.apply_annual_decay(decay_rates)
-            member.age += 1
-
-        # P0: 临时影响力衰减
-        for member in self.get_living_members():
-            if member.get_temp_influence() > 0:
-                member.decay_temp_influence_tasks()
-                member.update_influence()
-
-        # P1: 合同过期处理
-        self.process_contract_expiration()
-
-        # P1: 总督交接处理
-        self.process_governor_transitions()
-
-        # P1: 和约到期处理
-        self.process_truce_expiry()
-
-        # P0: 年度衰减完成日志
+        # 年度衰减完成日志
         self.log_event(
             f"年度衰减完成: 衰减率 veterans={decay_rates['veterans']}, popularity={decay_rates['popularity']}",
             level=logging.DEBUG

@@ -636,7 +636,7 @@ def get_resolution_view(state: GameState, viewer_player_id: str) -> dict:
             {"step": 2, "name": "contract_expiry", "display": "合同到期"},
             {"step": 3, "name": "risk_check", "display": "风险检查"},
             {"step": 4, "name": "annual_decay", "display": "年度衰减"},
-            {"step": 5, "name": "next_year", "display": "推进下一年度"},
+            {"step": 5, "name": "next_year", "display": "决算完成"},
         ]
         step_statuses = [{**sd, "status": status} for sd in step_definitions]
 

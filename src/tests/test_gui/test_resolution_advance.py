@@ -51,7 +51,15 @@ class TestResolutionAdvance:
         entry = dispatch["resolution"]
         assert entry["can_attr"] == "canAdvanceResolution"
         assert entry["slot"] == "doAdvanceResolution"
-        assert "推进" in entry["label"]
+        assert "进入下一年度" in entry["label"]
+
+    def test_resolution_advance_label_semantics(self):
+        """按钮文案「⏭️ 进入下一年度」精确映射 advance_year 跨年语义（非通用阶段推进）"""
+        store, state, players = self.setup_store()
+        label = store._PHASE_ADVANCE_DISPATCH["resolution"]["label"]
+        assert label == "\u23ed\ufe0f 进入下一年度"
+        assert "下一年度" in label
+        assert "下一回合" not in label  # 不再是通用阶段推进
 
     def test_advance_current_phase_dispatches_resolution(self):
         """doAdvanceCurrentPhase 将 resolution 分派到 doAdvanceResolution"""

@@ -6,6 +6,7 @@
 from typing import List, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
+from src.api import game_api
 
 # 导入所有阶段命令类，用于 turn 和 step 命令执行阶段
 from src.ui.commands.phase_mortality import MortalityCommand
@@ -82,40 +83,25 @@ class NextCommand(Command):
 
     def execute(self, args: List[str]) -> bool:
         """
-        执行 next 命令
+        执行 next 命令（改走 game_api.advance_year 唯一写入口，FC-01）。
+
+        force 为调试逃生门：跳过 resolution 前置（FC-02 force 分支），
+        但不跳过权限/重入/原子 commit，审计日志由 game_api.advance_year 记录。
         """
         force = any(arg.lower() == "force" for arg in args)
 
-        # 检查决议阶段是否已执行（除非 force 跳过）
-        if not self.state.is_phase_executed("resolution") and not force:
-            print("⛔ 必须先执行决议阶段 (resolution) 才能进入下一年")
-            print("   使用 'next force' 强制推进，或执行缺失阶段")
+        current_player = self.state.get_current_player()
+        player_id = current_player.player_id if current_player else ""
+
+        result = game_api.advance_year(self.state, player_id, force)
+
+        if not result.get("success"):
+            print(f"⛔ {result.get('message', '推进失败')}")
             return False
 
-        missing = self._get_missing_phases()
-        if missing and not force:
-            terms = TerminologyService.get()
-            missing_display = [getattr(terms, f"phase_{m}", m) for m in missing]
-            print(f"\n⛔ 无法推进，缺失阶段: {', '.join(missing_display)}")
-            print("   使用 'next force' 强制推进，或执行缺失阶段")
-            return False
-
-        if missing and force:
-            missing_names = ', '.join(missing)
-            print(f"\n⚠️ 强制推进 - 跳过: {missing_names}")
-
-        # ===== 新增：清理广场中未被招募的人物 =====
-        curia = self.state.curia
-        if not curia.is_empty():
-            ids_to_remove = [fig.id for fig in curia.get_all_available()]
-            for fid in ids_to_remove:
-                if fid in self.state._members:
-                    del self.state._members[fid]
-            curia.clear()
-            print(f"      🗑️ {len(ids_to_remove)} 名未被招募的人物已从游戏中消失")
-
-        self.state.advance_year()
-        print(f"已推进至 {abs(self.state.turn.year)} BC")
+        data = result.get("data") or {}
+        year_display = data.get("year_display") or result.get("message")
+        print(f"已推进至 {year_display}")
         self._show_turn_summary()
         return True
 

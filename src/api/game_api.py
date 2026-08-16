@@ -2,6 +2,7 @@
 import sys
 import traceback
 import io
+import logging
 from contextlib import redirect_stdout
 from src.core.game_state import GameState
 from src.api import api_response
@@ -103,19 +104,70 @@ def execute_turn(state: GameState, player_id: str) -> dict:
     return api_response(all_success, message, data={"phases": results})
 
 
-def advance_year(state: GameState, player_id: str) -> dict:
+def advance_year(state: GameState, player_id: str, force: bool = False) -> dict:
     """
     推进到下一年，需要玩家权限。
+
+    产品面唯一年度推进用例（FC-01）：
+    - GUI: ContextPanel.advancePhaseButton → doAdvanceResolution → adapter.advance_year → 本函数
+    - CLI: next → 本函数（force=True 为调试逃生门）
+    - debug: debug_cli → 本函数（同一 use-case）
+
+    语义（FC-02~FC-06 冻结顺序）：
+    ① 权限检查（force 不跳过）
+    ② 重入 guard（fail-closed；force 不跳过）
+    ③ resolution 前置（fail-closed；force 可跳过，见下方）
+    ④ 置 state._year_advance_in_progress = True
+    ⑤ try: state.advance_year()（原子原语，Slice 4 重构后）
+    ⑥ except: 结构化失败 advance_failed（年份未推进，无半推进）
+    ⑦ finally: state._year_advance_in_progress = False
+    ⑧ 成功：返回 year_display
+
+    force=True 语义（FC-02 force 分支，调试逃生门）：跳过 resolution 前置检查，
+    但不跳过权限检查、不跳过重入 guard、不跳过原子 commit；审计日志记录 force 使用。
+    force 可连续推进多年，属调试语义，不构成产品幂等保证（产品 GUI 面不暴露 force）。
     """
+    # ① 权限检查（保留，force 不跳过）
     if not state.config.get("testing.bypass_player_check", False):
         if not state.is_current_player(player_id):
             return api_response(False, i18n.get("error_not_your_turn"))
 
-    if state.turn:
+    # ② 重入 guard（fail-closed，FC-04；force 不跳过）
+    if getattr(state, "_year_advance_in_progress", False):
+        state.log_event("advance_year 重入拒绝（advance_in_progress）", level=logging.DEBUG)
+        return api_response(False, "年度推进正在进行中，请稍候", errors=["advance_in_progress"])
+
+    # ③ resolution 前置（fail-closed，FC-02/FC-03；force 可跳过）
+    if not force and not state.is_phase_executed("resolution"):
+        state.log_event("advance_year resolution 前置拒绝（resolution_not_executed）", level=logging.DEBUG)
+        return api_response(
+            False,
+            "必须先执行决议阶段 (resolution) 才能进入下一年",
+            errors=["resolution_not_executed"],
+        )
+
+    if force:
+        state.log_event("advance_year force=True（调试逃生门，跳过 resolution 前置）", level=logging.DEBUG)
+
+    if not state.turn:
+        return api_response(False, "游戏回合未初始化")
+
+    # ④ 置位
+    state._year_advance_in_progress = True
+    try:
+        # ⑤ 原子原语
         state.advance_year()
-        year_display = state.turn.get_year_display() if hasattr(state.turn, 'get_year_display') else str(state.turn.year)
-        return api_response(True, i18n.get("info_advance_year", year=year_display), data={"year_display": year_display})
-    return api_response(False, "游戏回合未初始化")
+    except Exception as e:
+        state.log_event(f"advance_year 异常: {e}", level=logging.ERROR)
+        return api_response(False, f"年度推进异常: {e}", errors=["advance_failed", str(e)])
+    finally:
+        # ⑥ 复位
+        state._year_advance_in_progress = False
+
+    # ⑦ 成功
+    year_display = state.turn.get_year_display() if hasattr(state.turn, 'get_year_display') else str(state.turn.year)
+    state.log_event(f"advance_year 成功: {year_display}", level=logging.DEBUG)
+    return api_response(True, i18n.get("info_advance_year", year=year_display), data={"year_display": year_display})
 
 
 # ---------- 以下为阶段0已有的查询函数，无需权限检查，保持原样 ----------

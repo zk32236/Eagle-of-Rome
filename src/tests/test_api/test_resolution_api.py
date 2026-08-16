@@ -26,6 +26,7 @@ from src.core.entities.province import Province
 from src.core.game_state import GameState
 from src.ui.commands.phase_resolution import ResolutionCommand
 from src.api.resolution_api import execute_resolution
+from src.api import game_api
 
 
 class TestExecuteResolutionBackend(unittest.TestCase):
@@ -76,16 +77,22 @@ class TestExecuteResolutionBackend(unittest.TestCase):
         self.assertEqual(year_after, year_before + 1)
 
     def test_advance_year_idempotent(self):
-        self.state.advance_year()
-        y1 = self.state.turn.year if self.state.turn else 0
-        self.state.advance_year()
-        y2 = self.state.turn.year if self.state.turn else 0
-        # Note: advance_year increments every call; AC-S2-04 says
-        # "重复点击不会增加第二次" for GUI — this is enforced in the GUI layer.
-        # At the model level, advance_year increments each call.
-        # This test documents that the model-level function is not idempotent,
-        # and the GUI guard is the real protection.
-        self.assertEqual(y2, y1 + 1)
+        # AC-S2-04（语义修正）: use-case 层幂等——第二次 game_api.advance_year 被拒绝（resolution_not_executed）。
+        # 模型原语 state.advance_year() 保持「每次 +1」契约（见 test_advance_year_increments_year），
+        # 产品面幂等由 game_api.advance_year 的 resolution token 消费保证。
+        self.state._current_player_id = "p1"
+        execute_resolution(self.state)  # 标记 resolution 已执行（token 就位）
+        year_before = self.state.turn.year
+
+        result1 = game_api.advance_year(self.state, "p1")
+        self.assertTrue(result1["success"])
+        year_after_1 = self.state.turn.year
+        self.assertEqual(year_after_1, year_before + 1)
+
+        result2 = game_api.advance_year(self.state, "p1")
+        self.assertFalse(result2["success"])
+        self.assertIn("resolution_not_executed", result2.get("errors", []))
+        self.assertEqual(self.state.turn.year, year_after_1)
 
     # ── AC-S2-05: CLI 与 GUI 结果等价（都委托 execute_resolution） ──
     def test_cli_command_delegates_to_api(self):
