@@ -31,6 +31,10 @@ if TYPE_CHECKING:
     from src.core.systems.military_system import MilitarySystem
 
 
+# FC-06: 年度衰减率（staged settlement 规划器与日志共用，保证单一来源）
+ANNUAL_DECAY_RATES = {"veterans": 0.20, "popularity": 0.50}
+
+
 class GameState:
     """游戏状态容器 - 多实例独立版本"""
 
@@ -1254,119 +1258,163 @@ class GameState:
     # ========== 回合管理 ==========
 
     def advance_year(self):
-        """推进到下一年（commit-last 原子化，FC-05/FC-06）。
+        """推进到下一年（FC-05/FC-06，staged settlement 原子化）。
 
-        Phase A（结算副作用，可失败）→ Phase B（COMMIT，原子，最后一步）。
+        Phase P（PLAN，只读结算规划，可抛异常，零权威突变）→
+        Phase C（COMMIT，应用计划 + 原 Phase B，纯赋值，无异常点）。
 
-        - A3（年度衰减 + age+1）/ A4（临时影响力衰减）为非幂等（累计衰减），
-          在 Phase A 前对 get_living_members() 的
-          {age, influence, temp_influence(含任务), popularity, veterans} 做快照；
-          Phase A 任一异常 → 恢复快照 → 抛回 use-case（game_api.advance_year）。
-        - A1/A2/A5/A6/A7 为幂等结算（重试安全），无需回滚。
+        任一子规划器（A1~A7）抛异常 → 立即上抛 → use-case（game_api.advance_year）
+        返回 advance_failed；此时 canonical authoritative state 零突变（FAILURE INVARIANT，
+        FC-06 冻结契约）。幂等降级为「重试安全」，不替代原子性。
 
         本方法为「模型原语」，约定仅由 use-case（game_api.advance_year）在满足
         resolution 前置后调用（FC-01）；测试可直接调用以验证原子性。
         """
-        # Phase A 前快照（仅非幂等项 A3/A4 涉及的 member 字段）
-        snapshot = {}
-        for member in self.get_living_members():
-            snapshot[member.id] = {
-                "age": member.age,
-                "influence": member.influence,
-                "temp_influence_tasks": copy.deepcopy(
-                    getattr(member, "_temp_influence_tasks", [])
-                ),
-                "popularity": member.popularity,
-                "veterans": member.veterans,
-            }
+        # ── Phase P：只读结算规划（任一子规划器抛异常 → 立即上抛，权威状态零突变）──
+        settlement = self._plan_settlement()
 
-        decay_rates = {"veterans": 0.20, "popularity": 0.50}
-        try:
-            # Phase A（结算副作用）
-            # A1 curia 清理（幂等）
-            self._cleanup_curia()
+        # ── Phase C：一次性 commit（应用 A1~A7 + 原 B1/B2/B3，全部纯赋值，无异常点）──
+        self._commit_settlement(settlement)
 
-            # A2 pending 清理（幂等）
-            self.clear_population_pending()
-            self.clear_forum_pending()
-            self.clear_senate_pending()
-            self.clear_pending_land_acts()
-
-            # A3 年度衰减 + age+1（非幂等）
-            for member in self.get_living_members():
-                member.apply_annual_decay(decay_rates)
-                member.age += 1
-
-            # A4 临时影响力衰减（非幂等）
-            for member in self.get_living_members():
-                if member.get_temp_influence() > 0:
-                    member.decay_temp_influence_tasks()
-                    member.update_influence()
-
-            # A5 合同过期处理（幂等）
-            self.process_contract_expiration()
-
-            # A6 总督交接处理（幂等）
-            self.process_governor_transitions()
-
-            # A7 和约到期处理（幂等）
-            self.process_truce_expiry()
-        except Exception:
-            # 回滚非幂等项（A3/A4）：恢复 member 衰减相关字段
-            for member in self.get_living_members():
-                snap = snapshot.get(member.id)
-                if snap is None:
-                    continue
-                member.age = snap["age"]
-                member.influence = snap["influence"]
-                member._temp_influence_tasks = copy.deepcopy(snap["temp_influence_tasks"])
-                member.popularity = snap["popularity"]
-                member.veterans = snap["veterans"]
-            self.log_event(
-                "advance_year 结算异常，已回滚非幂等项（年份未推进）",
-                level=logging.ERROR
-            )
-            raise
-
-        # Phase B（COMMIT，原子，最后一步，B1-B3 无异常点）
-        # B1 turn.advance_year（turn_number+1, year+1，纯字段自增）
-        if self._turn:
-            self._turn.advance_year()
-        # B2 消费 resolution token（幂等）
-        self._executed_phases.clear()
-        # B3 清空 phase_results
-        self._phase_results.clear()
-
-        # 年度衰减完成日志
+        # 年度衰减完成日志（DEBUG，logs 不属 canonical state）
         self.log_event(
-            f"年度衰减完成: 衰减率 veterans={decay_rates['veterans']}, popularity={decay_rates['popularity']}",
+            f"年度衰减完成: 衰减率 veterans={ANNUAL_DECAY_RATES['veterans']}, "
+            f"popularity={ANNUAL_DECAY_RATES['popularity']}",
             level=logging.DEBUG
         )
 
-    # ========== P1: 年度推进附加处理 ==========
+    # ========== FC-06: staged settlement（plan/commit 两段式） ==========
 
-    def process_contract_expiration(self) -> int:
-        """P1: 处理合同过期 - 所有 PENDING 合同存在 ≥3 回合则过期"""
-        expired_count = 0
-        for contract in self.contracts:
-            if getattr(contract, '_is_fleet_construction', False):
+    def _plan_settlement(self) -> Dict[str, Any]:
+        """按 A1→A7 顺序只读计算每个载体的目标变更。任一子规划器抛异常 → 零突变。"""
+        return {
+            # A1：curia 待删人物 id（无派系）
+            "curia_removals": self._plan_curia_cleanup(),
+            # A2：pending 清空无需规划（纯 clear，归入 commit）
+            # A3+A4：member 衰减目标值（age/veterans/popularity/temp_tasks + 是否需重算影响力）
+            "member_updates": self._plan_member_decay(),
+            # A5：待过期合同对象列表
+            "contracts_to_expire": self._plan_contract_expiration(),
+            # A6：总督交接计划（province + 新旧总督 + 是否升任）
+            "governor_transitions": self._plan_governor_transitions(),
+            # A7：待到期和约 war 对象列表
+            "truce_expiries": self._plan_truce_expiry(),
+        }
+
+    def _commit_settlement(self, plan: Dict[str, Any]) -> None:
+        """应用计划 + 原 Phase B。所有步骤均为纯赋值 / 确定性重算 / 无异常点 clear。"""
+        # A1：删除无派系 curia 人物 + 重建 available_figures
+        self._apply_curia_cleanup(plan["curia_removals"])
+        # A2：pending 清空（clear 类，无异常点）
+        self.clear_population_pending()
+        self.clear_forum_pending()
+        self.clear_senate_pending()
+        self.clear_pending_land_acts()
+        # A3+A4：赋 member 衰减目标 + update_influence（确定性重算）
+        self._apply_member_decay(plan["member_updates"])
+        # A5：合同过期
+        self._apply_contract_expiration(plan["contracts_to_expire"])
+        # A6：总督交接
+        self._apply_governor_transitions(plan["governor_transitions"])
+        # A7：和约到期
+        self._apply_truce_expiry(plan["truce_expiries"])
+        # ── 原 Phase B（COMMIT，最后一步，B1-B3 无异常点）──
+        if self._turn:
+            self._turn.advance_year()
+        self._executed_phases.clear()
+        self._phase_results.clear()
+
+    # ---------- A1 curia 清理（plan/apply） ----------
+
+    def _plan_curia_cleanup(self) -> List[int]:
+        """只读扫描 curia，返回待删的无派系人物 id 列表（零突变）。"""
+        curia = self._curia
+        if curia is None or curia.is_empty():
+            return []
+        return [fig.id for fig in curia.get_all_available() if fig.faction_id is None]
+
+    def _apply_curia_cleanup(self, removals: List[int]) -> None:
+        """应用 curia 清理：删除无派系人物 + 重建 available_figures（纯赋值）。"""
+        curia = self._curia
+        if curia is None:
+            return
+        for fid in removals:
+            self._members.pop(fid, None)
+        curia.available_figures = [
+            fig for fig in curia.available_figures
+            if fig.faction_id is not None
+        ]
+
+    # ---------- A3/A4 member 年度衰减（plan/apply） ----------
+
+    def _plan_member_decay(self) -> Dict[int, Dict[str, Any]]:
+        """只读重算每个存活 member 的衰减目标值（零突变，禁原地减一）。"""
+        updates: Dict[int, Dict[str, Any]] = {}
+        for member in self.get_living_members():
+            updates[member.id] = {
+                "age": member.age + 1,
+                "veterans": (
+                    int(member.veterans * (1 - ANNUAL_DECAY_RATES["veterans"]))
+                    if member.veterans > 0
+                    else member.veterans
+                ),
+                "popularity": (
+                    int(member.popularity * (1 - ANNUAL_DECAY_RATES["popularity"]))
+                    if member.popularity > 0
+                    else member.popularity
+                ),
+                "temp_influence_tasks": [
+                    {"per_turn": t["per_turn"], "remaining": t["remaining"] - 1}
+                    for t in member._temp_influence_tasks
+                    if t["remaining"] - 1 > 0
+                ],
+                "needs_influence_update": member.get_temp_influence() > 0,
+            }
+        return updates
+
+    def _apply_member_decay(self, updates: Dict[int, Dict[str, Any]]) -> None:
+        """应用 member 衰减目标值（纯赋值 + 确定性重算 update_influence）。"""
+        for member in self.get_living_members():
+            target = updates.get(member.id)
+            if target is None:
                 continue
-            if contract.status == ContractStatus.PENDING:
-                current_turn = self._turn.turn_number if self._turn else 0
-                created_turn = contract.create_turn
-                turns_pending = current_turn - created_turn
-                if turns_pending >= 3:
-                    contract.expire()
-                    expired_count += 1
-                    self.log_event(
-                        f"合同 {contract.id} ({contract.contract_type.name}) 已过期，存在 {turns_pending} 回合",
-                        level=logging.DEBUG
-                    )
-        return expired_count
+            member.age = target["age"]
+            member.veterans = target["veterans"]
+            member.popularity = target["popularity"]
+            member._temp_influence_tasks = target["temp_influence_tasks"]
+            if target["needs_influence_update"]:
+                member.update_influence()
 
-    def process_governor_transitions(self) -> list:
-        """P1: 处理总督交接 - 旧总督返回 + 候任总督上任"""
-        transitions = []
+    # ---------- A5 合同过期（plan/apply） ----------
+
+    def _plan_contract_expiration(self) -> List[Any]:
+        """只读计算待过期合同列表（PENDING 且存在 ≥3 回合，非舰队建造合同）。"""
+        current_turn = self._turn.turn_number if self._turn else 0
+        return [
+            contract
+            for contract in self.contracts
+            if not getattr(contract, "_is_fleet_construction", False)
+            and contract.status == ContractStatus.PENDING
+            and (current_turn - contract.create_turn) >= 3
+        ]
+
+    def _apply_contract_expiration(self, contracts: List[Any]) -> int:
+        """应用合同过期（status→EXPIRED，纯赋值）。返回过期数量。"""
+        current_turn = self._turn.turn_number if self._turn else 0
+        for contract in contracts:
+            turns_pending = current_turn - contract.create_turn
+            contract.expire()
+            self.log_event(
+                f"合同 {contract.id} ({contract.contract_type.name}) 已过期，存在 {turns_pending} 回合",
+                level=logging.DEBUG
+            )
+        return len(contracts)
+
+    # ---------- A6 总督交接（plan/apply） ----------
+
+    def _plan_governor_transitions(self) -> List[Dict[str, Any]]:
+        """只读计算每个行省的总督交接计划（零突变；assert 前移至此，commit 无异常点）。"""
+        transitions: List[Dict[str, Any]] = []
         for province in self.get_all_provinces():
             designate_id = province.governor_designate_id
             designate = (
@@ -1375,26 +1423,44 @@ class GameState:
                 else None
             )
             promote_designate = designate is not None and not designate.is_dead
+            old_id = province.old_governor_id
+            old_fig = self.get_member(old_id) if old_id is not None else None
+            transitions.append({
+                "province": province,
+                "old_id": old_id,
+                "old_fig": old_fig,
+                "designate": designate,
+                "promote": promote_designate,
+                "designate_id": designate_id,
+            })
+        return transitions
+
+    def _apply_governor_transitions(self, transitions: List[Dict[str, Any]]) -> list:
+        """应用总督交接（纯赋值 + 确定性重算）。返回 transition 列表（与原 process_* 一致）。"""
+        results = []
+        for t in transitions:
+            province = t["province"]
+            old_fig = t["old_fig"]
+            designate = t["designate"]
+            promote = t["promote"]
+
             old_id, designate_id = province.complete_governor_transition(
                 self._turn.turn_number if self._turn else 0,
-                promote_designate=promote_designate
+                promote_designate=promote
             )
 
-            # 处理旧总督返回
-            if old_id is not None:
-                old_fig = self.get_member(old_id)
-                if old_fig is not None and not old_fig.is_dead:
-                    assert old_fig is not None
-                    old_fig.is_absent = False
-                    old_fig.office = None
-                    old_fig.update_influence()
-                    self.log_event(
-                        f"旧总督 {old_fig.get_formal_name()} 返回罗马 (province_id={province.province_id})",
-                        level=logging.DEBUG
-                    )
+            # 处理旧总督返回（guard：old_fig 缺失/死亡则跳过，保证 commit 无异常点）
+            if old_fig is not None and not old_fig.is_dead:
+                old_fig.is_absent = False
+                old_fig.office = None
+                old_fig.update_influence()
+                self.log_event(
+                    f"旧总督 {old_fig.get_formal_name()} 返回罗马 (province_id={province.province_id})",
+                    level=logging.DEBUG
+                )
 
             # 处理候任总督上任或跳过
-            if promote_designate:
+            if promote:
                 designate.office = province.governor_type
                 designate.update_influence()
                 self.log_event(
@@ -1407,32 +1473,42 @@ class GameState:
                     level=logging.DEBUG
                 )
 
-            transitions.append({
+            results.append({
                 "province_id": province.province_id,
                 "old_governor_id": old_id,
-                "new_governor_id": designate_id if promote_designate else None,
+                "new_governor_id": designate_id if promote else None,
             })
-        return transitions
+        return results
 
-    def process_truce_expiry(self) -> list:
-        """P1: 处理和约到期 - 到期停战转为威胁"""
+    # ---------- A7 和约到期（plan/apply） ----------
+
+    def _plan_truce_expiry(self) -> List[Any]:
+        """只读计算待到期和约 war 列表（零突变）。"""
         war_system = self.get_war_system()
         if not war_system:
             return []
-
         current_turn = self._turn.turn_number if self._turn else 0
-        truce_wars = war_system.get_truce_wars_with_approved_treaty()
+        return [
+            war
+            for war in war_system.get_truce_wars_with_approved_treaty()
+            if war.is_truce_expired(current_turn)
+        ]
+
+    def _apply_truce_expiry(self, wars: List[Any]) -> list:
+        """应用和约到期（战争容器回移 + status/commander/peace_treaty 突变，仅在 commit 段）。"""
+        war_system = self.get_war_system()
+        if not war_system:
+            return []
         expired = []
-        for war in truce_wars:
-            if war.is_truce_expired(current_turn):
-                # noinspection PyProtectedMember
-                war_system._move_to_threat(war, threat_level=1)
-                war.clear_peace_treaty()
-                expired.append(war.name)
-                self.log_event(
-                    f"和约到期: {war.name} (ID={war.id}) 重启威胁",
-                    level=logging.DEBUG
-                )
+        for war in wars:
+            # noinspection PyProtectedMember
+            war_system._move_to_threat(war, threat_level=1)
+            war.clear_peace_treaty()
+            expired.append(war.name)
+            self.log_event(
+                f"和约到期: {war.name} (ID={war.id}) 重启威胁",
+                level=logging.DEBUG
+            )
         if expired:
             self.log_event(
                 f"{len(expired)} 场战争和约到期",
@@ -1440,21 +1516,27 @@ class GameState:
             )
         return expired
 
+    # ========== P1: 年度推进附加处理（薄包装，保留幂等单测语义） ==========
+
+    def process_contract_expiration(self) -> int:
+        """P1: 处理合同过期 - 所有 PENDING 合同存在 ≥3 回合则过期（薄包装）。"""
+        return self._apply_contract_expiration(self._plan_contract_expiration())
+
+    def process_governor_transitions(self) -> list:
+        """P1: 处理总督交接 - 旧总督返回 + 候任总督上任（薄包装）。"""
+        return self._apply_governor_transitions(self._plan_governor_transitions())
+
+    def process_truce_expiry(self) -> list:
+        """P1: 处理和约到期 - 到期停战转为威胁（薄包装）。"""
+        return self._apply_truce_expiry(self._plan_truce_expiry())
+
     def _cleanup_curia(self) -> None:
         """P0-1: 清理人才市场中无派系的广场人物。"
         
         - 无 faction_id 的人物（广场生成的新人物）→ 从 _members 删除
         - 有 faction_id 的人物（退休的派系成员）→ 保留在 _members 中
         """
-        curia = self._curia
-        if curia and not curia.is_empty():
-            for fig in curia.get_all_available():
-                if fig.faction_id is None:
-                    self._members.pop(fig.id, None)
-            curia.available_figures = [
-                fig for fig in curia.available_figures
-                if fig.faction_id is not None
-            ]
+        self._apply_curia_cleanup(self._plan_curia_cleanup())
 
     def is_phase_executed(self, phase_name: str) -> bool:
         """检查阶段是否已执行"""

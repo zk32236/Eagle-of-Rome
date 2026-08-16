@@ -36,6 +36,93 @@ def _make_state(year=-260, bypass=True, current_player="p1", turn_number=5):
     return state
 
 
+def _war_projection(state):
+    """战争系统投影（A7 突变载体，to_dict 不含 war，需显式纳入）。"""
+    ws = state.get_war_system()
+    if ws is None:
+        return None
+    return {
+        "active": sorted(w.id for w in ws._active_wars),
+        "threats": sorted(w.id for w in ws._threats),
+        "truce": sorted(w.id for w in ws._truce_wars),
+        "wars": {
+            w.id: {
+                "status": w.status.value,
+                "threat_level": w.threat_level,
+                "commander_id": w.commander_id,
+                "peace_treaty": (w._peace_treaty.copy() if getattr(w, "_peace_treaty", None) else None),
+                "truce_end_turn": w.truce_end_turn,
+                "_triggered_this_turn": w._triggered_this_turn,
+            }
+            for w in ws.get_all_wars()
+        },
+    }
+
+
+def _canonical_snapshot(state):
+    """canonical authoritative state：deepcopy(to_dict()) + war 投影。
+
+    - to_dict() 天然排除 _event_log（logs）与 _year_advance_in_progress（瞬态 guard）。
+    - deepcopy 规避 to_dict() 对 _temp_influence_tasks 的浅拷贝别名污染。
+    - _war_projection 补齐 A7 突变载体（WarSystem 无序列化，见 addendum §2.2 缺口登记）。
+    """
+    d = copy.deepcopy(state.to_dict())
+    d["_war_projection"] = _war_projection(state)
+    return d
+
+
+def _make_rich_state():
+    """构造包含全部 6 类结算载体的 GameState，使任一 A1~A7 步骤被误 commit 均可观测。"""
+    from src.core.entities.war import War, WarStatus
+    from src.core.systems.war_system import WarSystem
+    from src.core.entities.province import Province
+    from src.core.entities.contract import ContractType
+
+    state = _make_state()  # turn_number=5, year=-260
+    state.mark_phase_executed("resolution")
+
+    # A1: curia 无派系人物（faction_id=None）
+    curia_fig = Figure(id=500, name="Forum Stranger", age=30)
+    state.add_member(curia_fig)
+    state.curia.add_figure(curia_fig)
+
+    # A2: 非空 pending（land act + population campaign）
+    state.add_pending_land_act({"type": "land_act_test", "amount": 50})
+    state.record_population_campaign("p1", 1, 100)
+
+    # A3/A4: 存活 member（含临时影响力，使衰减可观测）
+    member = Figure(id=1, name="Marcus", age=40, veterans=100, popularity=80)
+    member.add_temp_influence_task(per_turn=10, duration=5)
+    state.add_member(member)
+
+    # A5: ≥3 回合 PENDING 合同（turn_number=5, create_turn=2 → turns_pending=3）
+    state.create_contract(ContractType.TAX_FARMING, 1, 90, 2)
+
+    # A6: 带候任总督的行省
+    old_gov = Figure(id=101, name="Old", is_absent=True, office="proconsul")
+    designate = Figure(id=102, name="New", office=None)
+    state._members[101] = old_gov
+    state._members[102] = designate
+    province = Province(
+        province_id=1, name="P", total_land=500,
+        governor_id=101, governor_designate_id=102, old_governor_id=101,
+        governor_type="proconsul",
+    )
+    state.add_province(province)
+
+    # A7: 已到期 truce war（指派指挥官使 commander_id 清空可观测）
+    ws = WarSystem(state)
+    state._war_system = ws
+    war = War(id="w1", name="Truce War", start_year=-270, threat_level=0, strength=5)
+    war.status = WarStatus.TRUCE
+    war.set_peace_treaty({"status": "approved"})
+    war.set_truce_end_turn(4)  # 4 <= 5 → 已到期
+    war.assign_commander(1)
+    ws._truce_wars.append(war)
+
+    return state
+
+
 # ---------------------------------------------------------------------------
 # FC-02 resolution 前置 / 权限门禁
 # ---------------------------------------------------------------------------
@@ -128,15 +215,15 @@ def test_advance_year_guard_reset_after_success():
 # ---------------------------------------------------------------------------
 
 def test_advance_year_no_partial_on_settlement_failure(monkeypatch):
-    """结算异常 → 年份未推进、resolution token 保留、guard 复位。"""
-    state = _make_state()
-    state.mark_phase_executed("resolution")
+    """结算异常（A5 规划器入口）→ 年份未推进、token 保留、guard 复位、canonical 状态逐字相等。"""
+    state = _make_rich_state()
+    before = _canonical_snapshot(state)
     year_before = state.turn.year
 
     def boom():
         raise RuntimeError("settlement failure")
 
-    monkeypatch.setattr(state, "process_contract_expiration", boom)
+    monkeypatch.setattr(state, "_plan_contract_expiration", boom)
     result = game_api.advance_year(state, "p1")
 
     assert result["success"] is False
@@ -144,6 +231,8 @@ def test_advance_year_no_partial_on_settlement_failure(monkeypatch):
     assert state.turn.year == year_before  # 年份未推进
     assert state.is_phase_executed("resolution")  # token 保留
     assert state._year_advance_in_progress is False  # guard 复位
+    # 升级断言：canonical exact-equal 覆盖 A1/A2 残留与全部结算载体
+    assert _canonical_snapshot(state) == before
 
 
 def test_advance_year_decay_rollback(monkeypatch):
@@ -159,7 +248,7 @@ def test_advance_year_decay_rollback(monkeypatch):
     def boom():
         raise RuntimeError("boom after decay")
 
-    monkeypatch.setattr(state, "process_contract_expiration", boom)
+    monkeypatch.setattr(state, "_plan_contract_expiration", boom)
     result = game_api.advance_year(state, "p1")
 
     assert result["success"] is False
@@ -177,7 +266,7 @@ def test_advance_year_retry_single_increment(monkeypatch):
     def boom():
         raise RuntimeError("transient failure")
 
-    monkeypatch.setattr(state, "process_truce_expiry", boom)
+    monkeypatch.setattr(state, "_plan_truce_expiry", boom)
     result1 = game_api.advance_year(state, "p1")
     assert result1["success"] is False
     assert state.turn.year == -260
@@ -319,7 +408,7 @@ def test_advance_year_rollback_restores_faction_derived_influence(monkeypatch):
     def boom():
         raise RuntimeError("boom after temp influence decay")
 
-    monkeypatch.setattr(state, "process_contract_expiration", boom)
+    monkeypatch.setattr(state, "_plan_contract_expiration", boom)
     result = game_api.advance_year(state, "p1")
 
     assert result["success"] is False
@@ -331,6 +420,119 @@ def test_advance_year_rollback_restores_faction_derived_influence(monkeypatch):
     # faction 派生影响力（on-demand 求和）随 member 影响力回滚而恢复
     assert faction.get_total_influence(state) == faction_influence_before
     assert state.turn.year == -260
+
+
+# ---------------------------------------------------------------------------
+# FC-06: staged settlement 失败原子性（T-A5/T-A6/T-A7/T-RETRY）
+# ---------------------------------------------------------------------------
+
+def test_advance_year_T_A5_plan_contract_expiration_atomic(monkeypatch):
+    """T-A5: A5 规划器入口注入失败 → curia/pending/members/year/token 全不变。"""
+    from src.core.entities.contract import ContractStatus
+
+    state = _make_rich_state()
+    before = _canonical_snapshot(state)
+
+    def boom():
+        raise RuntimeError("A5 entry failure")
+
+    monkeypatch.setattr(state, "_plan_contract_expiration", boom)
+    result = game_api.advance_year(state, "p1")
+
+    assert result["success"] is False
+    assert "advance_failed" in result.get("errors", [])
+    assert state.turn.year == -260
+    assert state.is_phase_executed("resolution")
+    assert state._year_advance_in_progress is False
+    assert _canonical_snapshot(state) == before
+    # 显式点名（可读性强化）：合同仍 PENDING、curia 人物未删、pending 未清
+    assert state.contracts[0].status == ContractStatus.PENDING
+    assert state.curia.available_figures[0].faction_id is None
+    assert state.get_pending_land_acts() == [{"type": "land_act_test", "amount": 50}]
+
+
+def test_advance_year_T_A6_plan_governor_atomic(monkeypatch):
+    """T-A6: A5 规划成功后 A6 规划器入口失败 → 合同状态也恢复（构造性等价「A5 已跑完再失败」）。"""
+    from src.core.entities.contract import ContractStatus
+
+    state = _make_rich_state()
+    before = _canonical_snapshot(state)
+
+    def boom():
+        raise RuntimeError("A6 entry failure")
+
+    monkeypatch.setattr(state, "_plan_governor_transitions", boom)
+    result = game_api.advance_year(state, "p1")
+
+    assert result["success"] is False
+    assert "advance_failed" in result.get("errors", [])
+    assert _canonical_snapshot(state) == before
+    # 特别点名：合同仍 PENDING（未 EXPIRED）、行省总督三字段未变
+    assert state.contracts[0].status == ContractStatus.PENDING
+    province = state.get_all_provinces()[0]
+    assert province.governor_id == 101
+    assert province.old_governor_id == 101
+    assert province.governor_designate_id == 102
+
+
+def test_advance_year_T_A7_plan_truce_atomic(monkeypatch):
+    """T-A7: A5+A6 规划成功后 A7 规划器入口失败 → 合同 + 行省总督 + curia/pending/member 全恢复。"""
+    from src.core.entities.contract import ContractStatus
+    from src.core.entities.war import WarStatus
+
+    state = _make_rich_state()
+    before = _canonical_snapshot(state)
+
+    def boom():
+        raise RuntimeError("A7 entry failure")
+
+    monkeypatch.setattr(state, "_plan_truce_expiry", boom)
+    result = game_api.advance_year(state, "p1")
+
+    assert result["success"] is False
+    assert "advance_failed" in result.get("errors", [])
+    assert _canonical_snapshot(state) == before
+    # 特别点名：合同仍 PENDING、行省总督未变、war 仍 TRUCE（commander/peace_treaty/容器未清）
+    assert state.contracts[0].status == ContractStatus.PENDING
+    province = state.get_all_provinces()[0]
+    assert province.governor_id == 101
+    assert province.governor_designate_id == 102
+    ws = state.get_war_system()
+    war = ws.get_all_wars()[0]
+    assert war.status == WarStatus.TRUCE
+    assert war.commander_id == 1
+    assert war._peace_treaty == {"status": "approved"}
+    assert war in ws._truce_wars
+    assert before["_war_projection"]["truce"] == ["w1"]
+
+
+def test_advance_year_T_RETRY_single_settlement(monkeypatch):
+    """T-RETRY: 失败 → 状态 exact-equal → 重试成功 → 恰好一次 year advance。"""
+    state = _make_rich_state()
+    before = _canonical_snapshot(state)
+
+    def boom():
+        raise RuntimeError("transient failure")
+
+    # 第一步：A7 规划器入口失败 → canonical exact-equal
+    monkeypatch.setattr(state, "_plan_truce_expiry", boom)
+    result1 = game_api.advance_year(state, "p1")
+    assert result1["success"] is False
+    assert "advance_failed" in result1.get("errors", [])
+    assert _canonical_snapshot(state) == before
+    assert state.turn.year == -260
+    assert state.is_phase_executed("resolution")
+
+    # 第二步：修复后重试 → 成功且仅 +1，结算恰好应用一次（对照无注入的 success 基准）
+    monkeypatch.undo()
+    result2 = game_api.advance_year(state, "p1")
+    assert result2["success"] is True
+    assert state.turn.year == -259  # 恰好 +1，非 +2
+    assert not state.is_phase_executed("resolution")
+
+    baseline = _make_rich_state()
+    assert game_api.advance_year(baseline, "p1")["success"] is True
+    assert _canonical_snapshot(state) == _canonical_snapshot(baseline)
 
 
 if __name__ == "__main__":
