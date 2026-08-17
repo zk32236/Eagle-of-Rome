@@ -131,7 +131,13 @@ class WarSystem:
         war.status = WarStatus.TRUCE
         return True
 
-    def _move_to_active(self, war: War) -> bool:
+    def _move_to_active(self, war: War, preserve_commander: bool = False) -> bool:
+        """将停战战争移回 ACTIVE。
+
+        preserve_commander=False（默认）保持旧行为：清空 commander_id；
+        preserve_commander=True 时保留指挥官/军团连续性（truce 到期路径使用，
+        Advisor P2-c 裁定 2026-08-17）。
+        """
         # 入口日志
         self.state.log_event(
             f"[DEBUG] _move_to_active 开始: war={war.id}",
@@ -161,7 +167,8 @@ class WarSystem:
         if war not in self._active_wars:
             self._active_wars.append(war)
         war.status = WarStatus.ACTIVE
-        war.commander_id = None
+        if not preserve_commander:
+            war.commander_id = None
         self.state.log_event(
             f"[DEBUG] _move_to_active 成功: war={war.id}",
             level=logging.DEBUG,

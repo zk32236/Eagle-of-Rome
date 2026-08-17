@@ -172,6 +172,17 @@ class TestGUICombatFeatures(unittest.TestCase):
         self.assertTrue(r4["success"])
         self.assertTrue(self.state.is_phase_executed("combat"))
 
+        # T8（INV-C5）：≤3 卡场景 → QML model 仍渲染 3 槽（DTO 层无截断）
+        # 注：本回合结果卡保留至 Combat 阶段结束（INV-C1），故此处断言 ≤3 而非 0
+        view = combat_api.get_combat_view(self.state, "player_opt")
+        all_cards = (
+            view["data"]["active_wars"]
+            + view["data"]["truce_wars"]
+            + view["data"]["resolved_war_cards"]
+        )
+        self.assertLessEqual(len(all_cards), 3)
+        self.assertEqual(max(3, len(all_cards)), 3)
+
     # ════════════════════════════════════════════════════════════════════
     # GUI 特征 5: 战斗结果包含 loot 分配字段
     # ════════════════════════════════════════════════════════════════════
@@ -233,6 +244,116 @@ class TestGUICombatFeatures(unittest.TestCase):
             state.get_phase_result("combat")["war_results"]["war_c"]["result"],
             "draw",
         )
+
+        # T1（INV-C1/C4）：Victory 结果卡不计入 ongoing（war_count 不触发）
+        vc = state.check_victory_conditions()
+        self.assertFalse(vc["game_over"])
+        self.assertEqual([c for c in vc["conditions"] if c["type"] == "war_count"], [])
+        # active+truce 不含 RESOLVED war（war_a/war_b 已 discard）
+        self.assertEqual([w for w in ws.get_active_wars() if w.status == WarStatus.RESOLVED], [])
+        self.assertEqual([w for w in ws.get_truce_wars() if w.status == WarStatus.RESOLVED], [])
+
+    # ════════════════════════════════════════════════════════════════════
+    # T9（INV-C6）：4 战争 overflow — 全量入卡、无截断、全可攻（DTO 层）
+    # ════════════════════════════════════════════════════════════════════
+    def test_four_war_overflow_all_cards_present(self):
+        state = _build_combat_full_state()
+        # 追加第 4 场 ACTIVE 战争（带指挥官）
+        w4 = War(id="war_d", name="高卢战争", war_type=WarType.FOREIGN, strength=7,
+                 threat_level=2, rewards={"treasury": 60})
+        w4.commander_id = 1
+        w4.legions_assigned = 1
+        w4.add_legion_number(9)
+        w4.status = WarStatus.ACTIVE
+        state._war_system._active_wars.append(w4)
+
+        view = combat_api.get_combat_view(state, "player_opt")
+        data = view["data"]
+        all_cards = data["active_wars"] + data["truce_wars"] + data["resolved_war_cards"]
+        # 无截断：4 卡全量入卡（禁 [:3]）
+        self.assertEqual(len(all_cards), 4)
+        self.assertEqual(len(data["active_wars"]), 4)
+        # 每卡 ACTIVE_ACTIONABLE（可攻）
+        for card in data["active_wars"]:
+            self.assertEqual(card["presentation_state"], "ACTIVE_ACTIONABLE")
+        # QML model = max(3, 4) = 4（横向 overflow 追加）
+        self.assertEqual(max(3, len(all_cards)), 4)
+
+    # ════════════════════════════════════════════════════════════════════
+    # T10（INV-C6）：TRUCE + 3×ACTIVE 混合 overflow — 4 卡、TRUCE 锁定不可攻、ongoing=4
+    # ════════════════════════════════════════════════════════════════════
+    def test_mixed_truce_active_overflow_locked(self):
+        state = _build_combat_full_state()
+        ws = state._war_system
+        # 第 4 场 = TRUCE（approved 草案，保持 TRUCE 容器）
+        w4 = War(id="war_truce", name="迦太基和约", war_type=WarType.FOREIGN, strength=9,
+                 threat_level=2)
+        w4.commander_id = 1
+        w4.status = WarStatus.TRUCE
+        w4.set_peace_treaty({"status": "approved"})
+        ws._truce_wars.append(w4)
+
+        view = combat_api.get_combat_view(state, "player_opt")
+        data = view["data"]
+        all_cards = data["active_wars"] + data["truce_wars"] + data["resolved_war_cards"]
+        # 无截断：3 ACTIVE + 1 TRUCE = 4 卡
+        self.assertEqual(len(all_cards), 4)
+        self.assertEqual(len(data["truce_wars"]), 1)
+        self.assertEqual(data["truce_wars"][0]["presentation_state"], "TRUCE_LOCKED")
+        for card in data["active_wars"]:
+            self.assertEqual(card["presentation_state"], "ACTIVE_ACTIONABLE")
+        # ongoing = ACTIVE + TRUCE = 4 → war_count 触发（INV-C4）
+        vc = state.check_victory_conditions()
+        self.assertTrue(vc["game_over"])
+        war_count_conds = [c for c in vc["conditions"] if c["type"] == "war_count"]
+        self.assertEqual(len(war_count_conds), 1)
+        self.assertTrue(war_count_conds[0]["critical"])
+        self.assertEqual(war_count_conds[0]["details"], "进行中战争达到 4 场，共和覆灭！")
+
+    # ════════════════════════════════════════════════════════════════════
+    # T12（INV-C1/C2/C4/C5 联合）：Reference Scenario 跨 Combat→Senate→Combat
+    # Victory×2（war_a/war_b RESOLVED）+ Draw（war_c → TRUCE）→ Senate 批准 →
+    # 下 Combat：active 空、resolved 空、truce 1 → 槽 [EMPTY][EMPTY][TRUCE_LOCKED]
+    # ════════════════════════════════════════════════════════════════════
+    @patch.object(combat_api.random, "randint")
+    def test_reference_scenario_victory_x2_draw_truce_slot(self, mock_randint):
+        mock_randint.return_value = 8
+        state = _build_combat_full_state()
+        ws = state._war_system
+
+        # 逐场结算：war_a → 确认 → war_b → 确认 → war_c（draw）→ 确认
+        for wid in ("war_a", "war_b", "war_c"):
+            combat_api.select_war(state, "player_opt", wid)
+            combat_api.do_combat_action(state, "player_opt", wid, "attack")
+            combat_api.confirm_battle_result(state, "player_opt")
+
+        war_c = ws.get_war_by_id("war_c")
+        self.assertEqual(war_c.status, WarStatus.TRUCE)
+
+        # Senate 批准（草案 status → approved）
+        war_c.set_peace_treaty_status("approved")
+
+        # 下 Combat（新 phase_data）
+        state.record_phase_result("combat", {})
+
+        view = combat_api.get_combat_view(state, "player_opt")
+        data = view["data"]
+        # INV-C1：Victory 结果卡不计入下 Combat（active 空）
+        self.assertEqual(data["active_wars"], [])
+        self.assertEqual(data["resolved_war_cards"], [])
+        # INV-C2：TRUCE 卡可见 + TRUCE_LOCKED
+        self.assertEqual(len(data["truce_wars"]), 1)
+        truce_card = data["truce_wars"][0]
+        self.assertEqual(truce_card["war_id"], "war_c")
+        self.assertEqual(truce_card["presentation_state"], "TRUCE_LOCKED")
+        # 槽位（DTO 层）＝ 3 槽：EMPTY/EMPTY/TRUCE_LOCKED（QML model = max(3, 1) = 3）
+        all_cards = data["active_wars"] + data["truce_wars"] + data["resolved_war_cards"]
+        self.assertEqual(len(all_cards), 1)
+        self.assertEqual(max(3, len(all_cards)), 3)
+        # INV-C4：1 TRUCE + 0 ACTIVE = 1 < 3 → war_count 不触发
+        vc = state.check_victory_conditions()
+        self.assertFalse(vc["game_over"])
+        self.assertEqual([c for c in vc["conditions"] if c["type"] == "war_count"], [])
 
     # ════════════════════════════════════════════════════════════════════
     # GUI 特征 6: auto_resolve_combat (adapter 方法)

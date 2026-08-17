@@ -737,10 +737,10 @@ def test_truce_expiry_file_logging():
             state.advance_year()
             state.close_logging()
 
-            # 验证战争已从停战移至威胁
+            # 验证战争已从停战移至活跃（Advisor P2-c 裁定：到期返 ACTIVE）
             assert war not in ws._truce_wars, "战争应从停战列表移除"
-            assert war in ws._threats, "战争应移至威胁列表"
-            assert war.status == WarStatus.THREAT, f"战争状态应为 THREAT，实际: {war.status}"
+            assert war in ws._active_wars, "战争应移至活跃列表"
+            assert war.status == WarStatus.ACTIVE, f"战争状态应为 ACTIVE，实际: {war.status}"
 
             # 验证 event_log 包含和约到期消息
             log_messages = state.event_log

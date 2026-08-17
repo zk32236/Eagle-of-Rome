@@ -523,10 +523,15 @@ class GuiSessionStore(QObject):
 
     @Property(list, notify=combatViewChanged)
     def combatAllWarCards(self) -> List[Dict[str, Any]]:
-        """Combined list of active + resolved war cards for QML Repeater."""
+        """Combined list of active + truce + resolved war cards for QML Repeater.
+
+        INV-C6：全量入卡（active → truce → resolved），禁 [:3] 截断；
+        presentation_state 由 L2 卡构建层（get_combat_view）产出，随卡 dict 原样透传。
+        """
         active = self._combat_view.get("active_wars", [])
+        truce = self._combat_view.get("truce_wars", [])
         resolved = self._combat_view.get("resolved_war_cards", [])
-        return active + resolved
+        return active + truce + resolved
 
     @Property(dict, notify=combatViewChanged)
     def combatResult(self) -> Dict[str, Any]:

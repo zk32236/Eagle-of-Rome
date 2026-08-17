@@ -179,6 +179,9 @@ class TestCombatAPI(unittest.TestCase):
         self.assertFalse(data["triumph"])
         # Disaster should have losses
         self.assertGreater(data["losses"], 0)
+        # V-2 增强（INV-C3）：disaster 后 war 保持 ACTIVE（不 resolve/discard）
+        self.assertEqual(war1.status, WarStatus.ACTIVE)
+        self.assertNotIn(war1, self.state._war_system._war_discard)
 
     # ════════════════════════════════════════════════════════════════════
     # Test 7: do_combat_action - defeat (low roll + low power)
@@ -202,6 +205,9 @@ class TestCombatAPI(unittest.TestCase):
         result = combat_api.do_combat_action(self.state, "player_opt", "defeat_war", "attack")
         self.assertTrue(result["success"])
         self.assertEqual(result["data"]["result"], "defeat")
+        # V-1 增强（INV-C3）：defeat 后 war 保持 ACTIVE（不 resolve/discard）
+        self.assertEqual(war1.status, WarStatus.ACTIVE)
+        self.assertNotIn(war1, self.state._war_system._war_discard)
 
     # ════════════════════════════════════════════════════════════════════
     # Test 8: do_combat_action - scout
@@ -242,15 +248,16 @@ class TestCombatAPI(unittest.TestCase):
         combat_api.select_war(self.state, "player_opt", "test_war_1")
         combat_api.do_combat_action(self.state, "player_opt", "test_war_1", "attack")
 
-        # Confirm result - should return to "select" since war2 remains
+        # INV-C3/Δ6 语义（D-8 登记）：war2 仍 ACTIVE 但无指挥官 → 不阻塞 advance
+        # （与 _skip_all_unassigned 一致；旧断言 all_resolved=False/select 编码修复前语义）
         result = combat_api.confirm_battle_result(self.state, "player_opt")
         self.assertTrue(result["success"])
-        self.assertFalse(result["data"]["all_resolved"])
-        self.assertEqual(result["data"]["next_step"], "select")
+        self.assertTrue(result["data"]["all_resolved"])
+        self.assertEqual(result["data"]["next_step"], "advance")
 
-        # View should show step "select"
+        # View should show step "advance"
         view = combat_api.get_combat_view(self.state, "player_opt")
-        self.assertEqual(view["data"]["current_step"], "select")
+        self.assertEqual(view["data"]["current_step"], "advance")
 
     # ════════════════════════════════════════════════════════════════════
     # Test 11: confirm_battle_result - all wars resolved
@@ -315,28 +322,13 @@ class TestCombatAPI(unittest.TestCase):
         self.assertEqual(view["data"]["current_step"], "result")
         self.assertEqual(len(view["data"]["battle_results"]), 1)
 
-        # Step 4: Confirm war1 -> back to SELECT (war2 remains)
-        combat_api.confirm_battle_result(self.state, "player_opt")
-        view = combat_api.get_combat_view(self.state, "player_opt")
-        self.assertEqual(view["data"]["current_step"], "select")
-
-        # Step 5: Select war2 -> ACTION -> ATTACK -> RESULT
-        combat_api.select_war(self.state, "player_opt", "test_war_2")
-        self.assertEqual(
-            combat_api.get_combat_view(self.state, "player_opt")["data"]["current_step"],
-            "action",
-        )
-        combat_api.do_combat_action(self.state, "player_opt", "test_war_2", "attack")
-        view = combat_api.get_combat_view(self.state, "player_opt")
-        self.assertEqual(view["data"]["current_step"], "result")
-
-        # Step 6: Confirm war2 -> ADVANCE
+        # Step 4: Confirm war1 -> ADVANCE（war2 无指挥官 → 不阻塞，INV-C3/Δ6，D-8 登记）
         combat_api.confirm_battle_result(self.state, "player_opt")
         view = combat_api.get_combat_view(self.state, "player_opt")
         self.assertEqual(view["data"]["current_step"], "advance")
         self.assertTrue(view["data"]["can_advance"])
 
-        # Step 7: Advance -> Resolution
+        # Step 5: Advance -> Resolution（无指挥官 war 跳过，与 _skip_all_unassigned 一致）
         result = combat_api.advance_combat(self.state, "player_opt")
         self.assertTrue(result["success"])
         self.assertTrue(self.state.is_phase_executed("combat"))
@@ -459,6 +451,47 @@ class TestCombatAPI(unittest.TestCase):
             by_war_id["test_war_1"]["result"]["war_id"],
             by_war_id["test_war_2"]["result"]["war_id"],
         )
+
+        # T1（INV-C1/C4）：Victory 结果卡不计入 ongoing（war_count 不触发；active+truce 不含 RESOLVED）
+        vc = self.state.check_victory_conditions()
+        self.assertFalse(vc["game_over"])
+        self.assertEqual([c for c in vc["conditions"] if c["type"] == "war_count"], [])
+        ws = self.state._war_system
+        self.assertEqual(
+            [w for w in ws.get_active_wars() if w.status == WarStatus.RESOLVED], []
+        )
+        self.assertEqual(
+            [w for w in ws.get_truce_wars() if w.status == WarStatus.RESOLVED], []
+        )
+
+    # ════════════════════════════════════════════════════════════════════
+    # T2（INV-C1）：Victory 下 Combat 重建 → 结果卡清除 + 槽 EMPTY
+    # ════════════════════════════════════════════════════════════════════
+    @patch.object(combat_api.random, "randint")
+    def test_get_combat_view_next_turn_victory_cards_cleared(self, mock_randint):
+        mock_randint.return_value = 8
+        # 本回合：war1 胜利结算
+        combat_api.select_war(self.state, "player_opt", "test_war_1")
+        combat_api.do_combat_action(self.state, "player_opt", "test_war_1", "attack")
+        combat_api.confirm_battle_result(self.state, "player_opt")
+
+        # 清理 war2（无指挥官，避免干扰 EMPTY 槽断言）
+        self.state._war_system._active_wars.remove(self.war2)
+
+        # 下回合（新 Combat 阶段）：phase_data 重建（resolved_wars 清空）
+        self.state.record_phase_result("combat", {})
+
+        view = combat_api.get_combat_view(self.state, "player_opt")
+        data = view["data"]
+        # INV-C1：victory 已终止 war（RESOLVED+discard）不出现在下 Combat active_wars
+        self.assertNotIn("test_war_1", [c["war_id"] for c in data["active_wars"]])
+        # 本回合结果卡随新 phase_data 清除
+        self.assertEqual(data["resolved_war_cards"], [])
+        self.assertEqual(data["truce_wars"], [])
+        # combatAllWarCards 空 → 槽位 EMPTY（QML model = max(3, 0) = 3 空槽）
+        all_cards = data["active_wars"] + data["truce_wars"] + data["resolved_war_cards"]
+        self.assertEqual(all_cards, [])
+        self.assertEqual(max(3, len(all_cards)), 3)
 
 
 if __name__ == "__main__":

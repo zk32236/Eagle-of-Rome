@@ -47,6 +47,16 @@ Rectangle {
         return resolved.indexOf(warId) >= 0
     }
 
+    // INV-C6: presentation_state 真值（L2 卡构建层产出，唯一状态源）。
+    // 兼容旧数据缺失字段时按 status + 本回合已战推断（防 TRUCE 卡被误当可攻）。
+    function warPresentationState(war, isEmptySlot) {
+        if (isEmptySlot || war === null || war === undefined) return "EMPTY"
+        if (war.presentation_state) return war.presentation_state
+        if (root.isWarResolved(war.war_id)) return "CURRENT_TURN_RESULT"
+        if (war.status === "truce") return "TRUCE_LOCKED"
+        return "ACTIVE_ACTIONABLE"
+    }
+
     // ── Content ──
     ColumnLayout {
         anchors.fill: parent
@@ -115,41 +125,50 @@ Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            // War cards grid — always visible
-            GridLayout {
-                id: warGrid
-                visible: true
+            // INV-C5/C6: ≤3 卡保持既有三槽布局（前三卡尺寸不变）；>3 卡横向单行追加
+            // （横向 Flickable 滚动），禁第二行换行/纵向压缩、禁 [:3] 截断
+            Flickable {
+                id: warGridFlickable
                 anchors.fill: parent
-                columns: 3
-                columnSpacing: 10
-                rowSpacing: 10
+                clip: true
+                flickableDirection: Flickable.HorizontalFlick
+                boundsBehavior: Flickable.StopAtBounds
+                contentWidth: Math.max(warGridFlickable.width, warGrid.implicitWidth)
+                contentHeight: warGridFlickable.height
 
-                Repeater {
-                    model: 3
+                GridLayout {
+                    id: warGrid
+                    width: Math.max(warGridFlickable.width, implicitWidth)
+                    height: warGridFlickable.height
+                    columns: Math.max(3, (sessionStore.combatAllWarCards || []).length)
+                    columnSpacing: 10
+                    rowSpacing: 10
 
-                    delegate: WarCard {
-                        cardIndex: index
-                        readonly property var _warData: (sessionStore.combatAllWarCards || [])[index]
+                    Repeater {
+                        model: Math.max(3, (sessionStore.combatAllWarCards || []).length)
 
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        Layout.minimumWidth: 140
-                        warData: _warData
-                        isEmptySlot: _warData === undefined || _warData === null
-                        selectable: false
-                        attackable: (root.combatStep === "select" || root.combatStep === "action")
-                            && !isEmptySlot
-                            && _warData !== null && _warData !== undefined
-                            && !root.isWarResolved(_warData ? _warData.war_id : -1)
-                        isResolved: !isEmptySlot && root.isWarResolved(_warData ? _warData.war_id : -1)
-                        onSelected: {
-                            if (_warData && _warData.war_id) {
-                                sessionStore.doSelectWar(_warData.war_id)
+                        delegate: WarCard {
+                            cardIndex: index
+                            readonly property var _warData: (sessionStore.combatAllWarCards || [])[index]
+
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            Layout.minimumWidth: 140
+                            warData: _warData
+                            isEmptySlot: _warData === undefined || _warData === null
+                            presentationState: root.warPresentationState(_warData, isEmptySlot)
+                            selectable: false
+                            attackable: (root.combatStep === "select" || root.combatStep === "action")
+                                && presentationState === "ACTIVE_ACTIONABLE"
+                            onSelected: {
+                                if (_warData && _warData.war_id) {
+                                    sessionStore.doSelectWar(_warData.war_id)
+                                }
                             }
-                        }
-                        onAttackRequested: {
-                            if (_warData && _warData.war_id) {
-                                sessionStore.doCombatAction(_warData.war_id, "attack")
+                            onAttackRequested: {
+                                if (_warData && _warData.war_id) {
+                                    sessionStore.doCombatAction(_warData.war_id, "attack")
+                                }
                             }
                         }
                     }
@@ -319,15 +338,22 @@ Rectangle {
     component WarCard: Rectangle {
         property var warData: null
         property bool selectable: false
-        property bool isResolved: false         // H4: new
         property int cardIndex: 0         // T05.7: slot 0/1/2 → I/II/III
         property bool isEmptySlot: false         // T05.5: empty placeholder slot
         property bool attackable: false         // FC-1: single attack entry in action step
+        property string presentationState: "EMPTY"   // INV-C6: L2 presentation 真值（ACTIVE_ACTIONABLE/TRUCE_LOCKED/CURRENT_TURN_RESULT/EMPTY）
         signal selected(string warId)
         signal attackRequested(string warId)
 
-        // T05.7: Card number I/II/III for battle card framework
-        readonly property string cardNumber: cardIndex === 0 ? "I" : (cardIndex === 1 ? "II" : "III")
+        // INV-C6：卡面状态由 presentation_state 派生（替代 delegate 层 root.isWarResolved 直查）
+        readonly property bool isResolved: !isEmptySlot && presentationState === "CURRENT_TURN_RESULT"
+        readonly property bool isTruceLocked: !isEmptySlot && presentationState === "TRUCE_LOCKED"
+
+        // T05.7 + D-4: 罗马数字徽章（前三 I/II/III 不变；overflow 第 4+ 卡扩展 IV/V/…）
+        readonly property string cardNumber: {
+            var numerals = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
+            return numerals[cardIndex] !== undefined ? numerals[cardIndex] : ("#" + (cardIndex + 1))
+        }
 
         // AC-4.3: per-war result object (穿透自 combatAllWarCards[].result)
         readonly property var cardResult: (warData && warData.result) ? warData.result : null
@@ -344,20 +370,21 @@ Rectangle {
             return "#2C1E12"
         }
 
-        // H2: Threat-colored border (T05.5 preserved)
+        // H2: Threat-colored border (T05.5 preserved) + INV-C6 TRUCE 锁定边框
         readonly property string threatBorderColor: {
             if (isResolved) return "#B0B0B0"
+            if (isTruceLocked) return "#8E8EA6"
             var level = (warData && warData.threat_level) || 0
             if (level >= 8) return "#B3261E"
             if (level >= 5) return "#E8B84B"
             return "#2E9D4D"
         }
 
-        color: isEmptySlot ? "#F5F0E8" : (isResolved ? "#E8E4DF" : "#FFF6E6")
+        color: isEmptySlot ? "#F5F0E8" : (isResolved ? "#E8E4DF" : (isTruceLocked ? "#ECEBF2" : "#FFF6E6"))
         radius: 6
         border.color: isEmptySlot ? "#D4D0C8" : threatBorderColor
-        border.width: isEmptySlot ? 1 : (isResolved ? 1 : 2)
-        opacity: isEmptySlot ? 1.0 : (isResolved ? 0.6 : 1.0)
+        border.width: isEmptySlot ? 1 : ((isResolved || isTruceLocked) ? 1 : 2)
+        opacity: isEmptySlot ? 1.0 : (isResolved ? 0.6 : (isTruceLocked ? 0.75 : 1.0))
         clip: true
 
         // ── Full visual shell (always rendered) ──
@@ -415,6 +442,23 @@ Rectangle {
                             id: resolvedLabel
                             anchors.centerIn: parent
                             text: "✓ 已行动"
+                            color: "#FFFFFF"
+                            font.pixelSize: theme.smallSize
+                            font.bold: true
+                        }
+                    }
+
+                    // INV-C6: TRUCE 锁定徽章（可见 + 不可攻）
+                    Rectangle {
+                        visible: !isEmptySlot && isTruceLocked
+                        color: "#5B5B76"
+                        radius: 3
+                        Layout.preferredWidth: truceLabel.implicitWidth + 6
+                        Layout.preferredHeight: 16
+                        Text {
+                            id: truceLabel
+                            anchors.centerIn: parent
+                            text: "🔒 停战中"
                             color: "#FFFFFF"
                             font.pixelSize: theme.smallSize
                             font.bold: true
@@ -570,7 +614,7 @@ Rectangle {
 
                 Text {
                     anchors.centerIn: parent
-                    text: attackable ? "⚔️ 发动进攻" : (isResolved ? "✓ 已结算" : "")
+                    text: attackable ? "⚔️ 发动进攻" : (isResolved ? "✓ 已结算" : (isTruceLocked ? "🔒 停战中" : ""))
                     color: attackable ? "#B3261E" : "#766652"
                     font.pixelSize: theme.smallSize
                     font.bold: attackable
@@ -580,7 +624,7 @@ Rectangle {
 
         MouseArea {
             anchors.fill: parent
-            enabled: (selectable || attackable) && !isResolved && !isEmptySlot
+            enabled: (selectable || attackable) && !isResolved && !isEmptySlot && !isTruceLocked
             cursorShape: Qt.PointingHandCursor
             onClicked: {
                 if (parent.warData && parent.warData.war_id) {

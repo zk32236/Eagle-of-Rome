@@ -1114,7 +1114,7 @@ class GameState:
                 "conditions": [
                     {
                         "type": "bankruptcy" | "legions_destroyed" | "revolt_majority"
-                               | "dictatorship" | "italy_grievance",
+                               | "dictatorship" | "italy_grievance" | "war_count",
                         "triggered": bool,
                         "details": str,
                         "critical": bool,  # True = triggers game over
@@ -1224,7 +1224,23 @@ class GameState:
                 "critical": True,
             })
 
-        # 6. Summary — top faction
+        # 6. Resolution count: ACTIVE + TRUCE >= 3 → GAME FAILURE（INV-C4）
+        # 数据源仅 war status（L1 权威，P8 只读复用），不从卡面/combatAllWarCards/
+        # resolved_wars 构建 —— Victory 结果卡（RESOLVED/discard）天然不计入。
+        ws = self.get_war_system()
+        ongoing_war_count = 0
+        if ws:
+            ongoing_war_count = len(ws.get_active_wars()) + len(ws.get_truce_wars())
+        if ongoing_war_count >= 3:
+            conditions.append({
+                "type": "war_count",
+                "triggered": True,
+                "details": f"进行中战争达到 {ongoing_war_count} 场，共和覆灭！",
+                "critical": True,
+            })
+            game_over = True
+
+        # 7. Summary — top faction
         top_faction = None
         if total_senate_influence > 0:
             top_faction_id = max(faction_influences, key=lambda fid: faction_influences[fid])
@@ -1501,12 +1517,15 @@ class GameState:
             return []
         expired = []
         for war in wars:
+            # Advisor P2-c 裁定（2026-08-17）：到期返 ACTIVE（非 THREAT），
+            # preserve_commander=True 保留 commander/legion 连续性；
+            # 容器迁移在 WarSystem._move_to_active 内完成（禁在 GameState 复制容器操作）
             # noinspection PyProtectedMember
-            war_system._move_to_threat(war, threat_level=1)
+            war_system._move_to_active(war, preserve_commander=True)
             war.clear_peace_treaty()
             expired.append(war.name)
             self.log_event(
-                f"和约到期: {war.name} (ID={war.id}) 重启威胁",
+                f"和约到期: {war.name} (ID={war.id}) 恢复为活跃战争",
                 level=logging.DEBUG
             )
         if expired:
@@ -1527,7 +1546,7 @@ class GameState:
         return self._apply_governor_transitions(self._plan_governor_transitions())
 
     def process_truce_expiry(self) -> list:
-        """P1: 处理和约到期 - 到期停战转为威胁（薄包装）。"""
+        """P1: 处理和约到期 - 到期停战恢复为活跃战争（薄包装）。"""
         return self._apply_truce_expiry(self._plan_truce_expiry())
 
     def _cleanup_curia(self) -> None:

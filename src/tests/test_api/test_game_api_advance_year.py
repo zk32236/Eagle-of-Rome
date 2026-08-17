@@ -372,13 +372,16 @@ def test_truce_expiry_idempotent():
     ws._truce_wars.append(war)
 
     expired1 = state.process_truce_expiry()
-    assert war in ws._threats
+    # Advisor P2-c 裁定（2026-08-17）：到期返 ACTIVE（非 THREAT）
+    assert war in ws._active_wars
+    assert war.status == WarStatus.ACTIVE
     assert war not in ws._truce_wars
     assert expired1
 
     expired2 = state.process_truce_expiry()
     assert expired2 == []  # 不再重复到期
-    assert war in ws._threats
+    assert war in ws._active_wars
+    assert war.status == WarStatus.ACTIVE
 
 
 # ---------------------------------------------------------------------------

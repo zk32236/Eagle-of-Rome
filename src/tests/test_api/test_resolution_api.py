@@ -194,6 +194,91 @@ class TestExecuteResolutionBackend(unittest.TestCase):
         dto = result.get("data", {})
         self.assertIsInstance(dto.get("key_events"), list)
 
+    # ════════════════════════════════════════════════════════════════════
+    # T11（INV-C4）：Resolution war_count 阈值 —— ACTIVE+TRUCE >= 3 → GAME FAILURE
+    # Advisor P2-b 裁定（2026-08-17）：维持 >=3（非 >3）。四断言：
+    # ① 3 ongoing → fail ② 2 ongoing → no fail ③ Victory 结果卡排除
+    # ④ 4 ongoing → fail
+    # ════════════════════════════════════════════════════════════════════
+    def test_resolution_war_count_failure_threshold(self):
+        from src.core.entities.war import War, WarStatus, WarType
+        from src.core.systems.war_system import WarSystem
+
+        def _make_war(wid: str, status: WarStatus):
+            w = War(id=wid, name=f"War {wid}", war_type=WarType.FOREIGN, strength=5)
+            w.status = status
+            return w
+
+        # ① 3 ACTIVE → game_over + war_count 条件（critical）
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+        ws = WarSystem(state)
+        state._war_system = ws
+        for i in range(3):
+            w = _make_war(f"a{i}", WarStatus.ACTIVE)
+            ws._active_wars.append(w)
+
+        vc = state.check_victory_conditions()
+        self.assertTrue(vc["game_over"])
+        war_count_conds = [c for c in vc["conditions"] if c["type"] == "war_count"]
+        self.assertEqual(len(war_count_conds), 1)
+        self.assertTrue(war_count_conds[0]["triggered"])
+        self.assertTrue(war_count_conds[0]["critical"])
+        self.assertEqual(war_count_conds[0]["details"], "进行中战争达到 3 场，共和覆灭！")
+
+        # ② 2 场（1 ACTIVE + 1 TRUCE）→ 不触发
+        state2 = GameState.create_for_testing({})
+        state2.turn = GameTurn(turn_number=1, year=-264)
+        ws2 = WarSystem(state2)
+        state2._war_system = ws2
+        w_active = _make_war("b1", WarStatus.ACTIVE)
+        w_truce = _make_war("b2", WarStatus.TRUCE)
+        w_truce.set_peace_treaty({"status": "approved"})
+        ws2._active_wars.append(w_active)
+        ws2._truce_wars.append(w_truce)
+
+        vc2 = state2.check_victory_conditions()
+        self.assertFalse(vc2["game_over"])
+        self.assertEqual([c for c in vc2["conditions"] if c["type"] == "war_count"], [])
+
+        # ③ Victory 结果卡（RESOLVED/discard）不误计：2 ACTIVE + 1 RESOLVED = ongoing 2
+        #    （若 RESOLVED 被误计则 3 → 触发，故本断言证明 Victory 卡排除）
+        state3 = GameState.create_for_testing({})
+        state3.turn = GameTurn(turn_number=1, year=-264)
+        ws3 = WarSystem(state3)
+        state3._war_system = ws3
+        w_a1 = _make_war("c1", WarStatus.ACTIVE)
+        w_a2 = _make_war("c2", WarStatus.ACTIVE)
+        w_victory = _make_war("c3", WarStatus.RESOLVED)
+        ws3._active_wars.append(w_a1)
+        ws3._active_wars.append(w_a2)
+        ws3._war_discard.append(w_victory)
+
+        vc3 = state3.check_victory_conditions()
+        self.assertFalse(vc3["game_over"])
+        self.assertEqual([c for c in vc3["conditions"] if c["type"] == "war_count"], [])
+
+        # ④ 4 ongoing（2 ACTIVE + 2 TRUCE）→ game failure
+        state4 = GameState.create_for_testing({})
+        state4.turn = GameTurn(turn_number=1, year=-264)
+        ws4 = WarSystem(state4)
+        state4._war_system = ws4
+        for i in range(2):
+            w = _make_war(f"d{i}", WarStatus.ACTIVE)
+            ws4._active_wars.append(w)
+        for i in range(2):
+            w = _make_war(f"e{i}", WarStatus.TRUCE)
+            w.set_peace_treaty({"status": "approved"})
+            ws4._truce_wars.append(w)
+
+        vc4 = state4.check_victory_conditions()
+        self.assertTrue(vc4["game_over"])
+        war_count_conds4 = [c for c in vc4["conditions"] if c["type"] == "war_count"]
+        self.assertEqual(len(war_count_conds4), 1)
+        self.assertTrue(war_count_conds4[0]["triggered"])
+        self.assertTrue(war_count_conds4[0]["critical"])
+        self.assertEqual(war_count_conds4[0]["details"], "进行中战争达到 4 场，共和覆灭！")
+
 
 if __name__ == "__main__":
     unittest.main()

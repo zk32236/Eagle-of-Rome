@@ -207,6 +207,82 @@ def _compute_combat_result(
     }
 
 
+def _apply_loss_consequence(war: War, result: str, state: GameState) -> None:
+    """应用战败/灾难后果（INV-C3：LOSS 后 war 保持 ACTIVE，不 resolve、不 discard）。
+
+    语义对齐 CLI legacy `phase_combat._apply_battle_result`（DEFEAT/DISASTER 分支）：
+    - defeat：指挥官伤损（fled/captured/wounded 概率）+ 离开战场（commander_id=None）
+    - disaster：指挥官阵亡（mark_member_dead + report_commander_casualty("killed")）
+    - war.duration += 1（战争拖延惩罚）
+    - 不调用 resolve_war、不入 _war_discard、status 保持 ACTIVE → 下回合（新 Combat
+      阶段）仍可战（INV-C3）；commander 离开是「后果」而非无差别清空战争。
+    """
+    current_turn = state.turn.turn_number if state.turn else 0
+    commander = state.get_member(war.commander_id) if war.commander_id is not None else None
+
+    if result == "disaster":
+        if commander and not commander.is_dead:
+            state.mark_member_dead(commander.id, transfer_land=True, transfer_wealth=True)
+        war.report_commander_casualty("killed", current_turn)
+        war.commander_id = None
+        war.legions_assigned = 0
+        war.fleets_assigned = 0
+        state.log_event(
+            f"💀 战斗灾难: {war.name}",
+            extra={
+                "type": "combat_disaster",
+                "war_id": war.id,
+                "war_name": war.name,
+                "result": result,
+            },
+        )
+    else:  # defeat
+        roll = random.random()
+        if roll < 0.3:
+            war.report_commander_casualty("fled", current_turn)
+        elif roll < 0.5:
+            war.report_commander_casualty("captured", current_turn)
+        else:
+            war.report_commander_casualty("wounded", current_turn)
+        war.commander_id = None
+        state.log_event(
+            f"战斗战败: {war.name}",
+            extra={
+                "type": "combat_defeat",
+                "war_id": war.id,
+                "war_name": war.name,
+                "result": result,
+            },
+        )
+    war.duration += 1
+
+
+def _actionable_wars(ws, phase_data) -> List[War]:
+    """本回合仍可战斗的 ACTIVE 战争：有指挥官且未在本回合战斗（resolved_wars）。
+
+    INV-C3/Δ6 单点真值（U2/U6 共用）：LOSS 后 war 仍 ACTIVE，但 commander 已
+    离场/阵亡 → 视同无需再战（与 `_skip_all_unassigned` 语义一致）；TRUCE war
+    不在 get_active_wars()，天然不计入。
+    """
+    if not ws:
+        return []
+    battled_ids = (
+        set(phase_data.get("resolved_wars", []))
+        if isinstance(phase_data, dict)
+        else set()
+    )
+    return [
+        w
+        for w in ws.get_active_wars()
+        if w.commander_id is not None and w.id not in battled_ids
+    ]
+
+
+def _all_battled(ws, phase_data) -> bool:
+    """advance 谓词：全部可战斗战争（有指挥官且未战）已结算。"""
+    return len(_actionable_wars(ws, phase_data)) == 0
+
+
 # ════════════════════════════════════════════════════════════════════════
 # Public API
 # ════════════════════════════════════════════════════════════════════════
@@ -245,18 +321,18 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
             pending_result = {}
             war_results = {}
 
-        # active_wars naturally shrinks as wars are resolved (status changes to RESOLVED)
-        # So all_resolved = True when active_wars is empty
-        # Check pending_result first: show result view before transitioning to advance
+        # INV-C3/Δ6（GUI 软锁防线）：advance 判定由「可战斗战争已全结算」驱动
+        # （有指挥官且未战），替代 len(active_wars)==0 —— LOSS 后 war 仍 ACTIVE 不阻塞。
+        # pending_result 优先：先展示结果视图再转 advance。
         if pending_result:
             current_step = "result"
-        elif len(active_wars) == 0:
+        elif _all_battled(ws, phase_data):
             current_step = "advance"
         elif selected_war_id:
             current_step = "action"
         else:
             current_step = "select"
-        all_resolved = len(active_wars) == 0
+        all_resolved = _all_battled(ws, phase_data)
 
         actionable = (
             current_phase_id == "combat"
@@ -264,8 +340,27 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
         )
         interaction_mode = "interactive" if current_phase_id == "combat" else "readonly"
 
-        # Build war cards for active wars
-        war_cards = [_war_card(w, state) for w in active_wars]
+        # Build war cards for active wars（INV-C3：LOSS 后 war 仍 ACTIVE → 卡仍在 active_wars）
+        # presentation_state（L2 卡构建层唯一落点，D2 §1）：由 war.status + 本回合已战
+        # （war_id ∈ resolved_wars）合成；不删 status 字段（API 兼容）
+        war_cards = []
+        for w in active_wars:
+            card = _war_card(w, state)
+            if w.id in resolved_wars:
+                card["presentation_state"] = "CURRENT_TURN_RESULT"
+                # P2-d：本回合已战斗的 ACTIVE 卡（defeat/disaster）附 result 摘要
+                if isinstance(war_results, dict) and w.id in war_results:
+                    card["result"] = war_results[w.id]
+            else:
+                card["presentation_state"] = "ACTIVE_ACTIONABLE"
+            war_cards.append(card)
+
+        # INV-C6：TRUCE war 卡面可见（TRUCE_LOCKED，计入容量、不可战斗）
+        truce_cards = []
+        for w in (ws.get_truce_wars() if ws else []):
+            card = _war_card(w, state)
+            card["presentation_state"] = "TRUCE_LOCKED"
+            truce_cards.append(card)
 
         # Build resolved war cards from war_system discard pile, filtered by phase_data
         resolved_war_ids = resolved_wars  # list of war_ids from phase_data
@@ -277,6 +372,7 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
             # AC-4.3: 逐场结果留卡片内 — 每张结算卡附本场 result 对象
             if isinstance(war_results, dict) and w.id in war_results:
                 card["result"] = war_results[w.id]
+            card["presentation_state"] = "CURRENT_TURN_RESULT"
             resolved_war_cards.append(card)
 
         # Battle results
@@ -305,6 +401,7 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
             "available_legion_count": available_legion_count,
             "treasury": treasury,
             "active_wars": war_cards,
+            "truce_wars": truce_cards,
             "resolved_war_cards": resolved_war_cards,
             "resolved_war_ids": resolved_war_ids,
             "battle_results": battle_results,
@@ -410,36 +507,28 @@ def do_combat_action(
         result_data = _compute_combat_result(war, state, dice, action)
         result = result_data["result"]
 
-        # Resolve war with core system
-        # Fix-B：非决定性（draw）不 resolve（P0-1/P0-2/P0-3）
-        is_non_decisive = (result == "draw")
-        if ws and not is_non_decisive:
-            victory = result in ("triumph", "victory")
-            ws.resolve_war(war_id, victory)
-            if result == "disaster":
-                # For disaster, also resolve war as non-victory but mark as losing war
-                war.status = WarStatus.RESOLVED
-                state.log_event(
-                    f"战斗灾难: {war.name}",
-                    extra={
-                        "type": "combat_disaster",
-                        "war_id": war_id,
-                        "war_name": war.name,
-                        "losses": result_data["losses"],
-                        "result": result,
-                    }
-                )
-
-        # Fix-C（C1）：非决定性（draw）→ 内联生成停战条约，war 立即离开 active 入 truce
-        # 单点覆盖 AI/auto（auto_resolve_combat）与 HUMAN GUI（session_store.doCombatAction）
-        if is_non_decisive:
-            _generate_peace_treaty(war, result, state)
+        # 决定性结果四分支（INV-C1/C3，替代 5898ef1 两分）：
+        # - triumph/victory → resolve_war(True)：war 结束 RESOLVED + discard（不变）
+        # - draw → _generate_peace_treaty：→ TRUCE（不变）
+        # - defeat/disaster → _apply_loss_consequence：war 保持 ACTIVE（不 resolve、
+        #   不 discard、commander consequence + duration+1；INV-C3）
+        if ws:
+            if result in ("triumph", "victory"):
+                ws.resolve_war(war_id, True)
+            elif result == "draw":
+                _generate_peace_treaty(war, result, state)
+            elif result in ("defeat", "disaster"):
+                _apply_loss_consequence(war, result, state)
 
         # Apply legion losses via military system
+        # INV-C3：defeat 部分损失（[:losses]）/ disaster 全量（军团覆灭）
         ms = _military_system(state)
         if ms and result_data["losses"] > 0:
             # Mark legions as needing to be disbanded
-            ws.add_legions_to_disband(war.legion_numbers[:result_data["losses"]])
+            if result == "disaster":
+                ws.add_legions_to_disband(list(war.legion_numbers))
+            else:
+                ws.add_legions_to_disband(war.legion_numbers[:result_data["losses"]])
 
         # Build battle result
         battle_result = _build_battle_result(
@@ -502,15 +591,16 @@ def confirm_battle_result(state: GameState, viewer_player_id: str) -> dict:
         phase_data["pending_result"] = {}
         phase_data["selected_war_id"] = ""
 
-        # Check if all wars resolved
+        # Advance 谓词（INV-C3/Δ6）：所有「可战斗」战争（有指挥官且未战）已结算 → advance。
+        # 替代 len(active_wars)==0：LOSS 后 war 仍 ACTIVE，但 commander 已离场/阵亡
+        # （consequence）→ 视同无需再战；TRUCE war 天然不计入。
         ws = _war_system(state)
-        active_wars = ws.get_active_wars() if ws else []
-        resolved = phase_data.get("resolved_wars", [])
-        if len(active_wars) == 0:
+        all_battled = _all_battled(ws, phase_data)
+        if all_battled:
             next_step = "advance"
         else:
             next_step = "select"
-        all_resolved = len(active_wars) == 0
+        all_resolved = all_battled
 
         state.record_phase_result("combat", phase_data)
 
@@ -536,15 +626,13 @@ def advance_combat(state: GameState, viewer_player_id: str) -> dict:
         phase_data = state.get_phase_result("combat") or {}
         if not isinstance(phase_data, dict):
             phase_data = {}
-        resolved = phase_data.get("resolved_wars", [])
         ws = _war_system(state)
-        active_wars = ws.get_active_wars() if ws else []
 
-        # Fast-path: no active wars → nothing to resolve → ready to advance
-        if len(active_wars) == 0:
-            pass
-        elif len(active_wars) > len(resolved):
-            remaining = len(active_wars) - len(resolved)
+        # INV-C3/Δ6：剩余计数 = 可战斗战争（有指挥官且未战）
+        # 无指挥官 war（含 LOSS 后 commander 离场）不阻塞；TRUCE war 不计入
+        actionable = _actionable_wars(ws, phase_data)
+        if actionable:
+            remaining = len(actionable)
             return api_response(False, f"尚有 {remaining} 场战争未结算")
 
         # Record combat result and mark phase executed
