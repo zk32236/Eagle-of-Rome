@@ -300,6 +300,13 @@ Rectangle {
                                         font.bold: sessionStore.populationResolved && root.scoreForCandidate(modelData.id, modelData.office) !== undefined
                                     }
                                 }
+                                Text {
+                                    visible: rows.length === 0
+                                    text: "无候选人（空缺）"
+                                    color: "#B88976"
+                                    font.pixelSize: 12
+                                    font.italic: true
+                                }
                             }
 
                             Column { Layout.preferredWidth: 64; Repeater { model: rows; Text { text: modelData.martial || 0; color: "#2C1E12"; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; width: 64 } } }
@@ -498,9 +505,7 @@ Rectangle {
                                         entries.push({"figure_id": item.figureId, "amount": item.amount})
                                     }
                                 }
-                                if (entries.length === 0) {
-                                    return
-                                }
+                                // WP-03 L5 (P2-02 Option A): 零花费庆典也提交（空 entries = 合法 no-op 完成）
                                 var result = sessionStore.doBatchCampaign(entries)
                                 if (!result.success) {
                                     root.forceActiveFocus()
@@ -592,6 +597,13 @@ Rectangle {
                                                 font.pixelSize: 12
                                                 onClicked: root.selectCandidate(modelData.office, modelData.id)
                                             }
+                                        }
+                                        Text {
+                                            visible: rows.length === 0
+                                            text: "弃权（无候选人）"
+                                            color: "#B88976"
+                                            font.pixelSize: 12
+                                            font.italic: true
                                         }
                                     }
                                 }

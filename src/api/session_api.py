@@ -208,9 +208,16 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
         current_phase_id = _infer_current_phase_id(state)
         is_population_phase = current_phase_id == "population"
         office_count = len([office for office, rows in candidates.items() if rows])
+        vacant_offices = [office for office, rows in candidates.items() if not rows]
+        my_candidate_count = sum(
+            1 for office, rows in candidates.items()
+            for c in rows if c.get("faction_id") == viewer.faction_id
+        )
         # WP-02a v3: campaign_done 按 player_id 隔离 (D-12)
-        campaign_done = state.get_batch_completed(viewer_player_id)
-        vote_done = office_count > 0 and len(my_votes) >= office_count
+        # WP-03 L2: 无本派系候选人 → campaign 平凡完成（读模型，不写 backend）
+        campaign_done = state.get_batch_completed(viewer_player_id) or (my_candidate_count == 0)
+        # WP-03 L3: 无 office 需投票 → HUMAN 平凡完成
+        vote_done = (office_count == 0) or (len(my_votes) >= office_count)
         current_step = "results" if resolved else ("vote" if campaign_done else "campaign")
         can_campaign = is_current and is_population_phase and not resolved
         can_vote = is_current and is_population_phase and campaign_done and not resolved
@@ -236,6 +243,8 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
             "current_step": current_step,
             "resolved": resolved,
             "office_count": office_count,
+            "vacant_offices": vacant_offices,
+            "my_candidate_count": my_candidate_count,
             "campaign_done": campaign_done,
             "vote_done": vote_done,
             "election_results": result_data.get("election_results", []) if isinstance(result_data, dict) else [],
@@ -356,7 +365,8 @@ def _all_human_population_votes_complete(state: GameState) -> bool:
     candidates = cand_result.get("data", {}) if cand_result.get("success") else {}
     required_offices = {office for office, rows in candidates.items() if rows}
     if not required_offices:
-        return False
+        # WP-03 L3: 无 office 需投票 → HUMAN 平凡完成（不阻塞 resolve）
+        return True
 
     votes_by_player: dict = {}
     for player_id, office, _figure_id in state.get_population_votes():
@@ -423,13 +433,20 @@ def _drain_ai_population_turns(state: GameState, auto) -> dict:
         required_offices = {
             office for office, rows in cand_result.get("data", {}).items() if rows
         }
-        if not required_offices:
+        # B3-AC09 S1 guard（fail-closed，保留）：候选数据本身为空/畸形（无 office 键）
+        # → 保持 AI_DRAIN_NO_CANDIDATES terminal，防 vacuous PASS。
+        if not cand_result.get("data"):
             return api_response(False, "AI drain: no required offices (empty candidates)", {
                 "processed_players": processed,
                 "failed_player": player.player_id,
                 "retryable": False,
                 "reason_code": "AI_DRAIN_NO_CANDIDATES",
             })
+        if not required_offices:
+            # WP-03 L4: 合法全空候选人（office 键齐备但均无候选人）→ AI 平凡完成（no-op，非 terminal）
+            state.set_vote_completed(player.player_id, True)
+            processed.append(player.player_id)
+            continue
         # === END S1 GUARD ===
 
         try:

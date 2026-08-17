@@ -120,6 +120,9 @@ def batch_campaign(
             "batch_campaign: empty entries, returning success with campaign_count=0",
             level=logging.DEBUG
         )
+        # WP-03 L5 (P2-02 Option A): 零花费庆典 = 合法 no-op 完成信号。
+        # 仅写入 per-player completion 标志；不触碰 check_and_commit 原子提交路径。
+        state.set_batch_completed(player_id, True)
         return api_response(True, "No entries to process", data={
             "total_spent": 0,
             "total_popularity_gain": 0,

@@ -298,3 +298,98 @@ class TestResolutionViewStepCount:
 
         result = session_api.get_resolution_view(state, viewer_id)
         assert len(result["data"]["step_statuses"]) == 5
+
+
+# ===========================================================================
+# WP-03 Slice 5/7 — population liveness predicate + 读模型（DA-Execute）
+# ===========================================================================
+
+def _make_empty_population_state():
+    """创建无任何候选人（全 office 空）的人口阶段状态，含一个 HUMAN 玩家。"""
+    config = {
+        "testing": {"bypass_player_check": True},
+        "political_rules": {
+            "min_ages": {"consul": 40},
+            "office_rank": {"consul": 5},
+            "office_influence_bonus": {"consul": 40},
+        },
+    }
+    state = GameState.create_for_testing(config)
+    state.turn = GameTurn(turn_number=1, year=-282)
+    state.treasury = 200
+
+    faction = Faction(id="Optimates", name="贵族派")
+    state._factions["Optimates"] = faction
+
+    player = Player(
+        player_id="player_1",
+        faction_id="Optimates",
+        player_type=PlayerType.HUMAN,
+    )
+    state._players["player_1"] = player
+    state._current_player_id = "player_1"
+    state._turn_order = ["player_1"]
+    state._provinces = {}
+    return state, "player_1"
+
+
+class TestPopulationLivenessPredicates:
+    """WP-03 Slice 5：empty-state completion predicate 修复。"""
+
+    def test_all_human_votes_complete_empty_offices(self):
+        """TS-05.1：空 required_offices → True（HUMAN 平凡完成）。"""
+        state, viewer_id = _make_empty_population_state()
+        assert session_api._all_human_population_votes_complete(state) is True
+
+    def test_drain_ai_population_turns_empty_offices(self):
+        """TS-05.2：空 required_offices → success 且 AI vote_completed=True（非 terminal）。"""
+        state, viewer_id = _make_empty_population_state()
+        # 追加一个 AI 玩家
+        ai_faction = Faction(id="Populares", name="平民派")
+        state._factions["Populares"] = ai_faction
+        ai = Player(player_id="ai_1", faction_id="Populares", player_type=PlayerType.AI)
+        state._players["ai_1"] = ai
+
+        result = session_api._drain_ai_population_turns(state, None)
+        assert result["success"] is True
+        assert state.get_vote_completed("ai_1") is True
+
+    def test_get_population_view_empty_state(self):
+        """TS-05.3：空态读模型 campaign_done/vote_done/vacant_offices/my_candidate_count。"""
+        state, viewer_id = _make_empty_population_state()
+        result = session_api.get_population_view(state, viewer_id)
+        assert result["success"] is True
+        data = result["data"]
+        assert data["office_count"] == 0
+        assert data["my_candidate_count"] == 0
+        assert data["vacant_offices"] == ["consul", "censor", "praetor", "quaestor", "tribune"]
+        assert data["campaign_done"] is True
+        assert data["vote_done"] is True
+        assert data["current_step"] == "vote"
+
+    def test_conversion_dto_persists_across_refresh(self):
+        """TS-07：转换 DTO 存 phase_result，refresh 不丢且不二次转换。"""
+        from src.core.systems.war_system import WarSystem
+        from src.core.entities.war import War, WarStatus, WarType
+        state, viewer_id = _make_empty_population_state()
+        fig = Figure.create_nobile(1, "Optimates", 45)
+        fig.office = "consul"
+        fig.is_absent = True
+        state.add_member(fig)
+        ws = WarSystem(state)
+        war = War(id="war_1", name="Test War", war_type=WarType.FOREIGN)
+        war.status = WarStatus.ACTIVE
+        war.commander_id = fig.id
+        war.set_commander_assigned_turn(0)
+        ws._active_wars = [war]
+        state._war_system = ws
+
+        from src.api import population_api
+        population_api.convert_battlefield_commanders(state)
+
+        v1 = session_api.get_population_view(state, viewer_id)
+        v2 = session_api.get_population_view(state, viewer_id)
+        assert v1["data"]["battlefield_commander_conversion"]["total"] == 1
+        assert v1["data"]["battlefield_commander_conversion"] == v2["data"]["battlefield_commander_conversion"]
+        # 不二次转换：figure.office 仍为 proconsul，total 仍 1
+        assert fig.office == "proconsul"

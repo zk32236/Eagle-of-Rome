@@ -74,6 +74,8 @@
 - 添加任期记录（含 assigned_turn 作为起始回合）
 - 更新 war 的 `commander_assigned_turn`
 
+> 注（GUI 面转换时机，FUNC-09 一致性）：GUI 面战场指挥官转换发生于 Population resolve 时（`resolve_population_slice`，选举结算前）；CLI 面转换发生于 Step 0 公告时（本节所述）。双面互斥 + 幂等 guard，无运行时二次转换。
+
 ---
 
 ### 2.3 候选人提名（`get_candidates`）
@@ -238,6 +240,38 @@ influence = base + family_bonus + office_bonus + temp_bonus
 
 ---
 
+### 2.8 NO-CANDIDATE / VACANCY CONTRACT（无候选人 / 空缺契约）
+
+人口阶段在候选人不存在（部分或全部公职无合格候选人）的合法状态下必须仍可完成，不得阻塞 resolve / advance。冻结以下最小产品规则：
+
+```text
+NO-CANDIDATE / VACANCY CONTRACT
+
+IF eligible_candidates(office) > 0
+→ normal election
+
+IF eligible_candidates(office) == 0
+→ office_status = VACANT_NO_CANDIDATE
+→ vote = ABSTAIN / figure_id = 0
+→ no winner assigned
+→ does NOT block player completion
+→ does NOT block AI completion
+→ does NOT block Population resolve
+→ does NOT block Population advance
+```
+
+**明确禁止（不得为修复 no-candidate 而放宽规则）：**
+
+```text
+不降低年龄 / cooldown / cursus honorum 来强行找候选人
+不生成 fake / NPC candidate
+不让上一年度官员自动留任
+不把 no-candidate 当 transient error 重试
+不只在 QML 隐藏问题而保留 backend deadlock
+```
+
+---
+
 ## 3. 历史演化
 
 | 阶段 | 变更 |
@@ -290,6 +324,7 @@ influence = base + family_bonus + office_bonus + temp_bonus
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.3 | 2026-08-17 | DA-Execute | WP-03：新增 §2.8 NO-CANDIDATE/VACANCY CONTRACT（no-candidate/vacancy 语义写回）；§2.2.5 补 GUI resolve 时机注（FUNC-09 一致性） |
 | v1.2 | 2026-07-17 | Audit Sub-Agent | 审计修复：修正 §2.2.4 卸任表格冗余表述 `is_absent=False 且 is_absent 不在战场` → `is_absent=False（即在罗马）` |
 | v1.1 | 2026-07-17 | Audit Sub-Agent | 审计修复：修正 §2.3 提名数量默认值（3→2）及冷却期描述；修正 §2.4 字段名 `land`→`land_private`；修正 §2.6 限制描述；修正 §5 AC #7 提名人数（3→2） |
 | v1.0 | 2026-07-13 | Document Officer Sub-Agent | 初版创建 |

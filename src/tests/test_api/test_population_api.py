@@ -1033,3 +1033,130 @@ class TestBatchCampaign:
         assert len(data["failed_entries"]) == 1
         assert "must be a dict" in data["failed_entries"][0]["reason"]
         assert len(state_normal_mode.get_population_campaigns()) == 0
+
+
+# ===========================================================================
+# WP-03 Slice 1/2/5/8 — 转换 DTO / 幂等 / same-war 连续性 / liveness（DA-Execute）
+# ===========================================================================
+
+def _make_conversion_state(office="consul", with_war=True):
+    """构造年末战场指挥官转换场景（absent consul/praetor + 可选 war）。"""
+    from src.core.systems.war_system import WarSystem
+    from src.core.entities.war import War, WarStatus, WarType
+    state = GameState.create_for_testing({
+        "testing": {"bypass_player_check": True},
+        "political_rules": {
+            "office_influence_bonus": {
+                "consul": 40, "praetor": 30, "proconsul": 0, "propraetor": 0,
+            },
+        },
+    })
+    state.turn = GameTurn(turn_number=5, year=-280)
+    fig = Figure.create_nobile(1, "f1", 45)
+    fig.office = office
+    fig.is_absent = True
+    state.add_member(fig)
+
+    ws = WarSystem(state)
+    war = None
+    if with_war:
+        war = War(id="war_1", name="Test War", war_type=WarType.FOREIGN)
+        war.status = WarStatus.ACTIVE
+        war.commander_id = fig.id
+        war.set_commander_assigned_turn(4)
+        ws._active_wars = [war]
+    state._war_system = ws
+    return state, fig, war
+
+
+class TestConvertBattlefieldCommanders:
+    """WP-03 Slice 1/2/8：战场指挥官转换 DTO / 幂等 / same-war 连续性。"""
+
+    def test_idempotent_two_calls_same_total(self):
+        """TS-01.1：连续两次 convert 返回相同 total，office 只转换一次。"""
+        state, fig, war = _make_conversion_state("consul")
+        r1 = population_api.convert_battlefield_commanders(state)
+        r2 = population_api.convert_battlefield_commanders(state)
+        assert r1["total"] == 1
+        assert r2["total"] == 1
+        assert r1 == r2
+        assert fig.office == "proconsul"
+
+    def test_no_absent_consul_or_praetor_returns_empty(self):
+        """TS-01.2：无 absent consul/praetor → {"converted": [], "total": 0}。"""
+        from src.core.systems.war_system import WarSystem
+        state = GameState.create_for_testing({"testing": {"bypass_player_check": True}})
+        state.turn = GameTurn(turn_number=5, year=-280)
+        fig = Figure.create_nobile(1, "f1", 45)
+        fig.office = "consul"
+        fig.is_absent = False  # 在罗马，非战场
+        state.add_member(fig)
+        state._war_system = WarSystem(state)
+        result = population_api.convert_battlefield_commanders(state)
+        assert result == {"converted": [], "total": 0}
+
+    def test_dto_field_completeness(self):
+        """TS-02.1：DTO 字段完整（figure_id/name/old_office/new_office/war_id）。"""
+        state, fig, war = _make_conversion_state("consul")
+        result = population_api.convert_battlefield_commanders(state)
+        item = result["converted"][0]
+        assert set(item.keys()) == {"figure_id", "name", "old_office", "new_office", "war_id"}
+        assert item["figure_id"] == fig.id
+        assert item["old_office"] == "consul"
+        assert item["new_office"] == "proconsul"
+        assert item["war_id"] == "war_1"
+        assert result["total"] == len(result["converted"])
+
+    def test_praetor_conversion(self):
+        """TS-02/TS-04：praetor → propraetor。"""
+        state, fig, war = _make_conversion_state("praetor")
+        result = population_api.convert_battlefield_commanders(state)
+        item = result["converted"][0]
+        assert item["old_office"] == "praetor"
+        assert item["new_office"] == "propraetor"
+
+    def test_war_id_null_branch(self):
+        """TS-02.2：无匹配 war → war_id=null（不抛异常）。"""
+        state, fig, war = _make_conversion_state("consul", with_war=False)
+        result = population_api.convert_battlefield_commanders(state)
+        item = result["converted"][0]
+        assert item["war_id"] is None
+
+    def test_same_war_continuity(self):
+        """TS-08：转换后 commander_id 不变，commander_assigned_turn 更新为当前 turn。"""
+        state, fig, war = _make_conversion_state("consul")
+        result = population_api.convert_battlefield_commanders(state)
+        assert war.commander_id == fig.id  # 不变
+        assert war.commander_assigned_turn == state.turn.turn_number  # 更新
+        # get_war_by_commander 仍返回同一 war
+        assert state.get_war_system().get_war_by_commander(fig.id) is war
+
+
+class TestBatchCampaignEmptyCompletion:
+    """WP-03 Slice 5.5 (P2-02)：零花费庆典 = 合法 no-op 完成信号。"""
+
+    def test_empty_entries_sets_batch_completed(self, state_normal_mode):
+        """TS-05.4：batch_campaign([]) success 且 campaign_done=True（锁定 Option A）。"""
+        result = population_api.batch_campaign(state_normal_mode, "p1", [])
+        assert result["success"] is True
+        assert result["data"]["campaign_count"] == 0
+        # Option A 锁定：空分支写入完成信号（不触碰 check_and_commit）
+        assert state_normal_mode.get_batch_completed("p1") is True
+        # 不触碰 WP-02 原子提交路径：无 committed batch 签名
+        assert state_normal_mode.get_committed_batches() == set()
+
+
+class TestNormalElectionRegression:
+    """TS-05.5 / L6：normal election 回归（加权投票 / winner 分配不变）。"""
+
+    def test_normal_election_resolves_with_weighted_vote(self, state_normal_mode):
+        # 使 fig1/fig2 成为 consul 合法候选人（需曾任 praetor）
+        fig1 = state_normal_mode.get_member(1)
+        fig2 = state_normal_mode.get_member(2)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        fig2.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        state_normal_mode._population_pending["votes"] = [("p1", "consul", 1), ("p2", "consul", 2)]
+        result = population_api.resolve_election(state_normal_mode)
+        assert result["success"] is True
+        assert len(result["data"]["elected"]) >= 1
+        assert result["data"]["election_results"][0]["office"] == "consul"
