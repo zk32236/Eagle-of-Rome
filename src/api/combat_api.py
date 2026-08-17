@@ -14,6 +14,16 @@ from src.core.entities.war import War, WarStatus
 
 logger = logging.getLogger("EOR-CombatAPI")
 
+# GUI/API 战斗结果词 → decider canonical 词（对齐 CLI STALEMATE，落地 L151 注释契约）
+# 复用既有 decider 白名单语义，不新增第四套结果模型。
+_COMBAT_RESULT_CANONICAL = {
+    "triumph": "TRIUMPH",
+    "victory": "VICTORY",
+    "draw": "STALEMATE",
+    "defeat": "DEFEAT",
+    "disaster": "DISASTER",
+}
+
 
 # ════════════════════════════════════════════════════════════════════════
 # 内部辅助
@@ -401,8 +411,10 @@ def do_combat_action(
         result = result_data["result"]
 
         # Resolve war with core system
-        victory = result in ("triumph", "victory")
-        if ws:
+        # Fix-B：非决定性（draw）不 resolve（P0-1/P0-2/P0-3）
+        is_non_decisive = (result == "draw")
+        if ws and not is_non_decisive:
+            victory = result in ("triumph", "victory")
             ws.resolve_war(war_id, victory)
             if result == "disaster":
                 # For disaster, also resolve war as non-victory but mark as losing war
@@ -417,6 +429,11 @@ def do_combat_action(
                         "result": result,
                     }
                 )
+
+        # Fix-C（C1）：非决定性（draw）→ 内联生成停战条约，war 立即离开 active 入 truce
+        # 单点覆盖 AI/auto（auto_resolve_combat）与 HUMAN GUI（session_store.doCombatAction）
+        if is_non_decisive:
+            _generate_peace_treaty(war, result, state)
 
         # Apply legion losses via military system
         ms = _military_system(state)
@@ -569,7 +586,11 @@ def _generate_peace_treaty(
         AutoPeaceTreatyDecider
     )
     decider = AutoPeaceTreatyDecider()
-    treaty = decider.decide_treaty(war, battle_result.upper(), state)
+    treaty = decider.decide_treaty(
+        war,
+        _COMBAT_RESULT_CANONICAL.get(battle_result, battle_result.upper()),
+        state,
+    )
     if treaty is None:
         return None
 

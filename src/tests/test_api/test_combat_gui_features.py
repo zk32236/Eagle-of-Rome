@@ -193,7 +193,10 @@ class TestGUICombatFeatures(unittest.TestCase):
     # ════════════════════════════════════════════════════════════════════
     @patch.object(combat_api.random, "randint")
     def test_gui_resolved_cards_per_war_result(self, mock_randint):
-        """三场战争逐场结算后，每张结算卡独立保留本场完整 result 对象。"""
+        """三场战争逐场结算后，每张结算卡独立保留本场完整 result 对象。
+
+        BUGFIX-01：war_c=draw → 入 truce（非 discard），resolved_war_cards 3→2。
+        """
         mock_randint.return_value = 8
         state = _build_combat_full_state()
         for wid in ("war_a", "war_b", "war_c"):
@@ -205,7 +208,7 @@ class TestGUICombatFeatures(unittest.TestCase):
         self.assertTrue(view["success"])
         data = view["data"]
         self.assertEqual(data["current_step"], "advance")
-        self.assertEqual(len(data["resolved_war_cards"]), 3)
+        self.assertEqual(len(data["resolved_war_cards"]), 2)
 
         results = {}
         for card in data["resolved_war_cards"]:
@@ -219,10 +222,17 @@ class TestGUICombatFeatures(unittest.TestCase):
                 self.assertIn(field, r)
             results[card["war_id"]] = r["result"]
 
-        # 三场结果独立保留且互不覆盖
+        # 决定性战争结果独立保留且互不覆盖
         self.assertEqual(results["war_a"], "triumph")
         self.assertEqual(results["war_b"], "victory")
-        self.assertEqual(results["war_c"], "draw")
+
+        # BUGFIX-01：war_c=draw → truce（不在 discard/resolved_war_cards），result 词不变
+        ws = state._war_system
+        self.assertEqual(ws.get_war_by_id("war_c").status, WarStatus.TRUCE)
+        self.assertEqual(
+            state.get_phase_result("combat")["war_results"]["war_c"]["result"],
+            "draw",
+        )
 
     # ════════════════════════════════════════════════════════════════════
     # GUI 特征 6: auto_resolve_combat (adapter 方法)
