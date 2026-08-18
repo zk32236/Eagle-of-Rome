@@ -11,11 +11,30 @@ Rectangle {
 
     property var offices: ["consul", "censor", "praetor", "quaestor", "tribune"]
     property var selectedVotes: ({})
+    // EOR-DEFECT-20260817-01 Fix A (P0): 年度切换哨兵 —— 上次快照所见年度（turnNumber）
+    property int _lastSeenTurn: 0
     property color actionButtonTop: "#FFF9EC"
     property color actionButtonBottom: "#E8D5B8"
     property color actionButtonHover: "#F4DFB8"
 
     FactionStyle { id: factionStyle }
+
+    // EOR-DEFECT-20260817-01 Fix A (P0): 年度推进（turnNumber 变化）→ 清空跨年残留的选票状态。
+    // 守卫 `turnNumber !== _lastSeenTurn`：仅在真实年度切换时重置一次；
+    // 同年度内快照刷新 / 多玩家 handoff（turnNumber 不变）不触发。
+    // 重置后，无候选人 office 在 selectedVotes 中键缺失 → 提交时 .get(office, 0) 回落 ABSTAIN。
+    Connections {
+        target: sessionStore
+        function onSnapshotChanged() {
+            if (sessionStore.turnNumber !== root._lastSeenTurn) {
+                root._lastSeenTurn = sessionStore.turnNumber
+                root.selectedVotes = ({})
+            }
+        }
+    }
+
+    // 组件创建时同步当前年度，避免把「创建后首个快照」误判为年度切换。
+    Component.onCompleted: root._lastSeenTurn = sessionStore.turnNumber
 
     function officeName(office) {
         var names = {

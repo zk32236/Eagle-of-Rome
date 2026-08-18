@@ -637,3 +637,122 @@ def test_fv26_multi_human_click_handoffs_without_resolve(runtime_factory):
     assert runtime.store.viewerPlayerId == runtime.human_ids[1]
     assert runtime.store.populationResolved is False
     assert runtime.store.canAdvancePopulation is False
+
+
+def _make_office_vacant(state, office):
+    """SA §6.2 fixture 扩展：使指定 office 零候选人（EOR-DEFECT-20260817-01）。
+
+    将当前所有可参选该 office 的存活人物标记 is_absent=True（get_candidates 跳过 absent
+    人物）。必须按 can_hold_office 判定而非仅当前候选集——get_candidates 按官职优先级
+    消耗 figure（used_figure_ids），仅标记当前候选集会让先前被高优先 office 消耗的
+    合格者在下一次计算中“替补”成为候选人。
+    """
+    turn = state.turn.turn_number
+    vacated = 0
+    for member in list(state.get_living_members()):
+        can_hold, _reason = member.can_hold_office(office, turn, state.config)
+        if can_hold:
+            member.is_absent = True
+            vacated += 1
+    assert vacated >= 1, f"fixture: no {office}-eligible member found to vacate"
+    after = population_api.get_candidates(state)
+    assert after["success"] is True
+    assert after["data"].get(office) == [], (
+        f"{office} should be zero-candidate, got {after['data'].get(office)}"
+    )
+    remaining = [o for o, rows in after["data"].items() if rows]
+    assert len(remaining) >= 1, "at least one office must retain candidates"
+
+
+def test_fv_zero_candidate_office_no_stale_leak(runtime_factory):
+    """EOR-DEFECT-20260817-01 Fix A+B 全链交互回归（P1-②：真实 advance_year 路径）。
+
+    第一回合 censor 有候选人 → 点击 censor 并提交成功（selectedVotes 含 censor）；
+    真实 advance_year（turnNumber 递增 + snapshotChanged）→ Fix A 重置 selectedVotes；
+    第二回合 censor 零候选人 → 点击 consul → 提交 → censor 强制 ABSTAIN、
+    无 INVALID_BATCH、无重试死锁。
+    """
+    from src.api import game_api
+
+    runtime = runtime_factory(campaign_done=True)
+    rows = _candidate_rows(runtime)
+    censor_id = rows["censor"]["id"]
+
+    # ── 第一回合：censor 有候选人，点击并提交 ──
+    _click(runtime, _candidate_control(runtime, rows["censor"]))
+    assert _selected_votes(runtime) == {"censor": censor_id}
+
+    with patch.object(
+        session_api.population_api,
+        "batch_vote",
+        wraps=session_api.population_api.batch_vote,
+    ) as backend_spy:
+        _click_resolve(runtime)
+    assert backend_spy.call_count == 1
+    round1_entries = backend_spy.call_args.args[2]
+    assert len(round1_entries) == 5
+    by_office1 = {e["office"]: e["figure_id"] for e in round1_entries}
+    assert by_office1["censor"] == censor_id
+    assert runtime.state.get_vote_completed(runtime.viewer_id) is True
+    # stale 前提成立：跨年残留的 selectedVotes 仍含 censor（缺陷根因）
+    assert _selected_votes(runtime) == {"censor": censor_id}
+
+    # ── 真实 advance_year（生产 use-case；force 仅跳过 resolution 前置，非 mock）──
+    state = runtime.state
+    turn_before = state.turn.turn_number
+    state.set_current_player(runtime.viewer_id)
+    adv = game_api.advance_year(state, runtime.viewer_id, force=True)
+    assert adv["success"] is True, adv
+    assert state.turn.turn_number == turn_before + 1
+    # 真实快照刷新 → snapshotChanged → turnNumber 变化 → Fix A 重置 selectedVotes
+    runtime.store.refreshSnapshot()
+    _process_events()
+    assert runtime.store.turnNumber == turn_before + 1
+    assert _selected_votes(runtime) == {}, "Fix A: 跨年残留的 selectedVotes 应已清空"
+
+    # ── 第二回合：censor 零候选人 ──
+    _make_office_vacant(state, "censor")
+    # 重新进入 population 阶段（advance_year 已清空 executed phases）
+    state.mark_phase_executed("mortality")
+    state.mark_phase_executed("revenue")
+    state.mark_phase_executed("forum")
+    state.set_current_player(runtime.viewer_id)
+    state.set_batch_completed(runtime.viewer_id, True)  # 第二回合 campaign 完成
+    runtime.store.refreshSnapshot()
+    _process_events()
+    assert runtime.store.currentPhaseId == "population"
+
+    # censor 行显示「弃权（无候选人）」，无 RadioButton
+    round2_available = {
+        o: [r for r in runtime.store.populationCandidates if r["office"] == o]
+        for o in OFFICES
+    }
+    assert round2_available["censor"] == []
+    non_empty = {o: rws for o, rws in round2_available.items() if rws}
+    assert non_empty, "第二回合至少一个 office 需保留候选人"
+    target_office = "consul" if "consul" in non_empty else next(iter(non_empty))
+    target = non_empty[target_office][0]
+    _click(runtime, _candidate_control(runtime, target))
+    assert _selected_votes(runtime) == {target_office: target["id"]}, (
+        "Fix A: selectedVotes 无 stale censor，仅含本次点击"
+    )
+
+    # 提交 → Fix B 兜底 censor=0（ABSTAIN）→ 成功、无 INVALID_BATCH、无重试
+    with patch.object(
+        session_api.population_api,
+        "batch_vote",
+        wraps=session_api.population_api.batch_vote,
+    ) as backend_spy2:
+        _click_resolve(runtime)
+    assert backend_spy2.call_count == 1, "无重试死锁：batch_vote 应恰好调用一次"
+    round2_entries = backend_spy2.call_args.args[2]
+    assert len(round2_entries) == 5
+    by_office2 = {e["office"]: e["figure_id"] for e in round2_entries}
+    assert by_office2["censor"] == 0, "Fix B: 零候选人 censor 应强制 ABSTAIN"
+    assert by_office2[target_office] == target["id"]
+    assert runtime.state.get_vote_completed(runtime.viewer_id) is True
+    round2_votes = [
+        v for v in runtime.state.get_population_votes()
+        if v[0] == runtime.viewer_id
+    ]
+    assert len(round2_votes) == 5

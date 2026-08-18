@@ -317,8 +317,19 @@ def submit_population_votes(
             "fields": invalid,
         }])
 
+    # EOR-DEFECT-20260817-01 Fix B (P1): 零候选人 office → 强制 figure_id=0（No-Candidate Contract）。
+    # P1-①: get_candidates success 守卫（对齐 population_api.batch_vote:505 模式）——
+    # 若候选数据获取失败，直接返回错误，不继续（防未来退化时全量静默 ABSTAIN）。
+    cand_result = population_api.get_candidates(state)
+    if not cand_result.get("success"):
+        return api_response(False, "Failed to load population candidates", {}, [{
+            "code": "CANDIDATES_UNAVAILABLE",
+            "message": "Unable to load candidate list for vote normalization",
+        }])
+    cand_data = cand_result.get("data", {})
     entries = [
-        {"office": office, "figure_id": selection_map.get(office, 0)}
+        {"office": office,
+         "figure_id": selection_map.get(office, 0) if cand_data.get(office) else 0}
         for office in _POPULATION_OFFICES
     ]
     batch_result = population_api.batch_vote(state, player_id, entries)

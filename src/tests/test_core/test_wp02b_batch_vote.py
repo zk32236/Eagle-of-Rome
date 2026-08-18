@@ -1657,6 +1657,11 @@ def test_v3_submit_population_votes_partial_map_normalizes_fixed_five(vote_state
 
     state = vote_state
     state.set_turn_order(["p1", "p2"])
+    # EOR-DEFECT-20260817-01 Fix B: 零候选人 office 的显式选择会被强制归一为 0（No-Candidate
+    # Contract）。vote_state 默认仅 quaestor 有候选人；为使本测试继续验证「显式选择透传」语义，
+    # 给 figure 1/3 添加官职历史使其成为 consul/praetor 的真实候选人（censor 仍零候选人）。
+    state.get_member(1).add_office_history("praetor", -5)
+    state.get_member(3).add_office_history("quaestor", -4)
     captured = []
 
     def capture_batch(_state, player_id, entries):
@@ -1796,4 +1801,125 @@ def test_v3_submit_population_votes_multi_human_handoff(vote_state):
     assert state.get_current_player().player_id == "p2"
     assert state.get_phase_result("population") is None
     assert resolve_spy.call_count == 0
+
+
+def test_v3_submit_population_votes_zero_candidate_office_forced_abstain(vote_state):
+    """EOR-DEFECT-20260817-01 Fix B: 零候选人 office 提交 → 强制 figure_id=0（ABSTAIN）。
+
+    vote_state 中 censor/consul/praetor/tribune 均无候选人（仅 quaestor 有候选人）。
+    构造携带 stale 非候选 figure_id 的 selection_map（censor=999 等）→ 零候选人 office
+    全部强制归一为 0（No-Candidate Contract）；有候选人 office（quaestor）保留显式选择；
+    真实 batch_vote 成功（无 INVALID_BATCH），玩家投票完成。
+    """
+    from src.api import session_api, population_api
+
+    state = vote_state
+    state.set_turn_order(["p1", "p2"])
+
+    # 前置：确认 fixture 候选人形状（仅 quaestor 有候选人）
+    cand_result = population_api.get_candidates(state)
+    assert cand_result["success"] is True
+    cand_data = cand_result["data"]
+    assert cand_data["consul"] == []
+    assert cand_data["censor"] == []
+    assert cand_data["praetor"] == []
+    assert cand_data["tribune"] == []
+    assert len(cand_data["quaestor"]) >= 1
+    quaestor_id = cand_data["quaestor"][0]["id"]
+
+    captured = []
+
+    def capture_batch(_state, player_id, entries):
+        captured.extend(entries)
+        return {
+            "success": True,
+            "message": "captured",
+            "data": {"vote_count": 5},
+            "errors": [],
+        }
+
+    with patch.object(session_api.population_api, "batch_vote", side_effect=capture_batch), \
+            patch.object(session_api, "complete_population_player", return_value={
+                "success": True,
+                "message": "handoff",
+                "data": {"new_player_id": "p2"},
+                "errors": [],
+            }):
+        result = session_api.submit_population_votes(
+            state,
+            "p1",
+            {"consul": 1, "censor": 999, "praetor": 2, "quaestor": quaestor_id, "tribune": 5},
+        )
+
+    assert result["success"] is True
+    assert len(captured) == 5
+    by_office = {entry["office"]: entry["figure_id"] for entry in captured}
+    assert len(by_office) == 5
+    assert set(by_office) == {"consul", "censor", "praetor", "quaestor", "tribune"}
+    # Fix B: 零候选人 office → 强制 figure_id=0（stale 非候选 id 被钳制为 ABSTAIN）
+    assert by_office["censor"] == 0
+    assert by_office["consul"] == 0
+    assert by_office["praetor"] == 0
+    assert by_office["tribune"] == 0
+    # 有候选人 office → 保留显式选择
+    assert by_office["quaestor"] == quaestor_id
+
+
+def test_v3_submit_population_votes_zero_candidate_office_real_batch_success(vote_state):
+    """EOR-DEFECT-20260817-01 Fix B: 零候选人强制 ABSTAIN 后，真实 batch_vote 全链成功。
+
+    不 mock batch_vote：selection_map 携带 stale 非候选 id（consul=1, censor=999, praetor=2,
+    tribune=5），Fix B 将其全部钳制为 0；quaestor 用真实候选人。真实 batch_vote 应成功
+    （无 INVALID_BATCH）、投票落库、vote_completed=True。
+    """
+    from src.api import session_api, population_api
+
+    state = vote_state
+    state.set_turn_order(["p1", "p2"])
+
+    cand_result = population_api.get_candidates(state)
+    assert cand_result["success"] is True
+    cand_data = cand_result["data"]
+    assert cand_data["censor"] == []
+    quaestor_id = cand_data["quaestor"][0]["id"]
+
+    result = session_api.submit_population_votes(
+        state,
+        "p1",
+        {"consul": 1, "censor": 999, "praetor": 2, "quaestor": quaestor_id, "tribune": 5},
+    )
+
+    assert result["success"] is True, result
+    votes = [vote for vote in state.get_population_votes() if vote[0] == "p1"]
+    assert len(votes) == 5
+    by_office = {office: figure_id for _pid, office, figure_id in votes}
+    assert by_office["censor"] == 0
+    assert by_office["consul"] == 0
+    assert by_office["praetor"] == 0
+    assert by_office["tribune"] == 0
+    assert by_office["quaestor"] == quaestor_id
+    assert state.get_vote_completed("p1") is True
+
+
+def test_v3_submit_population_votes_get_candidates_failure_blocked(vote_state):
+    """P1-①: get_candidates success=False → submit 返回错误，不继续（防全量静默 ABSTAIN）。"""
+    from src.api import session_api
+
+    state = vote_state
+    state.set_turn_order(["p1", "p2"])
+    failure = {
+        "success": False,
+        "message": "boom",
+        "data": {},
+        "errors": [{"code": "CANDIDATES_UNAVAILABLE", "message": "boom"}],
+    }
+    with patch.object(session_api.population_api, "get_candidates", return_value=failure), \
+            patch.object(session_api.population_api, "batch_vote") as batch_spy, \
+            patch.object(session_api, "complete_population_player") as complete_spy:
+        result = session_api.submit_population_votes(state, "p1", {"consul": 1})
+
+    assert result["success"] is False
+    assert batch_spy.call_count == 0
+    assert complete_spy.call_count == 0
+    assert len(state.get_population_votes()) == 0
 
