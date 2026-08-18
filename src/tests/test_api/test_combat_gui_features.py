@@ -278,6 +278,11 @@ class TestGUICombatFeatures(unittest.TestCase):
             self.assertEqual(card["presentation_state"], "ACTIVE_ACTIONABLE")
         # QML model = max(3, 4) = 4（横向 overflow 追加）
         self.assertEqual(max(3, len(all_cards)), 4)
+        # T9（P1-01 增补）：war_slots 有序 DTO — 4 ACTIVE → 长度 4，第 4 卡 slot_index=3（overflow）
+        war_slots = data["war_slots"]
+        self.assertEqual(len(war_slots), 4)
+        self.assertEqual([c["slot_index"] for c in war_slots], [0, 1, 2, 3])
+        self.assertEqual(war_slots[3]["war_id"], "war_d")
 
     # ════════════════════════════════════════════════════════════════════
     # T10（INV-C6）：TRUCE + 3×ACTIVE 混合 overflow — 4 卡、TRUCE 锁定不可攻、ongoing=4
@@ -321,6 +326,11 @@ class TestGUICombatFeatures(unittest.TestCase):
         state = _build_combat_full_state()
         ws = state._war_system
 
+        # P1-01 增补：同回合（结算前）3 卡按插入序 [A, B, C] 顺序断言
+        initial_slots = combat_api.get_combat_view(state, "player_opt")["data"]["war_slots"]
+        self.assertEqual([c["war_id"] for c in initial_slots], ["war_a", "war_b", "war_c"])
+        self.assertEqual([c["slot_index"] for c in initial_slots], [0, 1, 2])
+
         # 逐场结算：war_a → 确认 → war_b → 确认 → war_c（draw）→ 确认
         for wid in ("war_a", "war_b", "war_c"):
             combat_api.select_war(state, "player_opt", wid)
@@ -350,10 +360,66 @@ class TestGUICombatFeatures(unittest.TestCase):
         all_cards = data["active_wars"] + data["truce_wars"] + data["resolved_war_cards"]
         self.assertEqual(len(all_cards), 1)
         self.assertEqual(max(3, len(all_cards)), 3)
+        # P1-01 增补：下 Combat war_slots == [None, None, C]（slot_index 断言，非仅查 length）
+        war_slots = data["war_slots"]
+        self.assertEqual(len(war_slots), 3)
+        self.assertIsNone(war_slots[0])
+        self.assertIsNone(war_slots[1])
+        self.assertEqual(war_slots[2]["war_id"], "war_c")
+        self.assertEqual(war_slots[2]["slot_index"], 2)
         # INV-C4：1 TRUCE + 0 ACTIVE = 1 < 3 → war_count 不触发
         vc = state.check_victory_conditions()
         self.assertFalse(vc["game_over"])
         self.assertEqual([c for c in vc["conditions"] if c["type"] == "war_count"], [])
+
+    # ════════════════════════════════════════════════════════════════════
+    # P1-01 槽位复用：victory 释放槽 → 新 war 取最低空槽；满 3 追加 overflow
+    # ════════════════════════════════════════════════════════════════════
+    @patch.object(combat_api.random, "randint")
+    def test_slot_reuse_lowest_empty_slot_and_overflow(self, mock_randint):
+        state = _build_combat_full_state()
+        ws = state._war_system
+
+        # 初始 3 卡：war_a(0) / war_b(1) / war_c(2)
+        view0 = combat_api.get_combat_view(state, "player_opt")["data"]
+        self.assertEqual([c["slot_index"] for c in view0["war_slots"]], [0, 1, 2])
+
+        # war_a 决定性结果（triumph/victory）→ RESOLVED 释放 slot 0
+        mock_randint.return_value = 8
+        combat_api.select_war(state, "player_opt", "war_a")
+        combat_api.do_combat_action(state, "player_opt", "war_a", "attack")
+        combat_api.confirm_battle_result(state, "player_opt")
+        self.assertEqual(ws.get_war_by_id("war_a").status, WarStatus.RESOLVED)
+        # 新回合：resolved_war_cards 清空 → war_a 不再入卡 → slot 0 释放
+        state.record_phase_result("combat", {})
+
+        # 新 war_d 入 ACTIVE → 取最低空槽 slot 0（war_b/war_c 仍 1/2）
+        w4 = War(id="war_d", name="高卢战争", war_type=WarType.FOREIGN, strength=7,
+                 threat_level=2)
+        w4.commander_id = 1
+        w4.legions_assigned = 1
+        w4.status = WarStatus.ACTIVE
+        ws._active_wars.append(w4)
+
+        view1 = combat_api.get_combat_view(state, "player_opt")["data"]
+        by_id = {c["war_id"]: c for c in view1["war_slots"] if c is not None}
+        self.assertEqual(by_id["war_d"]["slot_index"], 0)
+        self.assertEqual(by_id["war_b"]["slot_index"], 1)
+        self.assertEqual(by_id["war_c"]["slot_index"], 2)
+        self.assertEqual(len(view1["war_slots"]), 3)
+
+        # 满 3 后追加第 4 场 ACTIVE → overflow slot 3
+        w5 = War(id="war_e", name="东方战争", war_type=WarType.FOREIGN, strength=6,
+                 threat_level=2)
+        w5.commander_id = 1
+        w5.legions_assigned = 1
+        w5.status = WarStatus.ACTIVE
+        ws._active_wars.append(w5)
+
+        view2 = combat_api.get_combat_view(state, "player_opt")["data"]
+        self.assertEqual(len(view2["war_slots"]), 4)
+        by_id2 = {c["war_id"]: c for c in view2["war_slots"] if c is not None}
+        self.assertEqual(by_id2["war_e"]["slot_index"], 3)
 
     # ════════════════════════════════════════════════════════════════════
     # GUI 特征 6: auto_resolve_combat (adapter 方法)
@@ -565,7 +631,14 @@ def _render_combat_qml_step(step_name, data, out_png):
                 super().__init__()
                 self._step = d.get("current_step", "select") or "select"
                 self._active = d.get("active_wars", []) or []
-                self._all = list(self._active) + (d.get("resolved_war_cards", []) or [])
+                # F-2（P1-01 同步）：combatAllWarCards 改为 war_slots 语义（含 truce + None 占位 + 槽序）
+                self._all = d.get("war_slots")
+                if self._all is None:
+                    self._all = (
+                        list(self._active)
+                        + (d.get("truce_wars", []) or [])
+                        + (d.get("resolved_war_cards", []) or [])
+                    )
                 self._resolved_ids = d.get("resolved_war_ids", []) or []
                 self._selected = d.get("selected_war_id", "") or ""
                 self._battle = (d.get("battle_results") or [{}])[0]

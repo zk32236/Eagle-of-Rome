@@ -5,7 +5,7 @@ WP03-BUGFIX-01 定向测试（TS-BF-01 ~ TS-BF-08）
 - Fix-A：draw → STALEMATE 归一化（复用 decider 词表，无第四套结果模型）
 - Fix-B：非决定性（draw）不调用 resolve_war（war/commander continuity 保留）
 - Fix-C：treaty 连续性（do_combat_action non-decisive 分支内联 _generate_peace_treaty）
-- 决定性（victory/defeat/triumph/disaster）回归不变
+- 决定性结果新语义（INV-C3）：victory/triumph → RESOLVED；defeat/disaster → ACTIVE（非 resolve、非 truce）
 
 test identity：由 oc-pytest-run evidence mode 产出（eor-pytest-identity/v1）。
 """
@@ -128,10 +128,10 @@ class TestBugfix01DrawTruce(unittest.TestCase):
         self.assertEqual(result["data"]["treaties"], [])
 
     # ════════════════════════════════════════════════════════════════════
-    # TS-BF-06（unit）：victory/defeat 决定性回归不变
+    # TS-BF-06（unit）：victory → RESOLVED / defeat → ACTIVE（INV-C3）
     # ════════════════════════════════════════════════════════════════════
     @patch.object(combat_api.random, "randint")
-    def test_bf06_victory_and_defeat_still_resolve(self, mock_randint):
+    def test_bf06_victory_resolves_defeat_stays_active(self, mock_randint):
         ws = self.state._war_system
 
         # victory：dice=7 + martial=6 + legions=0 → total=13，enemy=5 → score=8 → victory
@@ -168,10 +168,10 @@ class TestBugfix01DrawTruce(unittest.TestCase):
         self.assertEqual(dwar.duration, 1)  # 战争拖延惩罚
 
     # ════════════════════════════════════════════════════════════════════
-    # TS-BF-07（unit）：triumph/disaster 仍 resolve（不入 truce、不生成条约）
+    # TS-BF-07（unit）：triumph → RESOLVED / disaster → ACTIVE（INV-C3）
     # ════════════════════════════════════════════════════════════════════
     @patch.object(combat_api.random, "randint")
-    def test_bf07_triumph_disaster_still_resolved_no_truce(self, mock_randint):
+    def test_bf07_triumph_resolves_disaster_stays_active_no_truce(self, mock_randint):
         ws = self.state._war_system
 
         # triumph：dice=7 + martial=6 → total=13，enemy=0 → score=13 → triumph
@@ -233,6 +233,79 @@ class TestBugfix01DrawTruce(unittest.TestCase):
         self.assertIn(war, self.state._war_system.get_truce_wars())
 
         self.assertTrue(combat_api.advance_combat(self.state, "player_opt")["success"])
+
+    # ════════════════════════════════════════════════════════════════════
+    # TS-BF-09 ~ TS-BF-12（auto_resolve 四结果护栏，P0-01 二次 treaty 删除后）：
+    # auto_resolve_combat 逐场结果与 do_combat_action 单场语义一致
+    # （victory→RESOLVED / draw→恰一次 TRUCE 同 identity / defeat→ACTIVE /
+    #   disaster→ACTIVE），且 treaties 恒空 []（无二次 treaty）。
+    # ════════════════════════════════════════════════════════════════════
+    @patch.object(combat_api.random, "randint", return_value=7)
+    def test_bf09_auto_resolve_victory_resolved_no_truce(self, mock_randint):
+        ws = self.state._war_system
+        vwar = War(id="auto_victory", name="Auto Victory", war_type=WarType.FOREIGN,
+                   strength=5, threat_level=3, disaster_numbers=[12])
+        vwar.commander_id = 1
+        vwar.legions_assigned = 0
+        vwar.status = WarStatus.ACTIVE
+        ws._active_wars.append(vwar)
+
+        result = combat_api.auto_resolve_combat(self.state, "player_opt")
+        self.assertTrue(result["success"])
+        self.assertEqual(vwar.status, WarStatus.RESOLVED)
+        self.assertIn(vwar, ws._war_discard)
+        self.assertNotIn(vwar, ws._truce_wars)
+        self.assertEqual(result["data"]["treaties"], [])
+
+    @patch.object(combat_api.random, "randint", return_value=7)
+    def test_bf10_auto_resolve_draw_single_truce_same_identity(self, mock_randint):
+        war = self._make_draw_war("auto_draw")
+        result = combat_api.auto_resolve_combat(self.state, "player_opt")
+        self.assertTrue(result["success"])
+        ws = self.state._war_system
+        # 恰一次 TRUCE（同 identity：war 对象不变、commander 保留）
+        self.assertEqual(war.status, WarStatus.TRUCE)
+        self.assertEqual(len(ws._truce_wars), 1)
+        self.assertIn(war, ws._truce_wars)
+        self.assertIs(ws.get_war_by_commander(1), war)
+        self.assertEqual(war.commander_id, 1)
+        self.assertEqual(result["data"]["treaties"], [])
+
+    @patch.object(combat_api.random, "randint", return_value=2)
+    def test_bf11_auto_resolve_defeat_active_not_truce(self, mock_randint):
+        ws = self.state._war_system
+        dwar = War(id="auto_defeat", name="Auto Defeat", war_type=WarType.FOREIGN,
+                   strength=50, threat_level=3, disaster_numbers=[12])
+        dwar.commander_id = 1
+        dwar.legions_assigned = 0
+        dwar.status = WarStatus.ACTIVE
+        ws._active_wars.append(dwar)
+
+        result = combat_api.auto_resolve_combat(self.state, "player_opt")
+        self.assertTrue(result["success"])
+        self.assertEqual(dwar.status, WarStatus.ACTIVE)
+        self.assertNotIn(dwar, ws._truce_wars)
+        self.assertNotIn(dwar, ws._war_discard)
+        self.assertIsNone(dwar.commander_id)
+        self.assertEqual(result["data"]["treaties"], [])
+
+    @patch.object(combat_api.random, "randint", return_value=2)
+    def test_bf12_auto_resolve_disaster_active(self, mock_randint):
+        ws = self.state._war_system
+        dwar = War(id="auto_disaster", name="Auto Disaster", war_type=WarType.FOREIGN,
+                   strength=0, threat_level=3, disaster_numbers=[2, 3])
+        dwar.commander_id = 1
+        dwar.legions_assigned = 1
+        dwar.status = WarStatus.ACTIVE
+        ws._active_wars.append(dwar)
+
+        result = combat_api.auto_resolve_combat(self.state, "player_opt")
+        self.assertTrue(result["success"])
+        self.assertEqual(dwar.status, WarStatus.ACTIVE)
+        self.assertNotIn(dwar, ws._truce_wars)
+        self.assertNotIn(dwar, ws._war_discard)
+        self.assertIsNone(dwar.commander_id)
+        self.assertEqual(result["data"]["treaties"], [])
 
     # ════════════════════════════════════════════════════════════════════
     # T4（INV-C2，Advisor P2-c 裁定 2026-08-17）：approved treaty 到期 → ACTIVE

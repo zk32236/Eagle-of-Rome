@@ -94,6 +94,7 @@ class War:
         self._indemnity_due: int = 0
         self._truce_end_turn: Optional[int] = None
         self._legion_numbers: List[int] = []
+        self._combat_slot_index: int = -1  # 战斗槽位身份（-1 = 未分配）
 
         # ---------- MVP 0.7-2 新增 ----------
         self._unlocked_provinces = unlocked_provinces or []
@@ -317,6 +318,14 @@ class War:
     def legion_numbers(self) -> List[int]:
         return self._legion_numbers.copy()
 
+    @property
+    def combat_slot_index(self) -> int:
+        return self._combat_slot_index
+
+    @combat_slot_index.setter
+    def combat_slot_index(self, value: int):
+        self._combat_slot_index = value
+
 
     # ---------- MVP 0.7-2 新增属性 ----------
     @property
@@ -476,6 +485,7 @@ class War:
             "indemnity_due": self._indemnity_due,
             "truce_end_turn": self._truce_end_turn,
             "legion_numbers": self._legion_numbers.copy(),
+            "combat_slot_index": self._combat_slot_index,
             # MVP 0.7-2 新增
             "unlocked_provinces": self._unlocked_provinces.copy(),
 
@@ -548,6 +558,7 @@ class War:
         war._indemnity_due = data.get("indemnity_due", 0)
         war._truce_end_turn = data.get("truce_end_turn")
         war._legion_numbers = data.get("legion_numbers", [])
+        war._combat_slot_index = data.get("combat_slot_index", -1)
 
         # MVP 0.7-4 设置新增字段
         war._naval_required = data.get("_naval_required", False)

@@ -20,6 +20,10 @@ Rectangle {
     readonly property string combatStep: sessionStore.combatCurrentStep
     readonly property var selectedWarData: root.findSelectedWar()
 
+    // P1-02：卡片基准宽度 = (可用宽 - 10×2 列间距) / 3，适配 3 卡布局；
+    // N=3 → implicitWidth=W 零滚动；N=4 → implicitWidth=(4W+10)/3 > W 真溢出 + 水平滚动
+    readonly property real cardBaseWidth: Math.max(140, (warGridFlickable.width - 20) / 3)
+
     function findSelectedWar() {
         var wars = sessionStore.combatActiveWars || []
         var selectedId = sessionStore.combatSelectedWarId
@@ -151,7 +155,7 @@ Rectangle {
                             cardIndex: index
                             readonly property var _warData: (sessionStore.combatAllWarCards || [])[index]
 
-                            Layout.fillWidth: true
+                            Layout.preferredWidth: root.cardBaseWidth
                             Layout.fillHeight: true
                             Layout.minimumWidth: 140
                             warData: _warData

@@ -283,6 +283,50 @@ def _all_battled(ws, phase_data) -> bool:
     return len(_actionable_wars(ws, phase_data)) == 0
 
 
+def _build_war_slots(
+    war_cards: List[Dict[str, Any]],
+    truce_cards: List[Dict[str, Any]],
+    resolved_war_cards: List[Dict[str, Any]],
+    ws,
+) -> List[Optional[Dict[str, Any]]]:
+    """构建 war_slots 有序 DTO（P1-01 槽位身份 + 有序输出）。
+
+    - represented：全部非空卡，按 active → truce → resolved 插入序；
+    - 惰性分配：combat_slot_index < 0 的 war 按插入序取最低空槽
+      （基础 {0,1,2} 优先，满 3 后追加 max_slot+1 = overflow），并写回 war 实体
+      持久化（槽位身份跨回合/存档保留）；
+    - 输出 war_slots：长度 max(3, max_slot+1)，空槽填 None 占位，按 slot 排序。
+    """
+    represented = list(war_cards) + list(truce_cards) + list(resolved_war_cards)
+
+    used_slots = set()
+    for card in represented:
+        slot = card.get("slot_index", -1)
+        if slot is not None and slot >= 0:
+            used_slots.add(slot)
+
+    max_slot = max(used_slots) if used_slots else -1
+    for card in represented:
+        slot = card.get("slot_index", -1)
+        if slot is None or slot < 0:
+            slot = 0
+            while slot in used_slots:
+                slot += 1
+            used_slots.add(slot)
+            max_slot = max(max_slot, slot)
+            card["slot_index"] = slot
+            # 槽位身份写回 war 实体（持久化）
+            war = ws.get_war_by_id(card.get("war_id")) if ws else None
+            if war is not None:
+                war.combat_slot_index = slot
+
+    length = max(3, max_slot + 1)
+    war_slots: List[Optional[Dict[str, Any]]] = [None] * length
+    for card in represented:
+        war_slots[card["slot_index"]] = card
+    return war_slots
+
+
 # ════════════════════════════════════════════════════════════════════════
 # Public API
 # ════════════════════════════════════════════════════════════════════════
@@ -346,6 +390,7 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
         war_cards = []
         for w in active_wars:
             card = _war_card(w, state)
+            card["slot_index"] = w.combat_slot_index
             if w.id in resolved_wars:
                 card["presentation_state"] = "CURRENT_TURN_RESULT"
                 # P2-d：本回合已战斗的 ACTIVE 卡（defeat/disaster）附 result 摘要
@@ -359,6 +404,7 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
         truce_cards = []
         for w in (ws.get_truce_wars() if ws else []):
             card = _war_card(w, state)
+            card["slot_index"] = w.combat_slot_index
             card["presentation_state"] = "TRUCE_LOCKED"
             truce_cards.append(card)
 
@@ -369,11 +415,15 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
         resolved_war_cards = []
         for w in relevant_resolved:
             card = _war_card(w, state)
+            card["slot_index"] = w.combat_slot_index
             # AC-4.3: 逐场结果留卡片内 — 每张结算卡附本场 result 对象
             if isinstance(war_results, dict) and w.id in war_results:
                 card["result"] = war_results[w.id]
             card["presentation_state"] = "CURRENT_TURN_RESULT"
             resolved_war_cards.append(card)
+
+        # P1-01：war_slots 有序 DTO（槽位身份 + None 占位）
+        war_slots = _build_war_slots(war_cards, truce_cards, resolved_war_cards, ws)
 
         # Battle results
         battle_results = []
@@ -403,6 +453,7 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
             "active_wars": war_cards,
             "truce_wars": truce_cards,
             "resolved_war_cards": resolved_war_cards,
+            "war_slots": war_slots,
             "resolved_war_ids": resolved_war_ids,
             "battle_results": battle_results,
             "summary": {
@@ -871,12 +922,6 @@ def auto_resolve_combat(state: GameState, player_id: str) -> dict:
 
             battle_data = action_result.get("data", {})
             battles.append(battle_data)
-
-            # 生成停战条约（CLI 独有逻辑 → 现在属于共享用例）
-            result_str = battle_data.get("result", "")
-            treaty = _generate_peace_treaty(war, result_str, state)
-            if treaty:
-                treaties.append(treaty)
 
             # Confirm result
             confirm_battle_result(state, player_id)
