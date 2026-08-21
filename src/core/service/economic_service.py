@@ -314,6 +314,8 @@ class EconomicService:
             if not faction:
                 continue
             self.state.add_faction_treasury(faction_id, stipend + tax_int)
+            if stipend > 0:                      # ODR-01: 仅 stipend 扣国库，tax 不扣
+                self.state.add_treasury(-stipend)
             if tax_int > 0:
                 self.state.log_event(
                     f"派系抽成: {faction.name} +{tax_int}",

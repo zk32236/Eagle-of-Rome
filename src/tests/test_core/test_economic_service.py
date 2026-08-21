@@ -16,6 +16,39 @@ def make_state():
     return state
 
 
+_BETA_ECON_CONFIG = {
+    "economic_rules": {
+        "faction_stipend": 5,
+        "land_price_per_unit": 10,
+        "national_opex_rate": 0.0003,
+        "initial_national_public_land": 0,
+    }
+}
+
+
+def _make_beta_001_state():
+    """BETA 001 专用 fixture（T-001-01/02/03/05/07 共用）。
+
+    复现生产 stipend=5 语义（game_config.json L148），无文件/CWD 依赖：
+    opening=142 + income=36（战争赔款）− expense=18（运营费）− stipend=15（3 派×5）
+    → ending=145、treasury_delta=+3（与台账 §D/§J 完全一致）。
+    """
+    state = GameState.create_for_testing(_BETA_ECON_CONFIG)
+    state.turn = GameTurn(turn_number=5, year=-260)
+    state.treasury = 142
+    # 3 派系
+    for fid, name in (("opt", "Optimates"), ("pop", "Populares"), ("equ", "Equites")):
+        state.add_faction(Faction(id=fid, name=name))
+    # 收入 +36：战争赔款
+    state._war_system = WarSystem(state)
+    war = War(id="w1", name="BETA赔款战争")
+    war.set_indemnity_due(36)
+    state.get_war_system()._active_wars.append(war)
+    # 支出 −18：1 个已征服行省 → opex = int(6000 × 10 × 0.0003) = 18
+    state.add_province(Province(1, "BETA行省", total_land=6000, conquered=True))
+    return state
+
+
 def test_settle_indemnities_collects_income_and_clears_due():
     state = make_state()
     state.treasury = 100
@@ -153,6 +186,9 @@ def test_apply_faction_income_total_field():
     assert state.get_faction("opt").treasury == 116
     assert state.get_faction("pop").treasury == 71
 
+    # R-001-04 补强（国库盲区）：起始国库 0 − stipend 合计（100+50）=−150；tax 不扣国库
+    assert state.treasury == -150
+
 
 def test_apply_faction_income_empty_input():
     """apply_faction_income 传入空字典返回空结果"""
@@ -161,6 +197,95 @@ def test_apply_faction_income_empty_input():
     result = EconomicService(state).apply_faction_income({}, {})
 
     assert result == {}
+
+
+# === GUI-BETA-R1 WP-B 001：stipend 国库 debit（T-001 系列，DA-Plan-WP-B §6.1） ===
+
+
+def test_beta_001_treasury_absolute():
+    """T-001-01 打破恒真盲区：绝对国库 145 + delta +3（BETA opening=142/income=36/expense=18/stipend=15）"""
+    state = _make_beta_001_state()
+    result = EconomicService(state).settle_revenue_phase()
+
+    assert result["success"] is True
+    data = result["data"]
+    assert data["starting_treasury"] == 142
+    assert data["ending_treasury"] == 145
+    assert data["treasury_delta"] == 3
+    assert state.treasury == 145  # 绝对断言，不依赖 delta 公式
+
+
+def test_beta_001_faction_paired_grant():
+    """T-001-02 配对断言：派系 +15（每派 stipend 5）且国库 −15（stipend 合计）"""
+    state = _make_beta_001_state()
+    result = EconomicService(state).settle_revenue_phase()
+    data = result["data"]
+    faction_rows = data["faction_rows"]
+
+    for fid in ("opt", "pop", "equ"):
+        row = faction_rows[fid]
+        assert row["stipend"] == 5
+        assert row["tax"] == 0
+        assert row["total"] == 5
+        assert row["final"] == 5
+        assert state.get_faction(fid).treasury == 5
+
+    # 配对：派系合计 +15 = 国库 −15
+    assert sum(row["stipend"] for row in faction_rows.values()) == 15
+    assert state.treasury == 145
+
+
+def test_beta_001_sum_debit_no_double():
+    """T-001-03 单次扣款无重复：sum(stipend)=15，国库 = 142+36−18−15 = 145"""
+    state = _make_beta_001_state()
+    result = EconomicService(state).settle_revenue_phase()
+    data = result["data"]
+
+    assert sum(row["stipend"] for row in data["faction_rows"].values()) == 15
+    assert state.treasury == 142 + 36 - 18 - 15
+    assert state.treasury == 145
+
+
+def test_tax_does_not_debit_treasury():
+    """T-001-04 ODR-01：tax 不扣国库（只入派系）；stipend=0 时国库零扣减"""
+    state = make_state()
+    state.treasury = 500
+    opt = Faction(id="opt", name="Optimates")
+    state.add_faction(opt)
+
+    EconomicService(state).apply_faction_income({"opt": 15.5}, {"opt": 0})
+
+    assert state.get_faction("opt").treasury == 16  # tax round(15.5) 只入派系
+    assert state.treasury == 500  # 国库不被 tax 扣减
+
+
+def test_negative_treasury_deficit_counting():
+    """T-001-05 ODR-02 端到端：国库不足允许负值（3 − 3×5 = −12），check_victory_conditions 赤字计数=1"""
+    state = GameState.create_for_testing(_BETA_ECON_CONFIG)
+    state.turn = GameTurn(turn_number=5, year=-260)
+    state.treasury = 3
+    for fid, name in (("opt", "Optimates"), ("pop", "Populares"), ("equ", "Equites")):
+        state.add_faction(Faction(id=fid, name=name))
+    # 无收入无支出场景：仅 3 派 stipend 5 → 3 − 15 = −12
+
+    result = EconomicService(state).settle_revenue_phase()
+
+    assert result["success"] is True
+    assert state.treasury == -12  # 对齐 opex 赤字逻辑：允许负值，不抛异常
+    outcome = state.check_victory_conditions()
+    assert state.treasury_deficit_turns == 1
+
+
+def test_save_load_treasury_145():
+    """T-001-07 持久化：结算后 to_dict → load_from_dict → 新实例 _treasury == 145 不丢失"""
+    state = _make_beta_001_state()
+    EconomicService(state).settle_revenue_phase()
+    assert state.treasury == 145
+
+    restored = GameState.create_for_testing({})
+    restored.load_from_dict(state.to_dict())
+
+    assert restored.treasury == 145
 
 
 def test_process_contract_warranty_expires_completed_contract():

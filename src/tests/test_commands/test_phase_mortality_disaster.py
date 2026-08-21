@@ -25,7 +25,8 @@ class TestDisasterEvent(unittest.TestCase):
                 "national_public_land_tax_rate": 0.1,
                 "private_land_income_rate": 0.05,
                 "faction_tax_rate": 0.1,
-                "national_opex_rate": 0
+                "national_opex_rate": 0,
+                "faction_stipend": 0
             }
         }
         self.state = GameState.create_for_testing(self.test_config)

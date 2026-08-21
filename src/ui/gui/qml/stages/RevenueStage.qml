@@ -9,8 +9,8 @@ import "../i18n"
  * \brief RevenueStage — Phase 2: Revenue Stage content area.
  *
  * Fills StageDesktop.stageContentSlot only.
- * Layout: National Income (L) || National Expenditure (R)
- *         Faction Treasury (L) || Private Land Income (R)
+ * Layout: Left column: National Income | National Expenditure | Faction Treasury
+ *         Right column: Private Land Income
  *         Net Treasury Change (golden border, bottom)
  *
  * Layout contract: GUI_LAYOUT_CONTRACT_Phase1_v3.25.1.md §4
@@ -61,11 +61,16 @@ Rectangle {
             }
         }
 
-        // ---- Section 1: National Income (L) || National Expenditure (R) ----
+        // ---- Sections 1+2: National Income | National Expenditure | Faction Treasury (L) || Private Land Income (R) ----
         RowLayout {
             visible: _isSettled
             Layout.fillWidth: true
             spacing: 12
+
+            // Left column: National Income → National Expenditure → Faction Treasury
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 12
 
             // Left: National Income
             Rectangle {
@@ -228,13 +233,6 @@ Rectangle {
                     }
                 }
             }
-        }
-
-        // ---- Section 2: Faction Treasury (L) || Private Land Income (R) ----
-        RowLayout {
-            visible: _isSettled
-            Layout.fillWidth: true
-            spacing: 12
 
             // Left: Faction Treasury
             Rectangle {
@@ -302,6 +300,13 @@ Rectangle {
                 }
             }
 
+            }
+
+            // Right: Private Land Income (right column)
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 12
+
             // Right: Private Land Income
             Rectangle {
                 Layout.fillWidth: true
@@ -346,6 +351,8 @@ Rectangle {
                         }
                     }
                 }
+            }
+
             }
         }
 

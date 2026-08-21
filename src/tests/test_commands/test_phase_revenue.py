@@ -83,7 +83,7 @@ class TestRevenueCommand(unittest.TestCase):
         rate = 0.003
         expected_opex = int((1000 + 2000) * land_price * rate)  # 90
         # 国家公地收益：1000 * 10 * 0.02 = 200
-        expected_treasury = 1000 + 2 - expected_opex  # 912
+        expected_treasury = 1000 + 2 - expected_opex - 20  # 892（2 派 × stipend 10 国库扣减）
         self.assertEqual(self.state.treasury, expected_treasury)
         self.assertIn("国家运营费计算", output)
         self.assertIn(f"运营费 = {expected_opex}", output)
@@ -109,7 +109,7 @@ class TestRevenueCommand(unittest.TestCase):
             result = cmd.execute([])
         output = f.getvalue()
 
-        self.assertEqual(self.state.treasury, 1002)  # 1000 + 2
+        self.assertEqual(self.state.treasury, 982)  # 1000 + 2 - 20（2 派 stipend）
         self.assertIn("无已征服行省，国家运营费为 0", output)
 
     def _setup_mock_military_system(self):
@@ -232,7 +232,7 @@ class TestRevenueCommand(unittest.TestCase):
         # 工程支付 = works_contract.total_spent (已在收入阶段累计)
         expected_engineering_payment = works_contract.total_spent
         expected_treasury_change = expected_public_income + expected_tax_treasury - expected_engineering_payment
-        self.assertEqual(self.state.treasury, initial_treasury + expected_treasury_change)
+        self.assertEqual(self.state.treasury, initial_treasury + expected_treasury_change - 20)  # 2 派 stipend 国库扣减
 
     def test_no_contracts(self):
         """测试无合同时税收阶段仍正常执行"""
@@ -346,6 +346,68 @@ class TestRevenueCommand(unittest.TestCase):
         self.assertEqual(contract.status, ContractStatus.EXPIRED)
         # 验证行省已解绑
         self.assertIsNone(province.tax_contract_id)
+
+
+    def _make_three_path_state(self):
+        """T-001-06 三路径等价：同一配置工厂产出独立 state（语义等价克隆）"""
+        test_config = {
+            "economic_rules": {
+                "land_price_per_unit": 10,
+                "national_public_land_tax_rate": 0.02,
+                "faction_stipend": 10,
+                "faction_tax_rate": 0.1,
+                "private_land_income_rate": 0.05,
+                "base_tax": 100,
+                "public_land_income_rate": 0.01,
+                "initial_national_public_land": 0,
+            }
+        }
+        state = GameState.create_for_testing(test_config)
+        state.turn = GameTurn(turn_number=1, year=-264)
+        state.mark_phase_executed("mortality")
+        for fid, name in (("senate", "元老院派"), ("plebs", "平民派")):
+            state.add_faction(Faction(id=fid, name=name))
+        state.treasury = 1000
+        return state
+
+    def test_three_paths_identical_settlement(self):
+        """T-001-06 三路径等价：GUI（revenue_api）/ CLI（RevenueCommand）/ 直调 产出相同国库结果"""
+        from src.api.revenue_api import execute_revenue_phase
+        from src.core.entities.player import Player
+        from src.core.service.economic_service import EconomicService
+
+        # GUI 路径：execute_revenue_phase（需 viewer 玩家 + current player + mortality 已执行）
+        state_gui = self._make_three_path_state()
+        state_gui.add_player(Player(player_id="p1", faction_id="senate"))
+        state_gui.set_current_player("p1")
+        resp = execute_revenue_phase(state_gui, "p1")
+        self.assertTrue(resp["success"])
+        gui_data = resp["data"]["data"]
+
+        # CLI 路径：RevenueCommand.execute
+        state_cli = self._make_three_path_state()
+        cmd = RevenueCommand(state_cli)
+        f = io.StringIO()
+        with redirect_stdout(f):
+            self.assertTrue(cmd.execute([]))
+
+        # 直调路径：EconomicService.settle_revenue_phase
+        state_direct = self._make_three_path_state()
+        result = EconomicService(state_direct).settle_revenue_phase()
+        self.assertTrue(result["success"])
+        direct_data = result["data"]
+
+        expected_end = 1000 - 20  # 2 派 × stipend 10
+        expected_delta = -20
+        # 三路径国库终值一致
+        self.assertEqual(state_gui.treasury, expected_end)
+        self.assertEqual(state_cli.treasury, expected_end)
+        self.assertEqual(state_direct.treasury, expected_end)
+        # 返回数据一致（GUI/直调均有 data；CLI 以 state 为准）
+        self.assertEqual(gui_data["treasury_delta"], expected_delta)
+        self.assertEqual(gui_data["ending_treasury"], expected_end)
+        self.assertEqual(direct_data["treasury_delta"], expected_delta)
+        self.assertEqual(direct_data["ending_treasury"], expected_end)
 
 
 if __name__ == "__main__":

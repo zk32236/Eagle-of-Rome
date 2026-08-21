@@ -234,7 +234,8 @@ class TestMortalityCommand(unittest.TestCase):
                 "public_land_income_rate": 0.01,
                 "national_public_land_tax_rate": 0.1,
                 "private_land_income_rate": 0.05,
-                "faction_tax_rate": 0.1
+                "faction_tax_rate": 0.1,
+                "faction_stipend": 0
             }
         }
         state = GameState.create_for_testing(test_config)
