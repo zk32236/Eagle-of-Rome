@@ -117,22 +117,15 @@ class PopulationCommand(Command):
                     print(f"      ⚓ 舰队 {disbanded} 已解散（无需要海战的战争）")
 
 
-            # 清理广场中未被招募的人物
+            # 清理广场中未被招募的人物 + 卸任现任官员 + 转换战场指挥官
+            # （收敛为共享用例 population_api.begin_population_phase，幂等；CLI 保留打印）
             curia = self.state.curia
-            if not curia.is_empty():
-                ids_to_remove = [fig.id for fig in curia.get_all_available()]
-                for fid in ids_to_remove:
-                    if fid in self.state._members:
-                        del self.state._members[fid]
-                curia.clear()
-                print(f"      🗑️ {len(ids_to_remove)} 名未被招募的人物已从罗马消失，不知去向。")
+            curia_pending = [fig.id for fig in curia.get_all_available()] if not curia.is_empty() else []
+            population_api.begin_population_phase(self.state)
+            if curia_pending:
+                print(f"      🗑️ {len(curia_pending)} 名未被招募的人物已从罗马消失，不知去向。")
 
-            # 卸任所有现任官员（不包括战场指挥官）
-            election_order = ["consul", "censor", "praetor", "quaestor", "tribune"]
-            for office_type in election_order:
-                self._remove_office_holders(office_type)
-
-            # 转换战场指挥官
+            # 战场指挥官转换打印（转换本身已由 begin_population_phase 幂等完成）
             self._convert_battlefield_commanders()
 
             print()  # 空行分隔
@@ -161,27 +154,6 @@ class PopulationCommand(Command):
             else:
                 print(i18n.get("error_unknown_command"), flush=True)
 
-
-    def _remove_office_holders(self, office_type: str):
-        """
-        卸任所有现任官员（不包括战场指挥官，由 _convert_battlefield_commanders 处理）。
-        """
-        current_turn = self.state.turn.turn_number
-        for fig in self.state.get_living_members():
-            if fig.office != office_type:
-                continue
-
-            # 战场指挥官由专门方法处理，这里跳过
-            if fig.is_absent and office_type in ('consul', 'praetor'):
-                continue
-
-            # 普通卸任
-            fig.add_office_history(office_type, current_turn - 1, current_turn)
-            fig.office = f"ex-{office_type}"
-            fig.update_influence()
-
-            if office_type == "consul" and fig.id in self.state.turn.leader_ids:
-                self.state.turn.leader_ids.remove(fig.id)
 
     # ---------- 步骤1：庆典环节 ----------
     def _handle_step_1(self):

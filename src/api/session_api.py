@@ -164,6 +164,12 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
         if not viewer:
             return api_response(False, "Viewer player not found")
 
+        # GUI 人口阶段首个读模型刷新处：归档必须先于任何 get_candidates
+        # （设计 02 §2.2；G3 Q3）。阶段门：仅当当前阶段为 population 才执行
+        # （session_store.initialize 会在非人口阶段预刷新本视图，见偏离 D-6）。
+        if _infer_current_phase_id(state) == "population":
+            population_api.begin_population_phase(state)
+
         # 本派系可操作人物
         my_figures = []
         for fig in state.get_living_members():
@@ -320,6 +326,10 @@ def submit_population_votes(
     # EOR-DEFECT-20260817-01 Fix B (P1): 零候选人 office → 强制 figure_id=0（No-Candidate Contract）。
     # P1-①: get_candidates success 守卫（对齐 population_api.batch_vote:505 模式）——
     # 若候选数据获取失败，直接返回错误，不继续（防未来退化时全量静默 ABSTAIN）。
+    # GUI 人口阶段投票入口：归档必须先于 get_candidates（设计 02 §2.2；G3 Q3）。
+    # 阶段门：仅当当前阶段为 population 才执行（防 session_store 预刷新误触发，D-6）。
+    if _infer_current_phase_id(state) == "population":
+        population_api.begin_population_phase(state)
     cand_result = population_api.get_candidates(state)
     if not cand_result.get("success"):
         return api_response(False, "Failed to load population candidates", {}, [{
@@ -507,6 +517,10 @@ def resolve_population_slice(state: GameState) -> dict:
             "election_results": existing.get("election_results", []) if existing else [],
         })
     try:
+        # GUI 人口阶段结算入口：归档必须先于 AI drain（其内部即 get_candidates）
+        # （设计 02 §2.2；G3 Q3）。阶段门：仅当当前阶段为 population 才执行（D-6）。
+        if _infer_current_phase_id(state) == "population":
+            population_api.begin_population_phase(state)
         influence_before = _faction_influence_rows(state)
         # 先让 AI 自动完成（如果还有未完成的玩家）
         from src.ui.processors.auto_player_processor import AutoPlayerProcessor

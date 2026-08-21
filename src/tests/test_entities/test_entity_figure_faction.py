@@ -75,7 +75,7 @@ class TestFigure:
         fig.update_influence()
         # 基础45 + 家族30 + 执政官加成40 = 115
         assert fig.influence == 115
-        assert fig.rank == 4
+        assert fig.rank == 5  # ODR-6: consul 类默认对齐生产 consul=5（原为 4）
         assert fig.has_military_command() is True
         assert fig.has_veto_power() is False
         assert fig.has_prosecution_power() is False
@@ -171,6 +171,22 @@ class TestFigure:
         can, reason = fig_never_consul.can_hold_office("censor", current_turn, config)
         assert not can
         assert "Requires prior Consul service" in reason
+
+    def test_office_rank_class_default_matches_config(self):
+        """ODR-6 守卫：类默认 OFFICE_RANK == 生产配置（防未来漂移）。
+
+        对齐 data/config/game_config.json political_rules.office_rank：
+        dictator=6, consul=5, censor=4, praetor=3, quaestor=2, tribune=1。
+        """
+        expected = {
+            "dictator": 6,
+            "consul": 5,
+            "censor": 4,
+            "praetor": 3,
+            "quaestor": 2,
+            "tribune": 1,
+        }
+        assert Figure.OFFICE_RANK == expected
 
 
 class TestFaction:

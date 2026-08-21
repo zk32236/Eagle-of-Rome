@@ -1142,3 +1142,76 @@ def convert_battlefield_commanders(state: GameState) -> dict:
     # Persist DTO for GUI consumption
     state.record_phase_result("battlefield_commander_conversion", result)
     return result
+
+
+def archive_office_holders(state: GameState) -> dict:
+    """卸任所有现任官员（对齐 CLI _remove_office_holders 语义）。
+
+    战场指挥官（is_absent 的 consul/praetor）跳过——由
+    convert_battlefield_commanders 处理（置 proconsul/propraetor 而非 ex-，
+    历史 end=current_turn-1）。调用顺序约束：本函数必须先于
+    convert_battlefield_commanders 执行（P1-1b）。
+    """
+    current_turn = state.turn.turn_number
+    election_order = ["consul", "censor", "praetor", "quaestor", "tribune"]
+    archived = []
+    for office_type in election_order:
+        for fig in state.get_living_members():
+            if fig.office != office_type:
+                continue
+            # P1-1（对齐 phase_population.py:175）：缺席战场指挥官跳过
+            if fig.is_absent and office_type in ("consul", "praetor"):
+                continue
+            # P2-1 顺序依赖：add_office_history 内部置 office=None（figure.py:558），
+            # 下方 office=f"ex-{...}" 是强制第二步，不可省略
+            fig.add_office_history(office_type, current_turn - 1, current_turn)  # 对齐 :179
+            fig.office = f"ex-{office_type}"                                      # 对齐 :180
+            fig.update_influence()                                                # 对齐 :181
+            if office_type == "consul" and fig.id in state.turn.leader_ids:
+                state.turn.leader_ids.remove(fig.id)                              # 对齐 :183-184
+            archived.append({
+                "figure_id": fig.id,
+                "name": fig.name,
+                "office": office_type,
+                "start_turn": current_turn - 1,
+                "end_turn": current_turn,
+            })
+    return {"archived": archived, "total": len(archived)}
+
+
+def begin_population_phase(state: GameState) -> dict:
+    """人口阶段入口共享用例：curia 清理 + 现任归档 + 战场指挥官转换。
+
+    幂等：以 phase-result marker "population_entry" 守卫（对齐
+    convert_battlefield_commanders 的 "battlefield_commander_conversion"
+    幂等模式）。年度推进 _commit_settlement 清空 _phase_results → 每年重新 armed。
+    调用顺序（P1-1b）：先归档在场者（archive_office_holders），
+    再转换 absent 指挥官（convert_battlefield_commanders）——两条路径
+    语义不同且互补，is_absent 跳过保证无双处理。
+    """
+    stored = state.get_phase_result("population_entry")
+    if isinstance(stored, dict) and "archived" in stored:
+        return stored
+
+    # 1) curia 清理（对齐 CLI phase_population.py:120-128；P1-2 scope 内）
+    curia = state.curia
+    if not curia.is_empty():
+        ids_to_remove = [fig.id for fig in curia.get_all_available()]
+        for fid in ids_to_remove:
+            if fid in state._members:
+                del state._members[fid]
+        curia.clear()
+
+    # 2) 归档在场现任官员（必须先于转换，P1-1b）
+    archive_result = archive_office_holders(state)
+
+    # 3) 转换缺席战场指挥官（自带 "battlefield_commander_conversion" 幂等）
+    conversion_result = convert_battlefield_commanders(state)
+
+    result = {
+        "archived": archive_result.get("archived", []),
+        "converted": conversion_result.get("converted", []),
+        "curia_cleared": True,
+    }
+    state.record_phase_result("population_entry", result)
+    return result

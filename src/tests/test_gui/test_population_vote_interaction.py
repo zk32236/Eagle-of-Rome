@@ -722,6 +722,20 @@ def test_fv_zero_candidate_office_no_stale_leak(runtime_factory):
     _process_events()
     assert runtime.store.currentPhaseId == "population"
 
+    # D-8 窄修正（2026-08-21）：本次 refreshSnapshot → get_population_view →
+    # begin_population_phase 会把 Turn-1 当选 consul 归档为 ex-consul
+    # （add_office_history 写入 consul 任期 + 年龄≥42 → 修复后恢复 censor 资格），
+    # 产生新的 censor 候选人（实测 id=9101）。方案 A：将归档后仍具 censor 资格者
+    # 年龄调至 <42（game_config.json censor min_age=42）→ 真正不满足资格 → 池为空。
+    for member in state.get_living_members():
+        can_hold, _reason = member.can_hold_office(
+            "censor", state.turn.turn_number, state.config
+        )
+        if can_hold:
+            member.age = 41  # censor min_age=42 → 无资格（产品代码零改动）
+    runtime.store.refreshSnapshot()
+    _process_events()
+
     # censor 行显示「弃权（无候选人）」，无 RadioButton
     round2_available = {
         o: [r for r in runtime.store.populationCandidates if r["office"] == o]

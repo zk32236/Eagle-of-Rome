@@ -96,13 +96,16 @@ class Figure:
     """
 
     # 类属性（配置项，可通过 load_config 覆盖）
+    # ODR-6: 类默认对齐生产配置 game_config.json office_rank
+    # （dictator=6, consul=5, censor=4, praetor=3, quaestor=2, tribune=1）。
+    # 同时反转 censor/consul 与 tribune/quaestor（G3 P2-2）。
     OFFICE_RANK = {
         "dictator": 6,
-        "censor": 5,
-        "consul": 4,
+        "consul": 5,
+        "censor": 4,
         "praetor": 3,
-        "tribune": 2,
-        "quaestor": 1,
+        "quaestor": 2,
+        "tribune": 1,
     }
 
     OFFICE_INFLUENCE_BONUS = {

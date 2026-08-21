@@ -1160,3 +1160,153 @@ class TestNormalElectionRegression:
         assert result["success"] is True
         assert len(result["data"]["elected"]) >= 1
         assert result["data"]["election_results"][0]["office"] == "consul"
+
+
+# ===========================================================================
+# WP-A 官职归档 — archive_office_holders / begin_population_phase（DA-Execute）
+# ===========================================================================
+
+def _make_archive_state():
+    """构造归档场景：在场 consul/praetor + 缺席 consul/praetor（战场指挥官）。"""
+    state = GameState.create_for_testing({
+        "testing": {"bypass_player_check": True},
+        "political_rules": {
+            "office_influence_bonus": {
+                "consul": 40, "praetor": 30, "quaestor": 10, "proconsul": 0, "propraetor": 0,
+            },
+        },
+    })
+    state.turn = GameTurn(turn_number=5, year=-280)
+
+    fig_consul = Figure.create_nobile(1, "f1", 45)
+    fig_consul.office = "consul"
+    fig_consul.is_absent = False
+    state.add_member(fig_consul)
+
+    fig_praetor = Figure.create_nobile(2, "f1", 40)
+    fig_praetor.office = "praetor"
+    fig_praetor.is_absent = False
+    state.add_member(fig_praetor)
+
+    fig_absent_consul = Figure.create_nobile(3, "f2", 50)
+    fig_absent_consul.office = "consul"
+    fig_absent_consul.is_absent = True
+    state.add_member(fig_absent_consul)
+
+    fig_absent_praetor = Figure.create_nobile(4, "f2", 45)
+    fig_absent_praetor.office = "praetor"
+    fig_absent_praetor.is_absent = True
+    state.add_member(fig_absent_praetor)
+
+    war_system = MagicMock()
+    war_system.get_war_by_commander.return_value = None
+    state._war_system = war_system
+    return state, fig_consul, fig_praetor, fig_absent_consul, fig_absent_praetor
+
+
+class TestArchiveOfficeHolders:
+    """WP-A：现任官员归档 / 幂等 / curia 清理 / 顺序 / resolve_election 零回归。"""
+
+    def test_archive_sets_ex_office_and_history(self):
+        """在场 consul/praetor 归档后 office=ex-*、history +1、term(office, t-1, t)。"""
+        state, fig_consul, fig_praetor, _, _ = _make_archive_state()
+        result = population_api.archive_office_holders(state)
+        assert fig_consul.office == "ex-consul"
+        assert fig_praetor.office == "ex-praetor"
+        assert len(fig_consul.office_history) == 1
+        term = fig_consul.office_history[-1]
+        assert term.office_type == "consul"
+        assert term.start_turn == 4  # current_turn - 1
+        assert term.end_turn == 5    # current_turn
+        assert result["total"] == 2
+
+    def test_archive_removes_consul_from_leader_ids(self):
+        """consul 归档后从 state.turn.leader_ids 移除（对齐 :183-184）。"""
+        state, fig_consul, _, _, _ = _make_archive_state()
+        state.turn.leader_ids.append(fig_consul.id)
+        population_api.archive_office_holders(state)
+        assert fig_consul.id not in state.turn.leader_ids
+
+    def test_archive_skips_absent_battlefield_commanders(self):
+        """is_absent 的 consul/praetor 不归档（office 保持，交由转换路径）。"""
+        state, _, _, fig_absent_consul, fig_absent_praetor = _make_archive_state()
+        population_api.archive_office_holders(state)
+        assert fig_absent_consul.office == "consul"
+        assert fig_absent_praetor.office == "praetor"
+        assert len(fig_absent_consul.office_history) == 0
+        assert len(fig_absent_praetor.office_history) == 0
+
+    def test_archive_updates_influence(self):
+        """归档后 update_influence() 生效（ex- 加成：consul 40 → ex-consul 20）。"""
+        state, fig_consul, _, _, _ = _make_archive_state()
+        fig_consul.update_influence()
+        before = fig_consul.influence
+        population_api.archive_office_holders(state)
+        assert fig_consul.office == "ex-consul"
+        assert before - fig_consul.influence == 20
+
+    def test_begin_population_phase_idempotent(self):
+        """二次调用不重复归档：office_history 长度不变、marker 存在、结果一致。"""
+        state, fig_consul, _, _, _ = _make_archive_state()
+        r1 = population_api.begin_population_phase(state)
+        r2 = population_api.begin_population_phase(state)
+        assert r1 == r2
+        assert len(fig_consul.office_history) == 1
+        assert state.get_phase_result("population_entry") is not None
+
+    def test_begin_population_phase_curia_cleanup(self):
+        """curia 未招募人物被清理（对齐 CLI :120-128）。"""
+        state, _, _, _, _ = _make_archive_state()
+        fig_curia = Figure.create_plebeian(99, None, 25)
+        state.curia.add_figure(fig_curia)
+        state._members[99] = fig_curia
+        result = population_api.begin_population_phase(state)
+        assert result["curia_cleared"] is True
+        assert state.curia.is_empty() is True
+        assert state.get_member(99) is None
+
+    def test_begin_population_phase_order_archive_then_convert(self):
+        """一次调用内：在场者→ex-*，缺席者→proconsul/propraetor，无双处理（P1-1b）。"""
+        state, fig_consul, fig_praetor, fig_absent_consul, fig_absent_praetor = _make_archive_state()
+        result = population_api.begin_population_phase(state)
+        assert fig_consul.office == "ex-consul"
+        assert fig_praetor.office == "ex-praetor"
+        assert fig_absent_consul.office == "proconsul"
+        assert fig_absent_praetor.office == "propraetor"
+        # 缺席者仅转换路径一条 history，无双处理
+        assert len(fig_absent_consul.office_history) == 1
+        assert fig_absent_consul.office_history[-1].office_type == "consul"
+        assert len(result["archived"]) == 2
+        assert len(result["converted"]) == 2
+
+    def test_archive_does_not_change_resolve_election(self, state_normal_mode):
+        """回归：resolve_election 当选者 office=office、不入历史（:1015 语义保持）。"""
+        fig1 = state_normal_mode.get_member(1)
+        fig2 = state_normal_mode.get_member(2)
+        fig1.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        fig2.office_history.append(OfficeTerm(office_type="praetor", start_turn=-10, end_turn=-9))
+        state_normal_mode._population_pending["votes"] = [("p1", "consul", 1), ("p2", "consul", 2)]
+        result = population_api.resolve_election(state_normal_mode)
+        assert result["success"] is True
+        winner_id = result["data"]["election_results"][0]["figure_id"]
+        winner = state_normal_mode.get_member(winner_id)
+        assert winner.office == "consul"
+        consul_terms = [t for t in winner.office_history if t.office_type == "consul"]
+        assert len(consul_terms) == 0
+
+    def test_marker_resets_after_year_advance(self):
+        """跨年：_commit_settlement 清空 _phase_results 后 marker 重置、可重新归档。"""
+        state, fig_consul, _, _, _ = _make_archive_state()
+        population_api.begin_population_phase(state)
+        assert fig_consul.office == "ex-consul"
+        assert len(fig_consul.office_history) == 1
+
+        # 模拟年度推进：_commit_settlement 会 clear _phase_results（game_state.py:1341）
+        state._phase_results.clear()
+        assert state.get_phase_result("population_entry") is None
+
+        # 新年再次进入：fig_consul 重新当选 consul 后可再次归档
+        fig_consul.office = "consul"
+        population_api.begin_population_phase(state)
+        assert fig_consul.office == "ex-consul"
+        assert len(fig_consul.office_history) == 2
