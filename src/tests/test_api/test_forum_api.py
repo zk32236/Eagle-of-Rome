@@ -166,6 +166,8 @@ class TestForumView:
         assert isinstance(data["available_figures"], list)
         assert isinstance(data["pending_contracts"], list)
         assert isinstance(data["triumph_wars"], list)
+        assert "war_threats" in data
+        assert isinstance(data["war_threats"], list)
         assert "can_execute" in data
         assert "can_advance" in data
 

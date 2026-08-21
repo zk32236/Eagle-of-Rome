@@ -36,6 +36,21 @@ session_api, gui_query_api
 - CLI `phase_forum._generate_contracts()` → **委托至** `forum_api.generate_contracts()`
 - `open_market()` 的 `_generate_market_figures()` → **委托至** `figure_generation_system.generate_market_figures()`
 
+### 3.4 Canonical Forum Init (GUI-BETA-R1 WP-C, 2026-08-21)
+
+#### 3.4.1 `initialize_forum_turn(state: GameState) -> dict` [NEW]
+- **用途:** 广场回合 canonical 初始化，**exactly-once/回合**（GUI/CLI/AI 三路径共用入口）
+- **副作用顺序（固定）:** ① war `check_triggers(year)` + `escalate_threats()`（015）→ ④ `naval_system.process_fleet_construction(turn)` → ③ `generate_figures()`（含 hero 消费，009）→ ② `generate_contracts()`（014）→ ⑤ `check_province_unrest()`
+- **守卫:** `_forum_pending["forum_initialized"]`（list-flag，复刻 market_opened）；已置位 → `data={}` no-op
+- **ODR-04:** 入口调 `_reconcile_stale_hero_markers()`——hero_to_spawn 带 `spawn_turn` 且==当前回合才消费；无戳/旧回合 → 丢弃
+- **返回:** `{war_events, completed_fleets, figures, contracts, unrest}`
+
+#### 3.4.2 调用链变更 (WP-C)
+- `open_market()`：`_generate_market_figures()` → **替换为** `initialize_forum_turn()`（generated_figures 行形 `_available_figure_row` 不变，ODR-05；`market_opened` 步态标记保留）
+- `resolve_forum()`：函数体首行新增 `execute_land_acts(state)`（resolution-time 幂等 hook，CLI 显式调用保留不 double-execute）
+- `get_forum_view()`：新增 `"war_threats": _war_threat_rows(state)`（016；与 Senate `get_threat_wars()` 同 war.id；无威胁空数组）
+- CLI `phase_forum._execute_normal()`：原 4 个 init 调用合并为单次 `initialize_forum_turn()`，`_war_events`/民变/舰队/figures/contracts 全部消费 init 结果打印（壳方法保留）
+
 ## 4. forum_api 新增接口 (Wave-02 Province & Land)
 
 ### 4.1 `check_province_unrest() -> dict`
@@ -189,3 +204,4 @@ session_api, gui_query_api
 | v1.0 | 2026-07-17 | 初版 |
 | v1.8 | 2026-08-01 | EOR20260801-02 B2 Pilot (DA ATTEMPT-1): §7.1 FC-06 signature 从 tuple(sorted(...)) 修正为 frozenset(...)（对齐 Contract Freeze Table FC-06 冻结值）；CI-1 Frozen Value Preservation |
 | v1.9 | 2026-08-02 | WP-02b v3.0: 新增 §7.3 Session selection-map 规范化、awaiting_players/resolved 响应与 PopulationStage → Store → Adapter → Session 正式调用链；旧 GUI batchVote 标记为兼容路径 |
+| v2.0 | 2026-08-21 | GUI-BETA-R1 WP-C: 新增 §3.4 canonical init（initialize_forum_turn + ODR-04 归属校验 + forum_initialized exactly-once）；open_market 切换 init（ODR-05 行形不变）；resolve_forum 前置 execute_land_acts；get_forum_view 新增 war_threats（016） |

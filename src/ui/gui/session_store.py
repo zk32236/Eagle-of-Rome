@@ -465,6 +465,10 @@ class GuiSessionStore(QObject):
     def forumTriumphWars(self) -> List[Dict[str, Any]]:
         return self._forum_view.get("triumph_wars", [])
 
+    @Property(list, notify=forumViewChanged)
+    def forumWarThreats(self) -> List[Dict[str, Any]]:
+        return self._forum_view.get("war_threats", [])
+
     @Property(bool, notify=forumViewChanged)
     def canExecuteForum(self) -> bool:
         return self._forum_view.get("can_execute", False)

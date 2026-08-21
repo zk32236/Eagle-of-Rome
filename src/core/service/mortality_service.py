@@ -291,7 +291,7 @@ class MortalityService:
 
         if available:
             chosen = random.choice(available)
-            self.state.hero_to_spawn = {"type": "historical", "data": chosen}
+            self.state.hero_to_spawn = {"type": "historical", "data": chosen, "spawn_turn": self.state.turn.turn_number}
             logs.append(f"         历史英雄 {chosen['name']} 将在广场阶段登场")
             summary = f"历史英雄 {chosen['name']} 将在广场阶段登场。"
             impact = {"type": "hero_spawn", "subtype": "historical", "hero_id": chosen["id"], "name": chosen["name"]}
@@ -307,7 +307,7 @@ class MortalityService:
                 }
             )
         else:
-            self.state.hero_to_spawn = {"type": "random"}
+            self.state.hero_to_spawn = {"type": "random", "spawn_turn": self.state.turn.turn_number}
             logs.append("         无历史英雄可用，将生成一位随机猛人")
             summary = "无历史英雄可用，将在广场阶段生成一位随机猛人。"
             impact = {"type": "hero_spawn", "subtype": "random"}

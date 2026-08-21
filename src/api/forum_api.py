@@ -52,6 +52,7 @@ def get_forum_view(state: GameState, viewer_player_id: str) -> dict:
             "pending_contracts": _pending_contract_rows(state),
             "land_sale_quota": int(getattr(state, "pending_land_sale_quota", 0) or 0),
             "triumph_wars": _triumph_war_rows(state),
+            "war_threats": _war_threat_rows(state),
             "pending_actions": {
                 "retirements": len(pending.get("retirements", [])),
                 "recruitment_bids": len(pending.get("recruitment_bids", [])),
@@ -134,6 +135,70 @@ def retire_figure(state: GameState, player_id: str, figure_id: int) -> dict:
 
 
 
+def initialize_forum_turn(state: GameState) -> dict:
+    """Canonical forum turn initialization. Exactly-once per turn.
+
+    Side effects: war trigger/escalate (015), fleet completion, figures(+hero, 009),
+    contracts (014), province unrest. Shared by GUI / CLI / AI.
+    """
+    pending = state.get_forum_pending()
+    if pending.get("forum_initialized"):
+        return api_response(True, "Forum already initialized", data={})   # exactly-once guard
+
+    # ODR-04 方案 B：入口校验 hero 标记回合归属（不匹配 → 丢弃，不消费）
+    if state.hero_spawned_this_turn or state.hero_to_spawn is not None:
+        _reconcile_stale_hero_markers(state)
+
+    # ① war trigger + escalate（015）—— 尊重 enable_threats gate（war_system L736-737）
+    war_events: List[str] = []
+    ws = state.get_war_system()
+    if ws:
+        war_events = ws.check_triggers(state.turn.year, verbose=False) + ws.escalate_threats()
+
+    # ④ fleet construction completion（副产物）
+    completed_fleets: List[int] = []
+    if state.naval_system:
+        completed_fleets = state.naval_system.process_fleet_construction(state.turn.turn_number)
+
+    # ③ figures（含 hero，009）—— 走 forum_api.generate_figures wrapper（含 is_hero 标记行）
+    figures_result = generate_figures(state)
+
+    # ② contracts（014，含 fleet construction/replacement 合同）
+    contracts_result = generate_contracts(state)
+
+    # ⑤ 民变年度更新（副产物）
+    unrest_result = check_province_unrest(state)
+
+    # 防御性 hero 残留清理（009 跨回合陈旧触发兜底，ODR-04 后保留）
+    state.hero_spawned_this_turn = False
+    state.hero_to_spawn = None
+
+    state.add_forum_action("forum_initialized", True)                     # 全部副作用成功后才置位
+    return api_response(True, "Forum initialized", data={
+        "war_events": war_events,
+        "completed_fleets": completed_fleets,
+        "figures": figures_result.get("data", {}).get("figures", []),
+        "contracts": contracts_result.get("data", {}).get("contracts", []),
+        "unrest": unrest_result.get("data", {}),
+    })
+
+
+def _reconcile_stale_hero_markers(state: GameState) -> None:
+    """ODR-04 方案 B：hero_to_spawn 带 spawn_turn 戳且等于当前回合 → 保留消费；
+    戳缺失（pre-fix 存档）或非当前回合 → 丢弃残留标记，不生成英雄。"""
+    hero_info = state.hero_to_spawn
+    if hero_info is not None:
+        if hero_info.get("spawn_turn") == state.turn.turn_number:
+            return                      # 本回合标记，正常消费路径（generate_figures 内）
+        state.log_event(
+            "initialize_forum_turn: stale hero marker discarded (turn mismatch)",
+            level=logging.INFO,
+            extra={"marker_turn": hero_info.get("spawn_turn"), "current_turn": state.turn.turn_number},
+        )
+    state.hero_to_spawn = None
+    state.hero_spawned_this_turn = False
+
+
 def open_market(state: GameState, player_id: str) -> dict:
     """Open the forum market and generate the turn's new figures once."""
     ok, resp = _check_player_permission(state, player_id)
@@ -144,8 +209,10 @@ def open_market(state: GameState, player_id: str) -> dict:
     if pending.get("market_opened"):
         return api_response(True, "Forum market already open", data={"generated_figures": []})
 
-    generated = _generate_market_figures(state)
-    state.add_forum_action("market_opened", True)
+    init_result = initialize_forum_turn(state)                       # ← 切换 canonical init（AU-2，ODR-05）
+    figure_ids = {fd["id"] for fd in init_result.get("data", {}).get("figures", [])}
+    generated = [f for f in state.curia.get_all_available() if f.id in figure_ids]
+    state.add_forum_action("market_opened", True)                    # L148 保留（market 步态标记）
     if generated:
         state.log_event(
             f"Forum market opened: generated {len(generated)} figures",
@@ -155,7 +222,7 @@ def open_market(state: GameState, player_id: str) -> dict:
     return api_response(
         True,
         "Forum market opened",
-        data={"generated_figures": [_available_figure_row(fig) for fig in generated]},
+        data={"generated_figures": [_available_figure_row(fig) for fig in generated]},   # 行形不变
     )
 
 
@@ -389,6 +456,7 @@ def resolve_forum(state: GameState) -> dict:
     公示结算：根据收集的操作执行实际游戏逻辑，返回汇总结果。
     此函数已在原有基础上添加统一返回格式。
     """
+    execute_land_acts(state)          # ← 新增：canonical land-acts hook（幂等，resolution-time）
     pending = state.get_forum_pending()
     results = []
 
@@ -787,6 +855,31 @@ def _pending_contract_rows(state: GameState) -> List[Dict[str, Any]]:
             "can_bid": is_budgeted,
         })
     return rows
+
+
+def _war_threat_rows(state: GameState) -> List[Dict[str, Any]]:
+    """016: read-only war-threat rows for the forum DTO.
+
+    Shares war identity with the Senate view (war_system.get_threat_wars(),
+    war.id) and mirrors political_system.build_initial_info's minimal field set
+    {war_id/name/threat_level/naval_required}. Enhancement fields are read
+    directly from the War entity (no threat computation/rule duplication).
+    """
+    ws = state.get_war_system()
+    if not ws:
+        return []
+    return [
+        {
+            "war_id": str(war.id),
+            "name": war.name,
+            "threat_level": war.threat_level,
+            "naval_required": bool(war.naval_required),
+            "start_year": getattr(war, "start_year", None),
+            "escalate_rate": getattr(war, "escalate_rate", None),
+            "auto_escalate": bool(getattr(war, "auto_escalate", False)),
+        }
+        for war in ws.get_threat_wars()
+    ]
 
 
 def _triumph_war_rows(state: GameState) -> List[Dict[str, Any]]:

@@ -114,6 +114,7 @@ class GameState:
             "triumph_votes": [],  # 凯旋投票记录，每个元素为 (faction_id, vote)  # vote为True/False
             "land_trades": [],  # 土地交易记录，每个元素为 (seller_id, buyer_id, land, price)
             "market_opened": [],  # GUI/CLI market generation guard
+            "forum_initialized": [],  # canonical forum init guard（复刻 market_opened）
         }
 
         # 人口阶段临时存储
@@ -845,11 +846,13 @@ class GameState:
             "triumph_votes": [],
             "land_trades": [],
             "market_opened": [],
+            "forum_initialized": [],
         })
         # 确保所有 key 都存在
         required_forum_keys = [
             "retirements", "recruitment_bids", "contract_bids",
             "land_purchases", "triumph_votes", "land_trades", "market_opened",
+            "forum_initialized",
         ]
         for key in required_forum_keys:
             if key not in self._forum_pending:
@@ -938,6 +941,7 @@ class GameState:
             "triumph_votes": [],
             "land_trades": [],
             "market_opened": [],
+            "forum_initialized": [],
         }
         instance._population_pending = {
             "campaigns": [],

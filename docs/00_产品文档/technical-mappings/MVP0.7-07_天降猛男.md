@@ -18,9 +18,10 @@ data/cards/heroes.json                 # 历史英雄数据
 ```
 天命阶段 mortality_service._handle_mighty_man_event()
   → 设置 state.hero_spawned_this_turn = True
-  → 设置 state.hero_to_spawn = {"type": "historical", "data": {...}}
+  → 设置 state.hero_to_spawn = {"type": "historical", "data": {...}, "spawn_turn": <当前回合>}  # WP-C: 新增 spawn_turn 戳（ODR-04）
   ↓
-广场阶段 CLI phase_forum._generate_new_figures()
+广场阶段 canonical init forum_api.initialize_forum_turn()     # WP-C: GUI/CLI/AI 共用入口
+  → 入口 ODR-04 归属校验 _reconcile_stale_hero_markers()（戳==当前回合才消费，否则丢弃）
   → forum_api.generate_figures(state)           # [NEW] API 层入口
     → figure_generation_system.generate_figures(state)  # [NEW] 业务层
       → _create_historical_hero(state, data)     # [NEW] 从 CLI 下沉
@@ -32,8 +33,9 @@ data/cards/heroes.json                 # 历史英雄数据
 
 ### 3.2 随机猛男
 ```
-→ state.hero_to_spawn = {"type": "random"}
+→ state.hero_to_spawn = {"type": "random", "spawn_turn": <当前回合>}   # WP-C: 新增 spawn_turn 戳（ODR-04）
   ↓
+→ canonical init forum_api.initialize_forum_turn() → generate_figures()（入口 ODR-04 归属校验）
 → figure_generation_system._create_random_mighty_man(state)
   ↓
 → 使用 RomanNameGenerator + 当前存活着 max-stat 创建
@@ -51,5 +53,6 @@ data/cards/heroes.json                 # 历史英雄数据
 ## 4. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.2 | 2026-08-21 | GUI-BETA-R1 WP-C: hero_to_spawn 标记新增 spawn_turn 戳（mortality L294/L310）；广场阶段消费入口改为 canonical init（initialize_forum_turn，含 ODR-04 回合归属校验） |
 | v1.1 | 2026-07-25 | 新增英雄生成调用链 + figure_generation_system + forum_api 引用 |
 | v1.0 | 2026-07-12 | 初版 |

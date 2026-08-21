@@ -502,6 +502,27 @@ Rectangle {
                                 onTriggered: root.callAndReport(sessionStore.doBuyLand(root.selectedOwnFigureId, 1))
                             }
 
+                            SectionTitle { title: "⚔️ 战争威胁" }
+
+                            Repeater {
+                                model: sessionStore.forumWarThreats
+
+                                delegate: MarketActionRow {
+                                    label: modelData.name + " · 威胁等级 " + modelData.threat_level
+                                    value: modelData.naval_required ? "需海军" : "陆战"
+                                    actionText: "待定"
+                                    enabledAction: false
+                                }
+                            }
+
+                            MarketActionRow {
+                                visible: sessionStore.forumWarThreats.length === 0
+                                label: "本回合无战争威胁"
+                                value: ""
+                                actionText: "待定"
+                                enabledAction: false
+                            }
+
                             SectionTitle { title: "🏆 凯旋投票" }
 
                             Repeater {

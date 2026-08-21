@@ -17,6 +17,17 @@
 
 ## 3. 调用链
 
+### 3.0 广场阶段 canonical init（GUI-BETA-R1 WP-C，2026-08-21）
+
+```
+phase_forum._execute_normal()（L1346 区）
+  → forum_api.initialize_forum_turn(state)          # 合并原 4 个 init 调用（war/fleet/figures/contracts/unrest），exactly-once
+    → _war_events / _init_unrest_data / figures / contracts 全部消费 init 结果打印（_print_init_figures / _print_init_contracts / _print_unrest_result）
+  → _print_ui_03_0 民变块：_init_unrest_data 优先，None 时兑底直调 _update_civil_unrest()（直调测试零扰动）
+  → _do_resolution：保留显式 execute_land_acts（展示）→ resolve_forum（内部 hook 幂等，不 double-execute）
+壳方法保留：_update_war_system_silent / _generate_new_figures / _generate_contracts / _update_civil_unrest（生产不再调用，测试直调依赖）
+```
+
 ### 3.1 庆典批量提交（WP-02a 原子事务）
 
 ```
@@ -50,3 +61,4 @@ phase_population.py:_campaign_all()
 |:---:|:---:|:---:|
 | v1.0 | 2026-07-17 | 初版 |
 | v1.1 | 2026-07-30 | DA-Exec (WP-02a v3) | 加入 phase_population.py，新增庆典批量提交原子事务调用链 |
+| v1.2 | 2026-08-21 | GUI-BETA-R1 WP-C: 新增 §3.0 广场阶段 canonical init 调用链（_execute_normal 四调用合并为 initialize_forum_turn，打印消费 init 结果） |

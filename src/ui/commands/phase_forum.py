@@ -10,7 +10,7 @@ import sys
 import traceback
 import random
 import logging
-from typing import List, Optional, Dict, TYPE_CHECKING
+from typing import List, Optional, Dict, Any, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.api import forum_api, figure_api
 from src.core.i18n import i18n
@@ -48,6 +48,7 @@ class ForumCommand(Command):
         self._resolution_done = False
         self._auto_mode = False
         self._war_events = []
+        self._init_unrest_data = None  # canonical init 民变结果（_print_ui_03_0 打印消费）
 
         auto_forum = state.config.get("testing.auto_forum", False)
 
@@ -285,6 +286,35 @@ class ForumCommand(Command):
 
         return contracts
 
+    def _print_init_figures(self, figure_data_list: List[Dict[str, Any]]) -> None:
+        """纯打印：canonical init 返回的新人/英雄行（镜像 _generate_new_figures 输出格式）。"""
+        new_figures = []
+        for fd in figure_data_list:
+            fig = self.state.get_member(fd["id"])
+            if fig:
+                new_figures.append(fig)
+
+        print(f"    📜 {len(new_figures)} 名新人进入广场")
+
+        for fd in figure_data_list:
+            if fd.get("is_hero"):
+                fig = self.state.get_member(fd["id"])
+                if fig:
+                    print(f"      🌟 英雄降临: {fig.get_formal_name()} "
+                          f"(军略 {fig.martial}, 智略 {fig.intelligence}, "
+                          f"魅力 {fig.charisma}, 热诚 {fig.zeal})")
+                    self.state.log_event(
+                        f"天降猛男生成: {fig.get_formal_name()}",
+                        extra={"type": "hero_spawn", "figure_id": fig.id},
+                    )
+
+    def _print_init_contracts(self, contract_data_list: List[Dict[str, Any]]) -> None:
+        """纯打印：canonical init 返回的舰队建造合同行（镜像 _generate_contracts 输出格式）。"""
+        fleet_contracts = [cd for cd in contract_data_list if cd.get("is_fleet")]
+        if fleet_contracts:
+            print(f"\n   ⚓ 检测到海战威胁，生成 {len(fleet_contracts)} 个舰队建造合同")
+            sys.stdout.flush()
+
     # ==================== 新增：战争威胁、民变、凯旋等状态更新方法 ====================
 
     def _update_civil_unrest(self):
@@ -307,9 +337,12 @@ class ForumCommand(Command):
             )
             return
 
-        data = result.get("data", {})
-        rebellions = data.get("rebellions", [])
-        province_updates = data.get("province_updates", [])
+        self._print_unrest_result(result.get("data", {}))
+
+    def _print_unrest_result(self, unrest_data: Dict[str, Any]) -> None:
+        """纯打印：民变检查结果（从 _update_civil_unrest 提取，打印逻辑单点复用）。"""
+        rebellions = unrest_data.get("rebellions", [])
+        province_updates = unrest_data.get("province_updates", [])
 
         # Print summary with per-province details
         print("\n   📊 行省民变状态：")
@@ -399,8 +432,11 @@ class ForumCommand(Command):
                 for war in threat_wars:
                     print(f"\t\t{war.name} (等级 {war.threat_level})")
 
-        # 行省民变更新
-        self._update_civil_unrest()
+        # 行省民变更新（canonical init 已执行；init 结果优先，旧路径兜底直调测试）
+        if self._init_unrest_data is not None:
+            self._print_unrest_result(self._init_unrest_data)
+        else:
+            self._update_civil_unrest()
 
         # 凯旋信息（仅显示待投票的凯旋，不在此处审批）
         triumph = self._get_war_triumph()
@@ -1306,16 +1342,15 @@ class ForumCommand(Command):
             # 显示当前玩家信息（清屏+信息）
             self._show_current_player_overview()
 
-            # 先更新战争系统
-            self._update_war_system_silent()
-
-            # 处理舰队建造完成
-            if self.state.naval_system:
-                completed = self.state.naval_system.process_fleet_construction(self.state.turn.turn_number)
-                for fleet_num in completed:
-                    print(f"      ⚓ 舰队 {fleet_num} 建造完成")
-            self._generate_new_figures()
-            self._generate_contracts()
+            # 先执行 canonical init（war/fleet/figures/contracts/unrest，exactly-once）
+            init_result = forum_api.initialize_forum_turn(self.state)
+            init_data = init_result.get("data", {}) or {}
+            self._war_events = init_data.get("war_events", [])          # _print_ui_03_0 公告依赖
+            self._init_unrest_data = init_data.get("unrest")            # _print_ui_03_0 民变打印
+            for fleet_num in init_data.get("completed_fleets", []):
+                print(f"      ⚓ 舰队 {fleet_num} 建造完成")
+            self._print_init_figures(init_data.get("figures", []))
+            self._print_init_contracts(init_data.get("contracts", []))
 
             while self._step < 5:
                 if self._step == 0:
