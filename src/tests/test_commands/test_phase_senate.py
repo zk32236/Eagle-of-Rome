@@ -347,6 +347,8 @@ class TestTribuneVeto(unittest.TestCase):
         from src.core.systems.war_system import WarSystem
         self.state._war_system = WarSystem(self.state)
         self.state._war_system.load_wars_from_json("wars.json")
+        # WP-C-R1 AU-15: 宣战 auto_submit 需权威值域 config + 军事系统（P1-a 同值域）
+        self.state._military_system = MilitarySystem(self.state)
 
         # 添加测试派系
         self.faction1 = Faction(id="senate", name="元老院派", treasury=50, is_player=True)
@@ -399,6 +401,9 @@ class TestTribuneVeto(unittest.TestCase):
         self.state.config._config["testing"]["always_declare"] = True
         self.state.config._config["testing"]["min_legions"] = 4
         self.state.config._config["testing"]["max_legions"] = 8
+        # WP-C-R1 AU-15: 权威值域 config（ODR-ED-02，auto_submit 不再读 testing.min/max_legions）
+        self.state.config._config.setdefault("economic_rules", {})
+        self.state.config._config["economic_rules"]["senate_war_legions"] = {"default": 4, "min": 1, "cap_mode": "available_pool"}
         # 确保 auto_senate 为 False（测试需要手动模式）
         self.state.config._config["testing"]["auto_senate"] = True
 

@@ -40,8 +40,14 @@ CLI phase_forum._generate_contracts()
 | `phase_forum.py` | `src/ui/commands/` | CLI shell（仅打印） |
 | `naval_system.py` | `src/core/systems/` | 舰队建造合同委托（未修改） |
 
+### 4.3 预算权威值域（GUI-BETA-R1 WP-C-R1，ODR-ED-01）
+- **config：** `economic_rules.senate_budget` → `tax_farming_min_ratio=0.75` / `tax_farming_max_ratio=2.0`（min=base_cost×75% / max=base_cost×200%）/ `step=1`；default=base_cost（沿用现状）。
+- **派生：** `senate_api._budget_range_for_contract(state, contract)` 产出 per-contract `{min, max, step, default}`；SenateStage FC-03 Slider from/to/stepSize/value 读 `budget_range`。
+- **谓词：** `political_system._populate_proposal` budget 分支权威拒绝（非 int / <min / >max / step 不齐）；affordability 不拦截。
+
 ## 5. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.2 | 2026-08-22 | GUI-BETA-R1 WP-C-R1: 包税预算权威值域（senate_budget tax_farming 比率 + _budget_range_for_contract + _populate_proposal 谓词） |
 | v1.1 | 2026-07-25 | 新增包税合同生成调用链 + forum_api 引用 |
 | v1.0 | 2026-07-12 | 初版 |

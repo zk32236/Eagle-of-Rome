@@ -82,8 +82,10 @@ Rectangle {
         spacing: 10
 
         Rectangle {
+            id: announceArea
+            objectName: "announceArea"
             Layout.fillWidth: true
-            Layout.preferredHeight: sessionStore.forumResolved ? Math.min(138, 58 + Math.max(1, root.forumResolutionLines().length) * 18) : 60
+            Layout.preferredHeight: sessionStore.forumResolved ? Math.min(138, 58 + Math.max(1, root.forumResolutionLines().length) * 18) : (sessionStore.forumWarThreats.length > 0 ? 60 + Math.min(sessionStore.forumWarThreats.length, 4) * 16 : 60)
             color: "#D1FFF9EC"
             border.color: "#85A8753B"
             border.width: 1
@@ -95,7 +97,7 @@ Rectangle {
                 spacing: 4
 
                 Text {
-                    text: sessionStore.forumResolved ? "[\u516c\u793a\u533a] \u5e02\u573a\u7ed3\u7b97\u7ed3\u679c" : "\u5e7f\u573a\u9636\u6bb5\u5f00\u59cb\u3002\u7b2c\u4e00\u5e03\u533f\u6218\u4e89\u8fdb\u884c\u4e2d\u3002\u897f\u897f\u91cc\u5305\u7a0e\u5408\u540c\u5f85\u7ade\u6807\u3002"
+                    text: sessionStore.forumResolved ? "[\u516c\u793a\u533a] \u5e02\u573a\u7ed3\u7b97\u7ed3\u679c" : "\u5e7f\u573a\u9636\u6bb5\u5f00\u59cb\u3002\u897f\u897f\u91cc\u5305\u7a0e\u5408\u540c\u5f85\u7ade\u6807\u3002"
                     color: "#2E251B"
                     font.pixelSize: 13
                     font.bold: true
@@ -110,6 +112,34 @@ Rectangle {
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
                     lineHeight: sessionStore.forumResolved ? 1.18 : 1.0
+                }
+
+                // 016: war threat 顶部渲染（只读消费 sessionStore.forumWarThreats DTO，不重算）
+                ColumnLayout {
+                    objectName: "announceWarThreats"
+                    visible: sessionStore.forumWarThreats.length > 0
+                    spacing: 2
+                    Repeater {
+                        model: sessionStore.forumWarThreats
+                        delegate: Text {
+                            text: modelData.name + " \u00b7 \u5a01\u80c1\u7b49\u7ea7 " + modelData.threat_level
+                                  + (modelData.naval_required ? " \u00b7 \u9700\u6d77\u519b" : " \u00b7 \u9646\u6218")
+                            color: "#9A2D0A"
+                            font.pixelSize: 12
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                        }
+                    }
+                }
+
+                Text {
+                    objectName: "announceWarThreatsEmpty"
+                    visible: sessionStore.forumWarThreats.length === 0
+                    text: "\u672c\u56de\u5408\u65e0\u6218\u4e89\u5a01\u80c1"
+                    color: "#766652"
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
                 }
             }
         }
@@ -500,27 +530,6 @@ Rectangle {
                                 actionText: "认购"
                                 enabledAction: root.marketUnlocked && sessionStore.canExecuteForum && sessionStore.forumLandQuota > 0 && root.selectedOwnFigureId > 0
                                 onTriggered: root.callAndReport(sessionStore.doBuyLand(root.selectedOwnFigureId, 1))
-                            }
-
-                            SectionTitle { title: "⚔️ 战争威胁" }
-
-                            Repeater {
-                                model: sessionStore.forumWarThreats
-
-                                delegate: MarketActionRow {
-                                    label: modelData.name + " · 威胁等级 " + modelData.threat_level
-                                    value: modelData.naval_required ? "需海军" : "陆战"
-                                    actionText: "待定"
-                                    enabledAction: false
-                                }
-                            }
-
-                            MarketActionRow {
-                                visible: sessionStore.forumWarThreats.length === 0
-                                label: "本回合无战争威胁"
-                                value: ""
-                                actionText: "待定"
-                                enabledAction: false
                             }
 
                             SectionTitle { title: "🏆 凯旋投票" }

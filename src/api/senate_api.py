@@ -97,6 +97,59 @@ def _proposal_option(key: str, proposal_type: str, title: str, detail: str, para
     return option
 
 
+def _budget_range_for_contract(state: GameState, contract) -> Optional[Dict[str, int]]:
+    """authoritative budget range, anchored to contract.base_cost (ODR-ED-01).
+
+    PUBLIC_WORKS: min = 1T (absolute), max = base_cost x 1.5
+    TAX_FARMING:  min = base_cost x 0.75, max = base_cost x 2.0
+    step = 1, default = base_cost (unchanged current default).
+
+    Returns {"min", "max", "step", "default"}; None if config keys absent
+    (defensive; ODR closed so config is present in production).
+    """
+    sb = state.config.get("economic_rules.senate_budget")
+    if not sb:
+        return None
+    if isinstance(contract, dict):
+        base = int(contract.get("base_cost", 0) or 0)
+        ctype = contract.get("type")
+        if isinstance(ctype, str):
+            ctype = ContractType(ctype)
+    else:
+        base = int(getattr(contract, "base_cost", 0) or 0)
+        ctype = getattr(contract, "contract_type", None)
+    if ctype == ContractType.PUBLIC_WORKS:
+        mn = max(1, int(sb.get("public_works_min", 1)))
+        mx = int(base * float(sb.get("public_works_max_ratio", 1.5)))
+    else:  # TAX_FARMING
+        mn = int(base * float(sb.get("tax_farming_min_ratio", 0.75)))
+        mx = int(base * float(sb.get("tax_farming_max_ratio", 2.0)))
+    step = int(sb.get("step", 1))
+    return {"min": mn, "max": mx, "step": step, "default": base}
+
+
+def _legion_options_for_war(state: GameState, war) -> Optional[Dict[str, Any]]:
+    """authoritative legion value range for a war proposal (ODR-ED-02).
+
+    min = config min (1, cannot declare war with 0), default = config default (4),
+    max = dynamic available legion pool (len(get_available_legions())),
+    allowed = [min .. available_pool].
+
+    Returns {"min", "max", "default", "allowed"}; None if config keys absent
+    (defensive; ODR closed so config is present in production).
+    """
+    sw = state.config.get("economic_rules.senate_war_legions")
+    if not sw:
+        return None
+    ms = state.get_military_system()
+    pool = len(ms.get_available_legions()) if ms else 0
+    lo = int(sw.get("min", 1))
+    default = int(sw.get("default", 4))
+    allowed = list(range(lo, pool + 1))
+    default = max(lo, min(default, pool))
+    return {"min": lo, "max": pool, "default": default, "allowed": allowed}
+
+
 def _build_proposal_options(state: GameState, info: Dict[str, Any]) -> List[Dict[str, Any]]:
     options: List[Dict[str, Any]] = []
     for war in info.get("war_threats", []):
@@ -104,15 +157,23 @@ def _build_proposal_options(state: GameState, info: Dict[str, Any]) -> List[Dict
         maintenance_base = state.get_economic_rule("legion_maintenance_base", 8)
         veteran_bonus = state.get_economic_rule("veteran_maintenance_bonus", 1)
         veteran_maintenance = maintenance_base + veteran_bonus
+        legion_options = _legion_options_for_war(state, war)
+        if legion_options is None:
+            default_legions = None
+            legions_label = "征召数量待定（规则未配置）"
+        else:
+            default_legions = legion_options["default"]
+            legions_label = f"征召 {default_legions} 个军团"
         war_detail = (
-            f"征召 6 个军团；威胁 {war.get('threat_level', 0)}；"
+            f"{legions_label}；威胁 {war.get('threat_level', 0)}；"
             f"招募费（一次性）{recruit_cost} T/军团；维护费：新军团 {maintenance_base} T/月，老兵军团 {veteran_maintenance} T/月"
         )
         options.append(_proposal_option(
             f"war:{war.get('war_id')}", "war",
             f"宣战 — {war.get('name', war.get('war_id'))}",
             war_detail,
-            {"war_id": war.get("war_id"), "legions": 6},
+            {"war_id": war.get("war_id"), "legions": default_legions},
+            legion_options=legion_options,
         ))
     for peace in info.get("pending_peace_treaties", []):
         options.append(_proposal_option(
@@ -138,11 +199,14 @@ def _build_proposal_options(state: GameState, info: Dict[str, Any]) -> List[Dict
             ))
     for contract in info.get("pending_contracts", []):
         base_cost = contract.get("base_cost", 0)
+        budget_range = _budget_range_for_contract(state, contract)
+        default_budget = budget_range["default"] if budget_range else base_cost
         options.append(_proposal_option(
             f"budget:{contract.get('contract_id')}", "budget",
             f"建造合同 — {contract.get('name', contract.get('contract_id'))}",
             f"预算金额 {base_cost} T；预期收益 {contract.get('expected_profit', 0)} T",
-            {"contract_id": contract.get("contract_id"), "modified_budget": base_cost},
+            {"contract_id": contract.get("contract_id"), "modified_budget": default_budget},
+            budget_range=budget_range,
             contract_type=contract.get("type", ""),
         ))
     public_land = state.get_national_public_land()
@@ -705,8 +769,9 @@ def auto_submit_proposals(
         if threats:
             propose_chance = state.config.get("testing.propose_war_chance", 0.7)
             always_declare = state.config.get("testing.always_declare", False)
-            min_legions = state.config.get("testing.min_legions", 4)
-            max_legions = state.config.get("testing.max_legions", 8)
+            # P1-a: value range 改由 _legion_options_for_war（config 派生）提供，多战争总和守恒
+            ms = state.get_military_system()
+            remaining = len(ms.get_available_legions()) if ms else 0
 
             for war in threats:
                 if war.peace_treaty and war.peace_treaty.get('status') == 'pending':
@@ -717,7 +782,14 @@ def auto_submit_proposals(
                         continue
 
                 if always_declare or random.random() < propose_chance:
-                    legions = random.randint(min_legions, max_legions)
+                    legion_options = _legion_options_for_war(state, war)
+                    if legion_options is None or remaining < 1:
+                        continue  # 无权威值域 / 可用军团不足 → 跳过宣战（防御）
+                    lo = legion_options["min"]
+                    hi = min(remaining, legion_options["max"])
+                    if hi < lo:
+                        continue
+                    legions = random.randint(lo, hi)
                     result = propose(
                         state, consul_player_id, "war",
                         bypass_turn_check=True,
@@ -725,6 +797,7 @@ def auto_submit_proposals(
                         legions=legions,
                     )
                     if result["success"]:
+                        remaining -= legions  # 总和守恒：已提交宣战占用的军团从池中扣除
                         created_proposals.append({
                             "type": "war",
                             "war_id": war.id,
@@ -820,12 +893,15 @@ def auto_submit_proposals(
         for contract in budget_proposals:
             kwargs = {"contract_id": contract.id}
             if contract.contract_type == ContractType.PUBLIC_WORKS:
-                margin_range = state.config.get("economic_rules.public_work_budget_margin_range", [0.05, 0.20])
-                r = random.uniform(margin_range[0], margin_range[1])
-                modified_budget = int(contract.base_cost * (1 + r))
+                # P1-a: 值域改由 _budget_range_for_contract（config 派生）提供，不再读 code-default margin
+                budget_range = _budget_range_for_contract(state, contract)
+                if budget_range is None:
+                    modified_budget = contract.base_cost
+                else:
+                    modified_budget = random.randint(budget_range["min"], budget_range["max"])
                 kwargs["modified_budget"] = modified_budget
                 state.log_event(
-                    f"自动预算提案加成: 合同 {contract.name} 原始预算 {contract.base_cost} 加成 {r * 100:.1f}% → {modified_budget}",
+                    f"自动预算提案: 合同 {contract.name} 值域 [{budget_range['min'] if budget_range else contract.base_cost},{budget_range['max'] if budget_range else contract.base_cost}] → {modified_budget}",
                     level=logging.DEBUG,
                 )
             result = propose(state, consul_player_id, "budget", bypass_turn_check=True, **kwargs)
@@ -1104,10 +1180,10 @@ def process_war_takeover(state: GameState) -> dict:
             details.append(f"War {war.name}: no available legions")
             continue
 
-        # 计算所需军团数
-        min_leg = state.config.get("testing.min_legions", 4)
-        max_leg = state.config.get("testing.max_legions", 8)
-        recruit_count = min(random.randint(min_leg, max_leg), len(available))
+        # 计算所需军团数（D-2/P1-a：值域改由 config 派生 senate_war_legions.min..可用池，不再读 testing.min/max_legions）
+        sw = state.config.get("economic_rules.senate_war_legions")
+        min_leg = int(sw.get("min", 1)) if sw else 1
+        recruit_count = min(random.randint(min_leg, len(available)), len(available))
 
         # 征召军团
         results = ms.recruit_multiple(recruit_count)

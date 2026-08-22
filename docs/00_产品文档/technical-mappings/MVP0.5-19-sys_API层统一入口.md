@@ -204,4 +204,5 @@ session_api, gui_query_api
 | v1.0 | 2026-07-17 | 初版 |
 | v1.8 | 2026-08-01 | EOR20260801-02 B2 Pilot (DA ATTEMPT-1): §7.1 FC-06 signature 从 tuple(sorted(...)) 修正为 frozenset(...)（对齐 Contract Freeze Table FC-06 冻结值）；CI-1 Frozen Value Preservation |
 | v1.9 | 2026-08-02 | WP-02b v3.0: 新增 §7.3 Session selection-map 规范化、awaiting_players/resolved 响应与 PopulationStage → Store → Adapter → Session 正式调用链；旧 GUI batchVote 标记为兼容路径 |
+| v2.1 | 2026-08-22 | GUI-BETA-R1 WP-C-R1: senate_api 提案链权威值域（_budget_range_for_contract/_legion_options_for_war helper、auto_submit P1-a 同值域、_populate_proposal 权威谓词 chokepoint、process_war_takeover 执行期征召改接） |
 | v2.0 | 2026-08-21 | GUI-BETA-R1 WP-C: 新增 §3.4 canonical init（initialize_forum_turn + ODR-04 归属校验 + forum_initialized exactly-once）；open_market 切换 init（ODR-05 行形不变）；resolve_forum 前置 execute_land_acts；get_forum_view 新增 war_threats（016） |

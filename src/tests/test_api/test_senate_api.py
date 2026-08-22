@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 from src.core.game_state import GameState
 from src.api import senate_api
+from src.core.entities.contract import ContractStatus, ContractType
 from src.core.entities.figure import Figure, ClassTier
 from src.core.entities.entities import Faction, GameTurn
 from src.core.entities.war import War, WarType, WarStatus  # 确保导入 WarType, WarStatus
@@ -334,15 +335,15 @@ class TestAutoSubmitProposals(unittest.TestCase):
         self.assertFalse(result["success"])
 
     def test_auto_submit_proposals_war_threat(self):
-        """威胁战争：自动宣战提案"""
+        """威胁战争：自动宣战提案（P1-a：legions 由 config 派生值域 [1..可用池] 生成）"""
         # 添加威胁战争
         war = War(id="war_test_threat", name="测试威胁战争", war_type=WarType.FOREIGN, strength=5, naval_required=False)
         war.status = WarStatus.THREAT
         self.state.get_war_system()._threats.append(war)
         # 确保必定宣战
         self.state.config.testing.always_declare = True
-        self.state.config.testing.min_legions = 6
-        self.state.config.testing.max_legions = 6
+        # P1-a: 权威值域 config（不再读 testing.min/max_legions）
+        self.state.config.economic_rules.senate_war_legions = {"default": 4, "min": 1, "cap_mode": "available_pool"}
 
         result = senate_api.auto_submit_proposals(self.state)
         self.assertTrue(result["success"])
@@ -350,16 +351,18 @@ class TestAutoSubmitProposals(unittest.TestCase):
         war_proposals = [p for p in proposals if p["type"] == "war"]
         self.assertGreaterEqual(len(war_proposals), 1)
         self.assertEqual(war_proposals[0]["war_id"], "war_test_threat")
-        self.assertEqual(war_proposals[0]["legions"], 6)
+        # 生成值 ∈ [1 .. 可用池]（MilitarySystem 默认 25 个 UNRAISED）
+        legions = war_proposals[0]["legions"]
+        self.assertGreaterEqual(legions, 1)
+        self.assertLessEqual(legions, len(self.state.get_military_system().get_available_legions()))
 
     def test_auto_submit_proposals_war_bypass_turn_check(self):
-        """确保 war 提案绕过回合检查"""
+        """确保 war 提案绕过回合检查（P1-a 值域 config 派生）"""
         war = War(id="war_bypass", name="绕过检查战争", war_type=WarType.FOREIGN, strength=5, naval_required=False)
         war.status = WarStatus.THREAT
         self.state.get_war_system()._threats.append(war)
         self.state.config.testing.always_declare = True
-        self.state.config.testing.min_legions = 6
-        self.state.config.testing.max_legions = 6
+        self.state.config.economic_rules.senate_war_legions = {"default": 4, "min": 1, "cap_mode": "available_pool"}
 
         result = senate_api.auto_submit_proposals(self.state)
         self.assertTrue(result["success"])
@@ -367,6 +370,8 @@ class TestAutoSubmitProposals(unittest.TestCase):
         stored = self.state.get_senate_proposals()
         self.assertGreaterEqual(len(stored), 1)
         self.assertEqual(stored[0]["type"], "war")
+        self.assertGreaterEqual(stored[0]["legions"], 1)
+        self.assertLessEqual(stored[0]["legions"], len(self.state.get_military_system().get_available_legions()))
 
     def test_auto_submit_proposals_peace_treaty(self):
         """待决停战：自动和平提案"""
@@ -414,8 +419,7 @@ class TestAutoSubmitProposals(unittest.TestCase):
         war1.status = WarStatus.THREAT
         ws._threats.append(war1)
         self.state.config.testing.always_declare = True
-        self.state.config.testing.min_legions = 6
-        self.state.config.testing.max_legions = 6
+        self.state.config.economic_rules.senate_war_legions = {"default": 4, "min": 1, "cap_mode": "available_pool"}
 
         # 和平：添加停战
         war2 = War(id="w2", name="停战战争W2", war_type=WarType.FOREIGN, strength=5)
@@ -447,6 +451,81 @@ class TestAutoSubmitProposals(unittest.TestCase):
         self.assertIn("peace", types_found)
         # 总督任命依赖候选人选举逻辑，可能因随机性跳过行省
         # budget 和 land 依赖合同/公地数据，不强制断言
+
+    def test_auto_submit_war_range_conservation(self):
+        """T-AUTO-1：war 分支不再读 testing.min/max_legions；生成值 ∈ [1..可用池] 且多战争总和守恒。"""
+        self.state.config.testing.always_declare = True
+        # 即使 testing.min/max 被设为越界值，也不得影响生成值域
+        self.state.config.testing.min_legions = 100
+        self.state.config.testing.max_legions = 100
+        self.state.config.economic_rules.senate_war_legions = {"default": 4, "min": 1, "cap_mode": "available_pool"}
+
+        ws = self.state.get_war_system()
+        war1 = War(id="w_auto_1", name="自动宣战1", war_type=WarType.FOREIGN, strength=5, naval_required=False)
+        war1.status = WarStatus.THREAT
+        ws._threats.append(war1)
+        war2 = War(id="w_auto_2", name="自动宣战2", war_type=WarType.FOREIGN, strength=5, naval_required=False)
+        war2.status = WarStatus.THREAT
+        ws._threats.append(war2)
+
+        result = senate_api.auto_submit_proposals(self.state)
+        self.assertTrue(result["success"])
+        pool = len(self.state.get_military_system().get_available_legions())
+        war_proposals = [p for p in result["data"].get("proposals", []) if p["type"] == "war"]
+        self.assertGreaterEqual(len(war_proposals), 1)
+        for p in war_proposals:
+            self.assertGreaterEqual(p["legions"], 1)
+            self.assertLessEqual(p["legions"], pool)
+        # 多战争总和守恒（success 提案合计 ≤ 可用池）
+        total = sum(p["legions"] for p in war_proposals)
+        self.assertLessEqual(total, pool)
+        # 未被谓词拒绝：errors 无「可用军团不足」
+        for err in result["errors"]:
+            self.assertNotIn("可用军团不足", err)
+
+    def test_auto_submit_budget_in_range(self):
+        """T-AUTO-2：budget 分支不再读 code-default margin；生成值 ∈ [min,max]（per-contract 派生）。"""
+        self.state.config.economic_rules.senate_budget = {
+            "public_works_min": 1, "public_works_max_ratio": 1.5,
+            "tax_farming_min_ratio": 0.75, "tax_farming_max_ratio": 2.0, "step": 1,
+        }
+        contract = self.state.create_contract(ContractType.PUBLIC_WORKS, province_id=1, base_cost=100, current_turn=1)
+        contract.status = ContractStatus.PENDING
+
+        result = senate_api.auto_submit_proposals(self.state)
+        self.assertTrue(result["success"])
+        budget_proposals = [p for p in result["data"].get("proposals", []) if p["type"] == "budget"]
+        self.assertGreaterEqual(len(budget_proposals), 1)
+        for p in budget_proposals:
+            # 值域 [1, 150]（base=100，PUBLIC_WORKS）
+            self.assertGreaterEqual(p["modified_budget"], 1)
+            self.assertLessEqual(p["modified_budget"], 150)
+
+    def test_auto_submit_all_pass_predicate(self):
+        """T-AUTO-3：auto_submit war/budget 经 propose→create_proposal→_populate_proposal 全部 success（零谓词拒绝）。"""
+        self.state.config.testing.always_declare = True
+        self.state.config.economic_rules.senate_war_legions = {"default": 4, "min": 1, "cap_mode": "available_pool"}
+        self.state.config.economic_rules.senate_budget = {
+            "public_works_min": 1, "public_works_max_ratio": 1.5,
+            "tax_farming_min_ratio": 0.75, "tax_farming_max_ratio": 2.0, "step": 1,
+        }
+        ws = self.state.get_war_system()
+        war = War(id="w_auto_3", name="自动宣战3", war_type=WarType.FOREIGN, strength=5, naval_required=False)
+        war.status = WarStatus.THREAT
+        ws._threats.append(war)
+        contract = self.state.create_contract(ContractType.PUBLIC_WORKS, province_id=1, base_cost=100, current_turn=1)
+        contract.status = ContractStatus.PENDING
+
+        result = senate_api.auto_submit_proposals(self.state)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["errors"], [])
+        types = {p["type"] for p in result["data"].get("proposals", [])}
+        self.assertIn("war", types)
+        self.assertIn("budget", types)
+        # 提案均已成功写入 state（即经 _populate_proposal 全 success）
+        stored_types = {p["type"] for p in self.state.get_senate_proposals()}
+        self.assertIn("war", stored_types)
+        self.assertIn("budget", stored_types)
 
 
 class TestWP05VWarDetail(unittest.TestCase):
@@ -550,9 +629,24 @@ class TestWP05VParamsPassthrough(unittest.TestCase):
         self.state._current_player_id = "player1"
 
     def test_propose_many_params_passthrough(self):
+        # fixture：war w1 存在 + 可用池 ≥ 8；contract 存在且 120 ∈ [1, base×150%]（PUBLIC_WORKS base=100）
+        ws = WarSystem(self.state)
+        self.state._war_system = ws
+        war = War(id="w1", name="威胁战争W1", war_type=WarType.FOREIGN, strength=5, naval_required=False)
+        war.status = WarStatus.THREAT
+        ws._threats.append(war)
+        self.state._military_system = MilitarySystem(self.state)
+        contract = self.state.create_contract(ContractType.PUBLIC_WORKS, province_id=1, base_cost=100, current_turn=1)
+        contract.status = ContractStatus.PENDING
+        self.state.config.economic_rules.senate_budget = {
+            "public_works_min": 1, "public_works_max_ratio": 1.5,
+            "tax_farming_min_ratio": 0.75, "tax_farming_max_ratio": 2.0, "step": 1,
+        }
+        self.state.config.economic_rules.senate_war_legions = {"default": 4, "min": 1, "cap_mode": "available_pool"}
+
         specs = [
             {"type": "war", "params": {"war_id": "w1", "legions": 8}},
-            {"type": "budget", "params": {"contract_id": 5, "modified_budget": 120}},
+            {"type": "budget", "params": {"contract_id": contract.id, "modified_budget": 120}},
             {"type": "land", "params": {"act_type": "sale", "percent": 0.35}},
         ]
         result = senate_api.propose_many(self.state, "player1", specs)
@@ -563,17 +657,29 @@ class TestWP05VParamsPassthrough(unittest.TestCase):
         by_type = {p["type"]: p for p in proposals}
         self.assertEqual(by_type["war"]["war_id"], "w1")
         self.assertEqual(by_type["war"]["legions"], 8)
-        self.assertEqual(by_type["budget"]["contract_id"], 5)
+        self.assertEqual(by_type["budget"]["contract_id"], contract.id)
         self.assertEqual(by_type["budget"]["modified_budget"], 120)
         self.assertEqual(by_type["land"]["act_type"], "sale")
         self.assertEqual(by_type["land"]["percent"], 0.35)
 
     def test_propose_budget_clamp(self):
-        # 前端 clamp 到 [20,200] 后，后端接收合法边界值并透传存储
-        result = senate_api.propose(self.state, "player1", "budget", contract_id=5, modified_budget=20)
+        # D-3 处置（Test Matrix T014-5 语义）：越界值被权威谓词拒绝（前端 clamp 不能替代 Core 拒绝）；
+        # 合法值仍透传存储（round-trip 保持）。
+        contract = self.state.create_contract(ContractType.PUBLIC_WORKS, province_id=1, base_cost=100, current_turn=1)
+        contract.status = ContractStatus.PENDING
+        self.state.config.economic_rules.senate_budget = {
+            "public_works_min": 1, "public_works_max_ratio": 1.5,
+            "tax_farming_min_ratio": 0.75, "tax_farming_max_ratio": 2.0, "step": 1,
+        }
+        # 建造合同值域 [1, 150]：0 < min → 权威拒绝（0 不再被真值判断静默替换为 base_cost）
+        result = senate_api.propose(self.state, "player1", "budget", contract_id=contract.id, modified_budget=0)
+        self.assertFalse(result["success"])
+        self.assertEqual(len(self.state.get_senate_proposals()), 0)
+        # 合法边界值 120 ∈ [1,150] → 成功透传
+        result = senate_api.propose(self.state, "player1", "budget", contract_id=contract.id, modified_budget=120)
         self.assertTrue(result["success"])
         proposals = self.state.get_senate_proposals()
-        self.assertEqual(proposals[0]["modified_budget"], 20)
+        self.assertEqual(proposals[0]["modified_budget"], 120)
 
     def test_propose_land_percent_zero_disabled(self):
         # percent=0 后端 amount=0 无害（前端禁提交）；后端仍接受并存储 percent=0
@@ -661,3 +767,143 @@ class TestWP05VGovernorIA(unittest.TestCase):
         label = senate_api._proposal_label(state, proposals[0])
         self.assertIn("总督任命", label)
         self.assertIn("西西里", label)
+
+
+class TestBudgetRangeDerivation(unittest.TestCase):
+    """NT-1: T014-3/4 — per-contract 权威 budget_range（ED-01）+ payload round-trip。"""
+
+    def _make_state(self):
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+        faction = Faction(id="optimates", name="Optimates", treasury=50)
+        state.add_faction(faction)
+        consul = Figure(id=1, name="执政官", faction_id="optimates", age=40)
+        consul.office = "consul"
+        consul.class_tier = ClassTier.NOBILE
+        state.add_member(consul)
+        faction.member_ids.append(1)
+        state._players = {
+            "player1": MagicMock(player_id="player1", faction_id="optimates", player_type="human"),
+        }
+        state._current_player_id = "player1"
+        state.config.economic_rules.senate_budget = {
+            "public_works_min": 1, "public_works_max_ratio": 1.5,
+            "tax_farming_min_ratio": 0.75, "tax_farming_max_ratio": 2.0, "step": 1,
+        }
+        return state
+
+    def test_public_works_range_formula(self):
+        # T014-3 建造：min=1T（绝对）/ max=base×150% / step=1 / default=base
+        state = self._make_state()
+        contract = state.create_contract(ContractType.PUBLIC_WORKS, province_id=1, base_cost=100, current_turn=1)
+        r = senate_api._budget_range_for_contract(state, contract)
+        self.assertEqual(r, {"min": 1, "max": 150, "step": 1, "default": 100})
+
+    def test_tax_farming_range_formula(self):
+        # T014-3 包税：min=base×75% / max=base×200% / step=1 / default=base
+        state = self._make_state()
+        contract = state.create_contract(ContractType.TAX_FARMING, province_id=1, base_cost=80, current_turn=1)
+        r = senate_api._budget_range_for_contract(state, contract)
+        self.assertEqual(r, {"min": 60, "max": 160, "step": 1, "default": 80})
+
+    def test_budget_range_missing_config_returns_none(self):
+        # 防御：config 缺 senate_budget → None（不伪造 20-200）
+        state = GameState.create_for_testing({})
+        contract = state.create_contract(ContractType.PUBLIC_WORKS, province_id=1, base_cost=100, current_turn=1)
+        self.assertIsNone(senate_api._budget_range_for_contract(state, contract))
+
+    def test_budget_option_carries_budget_range(self):
+        # T014-3：option 携带 budget_range（QML Slider 值域来源），modified_budget 初始 = default
+        state = self._make_state()
+        contract = state.create_contract(ContractType.PUBLIC_WORKS, province_id=1, base_cost=100, current_turn=1)
+        contract.status = ContractStatus.PENDING
+        info = {"pending_contracts": [{
+            "contract_id": contract.id, "name": contract.name,
+            "type": contract.contract_type.value, "base_cost": contract.base_cost,
+            "expected_profit": contract.expected_profit,
+        }]}
+        options = senate_api._build_proposal_options(state, info)
+        budget_opts = [o for o in options if o["type"] == "budget"]
+        self.assertEqual(len(budget_opts), 1)
+        self.assertEqual(budget_opts[0]["params"]["modified_budget"], 100)
+        self.assertEqual(budget_opts[0]["budget_range"], {"min": 1, "max": 150, "step": 1, "default": 100})
+
+    def test_budget_payload_round_trip(self):
+        # T014-4：提交值 = 用户选择值（120 ∈ [1,150]）透传存储
+        state = self._make_state()
+        contract = state.create_contract(ContractType.PUBLIC_WORKS, province_id=1, base_cost=100, current_turn=1)
+        contract.status = ContractStatus.PENDING
+        result = senate_api.propose(state, "player1", "budget", contract_id=contract.id, modified_budget=120)
+        self.assertTrue(result["success"])
+        proposals = state.get_senate_proposals()
+        self.assertEqual(proposals[0]["modified_budget"], 120)
+
+
+class TestLegionOptionsDerivation(unittest.TestCase):
+    """NT-3: T015-3/4/13 — legion_options 权威值域（ED-02）+ default=4 + round-trip。"""
+
+    def _make_state(self):
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+        faction = Faction(id="optimates", name="Optimates", treasury=50)
+        state.add_faction(faction)
+        consul = Figure(id=1, name="执政官", faction_id="optimates", age=40)
+        consul.office = "consul"
+        consul.class_tier = ClassTier.NOBILE
+        state.add_member(consul)
+        faction.member_ids.append(1)
+        state._players = {
+            "player1": MagicMock(player_id="player1", faction_id="optimates", player_type="human"),
+        }
+        state._current_player_id = "player1"
+        state._war_system = WarSystem(state)
+        state._military_system = MilitarySystem(state)
+        state.config.economic_rules.senate_war_legions = {"default": 4, "min": 1, "cap_mode": "available_pool"}
+        return state
+
+    def _add_threat(self, state, war_id="w1"):
+        war = War(id=war_id, name="威胁战争", war_type=WarType.FOREIGN, strength=5, naval_required=False)
+        war.status = WarStatus.THREAT
+        state.get_war_system()._threats.append(war)
+        return war
+
+    def test_legion_options_equals_available_pool(self):
+        # T015-3：allowed == [1 .. available_pool]，min=1，max=pool，default=4（T015-13）
+        state = self._make_state()
+        war = self._add_threat(state)
+        pool = len(state.get_military_system().get_available_legions())
+        opts = senate_api._legion_options_for_war(state, war)
+        self.assertEqual(opts["min"], 1)
+        self.assertEqual(opts["max"], pool)
+        self.assertEqual(opts["default"], 4)
+        self.assertEqual(opts["allowed"], list(range(1, pool + 1)))
+
+    def test_legion_option_carries_default_4(self):
+        # T015-13：war option params.legions 初始 = config 派生 default（=4），携带 legion_options
+        state = self._make_state()
+        self._add_threat(state)
+        info = {"war_threats": [{"war_id": "w1", "name": "测试战争", "threat_level": 3}]}
+        options = senate_api._build_proposal_options(state, info)
+        war_opts = [o for o in options if o["type"] == "war"]
+        self.assertEqual(len(war_opts), 1)
+        self.assertEqual(war_opts[0]["params"]["legions"], 4)
+        self.assertEqual(war_opts[0]["legion_options"]["default"], 4)
+        pool = len(state.get_military_system().get_available_legions())
+        self.assertEqual(war_opts[0]["legion_options"]["allowed"], list(range(1, pool + 1)))
+
+    def test_legion_payload_round_trip(self):
+        # T015-4：选中 N → payload legions == N（4 ∈ [1, pool]）
+        state = self._make_state()
+        self._add_threat(state)
+        result = senate_api.propose(state, "player1", "war", war_id="w1", legions=4)
+        self.assertTrue(result["success"])
+        proposals = state.get_senate_proposals()
+        self.assertEqual(proposals[0]["legions"], 4)
+
+    def test_legion_options_missing_config_returns_none(self):
+        # 防御：config 缺 senate_war_legions → None（不伪造 [2,4,6,8,10]）
+        state = GameState.create_for_testing({})
+        state._war_system = WarSystem(state)
+        state._military_system = MilitarySystem(state)
+        war = self._add_threat(state)
+        self.assertIsNone(senate_api._legion_options_for_war(state, war))

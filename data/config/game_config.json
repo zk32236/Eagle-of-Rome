@@ -150,6 +150,19 @@
     "legion_maintenance_base": 8,
     "veteran_maintenance_bonus": 1,
 
+    "senate_budget": {
+      "public_works_min": 1,
+      "public_works_max_ratio": 1.5,
+      "tax_farming_min_ratio": 0.75,
+      "tax_farming_max_ratio": 2.0,
+      "step": 1
+    },
+    "senate_war_legions": {
+      "default": 4,
+      "min": 1,
+      "cap_mode": "available_pool"
+    },
+
     "land_price_per_unit": 10,
     "public_land_income_rate": 0.01,
     "national_public_land_tax_rate": 0.1,

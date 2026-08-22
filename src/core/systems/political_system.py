@@ -739,6 +739,26 @@ class PoliticalSystem:
             legions = kwargs.get("legions")
             if not war_id or not legions:
                 return self._result(False, "宣战提案需要 war_id 和 legions")
+            ws = self.state.get_war_system()
+            war = ws.get_war_by_id(war_id) if ws else None
+            if not war:
+                return self._result(False, "战争不存在")
+            # 共享 helper（D-1：lazy import 避免跨模块循环导入；值域单一来源 §6.3）
+            from src.api.senate_api import _legion_options_for_war
+            options = _legion_options_for_war(self.state, war)
+            if options is not None:
+                if not isinstance(legions, int):
+                    return self._result(False, "legions 必须为整数")
+                if legions < options["min"]:
+                    return self._result(False, "宣战至少需要 1 个军团")
+                if legions > options["max"]:
+                    return self._result(False, "可用军团不足")
+                existing_reserved = sum(
+                    p["legions"] for p in self.state.get_senate_proposals()
+                    if p.get("type") == "war" and p.get("legions")
+                )
+                if existing_reserved + legions > options["max"]:
+                    return self._result(False, "可用军团不足")
             proposal["war_id"] = war_id
             proposal["legions"] = legions
             return self._result(True)
@@ -783,13 +803,26 @@ class PoliticalSystem:
             modified_budget = kwargs.get("modified_budget")
             if not contract_id:
                 return self._result(False, "预算提案需要 contract_id")
+            contract = self.state.get_contract(contract_id)
+            if not contract:
+                return self._result(False, "合同不存在")
+            # 共享 helper（D-1：lazy import 避免跨模块循环导入；值域单一来源 §6.3）
+            from src.api.senate_api import _budget_range_for_contract
+            range_info = _budget_range_for_contract(self.state, contract)
+            if range_info is not None and modified_budget is not None:
+                if not isinstance(modified_budget, int):
+                    return self._result(False, "预算金额必须为整数")
+                if modified_budget < range_info["min"]:
+                    return self._result(False, "预算金额低于允许范围")
+                if modified_budget > range_info["max"]:
+                    return self._result(False, "预算金额超过允许范围")
+                if (modified_budget - range_info["min"]) % range_info["step"] != 0:
+                    return self._result(False, "预算金额不符合步进要求")
             proposal["contract_id"] = contract_id
-            if modified_budget:
+            if modified_budget is not None:
                 proposal["modified_budget"] = modified_budget
             else:
-                contract = self.state.get_contract(contract_id)
-                if contract:
-                    proposal["modified_budget"] = contract.base_cost
+                proposal["modified_budget"] = contract.base_cost
             return self._result(True)
 
         if proposal_type == "land":

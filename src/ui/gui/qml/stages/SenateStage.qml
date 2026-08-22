@@ -307,12 +307,9 @@ Rectangle {
         billParams = next
     }
 
-    function warLegionIndex(v) {
-        if (v === 2) return 0
-        if (v === 4) return 1
-        if (v === 6) return 2
-        if (v === 8) return 3
-        return 4
+    function legionIndexFor(v, model) {
+        if (!model || !v) return -1
+        return model.indexOf(v)
     }
 
     function hasZeroValueLandSelection() {
@@ -339,15 +336,23 @@ Rectangle {
         return ""
     }
 
-    Component.onCompleted: {
+    function refreshAccordion() {
         syncDefaultSelection()
         expandCheckedBills()
+    }
+
+    Component.onCompleted: {
+        refreshAccordion()
     }
 
     Connections {
         target: sessionStore
         function onSenateViewChanged() {
-            if (sessionStore.senateCurrentStep === "proposal" && selectedProposalKeys.length === 0) root.syncDefaultSelection()
+            // 提案阶段：选项加载完成后同步默认选中并展开（G7「只有法案条目无控件」闭合）
+            if (sessionStore.senateCurrentStep === "proposal") {
+                if (selectedProposalKeys.length === 0) root.refreshAccordion()
+                else root.expandCheckedBills()
+            }
         }
     }
 
@@ -607,7 +612,7 @@ Rectangle {
                                     property bool isProposal: sessionStore.senateCurrentStep === "proposal"
                                     property bool expanded: isProposal && root.expandedBillKeys.indexOf(modelData.key) >= 0
                                     property string billKey: (modelData && modelData.key) ? modelData.key : ""
-                                    property real defaultBudget: (modelData.params && modelData.params.modified_budget) ? modelData.params.modified_budget : 20
+                                    property real defaultBudget: (modelData.params && modelData.params.budget_range) ? modelData.params.budget_range.default : 0
                                     property real defaultPercent: (modelData.params && modelData.params.percent) ? modelData.params.percent : 0.10
                                     Layout.preferredHeight: isProposal
                                         ? (expanded ? cardColumn.implicitHeight + 12 : headerRow.implicitHeight + 12)
@@ -695,21 +700,29 @@ Rectangle {
                                                 wrapMode: Text.Wrap
                                             }
 
-                                            // FC-01 宣战军团下拉
+                                            // FC-01 宣战军团数量下拉（authoritative：legion_options = config 派生 [min..可用池]）
                                             RowLayout {
                                                 visible: modelData.type === "war"
                                                 Layout.fillWidth: true
                                                 spacing: 6
                                                 Text { text: "征召军团"; color: "#2C1E12"; font.pixelSize: 11; Layout.preferredWidth: 60 }
                                                 ComboBox {
-                                                    model: [2, 4, 6, 8, 10]
-                                                    currentIndex: root.warLegionIndex(root.billParamValue(billKey, "legions", 6))
+                                                    id: legionCombo
                                                     Layout.fillWidth: true
+                                                    enabled: (modelData.params && modelData.params.legion_options) ? true : false
+                                                    model: (modelData.params && modelData.params.legion_options) ? modelData.params.legion_options : []
+                                                    currentIndex: root.legionIndexFor(root.billParamValue(billKey, "legions", (modelData.params && modelData.params.legions) || 0), (modelData.params && modelData.params.legion_options) || [])
                                                     onActivated: root.setBillParam(billKey, "legions", model[currentIndex])
+                                                }
+                                                Text {
+                                                    visible: !(modelData.params && modelData.params.legion_options)
+                                                    text: "值域待定义"
+                                                    color: "#9A2D0A"
+                                                    font.pixelSize: 11
                                                 }
                                             }
 
-                                            // FC-03/FC-04 预算 slider（PUBLIC_WORKS [20,200] / TAX_FARMING [20,150]）
+                                            // FC-03/FC-04 预算 slider（authoritative：budget_range = config 派生 per-contract 值域）
                                             ColumnLayout {
                                                 visible: modelData.type === "budget"
                                                 Layout.fillWidth: true
@@ -727,11 +740,18 @@ Rectangle {
                                                 Slider {
                                                     id: budgetSlider
                                                     Layout.fillWidth: true
-                                                    from: 20
-                                                    to: modelData.contract_type === "tax_farming" ? 150 : 200
-                                                    stepSize: 1
+                                                    enabled: (modelData.params && modelData.params.budget_range) ? true : false
+                                                    from: (modelData.params && modelData.params.budget_range) ? modelData.params.budget_range.min : 0
+                                                    to: (modelData.params && modelData.params.budget_range) ? modelData.params.budget_range.max : 0
+                                                    stepSize: (modelData.params && modelData.params.budget_range) ? modelData.params.budget_range.step : 1
                                                     value: defaultBudget
                                                     onValueChanged: root.setBillParam(billKey, "modified_budget", Math.round(value))
+                                                }
+                                                Text {
+                                                    visible: !(modelData.params && modelData.params.budget_range)
+                                                    text: "值域待定义"
+                                                    color: "#9A2D0A"
+                                                    font.pixelSize: 11
                                                 }
                                             }
 

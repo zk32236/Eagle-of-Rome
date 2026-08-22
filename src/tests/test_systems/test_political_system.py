@@ -184,3 +184,180 @@ def test_build_initial_info_presiding_no_faction_degrades(state):
     assert po["figure_id"] == 9
     assert po["faction_id"] is None
     assert po["faction_name"] == ""
+
+
+# ==================== WP-C-R1 AU-14: NT-2 / NT-4（权威谓词正/负向，ED-01/ED-02） ====================
+
+def _with_authoritative_ranges(state):
+    """注入 ODR 权威值域 config（ED-01/ED-02 CLOSED 值，与 game_config.json 一致）。"""
+    state.config.economic_rules.senate_budget = {
+        "public_works_min": 1, "public_works_max_ratio": 1.5,
+        "tax_farming_min_ratio": 0.75, "tax_farming_max_ratio": 2.0, "step": 1,
+    }
+    state.config.economic_rules.senate_war_legions = {"default": 4, "min": 1, "cap_mode": "available_pool"}
+    return state
+
+
+# ---- NT-2: T014-5/6/7/8 预算谓词 ----
+
+def test_budget_reject_below_min(state):
+    """T014-5：建造 <1T → 权威拒绝。"""
+    _with_authoritative_ranges(state)
+    politics = PoliticalSystem(state)
+    contract = state.create_contract(ContractType.PUBLIC_WORKS, province_id=10, base_cost=100, current_turn=5)
+    proposal = {"type": "budget"}
+    result = politics._populate_proposal(proposal, "budget", contract_id=contract.id, modified_budget=0)
+    assert result["success"] is False
+    assert "低于允许范围" in result["message"]
+
+
+def test_budget_reject_above_max(state):
+    """T014-6：建造 >base×150% → 权威拒绝。"""
+    _with_authoritative_ranges(state)
+    politics = PoliticalSystem(state)
+    contract = state.create_contract(ContractType.PUBLIC_WORKS, province_id=10, base_cost=100, current_turn=5)
+    result = politics._populate_proposal({"type": "budget"}, "budget", contract_id=contract.id, modified_budget=151)
+    assert result["success"] is False
+    assert "超过允许范围" in result["message"]
+
+
+def test_budget_reject_non_int(state):
+    """T014-7：非 int → 权威拒绝。"""
+    _with_authoritative_ranges(state)
+    politics = PoliticalSystem(state)
+    contract = state.create_contract(ContractType.PUBLIC_WORKS, province_id=10, base_cost=100, current_turn=5)
+    result = politics._populate_proposal({"type": "budget"}, "budget", contract_id=contract.id, modified_budget=100.5)
+    assert result["success"] is False
+    assert "整数" in result["message"]
+
+
+def test_budget_reject_missing_contract(state):
+    """合同不存在 → 权威拒绝。"""
+    _with_authoritative_ranges(state)
+    politics = PoliticalSystem(state)
+    result = politics._populate_proposal({"type": "budget"}, "budget", contract_id=9999, modified_budget=50)
+    assert result["success"] is False
+    assert "合同不存在" in result["message"]
+
+
+def test_budget_tax_farming_boundaries(state):
+    """T014-5/6 包税：min=base×75% / max=base×200%。"""
+    _with_authoritative_ranges(state)
+    politics = PoliticalSystem(state)
+    contract = state.create_contract(ContractType.TAX_FARMING, province_id=10, base_cost=80, current_turn=5)
+    # 59 < 60（base×75%）→ 拒绝
+    result = politics._populate_proposal({"type": "budget"}, "budget", contract_id=contract.id, modified_budget=59)
+    assert result["success"] is False
+    # 60 == min → 接受
+    proposal = {"type": "budget"}
+    result = politics._populate_proposal(proposal, "budget", contract_id=contract.id, modified_budget=60)
+    assert result["success"] is True
+    assert proposal["modified_budget"] == 60
+    # 161 > 160（base×200%）→ 拒绝
+    result = politics._populate_proposal({"type": "budget"}, "budget", contract_id=contract.id, modified_budget=161)
+    assert result["success"] is False
+
+
+def test_budget_no_treasury_interception(state):
+    """T014-8：提交期无国库承受力拦截（ODR：不禁止提交，决算期判破产）。"""
+    _with_authoritative_ranges(state)
+    state._treasury = 10  # 国库极小，仍应可提交
+    politics = PoliticalSystem(state)
+    contract = state.create_contract(ContractType.PUBLIC_WORKS, province_id=10, base_cost=100, current_turn=5)
+    result = politics._populate_proposal({"type": "budget"}, "budget", contract_id=contract.id, modified_budget=150)
+    assert result["success"] is True
+
+
+# ---- NT-4: T015-5/6/7/12 军团谓词 ----
+
+def test_war_reject_below_min(state):
+    """T015-5：legions < 1（0 不可宣战）→ 权威拒绝。"""
+    _with_authoritative_ranges(state)
+    politics = PoliticalSystem(state)
+    add_threat_war(state, "war_min")
+    result = politics._populate_proposal({"type": "war"}, "war", war_id="war_min", legions=0)
+    assert result["success"] is False
+
+
+def test_war_reject_over_pool(state):
+    """T015-6：legions > 可用池 → 权威拒绝「可用军团不足」。"""
+    _with_authoritative_ranges(state)
+    politics = PoliticalSystem(state)
+    add_threat_war(state, "war_pool")
+    pool = len(state.get_military_system().get_available_legions())
+    result = politics._populate_proposal({"type": "war"}, "war", war_id="war_pool", legions=pool + 1)
+    assert result["success"] is False
+    assert "可用军团不足" in result["message"]
+
+
+def test_war_reject_non_int(state):
+    """T015-5：非 int → 权威拒绝。"""
+    _with_authoritative_ranges(state)
+    politics = PoliticalSystem(state)
+    add_threat_war(state, "war_nonint")
+    result = politics._populate_proposal({"type": "war"}, "war", war_id="war_nonint", legions=4.0)
+    assert result["success"] is False
+    assert "整数" in result["message"]
+
+
+def test_war_reject_missing_war(state):
+    """war 不存在 → 权威拒绝。"""
+    _with_authoritative_ranges(state)
+    politics = PoliticalSystem(state)
+    result = politics._populate_proposal({"type": "war"}, "war", war_id="missing_war", legions=4)
+    assert result["success"] is False
+    assert "战争不存在" in result["message"]
+
+
+def test_war_multi_war_sum_reject(state):
+    """T015-12：多战争总和 sum(所有 war legions) > 可用池 → 拒绝「可用军团不足」。"""
+    _with_authoritative_ranges(state)
+    politics = PoliticalSystem(state)
+    add_threat_war(state, "war_sum1")
+    add_threat_war(state, "war_sum2")
+    pool = len(state.get_military_system().get_available_legions())
+    # 先提交 war_sum1 占满可用池（单 war 合法）
+    proposal1 = {"type": "war"}
+    result1 = politics._populate_proposal(proposal1, "war", war_id="war_sum1", legions=pool)
+    assert result1["success"] is True
+    state.add_senate_proposal(proposal1)
+    # 再提交 war_sum2（即使仅 1 个）→ 总和超池 → 拒绝
+    result2 = politics._populate_proposal({"type": "war"}, "war", war_id="war_sum2", legions=1)
+    assert result2["success"] is False
+    assert "可用军团不足" in result2["message"]
+
+
+def test_war_multi_war_sum_ok_within_pool(state):
+    """T015-12 正向：多战争总和 ≤ 池 → 接受。"""
+    _with_authoritative_ranges(state)
+    politics = PoliticalSystem(state)
+    add_threat_war(state, "war_ok1")
+    add_threat_war(state, "war_ok2")
+    proposal1 = {"type": "war"}
+    result1 = politics._populate_proposal(proposal1, "war", war_id="war_ok1", legions=2)
+    assert result1["success"] is True
+    state.add_senate_proposal(proposal1)
+    proposal2 = {"type": "war"}
+    result2 = politics._populate_proposal(proposal2, "war", war_id="war_ok2", legions=2)
+    assert result2["success"] is True
+
+
+def test_war_no_treasury_interception(state):
+    """T015-7：提交期无国库承受力拦截（ODR：不禁止提交）。"""
+    _with_authoritative_ranges(state)
+    state._treasury = 1
+    politics = PoliticalSystem(state)
+    add_threat_war(state, "war_treasury")
+    result = politics._populate_proposal({"type": "war"}, "war", war_id="war_treasury", legions=4)
+    assert result["success"] is True
+
+
+def test_war_default_4_within_pool(state):
+    """T015-13 正向：default=4 ∈ [1..池] → 接受并写入。"""
+    _with_authoritative_ranges(state)
+    politics = PoliticalSystem(state)
+    add_threat_war(state, "war_def")
+    proposal = {"type": "war"}
+    result = politics._populate_proposal(proposal, "war", war_id="war_def", legions=4)
+    assert result["success"] is True
+    assert proposal["legions"] == 4
