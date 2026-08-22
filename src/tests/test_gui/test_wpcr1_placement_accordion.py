@@ -14,6 +14,7 @@
 - T015-11: 无个体军团 ID 选择器（仅数量控件）
 - T014-3: Slider from/to/stepSize/value == budget_range
 - T-ACC-1/2/3 + T014-10: accordion 展开状态与选中集一致、控件可见、onSenateViewChanged 不丢展开
+- T-R2-01~07: 真实 get_senate_view 生产链（root 级 legion_options/budget_range 契约 + SessionStore parity + QML 渲染 + round-trip）
 """
 import os
 import sys
@@ -27,11 +28,20 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(_
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from PySide6.QtCore import QObject, QUrl, Signal, Property, Slot, QMetaObject, Q_ARG, Qt
+from PySide6.QtCore import QObject, QUrl, Signal, Property, Slot, QMetaObject, Q_ARG, Q_RETURN_ARG, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
 import shiboken6
+from unittest.mock import MagicMock
+
+from src.core.game_state import GameState
+from src.core.entities.contract import ContractStatus, ContractType
+from src.core.entities.entities import Faction, GameTurn
+from src.core.entities.figure import Figure, ClassTier
+from src.core.entities.war import War, WarType, WarStatus
+from src.core.systems.war_system import WarSystem
+from src.core.systems.military_system import MilitarySystem
 
 
 def _qitem(obj):
@@ -279,6 +289,7 @@ class _MockSenateStore(QObject):
         self._current_step = current_step
         self._submitted = []
         self.submit_calls = 0
+        self.last_proposals = None
 
     @Property(list, notify=senateViewChanged)
     def senateProposalOptions(self):
@@ -336,9 +347,19 @@ class _MockSenateStore(QObject):
     def governorAppointments(self):
         return {}
 
+    @staticmethod
+    def _variant_to_python(value):
+        """QVariant→Python 转换（仿 session_store._variant_to_python，F-6 捕获 payload）。"""
+        if hasattr(value, "toVariant"):
+            return value.toVariant()
+        if hasattr(value, "toPython"):
+            return value.toPython()
+        return value
+
     @Slot("QVariant", result=dict)
     def doSubmitSenateProposals(self, proposals):
         self.submit_calls += 1
+        self.last_proposals = self._variant_to_python(proposals)
         return {"success": True, "message": "ok"}
 
     @Slot(result=dict)
@@ -354,16 +375,54 @@ class _MockSenateStore(QObject):
         return {"success": True, "message": "ok"}
 
 
+def _build_real_senate_state():
+    """真实链 GameState 配方（DA-Plan §5.1）：THREAT war（w1）+ PENDING PUBLIC_WORKS 合同（base_cost=100）+ 权威值域 config。
+
+    - senate_budget（ODR-ED-01）：PUBLIC_WORKS base=100 → budget_range {min:1, max:150, step:1, default:100}
+    - senate_war_legions（ODR-ED-02）：MilitarySystem pool=25 → legion_options {min:1, max:25, default:4, allowed:[1..25]}
+    - _executed_phases 置 {mortality,revenue,forum,population} → _infer_current_phase_id == "senate"
+    """
+    state = GameState.create_for_testing({})
+    state.turn = GameTurn(turn_number=1, year=-264)
+    faction = Faction(id="optimates", name="Optimates", treasury=50)
+    state.add_faction(faction)
+    consul = Figure(id=1, name="执政官", faction_id="optimates", age=40)
+    consul.office = "consul"
+    consul.class_tier = ClassTier.NOBILE
+    state.add_member(consul)
+    faction.member_ids.append(1)
+    state._players = {"player1": MagicMock(player_id="player1", faction_id="optimates", player_type="human")}
+    state._current_player_id = "player1"
+    state.config.economic_rules.senate_budget = {
+        "public_works_min": 1, "public_works_max_ratio": 1.5,
+        "tax_farming_min_ratio": 0.75, "tax_farming_max_ratio": 2.0, "step": 1,
+    }
+    state.config.economic_rules.senate_war_legions = {"default": 4, "min": 1, "cap_mode": "available_pool"}
+    state._war_system = WarSystem(state)
+    state._military_system = MilitarySystem(state)
+    war = War(id="w1", name="皮洛士战争", war_type=WarType.FOREIGN, strength=5, naval_required=False)
+    war.status = WarStatus.THREAT
+    state.get_war_system()._threats.append(war)
+    contract = state.create_contract(ContractType.PUBLIC_WORKS, province_id=1, base_cost=100, current_turn=1)
+    contract.status = ContractStatus.PENDING
+    state._executed_phases = {"mortality", "revenue", "forum", "population"}
+    return state
+
+
+def _real_senate_options():
+    """真实 producer 派生（F-1）：senate_api.get_senate_view(state,"player1")["data"]["proposal_options"]。"""
+    from src.api import senate_api
+    state = _build_real_senate_state()
+    view = senate_api.get_senate_view(state, "player1")
+    assert view["success"], view.get("message")
+    options = view["data"]["proposal_options"]
+    assert options, "proposal_options must be non-empty"
+    return options
+
+
 def _options_with_ranges():
-    return [
-        {"key": "war:w1", "type": "war", "title": "宣战 — 皮洛士战争", "detail": "征召 4 个军团；威胁 2；…",
-         "params": {"war_id": "w1", "legions": 4, "legion_options": [1, 2, 3, 4, 5]}},
-        {"key": "peace:p1", "type": "peace", "title": "停战 — 皮洛士战争", "detail": "赔款 100 T",
-         "params": {"war_id": "p1"}},
-        {"key": "budget:b1", "type": "budget", "title": "建造合同 — 意大利工程", "detail": "预算金额 100 T",
-         "params": {"contract_id": 1, "modified_budget": 100,
-                    "budget_range": {"min": 1, "max": 150, "step": 1, "default": 100}}},
-    ]
+    """WP-C-R1 遗留 fixture 名：改为真实 producer 派生（结构性关闭手工 shape escape，DA-Plan §4）。"""
+    return _real_senate_options()
 
 
 def _key_set(root):
@@ -371,25 +430,38 @@ def _key_set(root):
 
 
 def test_senate_accordion_expansion_and_controls():
-    """T-ACC-1/2/3 + T014-10: 展开状态与选中集一致；war/budget 控件可见可用；onSenateViewChanged 不丢展开。"""
-    store = _MockSenateStore(_options_with_ranges())
+    """T-ACC-1/2/3 + T014-10 + F-3: 展开状态与选中集一致；war/budget 控件可见可用；onSenateViewChanged 不丢展开。"""
+    options = _options_with_ranges()  # 真实 producer 派生（F-1）
+    store = _MockSenateStore(options)
     _engine, root = _load_qml("SenateStage.qml", store)
     app = _get_app()
 
-    # T-ACC-2: 展开状态 == 选中集（默认 war/peace/budget）
+    war_options = [o for o in options if o["type"] == "war"]
+    budget_options = [o for o in options if o["type"] == "budget"]
+    assert len(war_options) == 1, "recipe must produce exactly 1 war option"
+    assert len(budget_options) == 1, "recipe must produce exactly 1 budget option"
+    lo = war_options[0]["legion_options"]
+    br = budget_options[0]["budget_range"]
+
+    # F-3 parity 增补：root 级元数据存在；params 无重复 range 元数据（producer 契约）
+    assert "legion_options" in war_options[0] and "legion_options" not in war_options[0]["params"]
+    assert "budget_range" in budget_options[0] and "budget_range" not in budget_options[0]["params"]
+
+    # T-ACC-2: 展开状态 == 选中集（默认 war/budget，真实 producer 派生；land 不在默认选中集）
     keys = _key_set(root)
-    assert keys == {"war:w1", "peace:p1", "budget:b1"}
+    assert keys == {o["key"] for o in options if o["type"] in ("war", "peace", "budget")}
     expanded = {str(k) for k in _normalize(root.property("expandedBillKeys"))}
     assert expanded == keys
 
-    # T-ACC-1/T014-10: 控件展开可见（delegate 中控件在全部 bill card 实例化，仅有权值域者 enabled）
+    # T-ACC-1/T014-10: 控件展开可见（仅有权值域者 enabled）
     combos = [c for c in _all_items(root) if "ComboBox" in c.metaObject().className() and c.property("enabled") is True]
     assert len(combos) == 1, f"expected exactly 1 enabled legion ComboBox, got {len(combos)} (T015-11)"
     combo = combos[0]
     assert combo.isVisible() is True
-    assert str(combo.property("currentText")) == "4", "default legion selection must be 4 (T015-13)"
-    # T015-3: ComboBox model == legion_options
-    assert _normalize(combo.property("model")) == [1, 2, 3, 4, 5]
+    # T015-13: default 选中 = legion_options.default（真实 producer，default=4 ∈ 池）
+    assert str(combo.property("currentText")) == str(lo["default"])
+    # T015-3: ComboBox model == legion_options.allowed（真实 producer 派生，pool=25）
+    assert _normalize(combo.property("model")) == lo["allowed"]
 
     sliders = [s for s in _all_items(root)
                if "Slider" in s.metaObject().className()
@@ -399,11 +471,11 @@ def test_senate_accordion_expansion_and_controls():
                and s.isVisible()]
     assert len(sliders) == 1, f"expected exactly 1 enabled budget Slider, got {len(sliders)}"
     slider = sliders[0]
-    # T014-3: Slider from/to/stepSize/value == budget_range（authoritative，非硬编码 20-200）
-    assert slider.property("from") == 1
-    assert slider.property("to") == 150
-    assert slider.property("stepSize") == 1
-    assert slider.property("value") == 100
+    # T014-3: Slider from/to/stepSize/value == budget_range（真实 producer 派生，非硬编码）
+    assert slider.property("from") == br["min"]
+    assert slider.property("to") == br["max"]
+    assert slider.property("stepSize") == br["step"]
+    assert slider.property("value") == br["default"]
 
     # T-ACC-3: onSenateViewChanged 触发后不丢展开状态（选中集非空 → 仅重跑 expandCheckedBills）
     store.senateViewChanged.emit()
@@ -424,13 +496,184 @@ def test_senate_accordion_expansion_and_controls():
 
 
 def test_senate_no_individual_legion_selector():
-    """T015-11: 无个体军团 ID 选择器（仅数量 ComboBox；QML 结构断言）。"""
-    store = _MockSenateStore(_options_with_ranges())
+    """T015-11 + F-4: 无个体军团 ID 选择器（仅数量 ComboBox；model == legion_options.allowed）。"""
+    options = _options_with_ranges()
+    store = _MockSenateStore(options)
     _engine, root = _load_qml("SenateStage.qml", store)
     combos = [c for c in _all_items(root) if "ComboBox" in c.metaObject().className() and c.property("enabled") is True]
     assert len(combos) == 1, "only one enabled legion-count ComboBox is allowed"
+    lo = [o for o in options if o["type"] == "war"][0]["legion_options"]
     model = _normalize(combos[0].property("model"))
-    assert model == [1, 2, 3, 4, 5], "model must be a count range [1..pool], not individual legion IDs"
+    assert model == lo["allowed"], "model must be legion_options.allowed (count range [1..pool]), not individual legion IDs"
+
+
+# ---------------------------------------------------------------------------
+# T-R2-01~07: 真实生产链测试（DA-Plan §5.2；AC-014-R2 / AC-015-R2）
+# ---------------------------------------------------------------------------
+
+def test_r2_01_producer_budget_shape():
+    """T-R2-01 (AC-014-R2-1): 真实 get_senate_view：budget option root 含 budget_range dict；params 仅提交值。"""
+    options = _real_senate_options()
+    budget_options = [o for o in options if o["type"] == "budget"]
+    assert len(budget_options) == 1
+    bo = budget_options[0]
+    assert bo["budget_range"] == {"min": 1, "max": 150, "step": 1, "default": 100}
+    assert set(bo["params"].keys()) == {"contract_id", "modified_budget"}, "params 不得重复 range 元数据"
+    assert "budget_range" not in bo["params"]
+
+
+def test_r2_02_producer_war_shape():
+    """T-R2-02 (AC-015-R2-1): 真实 get_senate_view：war option root 含 legion_options dict（含 allowed）；params 仅提交值。"""
+    options = _real_senate_options()
+    war_options = [o for o in options if o["type"] == "war"]
+    assert len(war_options) == 1
+    wo = war_options[0]
+    lo = wo["legion_options"]
+    assert isinstance(lo, dict), "legion_options 必须是 dict（含 allowed list）"
+    assert lo["min"] == 1
+    assert lo["default"] == 4
+    assert lo["max"] == 25
+    assert lo["allowed"] == list(range(1, 26))
+    assert set(wo["params"].keys()) == {"war_id", "legions"}, "params 不得重复 range 元数据"
+    assert "legion_options" not in wo["params"]
+
+
+def test_r2_03_session_store_parity():
+    """T-R2-03 (AC-014-R2-2/AC-015-R2-2): 真实 SessionStore pass-through — senateProposalOptions 逐项 == producer 输出。"""
+    from src.ui.gui.session_store import GuiSessionStore
+    state = _build_real_senate_state()
+    options = _real_senate_options()
+    store = GuiSessionStore(state)
+    store.initialize("player1")
+    passed = store.senateProposalOptions
+    assert len(passed) == len(options)
+    for prod, via in zip(options, passed):
+        assert via["key"] == prod["key"]
+        assert via["type"] == prod["type"]
+        assert via["params"] == prod["params"], "params 嵌套不得被重排/增删"
+        if prod.get("budget_range") is not None:
+            assert via["budget_range"] == prod["budget_range"], "budget_range 必须仍在 root 且值一致"
+        if prod.get("legion_options") is not None:
+            assert via["legion_options"] == prod["legion_options"], "legion_options 必须仍在 root 且值一致"
+
+
+def test_r2_04_slider_real_shape():
+    """T-R2-04 (AC-014-R2-3): 真实 shape 加载 QML：budget Slider visible + enabled；from/to/stepSize/value == budget_range。"""
+    options = _real_senate_options()
+    store = _MockSenateStore(options)
+    _engine, root = _load_qml("SenateStage.qml", store)
+    br = [o for o in options if o["type"] == "budget"][0]["budget_range"]
+    sliders = [s for s in _all_items(root)
+               if "Slider" in s.metaObject().className()
+               and "Groove" not in s.metaObject().className()
+               and "Handle" not in s.metaObject().className()
+               and s.isVisible()]
+    assert len(sliders) == 1
+    slider = sliders[0]
+    assert slider.property("visible") is True
+    assert slider.property("enabled") is True
+    assert slider.property("from") == br["min"]
+    assert slider.property("to") == br["max"]
+    assert slider.property("stepSize") == br["step"]
+    assert slider.property("value") == br["default"]
+
+
+def test_r2_05_combo_real_shape():
+    """T-R2-05 (AC-015-R2-3/4): 真实 shape 加载 QML：war ComboBox visible + enabled；model == legion_options.allowed；currentIndex 映射 params.legions。"""
+    options = _real_senate_options()
+    store = _MockSenateStore(options)
+    _engine, root = _load_qml("SenateStage.qml", store)
+    lo = [o for o in options if o["type"] == "war"][0]["legion_options"]
+    combos = [c for c in _all_items(root) if "ComboBox" in c.metaObject().className() and c.isVisible()]
+    assert len(combos) == 1
+    combo = combos[0]
+    assert combo.property("visible") is True
+    assert combo.property("enabled") is True
+    assert _normalize(combo.property("model")) == lo["allowed"]
+    assert str(combo.property("currentText")) == str(lo["default"])
+
+
+def _click_submit(engine, root):
+    """在 QML 引擎内执行生产提交 JS：sessionStore.doSubmitSenateProposals(root.selectedProposals())（按钮 onClicked 同源）。"""
+    from PySide6.QtQml import QQmlExpression
+    ctx = engine.rootContext()
+    ctx.setContextProperty("_r2root", root)
+    expr = QQmlExpression(ctx, None, "sessionStore.doSubmitSenateProposals(_r2root.selectedProposals())")
+    result = expr.evaluate()
+    assert not expr.hasError(), expr.error()
+    return result
+
+
+def test_r2_06_budget_round_trip():
+    """T-R2-06 (AC-014-R2-4, D-6 已修复): Slider 改值 120 → setBillParam → 生产提交 JS（捕获）→ 真实链提交成功。
+
+    D-6 修复（2026-08-22 Owner 方案 A：谓词 int 容忍）：_populate_proposal 接受 int 或整数值 float
+    （is_integer() 判据）。QML JS number（Math.round）跨槽边界仍产生 Python float（120.0），现视为合法；
+    非整数值（120.5）仍拒收（test_political_system.py T014-7 负向矩阵保持，未修订）。
+    本测试改为真实链成功路径断言：feedback["success"] 为真 + payload modified_budget == 120 + contract_id 不变。
+    """
+    from src.ui.gui.api_adapter import GuiApiAdapter
+    options = _real_senate_options()
+    store = _MockSenateStore(options)
+    _engine, root = _load_qml("SenateStage.qml", store)
+    app = _get_app()
+    budget_options = [o for o in options if o["type"] == "budget"]
+    br = budget_options[0]["budget_range"]
+    assert br["min"] <= 120 <= br["max"]
+    sliders = [s for s in _all_items(root)
+               if "Slider" in s.metaObject().className()
+               and "Groove" not in s.metaObject().className()
+               and "Handle" not in s.metaObject().className()
+               and s.isVisible()]
+    assert len(sliders) == 1
+    sliders[0].setProperty("value", 120)
+    app.processEvents()
+    _click_submit(_engine, root)
+    captured = store.last_proposals
+    assert captured is not None, "mock store must capture submitted payload"
+    budget_row = [r for r in captured if r.get("type") == "budget"][0]
+    modified = budget_row["params"]["modified_budget"]
+    assert modified == 120, modified
+    # D-6 边界现状：QML JS number（Math.round）跨槽边界仍为 Python float（120.0）——已获谓词 int 容忍
+    assert float(modified).is_integer(), f"unexpected modified={modified!r}"
+    # 真实链：api_adapter → propose_many → _populate_proposal 权威谓词（int 容忍后成功路径）
+    state = _build_real_senate_state()
+    adapter = GuiApiAdapter(state)
+    feedback = adapter.submit_senate_proposals("player1", captured)
+    assert feedback["success"], feedback
+    proposals = state.get_senate_proposals()
+    by_type = {p["type"]: p for p in proposals}
+    assert by_type["budget"]["modified_budget"] == 120
+    assert by_type["budget"]["contract_id"] == budget_options[0]["params"]["contract_id"]
+
+
+def test_r2_07_legion_round_trip():
+    """T-R2-07 (AC-015-R2-5): ComboBox 选 N=5 → setBillParam（与 onActivated 同源 JS）→ 生产提交 JS → payload legions == 5；war_id 不变。"""
+    from src.ui.gui.api_adapter import GuiApiAdapter
+    options = _real_senate_options()
+    store = _MockSenateStore(options)
+    _engine, root = _load_qml("SenateStage.qml", store)
+    app = _get_app()
+    war_options = [o for o in options if o["type"] == "war"]
+    lo = war_options[0]["legion_options"]
+    assert 5 in lo["allowed"]
+    QMetaObject.invokeMethod(root, "setBillParam", Qt.DirectConnection,
+                             Q_ARG("QVariant", "war:w1"), Q_ARG("QVariant", "legions"), Q_ARG("QVariant", 5))
+    app.processEvents()
+    _click_submit(_engine, root)
+    captured = store.last_proposals
+    assert captured is not None
+    war_row = [r for r in captured if r.get("type") == "war"][0]
+    assert war_row["params"]["legions"] == 5
+    assert war_row["params"]["war_id"] == "w1"
+    state = _build_real_senate_state()
+    adapter = GuiApiAdapter(state)
+    feedback = adapter.submit_senate_proposals("player1", captured)
+    assert feedback["success"], feedback
+    proposals = state.get_senate_proposals()
+    by_type = {p["type"]: p for p in proposals}
+    assert by_type["war"]["legions"] == 5
+    assert by_type["war"]["war_id"] == "w1"
 
 
 if __name__ == "__main__":

@@ -612,7 +612,7 @@ Rectangle {
                                     property bool isProposal: sessionStore.senateCurrentStep === "proposal"
                                     property bool expanded: isProposal && root.expandedBillKeys.indexOf(modelData.key) >= 0
                                     property string billKey: (modelData && modelData.key) ? modelData.key : ""
-                                    property real defaultBudget: (modelData.params && modelData.params.budget_range) ? modelData.params.budget_range.default : 0
+                                    property real defaultBudget: (modelData.budget_range) ? modelData.budget_range.default : 0
                                     property real defaultPercent: (modelData.params && modelData.params.percent) ? modelData.params.percent : 0.10
                                     Layout.preferredHeight: isProposal
                                         ? (expanded ? cardColumn.implicitHeight + 12 : headerRow.implicitHeight + 12)
@@ -709,13 +709,13 @@ Rectangle {
                                                 ComboBox {
                                                     id: legionCombo
                                                     Layout.fillWidth: true
-                                                    enabled: (modelData.params && modelData.params.legion_options) ? true : false
-                                                    model: (modelData.params && modelData.params.legion_options) ? modelData.params.legion_options : []
-                                                    currentIndex: root.legionIndexFor(root.billParamValue(billKey, "legions", (modelData.params && modelData.params.legions) || 0), (modelData.params && modelData.params.legion_options) || [])
+                                                    enabled: (modelData.legion_options && modelData.legion_options.allowed && modelData.legion_options.allowed.length > 0) ? true : false
+                                                    model: (modelData.legion_options && modelData.legion_options.allowed) ? modelData.legion_options.allowed : []
+                                                    currentIndex: root.legionIndexFor(root.billParamValue(billKey, "legions", (modelData.params && modelData.params.legions) || 0), (modelData.legion_options && modelData.legion_options.allowed) || [])
                                                     onActivated: root.setBillParam(billKey, "legions", model[currentIndex])
                                                 }
                                                 Text {
-                                                    visible: !(modelData.params && modelData.params.legion_options)
+                                                    visible: !(modelData.legion_options && modelData.legion_options.allowed)
                                                     text: "值域待定义"
                                                     color: "#9A2D0A"
                                                     font.pixelSize: 11
@@ -740,15 +740,15 @@ Rectangle {
                                                 Slider {
                                                     id: budgetSlider
                                                     Layout.fillWidth: true
-                                                    enabled: (modelData.params && modelData.params.budget_range) ? true : false
-                                                    from: (modelData.params && modelData.params.budget_range) ? modelData.params.budget_range.min : 0
-                                                    to: (modelData.params && modelData.params.budget_range) ? modelData.params.budget_range.max : 0
-                                                    stepSize: (modelData.params && modelData.params.budget_range) ? modelData.params.budget_range.step : 1
-                                                    value: defaultBudget
+                                                    enabled: modelData.budget_range ? true : false
+                                                    from: (modelData.budget_range) ? modelData.budget_range.min : 0
+                                                    to: (modelData.budget_range) ? modelData.budget_range.max : 0
+                                                    stepSize: (modelData.budget_range) ? modelData.budget_range.step : 1
+                                                    value: (modelData.params && modelData.params.modified_budget !== undefined) ? modelData.params.modified_budget : defaultBudget
                                                     onValueChanged: root.setBillParam(billKey, "modified_budget", Math.round(value))
                                                 }
                                                 Text {
-                                                    visible: !(modelData.params && modelData.params.budget_range)
+                                                    visible: !modelData.budget_range
                                                     text: "值域待定义"
                                                     color: "#9A2D0A"
                                                     font.pixelSize: 11

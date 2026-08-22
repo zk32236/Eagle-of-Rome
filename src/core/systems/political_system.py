@@ -810,7 +810,8 @@ class PoliticalSystem:
             from src.api.senate_api import _budget_range_for_contract
             range_info = _budget_range_for_contract(self.state, contract)
             if range_info is not None and modified_budget is not None:
-                if not isinstance(modified_budget, int):
+                if not (isinstance(modified_budget, int)
+                        or (isinstance(modified_budget, float) and modified_budget.is_integer())):
                     return self._result(False, "预算金额必须为整数")
                 if modified_budget < range_info["min"]:
                     return self._result(False, "预算金额低于允许范围")
