@@ -153,6 +153,11 @@ class TestWP05Takeover(unittest.TestCase):
         self.assertEqual(actions[0]["commander_id"], self.consul.id)
         self.assertEqual(actions[0]["commander_name"], self.consul.get_formal_name())
         self.assertEqual(actions[0]["legions"], list(war.legion_numbers))
+        # AU-R1-05c（G3 C4）：provenance 4 字段与既有字段并存（dict 透传零破坏）
+        self.assertEqual(actions[0]["action"], "takeover")
+        self.assertEqual(actions[0]["trigger_source"], "human_explicit")
+        self.assertEqual(actions[0]["previous_status"], "active")
+        self.assertEqual(actions[0]["resulting_status"], "active")
 
         # AC-05: 刷新后 takeover_options 移除该 war
         view_after = senate_api.get_senate_view(self.state, "player1")
@@ -215,6 +220,11 @@ class TestWP05Takeover(unittest.TestCase):
         self.assertEqual(len(announcement["direct_actions"]), 1)
         self.assertEqual(announcement["direct_actions"][0]["action_type"], "takeover")
         self.assertEqual(announcement["direct_actions"][0]["war_id"], war.id)
+        # AU-R1-05c（G3 C4）：provenance 经 direct_actions → public_announcement dict 透传不破坏
+        self.assertEqual(announcement["direct_actions"][0]["trigger_source"], "human_explicit")
+        self.assertEqual(announcement["direct_actions"][0]["action"], "takeover")
+        self.assertIn("previous_status", announcement["direct_actions"][0])
+        self.assertIn("resulting_status", announcement["direct_actions"][0])
 
         # view 回读公示（随 phase_result 持久化）
         view = senate_api.get_senate_view(self.state, "player1")

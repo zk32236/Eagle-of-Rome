@@ -175,7 +175,7 @@ class TestSenateAPI(unittest.TestCase):
         self.assertIn("只有保民官可以行使否决权", result["message"])
 
     @patch("src.core.systems.political_system.PoliticalSystem.execute_war_declaration")
-    @patch("src.core.systems.political_system.PoliticalSystem.process_war_takeover")
+    @patch("src.core.systems.political_system.PoliticalSystem.execute_ai_takeover_direct_action")
     def test_resolve_senate(self, mock_takeover, mock_execute):
         war = War(id="war1", name="测试战争", war_type=WarType.FOREIGN, strength=5, naval_required=False)
         war.status = WarStatus.THREAT
@@ -201,6 +201,9 @@ class TestSenateAPI(unittest.TestCase):
         self.assertEqual(enacted[0]["type"], "war")
         self.assertIn("key_parameters", enacted[0])
         mock_execute.assert_called_once()
+        # AU-R1-05a（G3 C1，D-1 采纳）：resolve_senate 零 takeover mutation——AI 接管
+        # 唯一触发点 = auto_submit_proposals 尾部，resolve 不得触发 execute_ai_takeover_direct_action
+        mock_takeover.assert_not_called()
 
     def test_propose_peace_manually(self):
         """手动模式下停战提案应将草案状态设置为 submitted"""

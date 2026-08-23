@@ -134,6 +134,7 @@ class GameState:
         self._senate_pending = {
             "proposals": [],  # 列表，每个元素为提案字典
             "votes": {},  # {player_id: {proposal_id: bool}}
+            "vote_source": {},  # AU-R1-02b：{player_id: {proposal_id: "human"|"ai"}}（决策 provenance 注册表）
             "vetoes": set(),  # 被否决的提案ID集合
             "proposal_id_counter": 1,
             "decision_complete": False,  # WP-D AU-2：提案决策是否已完成（空批合法化标记）
@@ -232,15 +233,29 @@ class GameState:
     def clear_senate_votes(self) -> None:
         """清空当前元老院投票记录，保留提案与否决状态。"""
         self._senate_pending["votes"] = {}
+        # AU-R1-02b：vote_source 注册表与 votes 镜像一致（防陈旧 source 残留，C3 无泄漏）
+        self._senate_pending["vote_source"] = {}
 
-    def record_senate_vote(self, player_id: str, proposal_id: int, vote: bool) -> bool:
-        """记录投票，返回是否成功（未重复投票）"""
+    def record_senate_vote(self, player_id: str, proposal_id: int, vote: bool, source: str = "human") -> bool:
+        """记录投票，返回是否成功（未重复投票）。
+
+        AU-R1-02b（C3 幂等契约，frozen）：重复投票仍返回 False——同一 proposal×player
+        的决策只写入一次；human 既有调用零改动（默认 source="human"）；AI 决策经
+        calculate_vote_result 写回时传 source="ai"（created once → persisted → reused）。
+        """
         if player_id not in self._senate_pending["votes"]:
             self._senate_pending["votes"][player_id] = {}
         if proposal_id in self._senate_pending["votes"][player_id]:
-            return False  # 已投过票
+            return False  # 已投过票（幂等契约：不覆盖、不重掷）
         self._senate_pending["votes"][player_id][proposal_id] = vote
+        if player_id not in self._senate_pending["vote_source"]:
+            self._senate_pending["vote_source"][player_id] = {}
+        self._senate_pending["vote_source"][player_id][proposal_id] = source
         return True
+
+    def get_senate_vote_source(self, player_id: str, proposal_id: int) -> Optional[str]:
+        """AU-R1-02b：读取投票决策 provenance（"human"|"ai"|None），只读 getter。"""
+        return self._senate_pending["vote_source"].get(player_id, {}).get(proposal_id)
 
     def record_senate_veto(self, proposal_id: int) -> bool:
         """记录否决"""
@@ -252,6 +267,7 @@ class GameState:
         self._senate_pending = {
             "proposals": [],
             "votes": {},
+            "vote_source": {},
             "vetoes": set(),
             "proposal_id_counter": 1,
             "decision_complete": False,
@@ -735,6 +751,7 @@ class GameState:
             "_senate_pending": {
                 "proposals": self._senate_pending["proposals"].copy(),
                 "votes": {k: v.copy() for k, v in self._senate_pending["votes"].items()},
+                "vote_source": {k: v.copy() for k, v in self._senate_pending["vote_source"].items()},
                 "vetoes": list(self._senate_pending["vetoes"]),
                 "proposal_id_counter": self._senate_pending["proposal_id_counter"],
                 "decision_complete": self._senate_pending["decision_complete"],
@@ -888,6 +905,8 @@ class GameState:
         self._senate_pending = {
             "proposals": senate_data.get("proposals", []).copy(),
             "votes": {k: v.copy() for k, v in senate_data.get("votes", {}).items()},
+            # AU-R1-02b：旧存档缺 vote_source 键 → 空 dict（向后兼容，C3 无跨会话泄漏）
+            "vote_source": {k: v.copy() for k, v in senate_data.get("vote_source", {}).items()},
             "vetoes": set(senate_data.get("vetoes", [])),
             "proposal_id_counter": senate_data.get("proposal_id_counter", 1),
             "decision_complete": senate_data.get("decision_complete", False),
@@ -983,6 +1002,7 @@ class GameState:
         instance._senate_pending = {
             "proposals": [],
             "votes": {},
+            "vote_source": {},
             "vetoes": set(),
             "proposal_id_counter": 1,
             "decision_complete": False,

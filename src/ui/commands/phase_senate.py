@@ -15,8 +15,6 @@ from src.core.deciders.impl.auto_budget_decider import AutoBudgetDecider
 from src.core.deciders.senate_vote_decider import SenateVoteDecider
 from src.core.deciders.impl.auto_senate_vote_decider import AutoSenateVoteDecider
 from src.core.entities.war import War, WarStatus
-from src.core.deciders.impl.auto_war_takeover_decider import AutoWarTakeoverDecider
-from src.core.deciders.war_takeover_decider import WarTakeoverDecider
 from src.core.deciders.impl.auto_land_proposal_decider import AutoLandProposalDecider
 from src.core.deciders.land_proposal_decider import LandProposalDecider
 from src.core.deciders.tribune_veto_decider import TribuneVetoDecider
@@ -38,13 +36,14 @@ class SenateCommand(Command):
 
     def __init__(self, state: "GameState",
                  vote_decider: Optional[SenateVoteDecider] = None,
-                 takeover_decider: Optional[WarTakeoverDecider] = None,
                  land_proposal_deciders: Optional[List[LandProposalDecider]] = None,
                  veto_decider: Optional[TribuneVetoDecider] = None):
         super().__init__(state)
         self.vote_decider = vote_decider if vote_decider is not None else AutoSenateVoteDecider()
         self.budget_decider = AutoBudgetDecider()
-        self.takeover_decider = takeover_decider if takeover_decider is not None else AutoWarTakeoverDecider()
+        # AU-R1-05a（C1，D-1 采纳）：takeover_decider 参数/属性已移除——resolve_senate 零
+        # takeover；CLI auto 模式经 _auto_generate_proposals（:1025 auto_submit_proposals 尾部）
+        # 继承 AI 接管触发（Direct Action 语义，D-4 语义不回归）。
         self.land_proposal_deciders = land_proposal_deciders if land_proposal_deciders is not None else [
             AutoLandProposalDecider("populares", "distribution"),
             AutoLandProposalDecider("optimates", "sale")
@@ -640,7 +639,6 @@ class SenateCommand(Command):
         result = senate_api.resolve_senate(
             self.state,
             vote_decider=self.vote_decider,
-            takeover_decider=self.takeover_decider,
         )
         if result["success"]:
             passed_snapshot = result["data"].get("passed_proposals_snapshot", [])

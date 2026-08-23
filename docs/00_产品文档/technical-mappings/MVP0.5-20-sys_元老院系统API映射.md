@@ -1,7 +1,7 @@
 # MVP0.5-20-sys — 元老院系统 API 映射
 
 > **技术映射 — Senate API**  
-> **版本：** v1.3  
+> **版本：** v1.4  
 > **日期：** 2026-08-23（v1.0 初版 2026-07-26）  
 
 ---
@@ -35,6 +35,15 @@ src/phase/phase_senate.py       # CLI 阶段命令（已委托至 API）
 - **逻辑：** 验证派系 → 跳过已投票提案 → 使用 vote_decider 决策
 - **返回：** `{voted: [], skipped: [], errors: [], summary: str}`
 - **边界：** 玩家已投票 → 跳过；无效派系 → 报错
+- **R1（WP-D-R1，v1.4）vote 决策持久化契约：** 同一会期内 `proposal_id × faction_id` 的 AI 决策
+  **created once → persisted → reused**——首次消费（Veto 资格判定或最终结算，先到者）经
+  `calculate_vote_result`（political_system.py:371 起）`record_senate_vote(source="ai")` 写回
+  `game_state._senate_pending["vote_source"]` 注册表；后续消费方（`_passed_proposals_for_veto` /
+  `resolve_senate`，含每次新建 decider 的调用）读同一存储，**AI 不重掷**（决策计数 == 活跃 AI
+  派系数，Veto+resolve 后不增）。human 票权威优先（`record_senate_vote` 默认 source="human"，
+  重复投票返回 False 幂等契约不变——C3）。provenance：结构化 `log_event`
+  `type="senate_vote_decision"` + `{proposal_id, faction_id, vote, vote_source=human|ai,
+  decision_state=created|reused}`（AU-R1-02c/06a）。
 
 ## 3. 调用链
 ```
@@ -73,6 +82,8 @@ phase_senate.py (CLI) → senate_api.py (API) → 对应 Core/Entity
 - **执政官查找：** `political_system.py:778-795` `_find_consul_for_faction` —— 主循环消费谓词；fallback 四条件（faction 归属 + office==consul + 未 absent + 未死亡），任一不满足 → `return None` **fail-closed**（非执政官派系不再误判通过，P1 根因消除）。
 - **API 委托：** `senate_api.py:304-312` `_viewer_eligible_consul` 委托 `_is_eligible_consul`（无独立判定逻辑）。
 - **GUI 门禁：** `SenateStage.qml:693` 提案 CheckBox `enabled: sessionStore.canCreateSenateProposal`；提交按钮 `SenateStage.qml:885` `enabled: (canCreateSenateProposal || canTriggerAIProposer) && !hasZeroValueLandSelection()`（非执政官可经主按钮触发 AI proposer——frozen §11 Scenario B，偏离 D-7）。
+- **R1（v1.4）参数控件 authority 门控（AU-R1-03a，AC-R1-03 BLOCKER）：** 非执政官 viewer 除勾选外，**参数编辑控件一律按 `sessionStore.canCreateSenateProposal` 门控**——disclosure 三角 MouseArea（SenateStage.qml:724-731）`enabled: canCreateSenateProposal`（面板不可展开）；军团 ComboBox（:764-766）`enabled: canCreateSenateProposal && legion_options 存在`；预算 Slider（:795-797）`enabled: canCreateSenateProposal && budget_range 存在`；land Slider（:829）`enabled: canCreateSenateProposal`。API 保持 fail-closed 不动（仅回归，test_senate_authority.py）。
+- **R1（v1.4）collapse 契约（AU-R1-04a，AC-R1-04）：** `setProposalSelected`（:268-274）内联驱动 `expandedBillKeys`——checked → 自动展开 / unchecked → 折叠（checkbox 为控制交互，无陈旧参数面板残留，G7 #8 反例闭合）；三角 `toggleBillExpanded`（:310-315）保留为手动覆盖（两状态恒一致）。
 - **AI 路由：** `session_store.py:1255-1267` `doSubmitSenateProposals` —— viewer_has_consul → `propose_many`（0…N）；非执政官 → `adapter.call(senate_api.auto_submit_proposals, state)`（AI 为决策者；复用 adapter 统一反馈映射，不新增 api_adapter 方法，偏离 D-8）。
 - **API 负向：** 未授权手动提案 mutation fail-closed（`propose` 经 `_populate_proposal` 权威谓词；测试 test_senate_authority.py）。
 
@@ -116,6 +127,11 @@ SessionStore 透传（session_store.py:355-363 / :400-402）：`canSelectSenateP
 - label 为权威摘要载体（senate_api.py:60-85）：land「卖地法案 — 出售 N C（约 M%）」；war/budget 同源含参。
 - Vote/Veto 阶段复用 submitted_proposals + label（QML `voteParamDescription` land/war/budget 分支置空 = label 为准，SenateStage.qml:360-365）。
 - Announcement key_parameters 值来自 authoritative proposal/result DTO（禁 QML 重推导，023 连续性满足）。
+- **R1（v1.4）vote 决策持久化契约（AU-R1-02a/b/c，AC-R1-02 BLOCKER）：**
+  - 根因（R1-02）：`calculate_vote_result`（political_system.py:371）`:372` 每次调用新建 decider、`:404` AI 票内联计算**未写回** → Veto（`_passed_proposals_for_veto`）与 resolve 两消费方重掷翻票。
+  - 修复：`:404` else 分支 `decide_vote` 后立即 `record_senate_vote(player_id, proposal_id, support, source="ai")` 持久化；后续消费（含新建 decider 的调用）读同一存储 → 同一 support/oppose。human 票路径不变（source="human"）。
+  - 幂等（C3）：`record_senate_vote` 重复返回 False 契约保持；AI 写回不覆盖 human 票；`vote_source` 注册表随 `clear_senate_votes` / `clear_senate_pending` 镜像清除（无跨会话泄漏）；to_dict/load_from_dict 存档往返（旧存档缺键 → 空 dict 向后兼容）。
+  - provenance（AU-R1-02c/06a）：结构化 `log_event` `type="senate_vote_decision"` + `{proposal_id, faction_id, vote, vote_source, decision_state}`（created=首次 AI 决策即持久化；reused=复用既有存储）。
 
 ### 5.7 Takeover Direct Action（独立于 vote/veto 链）
 
@@ -125,10 +141,16 @@ SessionStore 透传（session_store.py:355-363 / :400-402）：`canSelectSenateP
 - **快照：** `political_system.py:296-308` resolve_senate 结算循环后、clear_senate_pending 前快照 → senate_api 组装公示（AU-5）。
 - **view 透传：** `senate_api.py:571` `data.direct_actions` 实时 pending；结算后被清空，持久副本在 public_announcement。
 - **链外性（D-02/D-07）：** 不创建 proposal、不进入 calculate_vote_result / record_veto / execute_passed_proposal；公示按「已生效事项」展示（⚡ 直接生效）。
+- **R1（v1.4）Direct Action 独占性（AU-R1-05a/b/c，AC-R1-05 BLOCKER，G3 C1/C4）：**
+  - **resolve_senate 零 takeover**：`resolve_senate`（core :251 / api :1080）的 `takeover_decider` 参数与隐藏 `process_war_takeover` 调用（原 :314）已移除——普通结算不再产生任何接管 mutation；重复 resolve 亦不能静默接管。
+  - **AI 自动接管同语义路径**：`PoliticalSystem.process_war_takeover` 重构为 `execute_ai_takeover_direct_action`（Direct Action 语义）——判定 eligible 活跃外战（ACTIVE + 非起义 + 指挥官缺失/已死/absent proconsul-propraetor）→ 候选 Consul（consul 优先）→ `decider.decide_takeover`（AI 自动化决策保留）→ mutation 统一走 `execute_war_takeover_direct`（与 human 同路径，FC-05 原子性）。
+  - **唯一触发点（C1，偏离 D-1 采纳）**：`auto_submit_proposals` 尾部（senate_api.py，GUI session_store:1265 / CLI phase_senate:1025 双入口共享同一活跃函数）——**严禁放回 resolve_senate**；auto_player_processor.py 为死代码（全仓零调用方）不选为触发点。CLI auto 模式经同入口继承 AI 接管（D-4 语义不回归）。
+  - **provenance（C4）**：`record_senate_direct_action` payload 扩展为 10 字段——既有 6 字段（action_type/war_id/war_name/commander_id/commander_name/legions）+ `action:"takeover"`、`trigger_source:"human_explicit"|"ai_auto"`、`previous_status`、`resulting_status`（= war.status 执行前后值，takeover 不改 status → 均为 "active"，D-3 最小解释）；`get_senate_view` / `get_senate_direct_actions` 按 dict 透传不变 → 既有消费者零破坏。
 
 ## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.4 | 2026-08-23 | GUI-BETA-R1 WP-D-R1（G7 Focused Correction）: ①§5.7 Direct Action 独占性——resolve_senate 零 takeover（隐藏 process_war_takeover 移除）+ AI 自动接管同语义路径（execute_ai_takeover_direct_action，唯一触发点 auto_submit_proposals 尾部，D-1）+ provenance 10 字段（action/trigger_source/previous_status/resulting_status，C4）；②§5.6/§2.3 vote 决策持久化契约（created once → persisted → reused，AI 不重掷，human 权威，C3 幂等）+ vote_source/decision_state provenance；③§5.1 参数控件 authority 门控（ComboBox/Slider/三角，AU-R1-03a）+ collapse 契约（checkbox 驱动，AU-R1-04a）+ R1-06 null-safe 说明 |
 | v1.3 | 2026-08-23 | GUI-BETA-R1 WP-D: 新增 §5 Senate Proposal Flow 契约（Consul 四层守卫 + DTO capability 四字段 + Zero-proposal 生命周期 + AI 0…N/空批 + Public Announcement DTO + 参数连续性 + Takeover Direct Action）——Trial Audit P1-PC-02/P1-PC-03 文档闭合 |
 | v1.2 | 2026-08-22 | GUI-BETA-R1 WP-C-R1: 提案链值域改接（_budget_range_for_contract/_legion_options_for_war helper + FC-01/FC-03 数据源 + auto_submit P1-a 同值域 + _populate_proposal 权威谓词 + process_war_takeover 执行期征召） |
 | v1.1 | 2026-07-26 | 新增 auto_vote() 方法（Wave-04 Finale, C-10e） |

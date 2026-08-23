@@ -251,7 +251,6 @@ class PoliticalSystem:
     def resolve_senate(
         self,
         vote_decider: Optional[SenateVoteDecider] = None,
-        takeover_decider: Optional[AutoWarTakeoverDecider] = None,
     ) -> dict:
         if not self.state:
             return self._result(False, "无效的游戏状态")
@@ -311,7 +310,9 @@ class PoliticalSystem:
         # 供 senate_api.resolve_senate 组装 public_announcement（公示持久化）。
         direct_actions = self.state.get_senate_direct_actions()
 
-        self.process_war_takeover(takeover_decider)
+        # AU-R1-05a（C1，D-1 采纳）：resolve_senate 零 takeover mutation——隐藏的
+        # process_war_takeover 调用已移除；AI 自动接管唯一触发点 = senate_api
+        # auto_submit_proposals 尾部（Direct Action 语义，见 execute_ai_takeover_direct_action）。
         self.state.clear_senate_pending()
 
         self.state.log_event(
@@ -400,8 +401,37 @@ class PoliticalSystem:
             player_votes = votes.get(player_id, {})
             if proposal_id in player_votes:
                 support = player_votes[proposal_id]
+                # AU-R1-02b/c：reused 路径 provenance——从注册表读 vote_source（human 票默认 "human"；
+                # AI 票经 AU-R1-02a 写回后为 "ai"）；旧存档缺注册表键 → 回退 "human"
+                vote_source = self.state.get_senate_vote_source(player_id, proposal_id) or "human"
+                decision_state = "reused"
             else:
                 support = vote_decider.decide_vote(self.build_issue_from_proposal(proposal), faction, self.state)
+                # AU-R1-02a（C3 幂等契约，frozen）：AI 票首次决策即持久化（created once →
+                # persisted → Veto/resolve 复用同一存储）；record_senate_vote 重复返回 False
+                # （理论不可达，因 :396 已判不存在）→ 不失败，按 reused 语义记日志继续。
+                recorded = self.state.record_senate_vote(player_id, proposal_id, support, source="ai")
+                vote_source = "ai"
+                decision_state = "created" if recorded else "reused"
+                if not recorded:
+                    self.state.log_event(
+                        f"[R1-C3] 幂等 guard: AI 票 {player_id}/{proposal_id} 已存在，按 reused 语义处理（不重掷）",
+                        level=logging.INFO,
+                        extra={"type": "senate_vote_idempotent", "player_id": player_id, "proposal_id": proposal_id},
+                    )
+            # AU-R1-02c/06a：决策级结构化日志（proposal_id/faction_id/vote/vote_source/decision_state 可溯源）
+            self.state.log_event(
+                f"元老院表决决策: proposal={proposal_id} faction={faction.id} vote={support}",
+                level=logging.INFO,
+                extra={
+                    "type": "senate_vote_decision",
+                    "proposal_id": proposal_id,
+                    "faction_id": faction.id,
+                    "vote": support,
+                    "vote_source": vote_source,
+                    "decision_state": decision_state,
+                },
+            )
 
             if support:
                 support_influence += influence
@@ -592,118 +622,110 @@ class PoliticalSystem:
                 )
         return restored
 
-    def process_war_takeover(self, decider: Optional[AutoWarTakeoverDecider] = None):
+    def execute_ai_takeover_direct_action(self, decider: Optional[AutoWarTakeoverDecider] = None) -> list:
+        """AU-R1-05b：AI 自动接管走 Direct Action 语义（与 human takeover_war 同 mutation 路径）。
+
+        - 判定需要接管的活跃外战（ACTIVE + 非起义 + 指挥官缺失 / 已死 / absent proconsul-propraetor）；
+        - 候选 Consul 选择（living + office consul/praetor + 未 absent/未死 + consul 优先）；
+        - 决策走 decider.decide_takeover（AI 自动化决策保留）；
+        - mutation 统一走 execute_war_takeover_direct（FC-05 原子性：招募成功才回写 commander）；
+        - 每条成功接管 record_senate_direct_action 写 provenance（trigger_source="ai_auto"，AU-R1-05c）；
+        - 返回成功接管记录列表（供测试/日志断言）。
+
+        **C1（G3，D-1 采纳）：严禁在 resolve_senate 内调用——唯一 AI 接管调用点 =
+        senate_api.auto_submit_proposals 尾部（GUI session_store:1265 / CLI phase_senate:1025
+        双入口共享同一活跃函数）。**
+        """
         ws = self.state.get_war_system()
         if not ws:
-            return
+            return []
 
         active_wars = ws.get_active_wars()
         if not active_wars:
-            return
+            return []
 
         decider = decider or AutoWarTakeoverDecider()
-
-        available_commanders = []
-        for fig in self.state.get_living_members():
-            if not fig.is_absent and not fig.is_dead and fig.office in ("consul", "praetor"):
-                available_commanders.append(fig)
-
-        self.state.log_event(
-            f"[DEBUG] process_war_takeover: available_commanders = {[f.id for f in available_commanders]}",
-            level=logging.DEBUG,
-            extra={"function": "process_war_takeover", "available_ids": [f.id for f in available_commanders]},
-        )
-
-        if not available_commanders:
-            for war in active_wars:
-                if war.commander_id:
-                    old_cmd = self.state.get_member(war.commander_id)
-                    if old_cmd:
-                        print(f"      ℹ️ 罗马无可用执政官或大法官，{war.name} 由 {old_cmd.name}（{old_cmd.office}）继续指挥。")
-                    else:
-                        print(f"      ℹ️ 罗马无可用执政官或大法官，{war.name} 继续由原有指挥官指挥。")
-            return
-
-        available_commanders.sort(key=lambda fig: 0 if fig.office == "consul" else 1)
-        candidate = available_commanders[0]
+        takeover_records = []
 
         for war in active_wars:
             if war.status != WarStatus.ACTIVE:
                 continue
+            if war.rebellion_province_id is not None:
+                continue  # 起义战争由总督接管（与 human takeover_war 语义一致）
 
-            self.state.log_event(
-                f"[DEBUG] process_war_takeover 前: war={war.id}, commander={war.commander_id}",
-                level=logging.DEBUG,
-                extra={"function": "process_war_takeover", "war_id": war.id, "commander_before": war.commander_id},
-            )
-
-            if war.commander_id is None:
-                if decider.decide_takeover(war, candidate, None, self.state):
-                    war.commander_id = candidate.id
-                    self._set_absent(candidate)
-                    self._auto_recruit_and_assign_legions_for_war(war, candidate.id)
-                    self.state.log_event(
-                        f"{candidate.name} 接管战争 {war.name}",
-                        level=logging.INFO,
-                        extra={"war_id": war.id, "new_commander": candidate.id},
-                    )
-                    print(f"      ✅ {candidate.get_formal_name()} 接管 {war.name}")
-                else:
-                    self.state.log_event(
-                        f"[DEBUG] 决策器拒绝接管战争 {war.id}（无指挥官）",
-                        level=logging.DEBUG,
-                        extra={"war_id": war.id, "candidate": candidate.id},
-                    )
+            old_cmd = self.state.get_member(war.commander_id) if war.commander_id else None
+            needs_takeover = war.commander_id is None
+            if old_cmd and not needs_takeover:
+                if old_cmd.is_dead:
+                    needs_takeover = True
+                elif old_cmd.is_absent and old_cmd.office in ("proconsul", "propraetor"):
+                    needs_takeover = True
+            if not needs_takeover:
+                self.state.log_event(
+                    f"[R1] AI 接管跳过: war={war.id}（已有有效指挥官 {war.commander_id}）",
+                    level=logging.DEBUG,
+                    extra={"function": "execute_ai_takeover_direct_action", "war_id": war.id,
+                           "commander_id": war.commander_id, "trigger_source": "ai_auto"},
+                )
                 continue
 
-            old_cmd = self.state.get_member(war.commander_id)
-            if old_cmd and old_cmd.is_absent:
-                if old_cmd.office in ("proconsul", "propraetor"):
-                    self.state.log_event(
-                        f"[DEBUG] process_war_takeover 接管分支: war={war.id}, old_commander={old_cmd.id}, office={old_cmd.office}, is_absent={old_cmd.is_absent}, candidate={candidate.id}",
-                        level=logging.DEBUG,
-                        extra={
-                            "function": "process_war_takeover",
-                            "war_id": war.id,
-                            "old_commander": old_cmd.id,
-                            "candidate": candidate.id,
-                        },
-                    )
-                    if decider.decide_takeover(war, candidate, old_cmd, self.state):
-                        old_cmd.is_absent = False
-                        if old_cmd.office == "proconsul":
-                            old_cmd.office = "ex-consul"
-                        elif old_cmd.office == "propraetor":
-                            old_cmd.office = "ex-praetor"
-                        old_cmd.update_influence()
-                        war.commander_id = candidate.id
-                        self._set_absent(candidate)
-                        self._auto_recruit_and_assign_legions_for_war(war, candidate.id)
-                        print(f"      ✅ {candidate.get_formal_name()} 接管 {war.name}，原指挥官 {old_cmd.get_formal_name()} 返回罗马")
-                        self.state.log_event(
-                            f"{candidate.name} 接管战争 {war.name}，原指挥官 {old_cmd.name} 返回罗马",
-                            level=logging.INFO,
-                            extra={"war_id": war.id, "new_commander": candidate.id, "old_commander": old_cmd.id},
-                        )
-                    else:
-                        print(f"      ✅ {candidate.get_formal_name()} 拒绝接管 {war.name}，原指挥官 {old_cmd.get_formal_name()} 继续指挥战争")
-                        self.state.log_event(
-                            f"[DEBUG] 决策器拒绝接管战争 {war.id}（已有指挥官 {old_cmd.id}）",
-                            level=logging.DEBUG,
-                            extra={"war_id": war.id, "old_commander": old_cmd.id, "candidate": candidate.id},
-                        )
-                else:
-                    self.state.log_event(
-                        f"[DEBUG] 战争 {war.id} 已有指挥官 {old_cmd.id}（{old_cmd.office}），且仍在任，不接管",
-                        level=logging.DEBUG,
-                        extra={"war_id": war.id, "old_commander": old_cmd.id, "office": old_cmd.office},
-                    )
-            else:
+            # 候选 Consul：living + office consul/praetor + 未 absent/未死 + consul 优先
+            candidates = [
+                fig for fig in self.state.get_living_members()
+                if not fig.is_absent and not fig.is_dead and fig.office in ("consul", "praetor")
+            ]
+            if not candidates:
+                continue
+            candidates.sort(key=lambda fig: 0 if fig.office == "consul" else 1)
+            candidate = candidates[0]
+
+            if not decider.decide_takeover(war, candidate, old_cmd, self.state):
                 self.state.log_event(
-                    f"[DEBUG] 战争 {war.id} 已有指挥官 {old_cmd.id if old_cmd else None}，但不符合接管条件",
+                    f"[R1] AI 决策器拒绝接管战争 {war.id}（candidate={candidate.id}）",
                     level=logging.DEBUG,
-                    extra={"war_id": war.id, "commander_id": old_cmd.id if old_cmd else None},
+                    extra={"function": "execute_ai_takeover_direct_action", "war_id": war.id,
+                           "candidate": candidate.id, "trigger_source": "ai_auto"},
                 )
+                continue
+
+            previous_status = war.status.value if hasattr(war.status, "value") else str(war.status)
+            if not self.execute_war_takeover_direct(war, candidate):
+                self.state.log_event(
+                    f"[R1] AI 接管失败（军团招募失败）: war={war.id}",
+                    level=logging.DEBUG,
+                    extra={"function": "execute_ai_takeover_direct_action", "war_id": war.id,
+                           "candidate": candidate.id, "trigger_source": "ai_auto"},
+                )
+                continue
+            resulting_status = war.status.value if hasattr(war.status, "value") else str(war.status)
+
+            record = {
+                "action_type": "takeover",
+                "action": "takeover",
+                "war_id": war.id,
+                "war_name": war.name,
+                "commander_id": candidate.id,
+                "commander_name": candidate.get_formal_name(),
+                "legions": list(getattr(war, "legion_numbers", []) or []),
+                "trigger_source": "ai_auto",
+                "previous_status": previous_status,
+                "resulting_status": resulting_status,
+            }
+            self.state.record_senate_direct_action(record)
+            self.state.log_event(
+                f"AI 自动接管战争 {war.name}: {candidate.get_formal_name()}",
+                level=logging.INFO,
+                extra={
+                    "type": "senate_takeover_direct_action",
+                    "war_id": war.id,
+                    "new_commander": candidate.id,
+                    "trigger_source": "ai_auto",
+                },
+            )
+            takeover_records.append(record)
+
+        return takeover_records
+
 
     def get_eligible_governor_candidates(self, governor_type: str) -> List[Figure]:
         if not self.state:
@@ -946,7 +968,7 @@ class PoliticalSystem:
 
         复用 _auto_recruit_and_assign_legions_for_war 招募军团；军团就位后才回写
         commander/office/is_absent。招募失败 → False，commander 不回写。
-        不触碰 AI 路径 process_war_takeover(decider) 与 resolve_senate。
+        human takeover_war（senate_api）与 AI execute_ai_takeover_direct_action 共用此路径。
         """
         if not war or not consul_figure:
             return False

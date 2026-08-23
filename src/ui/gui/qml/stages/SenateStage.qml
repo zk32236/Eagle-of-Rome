@@ -271,6 +271,13 @@ Rectangle {
         if (checked && pos < 0) next.push(key)
         if (!checked && pos >= 0) next.splice(pos, 1)
         selectedProposalKeys = next
+        // AU-R1-04a（R1-04 冻结契约）：checkbox 为控制交互——checked 自动展开 /
+        // unchecked 折叠（无陈旧参数面板残留）；三角 toggleBillExpanded 保留为手动覆盖。
+        var expanded = expandedBillKeys.slice()
+        var epos = expanded.indexOf(key)
+        if (checked && epos < 0) expanded.push(key)
+        if (!checked && epos >= 0) expanded.splice(epos, 1)
+        expandedBillKeys = expanded
     }
 
     function selectedProposals() {
@@ -726,6 +733,8 @@ Rectangle {
                                                 width: 18
                                                 height: 20
                                                 cursorShape: Qt.PointingHandCursor
+                                                // AU-R1-03a：非执政官 viewer 三角禁用（参数面板不可展开）
+                                                enabled: sessionStore.canCreateSenateProposal
                                                 onClicked: root.toggleBillExpanded(billKey)
                                             }
                                         }
@@ -763,7 +772,8 @@ Rectangle {
                                                 ComboBox {
                                                     id: legionCombo
                                                     Layout.fillWidth: true
-                                                    enabled: (modelData.legion_options && modelData.legion_options.allowed && modelData.legion_options.allowed.length > 0) ? true : false
+                                                    // AU-R1-03a：非执政官 viewer 不可编辑（authority 门控）
+                                                    enabled: sessionStore.canCreateSenateProposal && ((modelData.legion_options && modelData.legion_options.allowed && modelData.legion_options.allowed.length > 0) ? true : false)
                                                     model: (modelData.legion_options && modelData.legion_options.allowed) ? modelData.legion_options.allowed : []
                                                     currentIndex: root.legionIndexFor(root.billParamValue(billKey, "legions", (modelData.params && modelData.params.legions) || 0), (modelData.legion_options && modelData.legion_options.allowed) || [])
                                                     onActivated: root.setBillParam(billKey, "legions", model[currentIndex])
@@ -794,7 +804,8 @@ Rectangle {
                                                 Slider {
                                                     id: budgetSlider
                                                     Layout.fillWidth: true
-                                                    enabled: modelData.budget_range ? true : false
+                                                    // AU-R1-03a：非执政官 viewer 不可编辑（authority 门控）
+                                                    enabled: sessionStore.canCreateSenateProposal && (modelData.budget_range ? true : false)
                                                     from: (modelData.budget_range) ? modelData.budget_range.min : 0
                                                     to: (modelData.budget_range) ? modelData.budget_range.max : 0
                                                     stepSize: (modelData.budget_range) ? modelData.budget_range.step : 1
@@ -828,6 +839,9 @@ Rectangle {
                                                 Slider {
                                                     id: landSlider
                                                     Layout.fillWidth: true
+                                                    // AU-R1-03a：非执政官 viewer 不可编辑（authority 门控）；
+                                                    // AU-R1-06c：public_land 缺失 → 回退 1（null-safe）
+                                                    enabled: sessionStore.canCreateSenateProposal
                                                     from: 1
                                                     to: modelData.public_land || 1
                                                     stepSize: 1

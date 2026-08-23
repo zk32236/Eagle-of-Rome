@@ -472,10 +472,12 @@ def test_tribune_absent_guard_module_level(state):
     assert _tribune_absent_guard(state.get_member(2)) is True   # 无 office → 允许
 
 
-def test_process_war_takeover_excludes_live_tribune(state):
+def test_execute_ai_takeover_direct_action_excludes_live_tribune(state):
     """防线 1（ODR-WP-D-01）：出征指挥官选择天然排除在职 tribune（office in consul/praetor 筛选）。
 
     正向：consul 被选为指挥官并置位 absent；负向：tribune 在 living 池中但永不入选、不被置位 absent。
+    AU-R1-05b（G3 C1，D-1 采纳）：process_war_takeover 重构为 execute_ai_takeover_direct_action
+    （Direct Action 语义）；Scheme B 防线 1 断言完整保留（迁移至新方法名）。
     """
     from src.core.deciders.impl.auto_war_takeover_decider import AutoWarTakeoverDecider
 
@@ -487,7 +489,7 @@ def test_process_war_takeover_excludes_live_tribune(state):
     decider.decide_takeover.return_value = True
 
     politics = PoliticalSystem(state)
-    politics.process_war_takeover(decider=decider)
+    records = politics.execute_ai_takeover_direct_action(decider=decider)
 
     assert war.commander_id == 1  # consul 入选（tribune 被 office 筛选排除）
     assert state.get_member(1).is_absent is True
@@ -495,6 +497,12 @@ def test_process_war_takeover_excludes_live_tribune(state):
     assert state.get_member(3) not in [
         m for m in state.get_living_members() if m.office in ("consul", "praetor")
     ]
+    # AU-R1-05b：返回成功接管记录列表 + provenance（trigger_source=ai_auto）
+    assert len(records) == 1
+    assert records[0]["war_id"] == war.id
+    assert records[0]["trigger_source"] == "ai_auto"
+    assert records[0]["action"] == "takeover"
+    assert records[0]["commander_id"] == 1
 
 
 def test_governor_candidates_exclude_tribune(state):

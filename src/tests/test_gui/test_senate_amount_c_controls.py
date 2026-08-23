@@ -312,6 +312,27 @@ def test_has_zero_value_land_selection_amount_c():
     assert _call_bool(engine2, root2, "hasZeroValueLandSelection") is False
 
 
+def test_land_deselect_collapses_panel():
+    """AU-R1-04a（R1-04 冻结契约）：checkbox 驱动展开/折叠——取消勾选 → land 参数面板折叠（G7 #8 反例）。"""
+    store = _MockSenateStore([_land_option(amount_C=300, public_land=1000)])
+    engine, root = _load_senate_stage(store)
+    app = _get_app()
+    _select_and_expand_land(root, app)
+    assert len(_visible_sliders(root)) == 1
+
+    # 取消勾选 → 折叠（无陈旧参数面板残留）
+    QMetaObject.invokeMethod(root, "setProposalSelected", Qt.DirectConnection,
+                             Q_ARG("QVariant", "land:sale"), Q_ARG("QVariant", False))
+    app.processEvents()
+    assert len(_visible_sliders(root)) == 0, "取消勾选后参数面板必须折叠"
+
+    # 重新勾选 → 自动展开（checkbox 为控制交互，无需二次三角交互）
+    QMetaObject.invokeMethod(root, "setProposalSelected", Qt.DirectConnection,
+                             Q_ARG("QVariant", "land:sale"), Q_ARG("QVariant", True))
+    app.processEvents()
+    assert len(_visible_sliders(root)) == 1, "勾选后参数面板必须自动展开"
+
+
 def test_land_amount_c_round_trip_real_chain():
     """parity-proof（真实链配对）：QML 捕获 payload（amount_C=500）→ GuiApiAdapter → 真实链存储 500。"""
     from src.ui.gui.api_adapter import GuiApiAdapter

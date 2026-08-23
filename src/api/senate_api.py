@@ -11,7 +11,6 @@ from typing import Any, Dict, List, Optional
 from src.api import api_response
 from src.core.deciders.impl.auto_budget_decider import AutoBudgetDecider
 from src.core.deciders.impl.auto_land_proposal_decider import AutoLandProposalDecider
-from src.core.deciders.impl.auto_war_takeover_decider import AutoWarTakeoverDecider
 from src.core.deciders.land_proposal_decider import LandProposalDecider
 from src.core.deciders.senate_vote_decider import SenateVoteDecider
 from src.core.deciders.impl.auto_tribune_veto_decider import AutoTribuneVetoDecider
@@ -684,6 +683,7 @@ def takeover_war(state: GameState, player_id: str, war_id: str) -> dict:
 
     # 4. 直接执行（复用 PoliticalSystem 指挥官分配 + 军团招募）
     politics = _political_system(state)
+    previous_status = war.status.value if hasattr(war.status, "value") else str(war.status)
     if not politics.execute_war_takeover_direct(war, consul_figure):
         state.log_event(
             "战争接管: 拒绝（军团招募失败）",
@@ -691,19 +691,28 @@ def takeover_war(state: GameState, player_id: str, war_id: str) -> dict:
             extra={"war_id": war_id, "player_id": player_id, "reason": "legion_recruit_failed"},
         )
         return api_response(False, "接管失败：军团招募失败")
+    resulting_status = war.status.value if hasattr(war.status, "value") else str(war.status)
 
     state.log_event(
         "战争接管: 成功",
         level=logging.DEBUG,
         extra={"war_id": war_id, "player_id": player_id, "commander_id": consul_figure.id, "legions": list(getattr(war, "legion_numbers", []) or [])},
     )
+    # AU-R1-05c（G3 C4）：provenance 字段扩展——与既有 6 字段并存（action/trigger_source/
+    # previous_status/resulting_status）；get_senate_view/get_senate_direct_actions 按 dict
+    # 透传不变 → 既有消费者零破坏（trigger_source: human_explicit | ai_auto 可区分显式 Direct
+    # Action vs 隐藏 resolve 副作用；takeover 不改 status，前后值均为 ACTIVE——D-3 最小解释）。
     state.record_senate_direct_action({
         "action_type": "takeover",
+        "action": "takeover",
         "war_id": war_id,
         "war_name": war.name,
         "commander_id": consul_figure.id,
         "commander_name": consul_figure.get_formal_name(),
         "legions": list(getattr(war, "legion_numbers", []) or []),
+        "trigger_source": "human_explicit",
+        "previous_status": previous_status,
+        "resulting_status": resulting_status,
     })
     return api_response(
         True,
@@ -1016,6 +1025,25 @@ def auto_submit_proposals(
                 else:
                     errors.append(f"土地法案失败({act_type}): {result['message']}")
 
+    # ========== 4f. AI 自动接管（C1 触发点，G3/D-1 采纳） ==========
+    # AU-R1-05b：AI 接管走 Direct Action 语义（execute_ai_takeover_direct_action，与 human
+    # takeover_war 同 mutation 路径 + provenance trigger_source="ai_auto"）。唯一 AI 接管调用点
+    # ——不得放回 resolve_senate（resolve 零 takeover）；GUI（session_store:1265）与 CLI
+    # （phase_senate:1025）双入口共享本函数，AI 接管经同入口继承（D-4，CLI 语义不回归）。
+    politics = _political_system(state)
+    ai_takeovers = politics.execute_ai_takeover_direct_action()
+    if ai_takeovers:
+        state.log_event(
+            f"AI 自动接管 {len(ai_takeovers)} 个战争（Direct Action 语义）",
+            level=logging.INFO,
+            extra={
+                "type": "senate_ai_takeover_batch",
+                "count": len(ai_takeovers),
+                "war_ids": [r["war_id"] for r in ai_takeovers],
+                "trigger_source": "ai_auto",
+            },
+        )
+
     # ========== 返回结果 ==========
     message = f"已自动提交 {len(created_proposals)} 项提案"
     success = bool(created_proposals) or not errors
@@ -1080,12 +1108,16 @@ def veto(state: GameState, player_id: str, proposal_ids: List[int]) -> dict:
 def resolve_senate(
     state: GameState,
     vote_decider: Optional[SenateVoteDecider] = None,
-    takeover_decider: Optional[AutoWarTakeoverDecider] = None,
 ) -> dict:
-    """执行元老院阶段最终结算。"""
+    """执行元老院阶段最终结算。
+
+    AU-R1-05a（C1，D-1 采纳）：takeover_decider 参数已移除——resolve_senate 零 takeover
+    mutation（不再隐藏 process_war_takeover）；AI 自动接管唯一触发点 = auto_submit_proposals
+    尾部（execute_ai_takeover_direct_action，Direct Action 语义）。
+    """
     if not state:
         return api_response(False, "无效的游戏状态")
-    result = _political_system(state).resolve_senate(vote_decider, takeover_decider)
+    result = _political_system(state).resolve_senate(vote_decider)
 
     # Add DBUG logging for land proposal resolution results
     passed_snapshot = result.get("data", {}).get("passed_proposals_snapshot", [])

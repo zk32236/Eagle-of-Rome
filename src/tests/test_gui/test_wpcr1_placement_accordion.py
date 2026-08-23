@@ -283,10 +283,11 @@ def test_forum_no_stale_hardcoded_war_state():
 class _MockSenateStore(QObject):
     senateViewChanged = Signal()
 
-    def __init__(self, options, current_step="proposal", parent=None):
+    def __init__(self, options, current_step="proposal", can_create=None, parent=None):
         super().__init__(parent)
         self._options = options
         self._current_step = current_step
+        self._can_create = can_create  # AU-R1-03a：None = 沿用 current_step 推导（既有测试零改动）
         self._submitted = []
         self.submit_calls = 0
         self.last_proposals = None
@@ -313,6 +314,8 @@ class _MockSenateStore(QObject):
 
     @Property(bool, notify=senateViewChanged)
     def canCreateSenateProposal(self):
+        if self._can_create is not None:
+            return self._can_create
         return self._current_step == "proposal"
 
     @Property(bool, notify=senateViewChanged)
@@ -517,6 +520,57 @@ def test_senate_no_individual_legion_selector():
     lo = [o for o in options if o["type"] == "war"][0]["legion_options"]
     model = _normalize(combos[0].property("model"))
     assert model == lo["allowed"], "model must be legion_options.allowed (count range [1..pool]), not individual legion IDs"
+
+
+def test_senate_unauthorised_viewer_controls_gated():
+    """AU-R1-03a（AC-R1-03）：非执政官 viewer → 三角 MouseArea/军团 ComboBox/预算 Slider 全禁用。"""
+    options = _options_with_ranges()  # 真实 producer 形状
+    store = _MockSenateStore(options, can_create=False)
+    _engine, root = _load_qml("SenateStage.qml", store)
+
+    # 三角 MouseArea（width==18，billCard 表头）——非执政官禁用
+    triangles = [i for i in _all_items(root)
+                 if "MouseArea" in i.metaObject().className() and int(i.property("width")) == 18]
+    assert len(triangles) >= 2, f"expected >=2 triangle MouseAreas, got {len(triangles)}"
+    for tri in triangles:
+        assert tri.property("enabled") is False, "non-consul viewer: disclosure triangle must be disabled"
+
+    # 军团 ComboBox——非执政官禁用（原 enabled 仅值域存在判定）
+    combos = [c for c in _all_items(root) if "ComboBox" in c.metaObject().className() and c.isVisible()]
+    assert len(combos) == 1
+    assert combos[0].property("enabled") is False, "non-consul viewer: legion ComboBox must be disabled"
+
+    # 预算 Slider——非执政官禁用
+    sliders = [s for s in _all_items(root)
+               if "Slider" in s.metaObject().className()
+               and "Groove" not in s.metaObject().className()
+               and "Handle" not in s.metaObject().className()
+               and s.isVisible()]
+    assert len(sliders) == 1
+    assert sliders[0].property("enabled") is False, "non-consul viewer: budget Slider must be disabled"
+
+
+def test_senate_checkbox_drives_expansion():
+    """AU-R1-04a（AC-R1-04）：checkbox 驱动展开/折叠——勾选 land:sale 自动展开、取消勾选折叠。"""
+    options = _options_with_ranges()
+    store = _MockSenateStore(options, can_create=True)
+    _engine, root = _load_qml("SenateStage.qml", store)
+    app = _get_app()
+
+    def keys(prop):
+        return {str(k) for k in _normalize(root.property(prop))}
+
+    assert "land:sale" not in keys("expandedBillKeys")
+    QMetaObject.invokeMethod(root, "setProposalSelected", Qt.DirectConnection,
+                             Q_ARG("QVariant", "land:sale"), Q_ARG("QVariant", True))
+    app.processEvents()
+    assert "land:sale" in keys("expandedBillKeys"), "checked proposal must auto-expand"
+
+    QMetaObject.invokeMethod(root, "setProposalSelected", Qt.DirectConnection,
+                             Q_ARG("QVariant", "land:sale"), Q_ARG("QVariant", False))
+    app.processEvents()
+    assert "land:sale" not in keys("expandedBillKeys"), "unchecked proposal must collapse (G7 #8)"
+    assert keys("expandedBillKeys") == keys("selectedProposalKeys"), "expansion must mirror selection"
 
 
 # ---------------------------------------------------------------------------
