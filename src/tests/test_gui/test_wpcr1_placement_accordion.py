@@ -316,6 +316,14 @@ class _MockSenateStore(QObject):
         return self._current_step == "proposal"
 
     @Property(bool, notify=senateViewChanged)
+    def canSelectSenateProposal(self):
+        return self._current_step == "proposal"
+
+    @Property(bool, notify=senateViewChanged)
+    def canTriggerAIProposer(self):
+        return False
+
+    @Property(bool, notify=senateViewChanged)
     def canSubmitSenateVote(self):
         return False
 
@@ -341,6 +349,10 @@ class _MockSenateStore(QObject):
 
     @Property(dict, notify=senateViewChanged)
     def senateResult(self):
+        return {}
+
+    @Property(dict, notify=senateViewChanged)
+    def senatePublicAnnouncement(self):
         return {}
 
     @Property(dict, notify=senateViewChanged)

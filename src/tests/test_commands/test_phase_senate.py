@@ -356,8 +356,10 @@ class TestTribuneVeto(unittest.TestCase):
         self.state.add_faction(self.faction1)
         self.state.add_faction(self.faction2)
 
-        # 添加执政官（用于提案）
+        # 添加执政官（用于提案）——WP-D AU-1 修正：office 必须显式 = consul
+        # （旧 lenient fallback 接受任意 leader_ids[0]；S-8 后 fallback 校验 office==consul，见偏离 D-9）
         self.consul = Figure(id=101, name="执政官", faction_id="senate", age=40)
+        self.consul.office = "consul"
         self.state.add_member(self.consul)
         self.faction1.member_ids.append(self.consul.id)
         self.state.turn.leader_ids = [101]

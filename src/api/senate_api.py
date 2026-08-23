@@ -20,7 +20,7 @@ from src.core.entities.contract import ContractType, ContractStatus
 from src.core.entities.figure import Figure
 from src.core.entities.war import WarStatus
 from src.core.game_state import GameState
-from src.core.systems.political_system import PoliticalSystem
+from src.core.systems.political_system import PoliticalSystem, _tribune_absent_guard
 
 
 def _political_system(state: GameState) -> PoliticalSystem:
@@ -77,9 +77,11 @@ def _proposal_label(state: GameState, proposal: Dict[str, Any]) -> str:
         amount = proposal.get("modified_budget")
         return f"建造合同 — {_safe_name(contract, 'name') or proposal.get('contract_id')}（预算 {amount} T）"
     if ptype == "land":
+        amount_C = proposal.get("amount_C")
+        percent = proposal.get("percent") or 0.0
         if proposal.get("act_type") == "sale":
-            return "卖地法案 — 出售国家公地"
-        return "分地法案 — 分配公地给平民"
+            return f"卖地法案 — 出售 {amount_C} C（约 {percent * 100:.0f}%）"
+        return f"分地法案 — 分配 {amount_C} C 公地"
     return ptype
 
 
@@ -95,6 +97,31 @@ def _proposal_option(key: str, proposal_type: str, title: str, detail: str, para
     }
     option.update(extra)
     return option
+
+
+def _announcement_key_params(proposal: Dict[str, Any]) -> Dict[str, Any]:
+    """Public Announcement 关键参数映射（AU-6/S-10）。
+
+    值全部来自 authoritative proposal dict（params 透传语义，D-08 §10.3），禁 QML 自行推导。
+    per-type：land→{act_type,amount_C,percent}；war→{war_id,legions}；
+    budget→{contract_id,modified_budget}；governor→{province_id,candidate_id}；peace→{war_id}。
+    """
+    ptype = proposal.get("type")
+    if ptype == "land":
+        return {
+            "act_type": proposal.get("act_type"),
+            "amount_C": proposal.get("amount_C"),
+            "percent": proposal.get("percent"),
+        }
+    if ptype == "war":
+        return {"war_id": proposal.get("war_id"), "legions": proposal.get("legions")}
+    if ptype == "budget":
+        return {"contract_id": proposal.get("contract_id"), "modified_budget": proposal.get("modified_budget")}
+    if ptype == "governor":
+        return {"province_id": proposal.get("province_id"), "candidate_id": proposal.get("candidate_id")}
+    if ptype == "peace":
+        return {"war_id": proposal.get("war_id")}
+    return {}
 
 
 def _budget_range_for_contract(state: GameState, contract) -> Optional[Dict[str, int]]:
@@ -211,16 +238,21 @@ def _build_proposal_options(state: GameState, info: Dict[str, Any]) -> List[Dict
         ))
     public_land = state.get_national_public_land()
     if public_land > 0:
+        # D-1 / AU-7：默认比例 = config economic_rules.senate_land.default_percent（缺失回退 0.10，保持现状行为）
+        senate_land = state.config.get("economic_rules.senate_land") or {}
+        default_percent = float(senate_land.get("default_percent", 0.10))
+        default_amount_C = max(1, int(public_land * default_percent))
+        derived_percent = default_amount_C / public_land
         options.append(_proposal_option(
             "land:sale", "land", "卖地法案 — 出售国家公地",
-            f"出售 10% 国家公地；当前公地 {public_land} C",
-            {"act_type": "sale", "percent": 0.10},
+            f"出售 {default_amount_C} C（约 {derived_percent * 100:.0f}%）国家公地；当前公地 {public_land} C",
+            {"act_type": "sale", "amount_C": default_amount_C, "percent": derived_percent},
             public_land=public_land,
         ))
         options.append(_proposal_option(
             "land:distribution", "land", "分地法案 — 分配公地给平民",
-            f"分配 10% 国家公地；当前公地 {public_land} C",
-            {"act_type": "distribution", "percent": 0.10},
+            f"分配 {default_amount_C} C 国家公地；当前公地 {public_land} C",
+            {"act_type": "distribution", "amount_C": default_amount_C, "percent": derived_percent},
             public_land=public_land,
         ))
     return options
@@ -250,8 +282,15 @@ def _seat_share_rows(state: GameState) -> List[Dict[str, Any]]:
 
 
 def _current_tribune(state: GameState) -> Optional[Figure]:
+    """全局首个 eligible Tribune（AI 语义；迭代范围 = 全局 living members）。
+
+    P2-05 收口：与 record_veto（faction 内人类语义）迭代范围不同，但资格判定统一由
+    PoliticalSystem._is_eligible_tribune 单一谓词收敛（ODR-WP-D-01 方案 B：在职+未死亡，
+    is_absent 不参与判定——法律上保民官不存在缺席）。
+    """
+    politics = _political_system(state)
     for member in state.get_living_members():
-        if member.office == "tribune" and not member.is_dead:
+        if politics._is_eligible_tribune(member):
             return member
     return None
 
@@ -263,17 +302,15 @@ def _viewer_has_tribune(state: GameState, viewer_player_id: str) -> bool:
 
 
 def _viewer_eligible_consul(state: GameState, viewer_player_id: str) -> bool:
-    """判断 viewer 所在派系是否存在存活且在罗马的执政官（DEV-13 权限前置）。"""
+    """判断 viewer 所在派系是否存在 eligible 执政官（AU-1 单一谓词委托）。"""
     viewer = state.get_player(viewer_player_id)
     if not viewer:
         return False
     faction = state.get_faction(viewer.faction_id)
     if not faction:
         return False
-    for member in faction.get_members(state):
-        if member.office == "consul" and not member.is_absent and not member.is_dead:
-            return True
-    return False
+    politics = _political_system(state)
+    return any(politics._is_eligible_consul(member) for member in faction.get_members(state))
 
 
 def _build_takeover_options(state: GameState) -> List[Dict[str, Any]]:
@@ -465,19 +502,24 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
                 proposals.append(row)
         player_votes = state.get_senate_votes_copy().get(viewer_player_id, {})
         voted_all = bool(proposals) and all(proposal.get("id") in player_votes for proposal in proposals)
+        decision_complete = state.senate_proposal_decision_complete
         if result_data:
             current_step = "results"
-        elif not proposals:
+        elif not decision_complete:
             current_step = "proposal"
+        elif not proposals:
+            current_step = "results"  # Path A：0 提案 → 跳过 vote/veto，由提交处理函数直接 resolve（D-09）
         elif voted_all:
             current_step = "tribune_veto"
         else:
             current_step = "senate_vote"
         actionable = current_phase_id == "senate" and state.is_current_player(viewer_player_id)
-        can_create = actionable and current_step == "proposal" and len(proposal_options) > 0
+        viewer_has_consul = _viewer_eligible_consul(state, viewer_player_id)
+        can_create = actionable and current_step == "proposal" and viewer_has_consul
+        can_trigger_ai = actionable and current_step == "proposal" and not viewer_has_consul
         viewer_has_tribune = _viewer_has_tribune(state, viewer_player_id)
         takeover_options = _build_takeover_options(state)
-        can_takeover = actionable and bool(takeover_options) and _viewer_eligible_consul(state, viewer_player_id)
+        can_takeover = actionable and bool(takeover_options) and viewer_has_consul
 
         data = {
             "phase_id": "senate",
@@ -490,6 +532,10 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "current_step": current_step,
             "actionable": actionable,
             "can_create_proposal": can_create,
+            "can_select_proposal": viewer_has_consul,
+            "can_propose": actionable and current_step == "proposal",
+            "can_trigger_ai_proposer": can_trigger_ai,
+            "viewer_has_consul": viewer_has_consul,
             "can_vote": actionable and current_step == "senate_vote" and len(proposals) > 0,
             "can_veto": actionable and current_step == "tribune_veto" and viewer_has_tribune,
             "can_auto_veto": actionable and current_step == "tribune_veto" and not viewer_has_tribune,
@@ -522,6 +568,8 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "proposal_options": proposal_options,
             "submitted_proposals": proposals,
             "senate_result": senate_result or {},
+            "direct_actions": state.get_senate_direct_actions(),
+            "public_announcement": result_data.get("public_announcement", {}) if isinstance(result_data, dict) else {},
             "seat_shares": _seat_share_rows(state),
             "warnings": [{
                 "type": "info",
@@ -649,6 +697,14 @@ def takeover_war(state: GameState, player_id: str, war_id: str) -> dict:
         level=logging.DEBUG,
         extra={"war_id": war_id, "player_id": player_id, "commander_id": consul_figure.id, "legions": list(getattr(war, "legion_numbers", []) or [])},
     )
+    state.record_senate_direct_action({
+        "action_type": "takeover",
+        "war_id": war_id,
+        "war_name": war.name,
+        "commander_id": consul_figure.id,
+        "commander_name": consul_figure.get_formal_name(),
+        "legions": list(getattr(war, "legion_numbers", []) or []),
+    })
     return api_response(
         True,
         "接管战争成功",
@@ -680,11 +736,13 @@ def propose(state: GameState, player_id: str, proposal_type: str, bypass_turn_ch
 
 
 def propose_many(state: GameState, player_id: str, proposals: List[Dict[str, Any]]) -> dict:
-    """Record a batch of GUI-selected senate proposals."""
+    """Record a batch of GUI-selected senate proposals (0…N; empty batch is a legal decision)."""
     if not state:
         return api_response(False, "无效的游戏状态")
     if not proposals:
-        return api_response(False, "未选择任何法案")
+        # D-09 / SA §3.1（AU-3）：空批 = 合法政治决策「本会期不提交法案」，标记决策完成
+        state.senate_proposal_decision_complete = True
+        return api_response(True, "本会期未提交法案", data={"created": []})
     created = []
     errors = []
     for spec in proposals:
@@ -700,6 +758,8 @@ def propose_many(state: GameState, player_id: str, proposals: List[Dict[str, Any
             errors.append(result.get("message", "提案失败"))
     if errors and not created:
         return api_response(False, "提交法案失败", data={"created": created}, errors=errors)
+    # 非空批成功路径同样标记决策完成（供 get_senate_view 区分「未决策」vs「已决策」）
+    state.senate_proposal_decision_complete = True
     return api_response(
         True,
         f"已提交 {len(created)} 项法案",
@@ -732,15 +792,17 @@ def auto_submit_proposals(
     if not state:
         return api_response(False, "无效的游戏状态")
 
-    # 1. 查找执政官人物
+    # 1. 查找执政官人物（AU-1：主循环与 fallback 均校验 office==consul + 未 absent + 未死亡，全局执政官语义）
     consul_figure = None
     for member in state.get_living_members():
-        if member.office == "consul" and not member.is_absent:
+        if member.office == "consul" and not member.is_absent and not member.is_dead:
             consul_figure = member
             break
     if not consul_figure and state.turn and state.turn.leader_ids:
         leader_id = state.turn.leader_ids[0]
-        consul_figure = state.get_member(leader_id)
+        leader = state.get_member(leader_id)
+        if leader and leader.office == "consul" and not leader.is_absent and not leader.is_dead:
+            consul_figure = leader
     if not consul_figure:
         return api_response(False, "没有执政官，无法自动提交提案")
 
@@ -922,12 +984,14 @@ def auto_submit_proposals(
             decider_result = decider.decide_proposal(faction.id, state)
             if decider_result:
                 act_type, percent = decider_result
+                # AU-7（P2-04 clamp）：percent → amount_C 权威换算，小公地量下防 0（≥1）
+                amount_C = max(1, int(state.get_national_public_land() * percent))
                 proposal_id_ref = None
                 result = propose(
                     state, consul_player_id, "land",
                     bypass_turn_check=True,
                     act_type=act_type,
-                    percent=percent,
+                    amount_C=amount_C,
                 )
                 if result["success"]:
                     act_name = "公地出售法案" if act_type == "sale" else "公地分配法案"
@@ -938,23 +1002,28 @@ def auto_submit_proposals(
                         extra={
                             "proposal_id": proposal_id_ref,
                             "act_type": act_type,
-                            "percent": percent,
+                            "amount_C": amount_C,
                             "faction_id": faction.id,
                         },
                     )
                     created_proposals.append({
                         "type": "land",
                         "act_type": act_type,
-                        "percent": percent,
-                        "description": f"{act_name} {percent * 100:.1f}% 国家公地",
+                        "amount_C": amount_C,
+                        "percent": amount_C / state.get_national_public_land() if state.get_national_public_land() else 0.0,
+                        "description": f"{act_name} {amount_C} C 国家公地",
                     })
                 else:
                     errors.append(f"土地法案失败({act_type}): {result['message']}")
 
     # ========== 返回结果 ==========
     message = f"已自动提交 {len(created_proposals)} 项提案"
+    success = bool(created_proposals) or not errors
+    if success:
+        # D-09 / SA §3.1（AU-3）：AI 空批同样合法，标记提案决策完成（0 提案也推进阶段）
+        state.senate_proposal_decision_complete = True
     return api_response(
-        success=bool(created_proposals) or not errors,
+        success=success,
         message=message,
         data={"proposals": created_proposals},
         errors=errors,
@@ -1074,6 +1143,22 @@ def resolve_senate(
     if ws:
         commander_results = ws.assign_rebellion_commanders()
         phase_data["rebellion_commander_assignments"] = commander_results
+
+    # WP-D AU-5/AU-6: direct_actions + public_announcement 组装（公示随 phase_result 持久化，
+    # get_senate_view 经 result_data 回读）。enacted_proposals 仅 final enacted（D-06：rejected/vetoed 不进公示）。
+    phase_data["direct_actions"] = result.get("data", {}).get("direct_actions", [])
+    phase_data["public_announcement"] = {
+        "enacted_proposals": [
+            {
+                "proposal_id": p.get("id"),
+                "type": p.get("type"),
+                "title": _proposal_label(state, p),
+                "key_parameters": _announcement_key_params(p),
+            }
+            for p in (result.get("data", {}).get("passed_proposals_snapshot", []) or [])
+        ],
+        "direct_actions": phase_data["direct_actions"],
+    }
 
     # Record phase result immediately — before any callback (e.g. _on_refresh)
     # can read it. This eliminates the stale-state window where QML binding
@@ -1415,7 +1500,9 @@ def assign_governors(state: GameState) -> list[dict]:
 
         old_gov_id = getattr(province, 'governor_id', None)
         province.set_governor_designate(candidate_id, old_gov_id)
-        candidate.is_absent = True
+        # ODR-WP-D-01 防线 2：在职保民官不得置位 absent（fail-closed；候选 office=None/ex-* 天然排除，纯防御）
+        if _tribune_absent_guard(candidate):
+            candidate.is_absent = True
 
         state.log_event(
             f"Governor assigned: province={province_id}, governor={candidate_id}, name={name}",

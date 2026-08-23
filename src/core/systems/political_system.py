@@ -15,6 +15,16 @@ from src.core.entities.figure import Figure
 from src.core.entities.war import WarStatus
 
 
+def _tribune_absent_guard(figure) -> bool:
+    """ODR-WP-D-01 防线 2 共享 guard（外部模块用）：在职保民官不得置位 absent。
+
+    返回 True=允许置位；False=拒绝（fail-closed：office==tribune 且未死亡）。
+    政治系统内部置位统一走 PoliticalSystem._set_absent（含日志）；本函数供
+    senate_api / war_system / scenario_loader 等外部置位点内联防御。
+    """
+    return not (figure.office == "tribune" and not figure.is_dead)
+
+
 class PoliticalSystem:
     """Core senate proposal, voting, and execution rules."""
 
@@ -220,7 +230,7 @@ class PoliticalSystem:
 
         tribune = None
         for member in faction.get_members(self.state):
-            if member.office == "tribune" and not member.is_dead:
+            if self._is_eligible_tribune(member):
                 tribune = member
                 break
         if not tribune:
@@ -297,6 +307,10 @@ class PoliticalSystem:
 
         restored_peace_wars = self.restore_rejected_peace_wars(rejected_peace_wars)
 
+        # P-7（AU-5）：结算循环完成、clear_senate_pending 之前快照 direct_actions，
+        # 供 senate_api.resolve_senate 组装 public_announcement（公示持久化）。
+        direct_actions = self.state.get_senate_direct_actions()
+
         self.process_war_takeover(takeover_decider)
         self.state.clear_senate_pending()
 
@@ -314,6 +328,7 @@ class PoliticalSystem:
             "rejected_peace_wars": restored_peace_wars,
             "passed_proposals_snapshot": [p.copy() for p in passed_proposals],
             "rejected_proposals_snapshot": [p.copy() for p in rejected_proposals],
+            "direct_actions": direct_actions,
         })
 
     def build_issue_from_proposal(self, proposal: dict):
@@ -425,7 +440,7 @@ class PoliticalSystem:
                     province.set_governor_designate(proposal["candidate_id"], proposal.get("old_governor_id"))
                     new_governor = self.state.get_member(proposal["candidate_id"])
                     if new_governor:
-                        new_governor.is_absent = True
+                        self._set_absent(new_governor)
                     self.state.log_event(
                         f"候任总督设定: {new_governor.get_formal_name() if new_governor else proposal['candidate_id']} -> {province.name}",
                         extra={
@@ -458,20 +473,21 @@ class PoliticalSystem:
                     return {"success": True, "message": f"合同 {contract.name} 预算通过"}
 
             if proposal_type == "land":
+                # P-6（AU-7）：amount_C 为唯一权威消费值（不再 int(national_land * percent) 二次重推，
+                # 消除双事实源漂移）；percent 为 _populate_proposal 派生存入的展示/连续性字段。
                 act_type = proposal["act_type"]
-                percent = proposal["percent"]
-                national_land = self.state.get_national_public_land()
-                amount = int(national_land * percent)
+                amount_C = proposal["amount_C"]
+                percent = proposal.get("percent")
                 if act_type == "sale":
-                    self.state.set_pending_land_sale_quota(amount)
-                    return {"success": True, "message": f"卖地法案通过，出售 {amount} C 公地"}
+                    self.state.set_pending_land_sale_quota(amount_C)
+                    return {"success": True, "message": f"卖地法案通过，出售 {amount_C} C 公地"}
                 self.state.add_pending_land_act({
                     "type": "distribution",
                     "percent": percent,
-                    "amount": amount,
-                    "description": f"平民分地法案（分配 {percent * 100:.1f}% 国家公地）",
+                    "amount": amount_C,
+                    "description": f"平民分地法案（分配 {amount_C} C 国家公地）",
                 })
-                return {"success": True, "message": f"分地法案通过，分配 {amount} C 公地"}
+                return {"success": True, "message": f"分地法案通过，分配 {amount_C} C 公地"}
         except Exception as exc:
             self.state.log_event(
                 f"执行提案失败: {exc}",
@@ -490,7 +506,7 @@ class PoliticalSystem:
         war.commander_id = consul_id
         consul = self.state.get_member(consul_id)
         if consul:
-            consul.is_absent = True
+            self._set_absent(consul)
         self._auto_recruit_and_assign_legions_for_war(war, consul_id)
         self.state.log_event(
             f"宣战提案执行: {war.name}",
@@ -624,7 +640,7 @@ class PoliticalSystem:
             if war.commander_id is None:
                 if decider.decide_takeover(war, candidate, None, self.state):
                     war.commander_id = candidate.id
-                    candidate.is_absent = True
+                    self._set_absent(candidate)
                     self._auto_recruit_and_assign_legions_for_war(war, candidate.id)
                     self.state.log_event(
                         f"{candidate.name} 接管战争 {war.name}",
@@ -661,7 +677,7 @@ class PoliticalSystem:
                             old_cmd.office = "ex-praetor"
                         old_cmd.update_influence()
                         war.commander_id = candidate.id
-                        candidate.is_absent = True
+                        self._set_absent(candidate)
                         self._auto_recruit_and_assign_legions_for_war(war, candidate.id)
                         print(f"      ✅ {candidate.get_formal_name()} 接管 {war.name}，原指挥官 {old_cmd.get_formal_name()} 返回罗马")
                         self.state.log_event(
@@ -722,14 +738,59 @@ class PoliticalSystem:
                 return True
         return False
 
+    def _is_eligible_consul(self, member) -> bool:
+        """Consul 单一资格谓词（AU-1）：在职 + 未死亡 + 未 absent。
+
+        消费方：_find_consul_for_faction 主循环 / fallback / senate_api._viewer_eligible_consul
+        —— 消除两侧双事实源。
+        """
+        return member.office == "consul" and not member.is_dead and not member.is_absent
+
+    def _is_eligible_tribune(self, member) -> bool:
+        """Tribune 单一资格谓词（AU-4，按 ODR-WP-D-01 方案 B 语义——裁决 CLOSED 2026-08-23）。
+
+        方案 B：在职 + 未死亡（is_absent 不参与判定）。
+        法律语义（Owner 裁决）：保民官在职期间不能缺席（离开罗马城）——法律上 absent 对在职
+        tribune 不存在；防线 1（派遣/任命路径排除在职 tribune）+ 防线 2（_set_absent guard）
+        兜底，正常路径下在职 tribune 永不为 absent。
+        消费方：record_veto / senate_api._current_tribune / _viewer_has_tribune（单谓词收敛）。
+        """
+        return member.office == "tribune" and not member.is_dead
+
+    def _set_absent(self, figure) -> bool:
+        """防线 2（ODR-WP-D-01）：在职保民官置位 absent → fail-closed 拒绝。
+
+        法律语义：保民官在职期间不能离开罗马城，absent 对在职 tribune 不存在。
+        政治系统内所有 absent 置位路径统一经此方法（置位统一管理点）；被拒时保持原状态
+        并记日志（fail-closed：不产生非法状态）。返回 True=已置位；False=被 guard 拒绝。
+        """
+        if figure.office == "tribune" and not figure.is_dead:
+            if self.state:
+                self.state.log_event(
+                    f"[ODR-WP-D-01] 防线2 guard: 在职保民官 {figure.name} 不得置位 absent（拒绝）",
+                    level=logging.WARNING,
+                    extra={"type": "tribune_absent_guard", "figure_id": figure.id},
+                )
+            return False
+        figure.is_absent = True
+        return True
+
     def _find_consul_for_faction(self, faction):
         for member in faction.get_members(self.state):
-            if member.office == "consul" and not member.is_dead:
+            if self._is_eligible_consul(member):
                 return member
 
         if self.state.turn and self.state.turn.leader_ids:
             first_leader = self.state.get_member(self.state.turn.leader_ids[0])
-            if first_leader and not first_leader.is_dead:
+            # fallback 四条件（P1 修正）：faction 归属 + office==consul + 未 absent + 未死亡，
+            # 任一不满足即 fail-closed return None（非执政官派系不再误判通过）。
+            if (
+                first_leader
+                and first_leader.faction_id == faction.id
+                and first_leader.office == "consul"
+                and not first_leader.is_absent
+                and not first_leader.is_dead
+            ):
                 return first_leader
         return None
 
@@ -827,14 +888,25 @@ class PoliticalSystem:
             return self._result(True)
 
         if proposal_type == "land":
+            # P-5（AU-7）：amount_C 为唯一权威输入（int），percent 仅派生存入；
+            # percent 不再作为独立输入参数接受（冻结 D-01 canonical conversion）。
             act_type = kwargs.get("act_type")
-            percent = kwargs.get("percent")
-            if not act_type or percent is None:
-                return self._result(False, "土地法案需要 act_type 和 percent")
+            amount_C = kwargs.get("amount_C")
+            if not act_type or amount_C is None:
+                return self._result(False, "土地法案需要 act_type 和 amount_C")
             if act_type not in ("sale", "distribution"):
                 return self._result(False, "无效的土地法案类型")
+            if not (isinstance(amount_C, int) or (isinstance(amount_C, float) and amount_C.is_integer())):
+                return self._result(False, "土地数量必须为整数")
+            amount_C = int(amount_C)
+            national_land = self.state.get_national_public_land()
+            if amount_C < 1:
+                return self._result(False, "土地数量必须至少为 1 C")
+            if amount_C > national_land:
+                return self._result(False, "土地数量超过国家公地总量")
             proposal["act_type"] = act_type
-            proposal["percent"] = percent
+            proposal["amount_C"] = amount_C
+            proposal["percent"] = amount_C / national_land if national_land else 0.0
             return self._result(True)
 
         return self._result(False, f"未知的提案类型: {proposal_type}")
@@ -905,7 +977,7 @@ class PoliticalSystem:
             old_cmd.update_influence()
 
         war.commander_id = consul_figure.id
-        consul_figure.is_absent = True
+        self._set_absent(consul_figure)
         self.state.log_event(
             f"战争接管直接执行: war={war.id}, commander={consul_figure.id}",
             level=logging.INFO,

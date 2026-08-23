@@ -352,6 +352,16 @@ class GuiSessionStore(QObject):
         return self._senate_view.get("can_create_proposal", False)
 
     @Property(bool, notify=senateViewChanged)
+    def canSelectSenateProposal(self) -> bool:
+        """WP-D AU-2：viewer 手选提案权（= viewer 派系拥有 eligible 执政官）。"""
+        return self._senate_view.get("can_select_proposal", False)
+
+    @Property(bool, notify=senateViewChanged)
+    def canTriggerAIProposer(self) -> bool:
+        """WP-D AU-2：非执政官派系 → AI 自动提案入口。"""
+        return self._senate_view.get("can_trigger_ai_proposer", False)
+
+    @Property(bool, notify=senateViewChanged)
     def canSubmitSenateVote(self) -> bool:
         return self._senate_view.get("can_vote", False)
 
@@ -382,8 +392,14 @@ class GuiSessionStore(QObject):
         - governor_assignments: list of {province_id, governor_id, name, assigned_at}
         - rebellion_commander_assignments: list of {rebellion_id, commander_id, name, assigned_at}
         - fleet_assignments: list of {war_id, war_name, fleets, total_power, needed_power}
+        - public_announcement: {enacted_proposals, direct_actions} (WP-D AU-6)
         """
         return self._senate_view.get("senate_result", {}).get("data", {})
+
+    @Property(dict, notify=senateViewChanged)
+    def senatePublicAnnouncement(self) -> Dict[str, Any]:
+        """WP-D AU-6：本轮最终生效事项公示（enacted_proposals + direct_actions）。"""
+        return self._senate_view.get("senate_result", {}).get("data", {}).get("public_announcement", {})
 
     # -----------------------------------------------------------------------
     # 收入阶段属性
@@ -1227,6 +1243,11 @@ class GuiSessionStore(QObject):
 
     @Slot("QVariant", result=dict)
     def doSubmitSenateProposals(self, proposals) -> dict:
+        """WP-D AU-1/AU-3：提案提交路由（执政官 → propose_many 0…N；非执政官 → AI proposer 0…N）。
+
+        Path A（0 提案）：提交空批后 submitted_proposals 为空 → 直接 resolve_senate 空结算
+        （record_phase_result → advance_senate_phase 可过，P2-01 resolve hook）。
+        """
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
         payload = self._variant_to_python(proposals)
@@ -1235,11 +1256,24 @@ class GuiSessionStore(QObject):
             item = self._variant_to_python(item)
             if isinstance(item, dict):
                 selected.append(item)
-        feedback = self._adapter.submit_senate_proposals(self._viewer_id, selected)
+        if self._senate_view.get("viewer_has_consul", False):
+            feedback = self._adapter.submit_senate_proposals(self._viewer_id, selected)
+        else:
+            # 非执政官派系：AI proposer 为决策者（SS-2 内路由；经 adapter.call 复用统一反馈映射，
+            # 不新增 api_adapter 方法——api_adapter.py 不在 WP-D 冻结面，见偏离 D-8）
+            from src.api import senate_api
+            feedback = self._adapter.call(senate_api.auto_submit_proposals, self._state)
         self._raise_feedback(feedback)
         if feedback.get("success"):
             self._refresh_snapshot()
             self._refresh_senate_view()
+            created = (feedback.get("data") or {}).get("created") or (feedback.get("data") or {}).get("proposals") or []
+            if not created and not (self._senate_view.get("submitted_proposals") or []):
+                # P2-01：Path A 空批 → 空结算 → record_phase_result → advance 可过
+                resolve_feedback = self._adapter.resolve_senate()
+                self._raise_feedback(resolve_feedback)
+                self._refresh_snapshot()
+                self._refresh_senate_view()
         self.senateViewChanged.emit()
         return feedback
 

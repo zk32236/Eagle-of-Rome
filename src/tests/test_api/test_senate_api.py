@@ -89,6 +89,13 @@ class TestSenateAPI(unittest.TestCase):
         self.assertFalse(data["can_create_proposal"])
         self.assertFalse(data["can_vote"])
         self.assertFalse(data["can_resolve"])
+        # WP-D AU-2：DTO capability 新字段存在（值由 authority 决定）
+        self.assertIn("viewer_has_consul", data)
+        self.assertIn("can_select_proposal", data)
+        self.assertIn("can_propose", data)
+        self.assertIn("can_trigger_ai_proposer", data)
+        self.assertIn("direct_actions", data)
+        self.assertIn("public_announcement", data)
         self.assertIn("summary", data)
         self.assertIn("faction_leaders", data)
         self.assertIn("presiding_officer", data)
@@ -185,6 +192,14 @@ class TestSenateAPI(unittest.TestCase):
         result = senate_api.resolve_senate(self.state, vote_decider=mock_decider)
         self.assertTrue(result["success"])
         self.assertIn(war_proposal_id, result["data"]["passed_proposals"])
+        # WP-D AU-5/AU-6：resolve 数据含 direct_actions 快照 + public_announcement（enacted 仅最终通过）
+        self.assertIn("direct_actions", result["data"])
+        self.assertIn("public_announcement", result["data"])
+        enacted = result["data"]["public_announcement"]["enacted_proposals"]
+        self.assertEqual(len(enacted), 1)
+        self.assertEqual(enacted[0]["proposal_id"], war_proposal_id)
+        self.assertEqual(enacted[0]["type"], "war")
+        self.assertIn("key_parameters", enacted[0])
         mock_execute.assert_called_once()
 
     def test_propose_peace_manually(self):
@@ -647,7 +662,7 @@ class TestWP05VParamsPassthrough(unittest.TestCase):
         specs = [
             {"type": "war", "params": {"war_id": "w1", "legions": 8}},
             {"type": "budget", "params": {"contract_id": contract.id, "modified_budget": 120}},
-            {"type": "land", "params": {"act_type": "sale", "percent": 0.35}},
+            {"type": "land", "params": {"act_type": "sale", "amount_C": 300}},
         ]
         result = senate_api.propose_many(self.state, "player1", specs)
         self.assertTrue(result["success"])
@@ -659,8 +674,10 @@ class TestWP05VParamsPassthrough(unittest.TestCase):
         self.assertEqual(by_type["war"]["legions"], 8)
         self.assertEqual(by_type["budget"]["contract_id"], contract.id)
         self.assertEqual(by_type["budget"]["modified_budget"], 120)
+        # AU-7：land payload 主字段 amount_C（int）；percent 派生（默认公地 1000 → 300/1000 = 0.3）
         self.assertEqual(by_type["land"]["act_type"], "sale")
-        self.assertEqual(by_type["land"]["percent"], 0.35)
+        self.assertEqual(by_type["land"]["amount_C"], 300)
+        self.assertAlmostEqual(by_type["land"]["percent"], 0.3)
 
     def test_propose_budget_clamp(self):
         # D-3 处置（Test Matrix T014-5 语义）：越界值被权威谓词拒绝（前端 clamp 不能替代 Core 拒绝）；
@@ -681,13 +698,15 @@ class TestWP05VParamsPassthrough(unittest.TestCase):
         proposals = self.state.get_senate_proposals()
         self.assertEqual(proposals[0]["modified_budget"], 120)
 
-    def test_propose_land_percent_zero_disabled(self):
-        # percent=0 后端 amount=0 无害（前端禁提交）；后端仍接受并存储 percent=0
-        result = senate_api.propose(self.state, "player1", "land", act_type="sale", percent=0)
-        self.assertTrue(result["success"])
-        proposals = self.state.get_senate_proposals()
-        self.assertEqual(proposals[0]["act_type"], "sale")
-        self.assertEqual(proposals[0]["percent"], 0)
+    def test_propose_land_amount_c_zero_rejected(self):
+        # AU-7：amount_C 主输入值域校验——0 违反 1≤amount_C → 权威拒绝
+        result = senate_api.propose(self.state, "player1", "land", act_type="sale", amount_C=0)
+        self.assertFalse(result["success"])
+        self.assertEqual(len(self.state.get_senate_proposals()), 0)
+        # percent 不再作为独立输入接受（D-01 canonical conversion，DA Plan P-5）
+        result = senate_api.propose(self.state, "player1", "land", act_type="sale", percent=0.1)
+        self.assertFalse(result["success"])
+        self.assertIn("amount_C", result["message"])
 
 
 class TestWP05VGovernorIA(unittest.TestCase):

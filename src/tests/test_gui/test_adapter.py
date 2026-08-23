@@ -176,7 +176,8 @@ class TestGuiApiAdapter:
         consul.office = "consul"
         store = GuiSessionStore(state)
         store.initialize(player_id)
-        option = {"type": "land", "params": {"act_type": "sale", "percent": 0.1}}
+        # WP-D AU-7：land payload 主字段改 amount_C（percent 不再作为独立输入，见偏离 D-10）
+        option = {"type": "land", "params": {"act_type": "sale", "amount_C": 300}}
 
         feedback = store.doSubmitSenateProposals([option])
 
@@ -194,7 +195,7 @@ class TestGuiApiAdapter:
         consul.office = "consul"
         store = GuiSessionStore(state)
         store.initialize(player_id)
-        store.doSubmitSenateProposals([{"type": "land", "params": {"act_type": "sale", "percent": 0.1}}])
+        store.doSubmitSenateProposals([{"type": "land", "params": {"act_type": "sale", "amount_C": 300}}])
 
         submitted_before_vote = list(store.senateSubmittedProposals)
 
@@ -216,7 +217,7 @@ class TestGuiApiAdapter:
         tribune.office = "tribune"
         store = GuiSessionStore(state)
         store.initialize(player_id)
-        store.doSubmitSenateProposals([{"type": "land", "params": {"act_type": "sale", "percent": 0.1}}])
+        store.doSubmitSenateProposals([{"type": "land", "params": {"act_type": "sale", "amount_C": 300}}])
         store.doSubmitSenateVotes()
 
         feedback = store.doSubmitSenateVetoes([])
@@ -249,7 +250,7 @@ class TestGuiApiAdapter:
         other_member.office = "tribune"
         store = GuiSessionStore(state)
         store.initialize(player_id)
-        store.doSubmitSenateProposals([{"type": "land", "params": {"act_type": "sale", "percent": 0.1}}])
+        store.doSubmitSenateProposals([{"type": "land", "params": {"act_type": "sale", "amount_C": 300}}])
         store.doSubmitSenateVotes()
 
         assert store.senateCurrentStep == "tribune_veto"

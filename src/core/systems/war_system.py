@@ -1121,7 +1121,9 @@ class WarSystem:
             # 指派指挥官和军团
             self.assign_commander(war.id, governor_id, len(recruited_numbers))
             ms.assign_to_war(recruited_numbers, war.id, governor_id)
-            commander.is_absent = True  # 总督出征
+            # ODR-WP-D-01 防线 2：在职保民官不得置位 absent（fail-closed；指挥官=行省总督，天然排除，纯防御）
+            if not (commander.office == "tribune" and not commander.is_dead):
+                commander.is_absent = True  # 总督出征
 
             commander_name = commander.get_formal_name() if hasattr(commander, 'get_formal_name') else commander.name
 

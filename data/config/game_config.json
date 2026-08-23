@@ -162,6 +162,10 @@
       "min": 1,
       "cap_mode": "available_pool"
     },
+    "senate_land": {
+      "default_percent": 0.10,
+      "step": 1
+    },
 
     "land_price_per_unit": 10,
     "public_land_income_rate": 0.01,

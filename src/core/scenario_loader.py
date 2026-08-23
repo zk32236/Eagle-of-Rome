@@ -120,7 +120,9 @@ class ScenarioLoader:
                 governor = random.choice(candidates)
                 province._governor_id = governor.id
                 province._governor_since = state.turn.turn_number
-                governor.is_absent = True
+                # ODR-WP-D-01 防线 2：在职保民官不得置位 absent（fail-closed；初始总督候选 office=None，天然排除，纯防御）
+                if not (governor.office == "tribune" and not governor.is_dead):
+                    governor.is_absent = True
                 governor.office = province.governor_type
                 governor.update_influence()
                 print(f"   ✅ {province.name} ({province.governor_type}) 初始总督: {governor.get_formal_name()}")

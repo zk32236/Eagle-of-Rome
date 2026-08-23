@@ -135,7 +135,9 @@ class GameState:
             "proposals": [],  # 列表，每个元素为提案字典
             "votes": {},  # {player_id: {proposal_id: bool}}
             "vetoes": set(),  # 被否决的提案ID集合
-            "proposal_id_counter": 1
+            "proposal_id_counter": 1,
+            "decision_complete": False,  # WP-D AU-2：提案决策是否已完成（空批合法化标记）
+            "direct_actions": [],  # WP-D AU-5：本会期已直接生效动作（如接管）
         }
 
         # 初始化时调用 reset，确保状态一致性
@@ -251,8 +253,29 @@ class GameState:
             "proposals": [],
             "votes": {},
             "vetoes": set(),
-            "proposal_id_counter": 1
+            "proposal_id_counter": 1,
+            "decision_complete": False,
+            "direct_actions": [],
         }
+
+    # ========== WP-D AU-2/AU-5: 提案决策完成标记 + 直接生效动作 ==========
+
+    @property
+    def senate_proposal_decision_complete(self) -> bool:
+        """提案决策是否已完成（True = 执政官/AI 已提交本会期法案批次，空批合法）。"""
+        return self._senate_pending["decision_complete"]
+
+    @senate_proposal_decision_complete.setter
+    def senate_proposal_decision_complete(self, value: bool) -> None:
+        self._senate_pending["decision_complete"] = bool(value)
+
+    def record_senate_direct_action(self, action: dict) -> None:
+        """记录一条已直接生效的元老院动作（如战争接管，不进入 vote/veto 链）。"""
+        self._senate_pending["direct_actions"].append(action)
+
+    def get_senate_direct_actions(self) -> list:
+        """返回本会期直接生效动作列表副本。"""
+        return self._senate_pending["direct_actions"].copy()
 
     # 人口阶段玩家操作
     def record_population_campaign(self, player_id: str, figure_id: int, amount: int) -> None:
@@ -714,6 +737,8 @@ class GameState:
                 "votes": {k: v.copy() for k, v in self._senate_pending["votes"].items()},
                 "vetoes": list(self._senate_pending["vetoes"]),
                 "proposal_id_counter": self._senate_pending["proposal_id_counter"],
+                "decision_complete": self._senate_pending["decision_complete"],
+                "direct_actions": [a.copy() for a in self._senate_pending["direct_actions"]],
             },
             "_pending_land_sale_quota": self._pending_land_sale_quota,
         }
@@ -865,6 +890,8 @@ class GameState:
             "votes": {k: v.copy() for k, v in senate_data.get("votes", {}).items()},
             "vetoes": set(senate_data.get("vetoes", [])),
             "proposal_id_counter": senate_data.get("proposal_id_counter", 1),
+            "decision_complete": senate_data.get("decision_complete", False),
+            "direct_actions": [a.copy() for a in senate_data.get("direct_actions", [])],
         }
 
         # Phase 2 新增：恢复待售公地配额
@@ -957,7 +984,9 @@ class GameState:
             "proposals": [],
             "votes": {},
             "vetoes": set(),
-            "proposal_id_counter": 1
+            "proposal_id_counter": 1,
+            "decision_complete": False,
+            "direct_actions": [],
         }
 
 

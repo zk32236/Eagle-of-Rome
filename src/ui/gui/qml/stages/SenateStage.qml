@@ -123,6 +123,38 @@ Rectangle {
         return parts.join("\uff1b")
     }
 
+    // ---- WP-D AU-6: Public Announcement 渲染（数据来自 authoritative DTO，禁 QML 推导） ----
+    function _announcementEnactedText() {
+        var rows = (sessionStore.senatePublicAnnouncement || {}).enacted_proposals || []
+        if (rows.length === 0) return "\u65e0"
+        var parts = []
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i]
+            var line = r.title || ""
+            var kp = r.key_parameters || {}
+            if (r.type === "land" && kp.amount_C !== undefined) {
+                line += "（" + (kp.act_type === "sale" ? "\u51fa\u552e" : "\u5206\u914d") + " " + kp.amount_C + " C \u516c\u5730）"
+            } else if (r.type === "war" && kp.legions !== undefined) {
+                line += "（" + kp.legions + " \u519b\u56e2\uff09"
+            } else if (r.type === "budget" && kp.modified_budget !== undefined) {
+                line += "（\u9884\u7b97 " + kp.modified_budget + " T\uff09"
+            }
+            parts.push(line)
+        }
+        return parts.join("\uff1b")
+    }
+
+    function _directActionText() {
+        var rows = (sessionStore.senatePublicAnnouncement || {}).direct_actions || []
+        if (rows.length === 0) return "\u65e0"
+        var parts = []
+        for (var i = 0; i < rows.length; i++) {
+            var a = rows[i]
+            parts.push("\u63a5\u7ba1\u6218\u4e89 \u2014 " + (a.war_name || a.war_id) + " \u00b7 " + (a.commander_name || a.commander_id))
+        }
+        return parts.join("\uff1b")
+    }
+
     function tribuneActionText() {
         if (sessionStore.canManuallySelectSenateVeto) return "\u786e\u8ba4\u5426\u51b3 \u2192 \u516c\u793a\u7ed3\u679c"
         return "AI\u5224\u5b9a\u5426\u51b3 \u2192 \u516c\u793a\u7ed3\u679c"
@@ -317,9 +349,9 @@ Rectangle {
         for (var i = 0; i < options.length; i++) {
             var o = options[i]
             if (o.type !== "land" || !hasSelectedProposal(o.key)) continue
-            var percent = billParamValue(o.key, "percent", (o.params && o.params.percent) || 0)
+            var amountC = billParamValue(o.key, "amount_C", (o.params && o.params.amount_C) || 0)
             var publicLand = o.public_land || 0
-            if (percent <= 0 || publicLand <= 0) return true
+            if (amountC <= 0 || publicLand <= 0) return true
         }
         return false
     }
@@ -329,10 +361,7 @@ Rectangle {
         if (!item) return ""
         if (item.type === "war") return ""  // 后端 _proposal_label 已含「（征召 N 个军团）」，避免重复（G5 识图缺陷）
         if (item.type === "budget") return ""  // 后端 _proposal_label 已含「（预算 N T）」，避免重复（G5 识图缺陷，与 war 同源）
-        if (item.type === "land") {
-            var actName = item.act_type === "sale" ? "出售" : "分配"
-            return "（" + actName + " " + ((item.percent !== undefined ? item.percent : 0) * 100).toFixed(0) + "% 公地）"
-        }
+        if (item.type === "land") return ""  // AU-7：后端 _proposal_label 已含「出售 N C（约 M%）」，与 war/budget 同源避免重复（实现注记：计划 Q-4 字面会与 label 重复，按文件内既有模式取 label 为准）
         return ""
     }
 
@@ -415,6 +444,32 @@ Rectangle {
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
                     maximumLineCount: 2
+                    elide: Text.ElideRight
+                }
+
+                // WP-D AU-6: ✅ 最终通过（Public Announcement —— 仅 final enacted，D-06 rejected 不进公示）
+                Text {
+                    visible: ((sessionStore.senatePublicAnnouncement || {}).enacted_proposals || []).length > 0
+                    text: "\u2705 \u6700\u7ec8\u901a\u8fc7\uff1a" + root._announcementEnactedText()
+                    color: "#2E7D32"
+                    font.pixelSize: 12
+                    font.bold: true
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 3
+                    elide: Text.ElideRight
+                }
+
+                // WP-D AU-6: ⚡ 直接生效（Direct Actions —— 依法直接生效，不经过 vote/veto）
+                Text {
+                    visible: ((sessionStore.senatePublicAnnouncement || {}).direct_actions || []).length > 0
+                    text: "\u26a1 \u76f4\u63a5\u751f\u6548\uff1a" + root._directActionText()
+                    color: "#9A2D0A"
+                    font.pixelSize: 12
+                    font.bold: true
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 3
                     elide: Text.ElideRight
                 }
 
@@ -613,7 +668,6 @@ Rectangle {
                                     property bool expanded: isProposal && root.expandedBillKeys.indexOf(modelData.key) >= 0
                                     property string billKey: (modelData && modelData.key) ? modelData.key : ""
                                     property real defaultBudget: (modelData.budget_range) ? modelData.budget_range.default : 0
-                                    property real defaultPercent: (modelData.params && modelData.params.percent) ? modelData.params.percent : 0.10
                                     Layout.preferredHeight: isProposal
                                         ? (expanded ? cardColumn.implicitHeight + 12 : headerRow.implicitHeight + 12)
                                         : 48
@@ -755,16 +809,17 @@ Rectangle {
                                                 }
                                             }
 
-                                            // FC-05/FC-06 卖地/分地 percent slider + 公地换算
+                                            // FC-05/FC-06 卖地/分地 amount_C slider（AU-7：authoritative = params.amount_C int 主输入；
+                                            // percent 仅派生展示 = amount_C / root public_land，禁独立编辑）
                                             ColumnLayout {
                                                 visible: modelData.type === "land"
                                                 Layout.fillWidth: true
                                                 spacing: 2
                                                 RowLayout {
                                                     Layout.fillWidth: true
-                                                    Text { text: "土地比例"; color: "#2C1E12"; font.pixelSize: 11; Layout.preferredWidth: 60 }
+                                                    Text { text: "土地数量"; color: "#2C1E12"; font.pixelSize: 11; Layout.preferredWidth: 60 }
                                                     Text {
-                                                        text: (landSlider.value * 100).toFixed(0) + "% = " + Math.floor((modelData.public_land || 0) * landSlider.value) + " C"
+                                                        text: Math.round(landSlider.value) + " C（约 " + Math.round((landSlider.value / (modelData.public_land || 1)) * 100) + "%）"
                                                         color: "#9A2D0A"
                                                         font.pixelSize: 11
                                                         font.bold: true
@@ -773,11 +828,11 @@ Rectangle {
                                                 Slider {
                                                     id: landSlider
                                                     Layout.fillWidth: true
-                                                    from: 0.05
-                                                    to: 1.00
-                                                    stepSize: 0.05
-                                                    value: defaultPercent
-                                                    onValueChanged: root.setBillParam(billKey, "percent", value)
+                                                    from: 1
+                                                    to: modelData.public_land || 1
+                                                    stepSize: 1
+                                                    value: (modelData.params && modelData.params.amount_C !== undefined) ? modelData.params.amount_C : 1
+                                                    onValueChanged: root.setBillParam(billKey, "amount_C", Math.round(value))
                                                 }
                                             }
 
@@ -825,10 +880,18 @@ Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 26
                         radius: 4
-                        enabled: sessionStore.canCreateSenateProposal && root.selectedProposalKeys.length > 0 && !root.hasZeroValueLandSelection()
+                        // WP-D AU-3/AU-1：移除 selectedProposalKeys.length>0（空批合法）；
+                        // AI 分支（canTriggerAIProposer）按钮同样可点（frozen §11 Scenario B，见偏离 D-7）
+                        enabled: (sessionStore.canCreateSenateProposal || sessionStore.canTriggerAIProposer) && !root.hasZeroValueLandSelection()
                         opacity: enabled ? 1.0 : 0.45
                         gradient: Gradient { GradientStop { position: 0.0; color: "#D9AA52" } GradientStop { position: 1.0; color: "#BC7B28" } }
-                        Text { anchors.centerIn: parent; text: root.proposalStepDone ? "\u2190 \u6cd5\u6848\u5df2\u63d0\u4ea4" : "\u63d0\u4ea4\u9009\u4e2d\u6cd5\u6848 \u2192 \u79fb\u4ea4\u8868\u51b3"; color: "#2C1E12"; font.pixelSize: 12; font.bold: true }
+                        Text {
+                            anchors.centerIn: parent
+                            text: root.proposalStepDone ? "\u2190 \u6cd5\u6848\u5df2\u63d0\u4ea4"
+                                : (sessionStore.canTriggerAIProposer ? "AI \u6267\u653f\u5b98\u81ea\u52a8\u63d0\u6848 \u2192"
+                                   : (root.selectedProposalKeys.length === 0 ? "\u672c\u4f1a\u671f\u4e0d\u63d0\u4ea4\u6cd5\u6848 \u2192 \u7ed3\u675f\u63d0\u6848" : "\u63d0\u4ea4\u9009\u4e2d\u6cd5\u6848 \u2192 \u79fb\u4ea4\u8868\u51b3"))
+                            color: "#2C1E12"; font.pixelSize: 12; font.bold: true
+                        }
                         MouseArea { anchors.fill: parent; enabled: parent.enabled; onClicked: sessionStore.doSubmitSenateProposals(root.selectedProposals()) }
                     }
                 }

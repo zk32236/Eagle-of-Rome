@@ -144,11 +144,23 @@ class TestWP05Takeover(unittest.TestCase):
         self.assertTrue(war.legion_numbers)
         self.assertTrue(self.consul.is_absent)
 
+        # WP-D AU-5：成功接管 → direct_actions 记录（含 war_name/commander_name/legions）
+        actions = self.state.get_senate_direct_actions()
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]["action_type"], "takeover")
+        self.assertEqual(actions[0]["war_id"], war.id)
+        self.assertEqual(actions[0]["war_name"], war.name)
+        self.assertEqual(actions[0]["commander_id"], self.consul.id)
+        self.assertEqual(actions[0]["commander_name"], self.consul.get_formal_name())
+        self.assertEqual(actions[0]["legions"], list(war.legion_numbers))
+
         # AC-05: 刷新后 takeover_options 移除该 war
         view_after = senate_api.get_senate_view(self.state, "player1")
         self.assertTrue(view_after["success"])
         opt_after = view_after["data"]["takeover_options"]
         self.assertFalse(any(o["war_id"] == war.id for o in opt_after))
+        # WP-D AU-5：view DTO 透传 direct_actions
+        self.assertEqual(len(view_after["data"]["direct_actions"]), 1)
 
     def test_wp05_takeover_direct_not_proposal(self):
         war = self._add_active_war()
@@ -183,6 +195,34 @@ class TestWP05Takeover(unittest.TestCase):
         self.assertFalse(second["success"])
         self.assertEqual(war.commander_id, commander_after_first)
         self.assertEqual(list(war.legion_numbers), legions_after_first)
+
+    def test_wp05_takeover_resolve_announcement_direct_action(self):
+        """WP-D AU-5/AU-6 场景 I：接管 → resolve → public_announcement.direct_actions 含接管（无 vote/veto 痕迹）。"""
+        for phase in ["mortality", "revenue", "forum", "population"]:
+            self.state.mark_phase_executed(phase)
+        war = self._add_active_war()
+
+        result = senate_api.takeover_war(self.state, "player1", war.id)
+        self.assertTrue(result["success"])
+        # 接管不进入 proposal/veto 链
+        self.assertEqual(len(self.state.get_senate_proposals()), 0)
+        self.assertEqual(len(self.state.get_senate_vetoes_copy()), 0)
+
+        resolved = senate_api.resolve_senate(self.state)
+        self.assertTrue(resolved["success"])
+        announcement = resolved["data"]["public_announcement"]
+        self.assertEqual(announcement["enacted_proposals"], [])
+        self.assertEqual(len(announcement["direct_actions"]), 1)
+        self.assertEqual(announcement["direct_actions"][0]["action_type"], "takeover")
+        self.assertEqual(announcement["direct_actions"][0]["war_id"], war.id)
+
+        # view 回读公示（随 phase_result 持久化）
+        view = senate_api.get_senate_view(self.state, "player1")
+        self.assertTrue(view["success"])
+        self.assertEqual(view["data"]["current_step"], "results")
+        self.assertEqual(len(view["data"]["public_announcement"]["direct_actions"]), 1)
+        # 实时 pending 列表在 resolve（clear_senate_pending）后被清空；持久副本在 public_announcement
+        self.assertEqual(view["data"]["direct_actions"], [])
 
 
 if __name__ == "__main__":
