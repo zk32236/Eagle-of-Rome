@@ -283,33 +283,11 @@ def _seat_share_rows(state: GameState) -> List[Dict[str, Any]]:
 def _current_tribune(state: GameState) -> Optional[Figure]:
     """全局首个 eligible Tribune（AI 语义；迭代范围 = 全局 living members）。
 
-    P2-05 收口：与 record_veto（faction 内人类语义）迭代范围不同，但资格判定统一由
-    PoliticalSystem._is_eligible_tribune 单一谓词收敛（ODR-WP-D-01 方案 B：在职+未死亡，
-    is_absent 不参与判定——法律上保民官不存在缺席）。
+    AU-R2-3c（D-4）：薄委托 → PoliticalSystem._find_any_eligible_tribune（单一迭代范围 +
+    单一谓词 _is_eligible_tribune，方案 B：在职+未死亡，is_absent 不参与判定——法律上
+    保民官不存在缺席）。调用点稳定（apply_auto_tribune_vetoes / 测试）。
     """
-    politics = _political_system(state)
-    for member in state.get_living_members():
-        if politics._is_eligible_tribune(member):
-            return member
-    return None
-
-
-def _viewer_has_tribune(state: GameState, viewer_player_id: str) -> bool:
-    viewer = state.get_player(viewer_player_id)
-    tribune = _current_tribune(state)
-    return bool(viewer and tribune and tribune.faction_id == viewer.faction_id)
-
-
-def _viewer_eligible_consul(state: GameState, viewer_player_id: str) -> bool:
-    """判断 viewer 所在派系是否存在 eligible 执政官（AU-1 单一谓词委托）。"""
-    viewer = state.get_player(viewer_player_id)
-    if not viewer:
-        return False
-    faction = state.get_faction(viewer.faction_id)
-    if not faction:
-        return False
-    politics = _political_system(state)
-    return any(politics._is_eligible_consul(member) for member in faction.get_members(state))
+    return _political_system(state)._find_any_eligible_tribune()
 
 
 def _build_takeover_options(state: GameState) -> List[Dict[str, Any]]:
@@ -425,10 +403,36 @@ def _passed_proposals_for_veto(state: GameState) -> List[Dict[str, Any]]:
 def apply_auto_tribune_vetoes(
     state: GameState,
     veto_decider: Optional[TribuneVetoDecider] = None,
+    viewer_player_id: Optional[str] = None,
 ) -> dict:
-    """Apply AI tribune veto decisions for GUI when current viewer does not own the tribune."""
+    """Apply AI tribune veto decisions for GUI when current viewer does not own the tribune.
+
+    AU-R2-3a（C2，R2-B-1）：新增 viewer_player_id 参数 + fail-closed guard——人类派系持有
+    eligible Tribune → AutoTribuneVetoDecider 零构造零调用（guard 置于 decider 构造之前
+    return），返回 api_response(False) + WARNING 日志（type="tribune_veto_human_guard"）。
+    viewer_player_id 默认 None → CLI auto 模式（phase_senate._handle_step_4，无 viewer 概念）
+    行为不变（FACT-8 向后兼容）。
+    """
     if not state:
         return api_response(False, "Invalid game state")
+    # ★ R2-B-1（C2 冻结原文）：viewer-owns-tribune fail-closed guard（API 兜底，权威 mutation 边界）
+    if viewer_player_id:
+        control = _political_system(state).resolve_veto_control(viewer_player_id)
+        if control["mode"] == "HUMAN":
+            state.log_event(
+                "AI 保民官否决被拒：人类派系持有 eligible Tribune，AI 否决不可执行",
+                level=logging.WARNING,
+                extra={
+                    "type": "tribune_veto_human_guard",
+                    "viewer_player_id": viewer_player_id,
+                    "tribune_id": control["actor"],
+                },
+            )
+            return api_response(
+                False,
+                "人类保民官拥有否决权，AI 否决不可执行",
+                data={"vetoed": [], "decisions": []},
+            )
     tribune = _current_tribune(state)
     if not tribune:
         return api_response(True, "No tribune is available; veto step skipped", data={"vetoed": [], "decisions": []})
@@ -464,7 +468,8 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         if not viewer:
             return api_response(False, "Viewer player not found")
 
-        result = _political_system(state).build_initial_info()
+        politics = _political_system(state)
+        result = politics.build_initial_info()
         if not result.get("success", False):
             return api_response(
                 False,
@@ -513,10 +518,15 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         else:
             current_step = "senate_vote"
         actionable = current_phase_id == "senate" and state.is_current_player(viewer_player_id)
-        viewer_has_consul = _viewer_eligible_consul(state, viewer_player_id)
+        # AU-R2-2b（C4/C5）：能力位全由单一 authority resolver 产出（provenance 全收敛）——
+        # _viewer_eligible_consul / _viewer_has_tribune 独立重算已退役（FACT-1）。
+        proposal_control = politics.resolve_proposal_control(viewer_player_id)
+        veto_control = politics.resolve_veto_control(viewer_player_id)
+        viewer_has_consul = proposal_control["mode"] == "HUMAN"
+        viewer_has_tribune = veto_control["mode"] == "HUMAN"
         can_create = actionable and current_step == "proposal" and viewer_has_consul
-        can_trigger_ai = actionable and current_step == "proposal" and not viewer_has_consul
-        viewer_has_tribune = _viewer_has_tribune(state, viewer_player_id)
+        # D-3 收严：can_trigger_ai 严格 mode=="AI"（NONE 不再暴露 AI 入口，fail-closed D-R2-05）
+        can_trigger_ai = actionable and current_step == "proposal" and proposal_control["mode"] == "AI"
         takeover_options = _build_takeover_options(state)
         can_takeover = actionable and bool(takeover_options) and viewer_has_consul
 
@@ -531,16 +541,27 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "current_step": current_step,
             "actionable": actionable,
             "can_create_proposal": can_create,
-            "can_select_proposal": viewer_has_consul,
+            # R2-A-2（C5）：can_select_proposal 补 actionable+step guard，对齐 can_create_proposal 三重 guard
+            "can_select_proposal": actionable and current_step == "proposal" and viewer_has_consul,
             "can_propose": actionable and current_step == "proposal",
             "can_trigger_ai_proposer": can_trigger_ai,
             "viewer_has_consul": viewer_has_consul,
             "can_vote": actionable and current_step == "senate_vote" and len(proposals) > 0,
-            "can_veto": actionable and current_step == "tribune_veto" and viewer_has_tribune,
-            "can_auto_veto": actionable and current_step == "tribune_veto" and not viewer_has_tribune,
+            # D-3 收严：can_veto/can_auto_veto 由 ±viewer_has_tribune 改为严格 mode（NONE → 双 False）
+            "can_veto": actionable and current_step == "tribune_veto" and veto_control["mode"] == "HUMAN",
+            "can_auto_veto": actionable and current_step == "tribune_veto" and veto_control["mode"] == "AI",
             "viewer_has_tribune": viewer_has_tribune,
             "can_resolve": actionable and current_step == "tribune_veto",
             "can_advance": current_step == "results",
+            # AU-R2-2b provenance（AC-R2-11 observability，D-2：authority_reason 为 JSON dict）
+            "proposal_control_mode": proposal_control["mode"],
+            "veto_control_mode": veto_control["mode"],
+            "proposal_actor": proposal_control["actor"],
+            "veto_actor": veto_control["actor"],
+            "authority_reason": {
+                "proposal": proposal_control["authority_reason"],
+                "veto": veto_control["authority_reason"],
+            },
             "summary": {
                 "title": "元老院议事",
                 "status": current_step,
@@ -619,9 +640,11 @@ def takeover_war(state: GameState, player_id: str, war_id: str) -> dict:
         )
         return api_response(False, "派系不存在")
 
+    politics = _political_system(state)
     consul_figure = None
     for member in faction.get_members(state):
-        if member.office == "consul" and not member.is_absent and not member.is_dead:
+        # AU-R2-2c（C5）：内联四条件退役 → 委托单一谓词（行为等价 FACT-5；war 生命周期仍 WP-G）
+        if politics._is_eligible_consul(member):
             consul_figure = member
             break
     if not consul_figure:
@@ -681,8 +704,7 @@ def takeover_war(state: GameState, player_id: str, war_id: str) -> dict:
             )
             return api_response(False, "该战争已有有效指挥官，无法接管")
 
-    # 4. 直接执行（复用 PoliticalSystem 指挥官分配 + 军团招募）
-    politics = _political_system(state)
+    # 4. 直接执行（复用 PoliticalSystem 指挥官分配 + 军团招募；politics 已在权限校验处构造）
     previous_status = war.status.value if hasattr(war.status, "value") else str(war.status)
     if not politics.execute_war_takeover_direct(war, consul_figure):
         state.log_event(
@@ -801,17 +823,10 @@ def auto_submit_proposals(
     if not state:
         return api_response(False, "无效的游戏状态")
 
-    # 1. 查找执政官人物（AU-1：主循环与 fallback 均校验 office==consul + 未 absent + 未死亡，全局执政官语义）
-    consul_figure = None
-    for member in state.get_living_members():
-        if member.office == "consul" and not member.is_absent and not member.is_dead:
-            consul_figure = member
-            break
-    if not consul_figure and state.turn and state.turn.leader_ids:
-        leader_id = state.turn.leader_ids[0]
-        leader = state.get_member(leader_id)
-        if leader and leader.office == "consul" and not leader.is_absent and not leader.is_dead:
-            consul_figure = leader
+    # 1. 查找执政官人物（AU-R2-2c，C3 收敛）：全局 eligible Consul 唯一查找路径 =
+    #    PoliticalSystem._find_any_eligible_consul（FACT-3：原 leader fallback 带完整资格校验，
+    #    在 get_living_members 全量迭代下不可达成功 → 等效死代码，收敛移除；行为等价 D-7）。
+    consul_figure = _political_system(state)._find_any_eligible_consul()
     if not consul_figure:
         return api_response(False, "没有执政官，无法自动提交提案")
 

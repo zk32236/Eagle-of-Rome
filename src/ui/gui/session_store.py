@@ -1308,14 +1308,28 @@ class GuiSessionStore(QObject):
                 veto_ids.append(int(item))
             except (TypeError, ValueError):
                 continue
-        if self._senate_view.get("can_auto_veto", False):
-            auto_feedback = self._adapter.apply_auto_senate_vetoes()
+        # AU-R2-3b（R2-B-2，C3）：路由改读 resolver-backed veto_control_mode——不再信任
+        # cached can_auto_veto（stale 场景：cached True 但 mode=HUMAN → human 分支 + API
+        # guard 双层兜底）。HUMAN→submit_senate_vetoes / AI→apply_auto（直传 viewer_id，
+        # R2-B-1 guard 兜底；adapter 零改动，D-8 先例）/ NONE→resolve 直接结算。
+        veto_mode = self._senate_view.get("veto_control_mode")
+        if veto_mode is None:
+            # 旧缓存兼容（R2 前 DTO 无 veto_control_mode）：退化回 can_veto/can_auto_veto 派生
+            if self._senate_view.get("can_auto_veto", False):
+                veto_mode = "AI"
+            elif self._senate_view.get("can_veto", False):
+                veto_mode = "HUMAN"
+        if veto_mode == "AI":
+            from src.api import senate_api
+            auto_feedback = self._adapter.call(
+                senate_api.apply_auto_tribune_vetoes, self._state, None, self._viewer_id
+            )
             self._raise_feedback(auto_feedback)
             if not auto_feedback.get("success"):
                 self._refresh_senate_view()
                 self.senateViewChanged.emit()
                 return auto_feedback
-        elif veto_ids:
+        elif veto_mode == "HUMAN" and veto_ids:
             veto_feedback = self._adapter.submit_senate_vetoes(self._viewer_id, veto_ids)
             self._raise_feedback(veto_feedback)
             if not veto_feedback.get("success"):

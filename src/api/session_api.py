@@ -573,11 +573,18 @@ def resolve_population_slice(state: GameState) -> dict:
         cand_result = population_api.get_candidates(state)
         candidates_before_resolve = cand_result.get("data", {}) if cand_result.get("success") else {}
 
-        # 转换战场指挥官（consul→proconsul, praetor→propraetor）
-        from src.api.population_api import convert_battlefield_commanders
-        conversion_result = convert_battlefield_commanders(state)
+        # R2-A-1（AU-R2-2a）：结算尾段以幂等 begin_population_phase 替代独立
+        # convert_battlefield_commanders —— archive→convert 全序（P1-1b）无条件先于
+        # resolve_election，消除「resolve 前未清档」的间歇 stale office 窗口（R2-04 根因）。
+        # 幂等：population_entry marker 守卫——已 archive（顶部 :523 门控已执行）→ 返回
+        # cached no-op；未执行 → 此刻归档→转换全序。顶部阶段门控保留，二者互补无双重归档。
+        entry = population_api.begin_population_phase(state)
+        conversion_result = {
+            "converted": entry.get("converted", []),
+            "total": len(entry.get("converted", [])),
+        }
 
-        # 结算选举
+        # 结算选举（archive 已无条件先于 resolve）
         resolve_result = population_api.resolve_election(state)
         if not resolve_result:
             return api_response(False, "Election resolve returned None")

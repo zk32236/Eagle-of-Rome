@@ -1,7 +1,7 @@
 # MVP0.5-20-sys — 元老院系统 API 映射
 
 > **技术映射 — Senate API**  
-> **版本：** v1.4  
+> **版本：** v1.5  
 > **日期：** 2026-08-23（v1.0 初版 2026-07-26）  
 
 ---
@@ -79,8 +79,8 @@ phase_senate.py (CLI) → senate_api.py (API) → 对应 Core/Entity
 ### 5.1 Consul Proposal Authority 契约（四层守卫）
 
 - **Core 单一谓词：** `political_system.py:741-747` `_is_eligible_consul(member)` = `office=="consul"` + 未死亡 + 未 absent（单一事实源，消除 GUI/Core 双判定）。
-- **执政官查找：** `political_system.py:778-795` `_find_consul_for_faction` —— 主循环消费谓词；fallback 四条件（faction 归属 + office==consul + 未 absent + 未死亡），任一不满足 → `return None` **fail-closed**（非执政官派系不再误判通过，P1 根因消除）。
-- **API 委托：** `senate_api.py:304-312` `_viewer_eligible_consul` 委托 `_is_eligible_consul`（无独立判定逻辑）。
+- **执政官查找：** `political_system.py` `_find_consul_for_faction` —— 主循环消费谓词；fallback（R2 收敛：保留 leader 存在性 + faction 归属检查，资格判定统一委托 `_is_eligible_consul` 单一谓词，原四条件内联退役），任一不满足 → `return None` **fail-closed**（非执政官派系不再误判通过，P1 根因消除）。
+- **API 委托（R2 收敛）：** `senate_api.get_senate_view` 能力位由 `PoliticalSystem.resolve_proposal_control` 单一 resolver 产出（`mode=="HUMAN"` → viewer_has_consul）；`_viewer_eligible_consul` 独立重算已**退役删除**（FACT-1）。
 - **GUI 门禁：** `SenateStage.qml:693` 提案 CheckBox `enabled: sessionStore.canCreateSenateProposal`；提交按钮 `SenateStage.qml:885` `enabled: (canCreateSenateProposal || canTriggerAIProposer) && !hasZeroValueLandSelection()`（非执政官可经主按钮触发 AI proposer——frozen §11 Scenario B，偏离 D-7）。
 - **R1（v1.4）参数控件 authority 门控（AU-R1-03a，AC-R1-03 BLOCKER）：** 非执政官 viewer 除勾选外，**参数编辑控件一律按 `sessionStore.canCreateSenateProposal` 门控**——disclosure 三角 MouseArea（SenateStage.qml:724-731）`enabled: canCreateSenateProposal`（面板不可展开）；军团 ComboBox（:764-766）`enabled: canCreateSenateProposal && legion_options 存在`；预算 Slider（:795-797）`enabled: canCreateSenateProposal && budget_range 存在`；land Slider（:829）`enabled: canCreateSenateProposal`。API 保持 fail-closed 不动（仅回归，test_senate_authority.py）。
 - **R1（v1.4）collapse 契约（AU-R1-04a，AC-R1-04）：** `setProposalSelected`（:268-274）内联驱动 `expandedBillKeys`——checked → 自动展开 / unchecked → 折叠（checkbox 为控制交互，无陈旧参数面板残留，G7 #8 反例闭合）；三角 `toggleBillExpanded`（:310-315）保留为手动覆盖（两状态恒一致）。
@@ -89,13 +89,16 @@ phase_senate.py (CLI) → senate_api.py (API) → 对应 Core/Entity
 
 ### 5.2 Senate DTO capability 字段（get_senate_view data，senate_api.py:459 起）
 
-| 字段 | 语义 | 来源（senate_api.py:516-529） |
+| 字段 | 语义 | 来源（senate_api.py，R2 收敛后） |
 |:--|:--|:--|
-| `viewer_has_consul` | viewer 派系存在 eligible 执政官 | `_viewer_eligible_consul` |
-| `can_select_proposal` | viewer 可手选/配置提案（= viewer_has_consul；**不再含 `len(options)>0` 条件**） | `viewer_has_consul` |
+| `viewer_has_consul` | viewer 派系存在 eligible 执政官 | `resolve_proposal_control(viewer).mode == "HUMAN"`（单一 resolver） |
+| `can_select_proposal` | viewer 可手选/配置提案（R2-A-2：补 actionable + step==proposal guard，与 can_create_proposal 三重 guard 对齐） | `actionable && step==proposal && viewer_has_consul` |
 | `can_create_proposal` | 可提交 = actionable + step==proposal + viewer_has_consul | `can_create` |
-| `can_trigger_ai_proposer` | 非执政官派系可触发 AI proposer = actionable + step==proposal + !viewer_has_consul | `can_trigger_ai` |
-| `can_veto` / `can_auto_veto` / `viewer_has_tribune` | Tribune 否决权 authority 态（D-10，详见 MVP0.5-09 v1.1） | `_viewer_has_tribune` |
+| `can_trigger_ai_proposer` | 非执政官派系可触发 AI proposer（R2-D-3 收严：严格 mode=="AI"；NONE → False） | `actionable && step==proposal && proposal_control.mode=="AI"` |
+| `can_veto` / `can_auto_veto` / `viewer_has_tribune` | Tribune 否决权 authority 态（R2-D-3 收严：严格 mode==HUMAN/AI；NONE → 双 False，fail-closed） | `resolve_veto_control(viewer)`（详见 MVP0.5-09 v1.2） |
+| `proposal_control_mode` / `veto_control_mode` | HUMAN\|AI\|NONE provenance（AC-R2-11） | resolver 直出 |
+| `proposal_actor` / `veto_actor` | 权威 office holder id（或 None） | resolver 直出 |
+| `authority_reason` | `{"proposal": str, "veto": str}` JSON dict（D-2 形状） | resolver 直出 |
 
 SessionStore 透传（session_store.py:355-363 / :400-402）：`canSelectSenateProposal` / `canTriggerAIProposer` / `senatePublicAnnouncement`。
 
@@ -133,7 +136,57 @@ SessionStore 透传（session_store.py:355-363 / :400-402）：`canSelectSenateP
   - 幂等（C3）：`record_senate_vote` 重复返回 False 契约保持；AI 写回不覆盖 human 票；`vote_source` 注册表随 `clear_senate_votes` / `clear_senate_pending` 镜像清除（无跨会话泄漏）；to_dict/load_from_dict 存档往返（旧存档缺键 → 空 dict 向后兼容）。
   - provenance（AU-R1-02c/06a）：结构化 `log_event` `type="senate_vote_decision"` + `{proposal_id, faction_id, vote, vote_source, decision_state}`（created=首次 AI 决策即持久化；reused=复用既有存储）。
 
+### 5.8 R2 Senate Authority Consolidation（GUI-BETA-R1 WP-D-R2，2026-08-23，v1.5）
+
+> 单一 authority root 收敛（R2-A Proposal Authority + R2-B Tribune Veto Authority + shared root）。
+> 冻结语义来源：SA Design（02-SA-Design-WP-D-R2）+ G3 DESIGN_FROZEN（C1~C8）+ Task Package v1.0（§10/§11）。
+
+**① 单一 authority resolver（唯一权威解析路径，消费者只读结果禁独立重算）：**
+
+```text
+PoliticalSystem.resolve_proposal_control(viewer_player_id) -> {mode: HUMAN|AI|NONE, actor, authority_reason}
+PoliticalSystem.resolve_veto_control(viewer_player_id)     -> {mode: HUMAN|AI|NONE, actor, authority_reason}
+  missing_viewer / missing_faction → NONE（fail-closed，D-R2-05）
+  faction 内 eligible office      → HUMAN（human_eligible_consul / human_eligible_tribune）
+  全局 eligible office（AI 语义）  → AI（ai_eligible_consul / ai_eligible_tribune）
+  否则                            → NONE（no_eligible_consul / no_eligible_tribune）
+收敛 helper：_find_any_eligible_consul / _find_tribune_for_faction / _find_any_eligible_tribune
+（退役 ≥10 处内联 duplicate：C2 fallback 四条件 / C3 auto_submit_proposals / C4 phase_senate /
+ C5 takeover_war / T2 _current_tribune 薄委托 / T3 record_veto / T5 _get_tribune /
+ _viewer_eligible_consul 删除 / _viewer_has_tribune 删除 / DTO 独立组合——C4）
+```
+
+**② `apply_auto_tribune_vetoes` 人类 guard（R2-B-1，C2）：**
+
+```text
+签名 + viewer_player_id: Optional[str] = None；guard 置于 decider 构造（:437）之前：
+  resolve_veto_control(viewer) == HUMAN → WARNING 日志（type=tribune_veto_human_guard）+
+  api_response(False, "人类保民官拥有否决权，AI 否决不可执行", {vetoed:[], decisions:[]})
+  → AutoTribuneVetoDecider 零构造零调用（spy/call-count 硬证据）
+viewer_player_id=None（CLI auto 模式）→ 行为不变（FACT-8 向后兼容）
+```
+
+**③ `can_select_proposal` 三重 guard（R2-A-2，C5）：** `actionable && step==proposal && viewer_has_consul`（对齐 can_create_proposal）。
+
+**④ office 清档↔结算耦合闭合（R2-A-1，C1）：** `resolve_population_slice`（session_api.py）结算尾段以幂等 `begin_population_phase`（population_entry marker 守卫，archive→convert 全序 P1-1b）替代独立 `convert_battlefield_commanders` 调用——archive 无条件先于 `resolve_election`，消除「resolve 前未清档」的间歇 stale office 窗口（R2-04 根因）；conversion DTO 形状保持 `{converted, total}`；顶部 :523 阶段门控保留（互补且幂等，无双重归档）。
+
+**⑤ HUMAN vs AI 路由边界（生产入口）：**
+
+```text
+入口                             路由（R2 收敛后）
+get_senate_view                  能力位 + provenance 全由 resolver 单一产出
+create_proposal                   _find_consul_for_faction（fail-closed 保留，谓词收敛）
+record_veto                       _find_tribune_for_faction（fail-closed 保留，T3 收敛）
+apply_auto_tribune_vetoes         R2-B-1 guard（viewer HUMAN → 零调用）+ _current_tribune（薄委托）
+auto_submit_proposals             _find_any_eligible_consul（C3 收敛；:1034 AI takeover 触发点保留 → WP-G）
+doSubmitSenateVetoes（store）     读 resolver-backed veto_control_mode：HUMAN→submit / AI→apply_auto（直传 viewer_id，guard 双层兜底）/ NONE→resolve 直结——不信任 cached can_auto_veto（R2-B-2，C3）
+doSubmitSenateProposals（store）  读 viewer_has_consul（resolver 单一产出）路由
+can_trigger_ai_proposer / can_auto_veto  严格 mode=="AI"（D-3：NONE → 双 False，fail-closed）
+```
+
 ### 5.7 Takeover Direct Action（独立于 vote/veto 链）
+
+> **R2 范围声明：** war/truce/takeover 生命周期语义不属于 WP-D-R2（Task Package §4/§0 路由 WP-G）；R2 仅将 `takeover_war` 的资格判定收敛为 `_is_eligible_consul` 谓词委托（C5，行为等价），`:1034 execute_ai_takeover_direct_action` 触发点一字不动。
 
 - **入口：** `senate_api.py:586-628` `takeover_war` —— 权限校验（faction 成员 office==consul + 未 absent + 未死亡，:625，fail-closed）→ 活跃外战 + 幂等校验 → `execute_war_takeover_direct` 直接执行。
 - **记录：** 成功分支 `senate_api.py:665-672` `record_senate_direct_action({action_type:"takeover", war_id, war_name, commander_id, commander_name, legions})`。
@@ -150,7 +203,7 @@ SessionStore 透传（session_store.py:355-363 / :400-402）：`canSelectSenateP
 ## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
-| v1.4 | 2026-08-23 | GUI-BETA-R1 WP-D-R1（G7 Focused Correction）: ①§5.7 Direct Action 独占性——resolve_senate 零 takeover（隐藏 process_war_takeover 移除）+ AI 自动接管同语义路径（execute_ai_takeover_direct_action，唯一触发点 auto_submit_proposals 尾部，D-1）+ provenance 10 字段（action/trigger_source/previous_status/resulting_status，C4）；②§5.6/§2.3 vote 决策持久化契约（created once → persisted → reused，AI 不重掷，human 权威，C3 幂等）+ vote_source/decision_state provenance；③§5.1 参数控件 authority 门控（ComboBox/Slider/三角，AU-R1-03a）+ collapse 契约（checkbox 驱动，AU-R1-04a）+ R1-06 null-safe 说明 |
+| v1.5 | 2026-08-23 | GUI-BETA-R1 WP-D-R2（Senate Authority Consolidation）: ①单一 authority resolver（resolve_proposal_control/resolve_veto_control，{mode,actor,authority_reason} HUMAN\|AI\|NONE + 三收敛 helper，退役 ≥10 处内联 duplicate）；②apply_auto_tribune_vetoes 人类 guard（viewer_player_id + fail-closed，decider 零构造零调用 + tribune_veto_human_guard 日志）；③can_select_proposal 三重 guard（R2-A-2）；④resolve_population_slice 尾部幂等 begin_population_phase（archive→convert→resolve 全序，R2-A-1）；⑤HUMAN vs AI 路由边界（store 读 veto_control_mode 不信任 cached can_auto_veto；can_trigger_ai/can_auto_veto 严格 mode==AI，D-3）+ provenance 5 字段（mode×2/actor×2/authority_reason dict） |
 | v1.3 | 2026-08-23 | GUI-BETA-R1 WP-D: 新增 §5 Senate Proposal Flow 契约（Consul 四层守卫 + DTO capability 四字段 + Zero-proposal 生命周期 + AI 0…N/空批 + Public Announcement DTO + 参数连续性 + Takeover Direct Action）——Trial Audit P1-PC-02/P1-PC-03 文档闭合 |
 | v1.2 | 2026-08-22 | GUI-BETA-R1 WP-C-R1: 提案链值域改接（_budget_range_for_contract/_legion_options_for_war helper + FC-01/FC-03 数据源 + auto_submit P1-a 同值域 + _populate_proposal 权威谓词 + process_war_takeover 执行期征召） |
 | v1.1 | 2026-07-26 | 新增 auto_vote() 方法（Wave-04 Finale, C-10e） |

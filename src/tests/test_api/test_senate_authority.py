@@ -102,13 +102,33 @@ class TestConsulAuthority(TestSenateAuthorityBase):
         self.assertIs(data["can_trigger_ai_proposer"], True)
 
     def test_absent_consul_boundary(self):
-        """AU-1：执政官 absent → 不 eligible → 该派系手动权消失、AI proposer 接管。"""
+        """AU-1/R2-D-3：执政官 absent → 不 eligible → 该派系手动权消失。
+
+        R2 收严（D-3，SA §1.4 冻结）：can_trigger_ai_proposer 严格 mode=="AI"——本场景
+        全局无 eligible consul（唯一 consul 已 absent）→ mode NONE → AI 入口同样关闭
+        （fail-closed D-R2-05；auto_submit_proposals 本就拒绝无执政官）。
+        """
         self.consul.is_absent = True
         view = senate_api.get_senate_view(self.state, "player1")
         data = view["data"]
         self.assertIs(data["viewer_has_consul"], False)
         self.assertIs(data["can_select_proposal"], False)
         self.assertIs(data["can_create_proposal"], False)
+        self.assertIs(data["can_trigger_ai_proposer"], False)
+        self.assertEqual(data["proposal_control_mode"], "NONE")
+
+    def test_absent_consul_with_ai_consul_elsewhere_routes_ai(self):
+        """R2-D-3 对照：本派系 consul absent 但全局另有 eligible consul → mode AI → AI 入口开启。"""
+        ai_consul = Figure(id=9, name="AI执政官", faction_id="populares", age=40)
+        ai_consul.office = "consul"
+        ai_consul.class_tier = ClassTier.NOBILE
+        ai_consul.influence = 50
+        self.state.add_member(ai_consul)
+        self.faction2.member_ids.append(9)
+        self.consul.is_absent = True
+        view = senate_api.get_senate_view(self.state, "player1")
+        data = view["data"]
+        self.assertEqual(data["proposal_control_mode"], "AI")
         self.assertIs(data["can_trigger_ai_proposer"], True)
 
     def test_dead_consul_not_eligible(self):

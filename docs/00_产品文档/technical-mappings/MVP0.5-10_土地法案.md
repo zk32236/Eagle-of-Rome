@@ -75,6 +75,7 @@ SenateStage.qml land Slider（qml:812-836，id landSlider :829 —— from 1 / t
 ## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.2（R2 复核） | 2026-08-23 | GUI-BETA-R1 WP-D-R2 复核：**REVIEWED — NO CHANGE REQUIRED** —— authority 收敛（单一 resolver / R2-A Proposal Authority / R2-B Tribune Veto Authority）不触碰 land proposal 语义；amount_C 权威主输入 / percent 派生契约 / 值域校验 / 消费点全部不变（§3/§4/§5 零改动） |
 | v1.2 | 2026-08-23 | GUI-BETA-R1 WP-D: amount_C 唯一权威主输入（percent 派生）+ 值域校验（integer-valued / 1..public_land）+ AI percent→amount_C 转换 + GUI→DTO→Core 全路径 + 消费点（sale→quota / distribution→pending act）——Trial Audit P1-PC-02/P1-PC-03 文档闭合 |
 | v1.1 | 2026-07-26 | 土地分配 CLI→API 下沉：新增 forum_api.execute_land_acts() + senate_api 法案提交 |
 | v1.0 | 2026-07-13 | 初版 |

@@ -228,11 +228,9 @@ class PoliticalSystem:
         if not faction:
             return self._result(False, "派系不存在")
 
-        tribune = None
-        for member in faction.get_members(self.state):
-            if self._is_eligible_tribune(member):
-                tribune = member
-                break
+        # AU-R2-1（T3 收敛）：faction 内 eligible Tribune 查找统一委托
+        # _find_tribune_for_faction（单一迭代范围 + 单一谓词，P2-05 分歧消除）
+        tribune = self._find_tribune_for_faction(faction)
         if not tribune:
             return self._result(False, "只有保民官可以行使否决权")
 
@@ -763,8 +761,8 @@ class PoliticalSystem:
     def _is_eligible_consul(self, member) -> bool:
         """Consul 单一资格谓词（AU-1）：在职 + 未死亡 + 未 absent。
 
-        消费方：_find_consul_for_faction 主循环 / fallback / senate_api._viewer_eligible_consul
-        —— 消除两侧双事实源。
+        消费方（R2 收敛后）：_find_consul_for_faction 主循环 / fallback / _find_any_eligible_consul
+        / resolve_proposal_control（senate_api._viewer_eligible_consul 已退役）——消除双事实源。
         """
         return member.office == "consul" and not member.is_dead and not member.is_absent
 
@@ -775,7 +773,8 @@ class PoliticalSystem:
         法律语义（Owner 裁决）：保民官在职期间不能缺席（离开罗马城）——法律上 absent 对在职
         tribune 不存在；防线 1（派遣/任命路径排除在职 tribune）+ 防线 2（_set_absent guard）
         兜底，正常路径下在职 tribune 永不为 absent。
-        消费方：record_veto / senate_api._current_tribune / _viewer_has_tribune（单谓词收敛）。
+        消费方（R2 收敛后）：_find_tribune_for_faction / _find_any_eligible_tribune /
+        resolve_veto_control（senate_api._current_tribune 薄委托 / _viewer_has_tribune 已退役）。
         """
         return member.office == "tribune" and not member.is_dead
 
@@ -804,17 +803,97 @@ class PoliticalSystem:
 
         if self.state.turn and self.state.turn.leader_ids:
             first_leader = self.state.get_member(self.state.turn.leader_ids[0])
-            # fallback 四条件（P1 修正）：faction 归属 + office==consul + 未 absent + 未死亡，
-            # 任一不满足即 fail-closed return None（非执政官派系不再误判通过）。
+            # fallback（AU-R2-1 收敛）：保留 leader 存在性 + faction 归属检查，资格判定
+            # 统一委托 _is_eligible_consul 单一谓词（原四条件内联退役——任一不满足即
+            # fail-closed return None，非执政官派系不再误判通过；行为等价）。
             if (
                 first_leader
                 and first_leader.faction_id == faction.id
-                and first_leader.office == "consul"
-                and not first_leader.is_absent
-                and not first_leader.is_dead
+                and self._is_eligible_consul(first_leader)
             ):
                 return first_leader
         return None
+
+    def _find_any_eligible_consul(self):
+        """全局首个 eligible Consul（AI proposer 语义，AU-R2-1）。
+
+        替代 C3（senate_api.auto_submit_proposals 内联主循环 + leader fallback）/
+        C4（phase_senate._handle_step_1 内联）——单一迭代范围（全局 living members）+
+        单一谓词 _is_eligible_consul；无命中 → None。
+        """
+        for member in self.state.get_living_members():
+            if self._is_eligible_consul(member):
+                return member
+        return None
+
+    def _find_tribune_for_faction(self, faction):
+        """faction 内首个 eligible Tribune（人类 veto 语义，AU-R2-1）。
+
+        替代 T3（record_veto faction 内迭代）——faction.get_members（仅活成员）+
+        单一谓词 _is_eligible_tribune；无命中 → None（fail-closed「只有保民官可以行使否决权」）。
+        """
+        for member in faction.get_members(self.state):
+            if self._is_eligible_tribune(member):
+                return member
+        return None
+
+    def _find_any_eligible_tribune(self):
+        """全局首个 eligible Tribune（AI 否决语义，AU-R2-1）。
+
+        替代 T2（senate_api._current_tribune 全局迭代）/ T5（phase_senate._get_tribune
+        内联）——单一迭代范围（全局 living members）+ 单一谓词 _is_eligible_tribune。
+        """
+        for member in self.state.get_living_members():
+            if self._is_eligible_tribune(member):
+                return member
+        return None
+
+    def resolve_proposal_control(self, viewer_player_id: str) -> dict:
+        """单一权威提案控制解析（R2 冻结符号，SA §1.2）。
+
+        输出 {mode: HUMAN|AI|NONE, actor, authority_reason}：
+        - viewer 缺失 → NONE(missing_viewer)；faction 缺失 → NONE(missing_faction)；
+        - faction 内 eligible Consul → HUMAN(human_eligible_consul)；
+        - 全局 eligible Consul（AI proposer 独立路径）→ AI(ai_eligible_consul)；
+        - 否则 NONE(no_eligible_consul)——fail-closed，不 fallback 猜测。
+        消费方（senate_api.get_senate_view / store / 测试）只读结果，禁独立重算。
+        """
+        viewer = self.state.get_player(viewer_player_id)
+        if not viewer:
+            return {"mode": "NONE", "actor": None, "authority_reason": "missing_viewer"}
+        faction = self.state.get_faction(viewer.faction_id)
+        if not faction:
+            return {"mode": "NONE", "actor": None, "authority_reason": "missing_faction"}
+        consul = self._find_consul_for_faction(faction)
+        if consul:
+            return {"mode": "HUMAN", "actor": consul.id, "authority_reason": "human_eligible_consul"}
+        ai_consul = self._find_any_eligible_consul()
+        if ai_consul:
+            return {"mode": "AI", "actor": ai_consul.id, "authority_reason": "ai_eligible_consul"}
+        return {"mode": "NONE", "actor": None, "authority_reason": "no_eligible_consul"}
+
+    def resolve_veto_control(self, viewer_player_id: str) -> dict:
+        """单一权威否决控制解析（R2 冻结符号，SA §1.2）。
+
+        输出 {mode: HUMAN|AI|NONE, actor, authority_reason}：
+        - viewer 缺失 → NONE(missing_viewer)；faction 缺失 → NONE(missing_faction)；
+        - faction 内 eligible Tribune → HUMAN(human_eligible_tribune)；
+        - 全局 eligible Tribune（AI 否决语义）→ AI(ai_eligible_tribune)；
+        - 否则 NONE(no_eligible_tribune)——fail-closed（D-R2-05）。
+        """
+        viewer = self.state.get_player(viewer_player_id)
+        if not viewer:
+            return {"mode": "NONE", "actor": None, "authority_reason": "missing_viewer"}
+        faction = self.state.get_faction(viewer.faction_id)
+        if not faction:
+            return {"mode": "NONE", "actor": None, "authority_reason": "missing_faction"}
+        tribune = self._find_tribune_for_faction(faction)
+        if tribune:
+            return {"mode": "HUMAN", "actor": tribune.id, "authority_reason": "human_eligible_tribune"}
+        ai_tribune = self._find_any_eligible_tribune()
+        if ai_tribune:
+            return {"mode": "AI", "actor": ai_tribune.id, "authority_reason": "ai_eligible_tribune"}
+        return {"mode": "NONE", "actor": None, "authority_reason": "no_eligible_tribune"}
 
     def _populate_proposal(self, proposal: dict, proposal_type: str, **kwargs) -> dict:
         if proposal_type == "war":
