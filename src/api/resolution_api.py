@@ -61,6 +61,10 @@ def execute_resolution(
                 errors=["resolution_already_executed"],
             )
 
+        # 1c. 清除上年决算 read-model（WP-E R-1 P2-4 收口：置于幂等 guard 之后——
+        #     语义 = 「新 resolution 开始时清」，非函数最顶端；防跨年残留泄漏到新年预结算视图）
+        state.clear_resolution_settlement()
+
         # 2. 胜利条件检查
         victory_conditions = state.check_victory_conditions()
 

@@ -23,5 +23,7 @@ src/ui/commands/phase_senate.py       # 提名UI + AI自动提名
 
 ## 5. 版本日志
 | 版本 | 日期 | 摘要 |
+|:-----|:-----|:------|
+| v1.2 | 2026-08-23 | GUI-BETA-R1 WP-E（Slice 11 PU-04）：A6 交接事件 read-model 形状（`governor_returns`）——`_commit_settlement`（game_state.py:1507 区域）捕获交接真实事件行 + 行内补全 province_name / old_governor_name / new_governor_name（`get_member()` 命名富化，非业务重算）；Resolution 四步分节「总督返回」段读 read-model（禁累计快照编造） |
 | v1.1 | 2026-07-26 | 补充已知差异（代码自动分配 vs 文档提案流程） |
 | v1.0 | 2026-07-12 | 初版 |

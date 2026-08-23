@@ -10,13 +10,184 @@ Debug Logging Requirement (SA-Development-Workflow §A5):
 
 import logging
 import random
-from typing import List, Optional, Dict, TYPE_CHECKING
+from typing import List, Optional, Dict, Tuple, TYPE_CHECKING
 
 from src.core.entities.figure import Figure, ClassTier, RomanNameGenerator
 
 if TYPE_CHECKING:
     from src.core.game_state import GameState
 
+
+# --- E-G7-09 (ODR-WP-E-01): veteran supply defaults (code-level; config optional) ---
+# forum_rules.veteran_supply block; every key read via .get(key, default) so the
+# mechanism stays active even when the config block is absent.
+_DEFAULT_VETERAN_SUPPLY: Dict = {
+    "enabled": True,
+    "min_veteran_nobiles": 1,
+    "max_veteran_nobiles": 2,
+    "min_ex_consul_count": 1,
+    "censor_anchor_years_ago": 1,
+    "history_years_ago_min": 2,
+    "history_years_ago_max": 8,
+    "ex_consul_probability": 0.5,
+    "age_min": 45,
+    "age_max": 58,
+}
+
+
+def _read_veteran_supply_config(forum_rules: Dict) -> Dict:
+    """Read the forum_rules.veteran_supply block with code-level defaults.
+
+    All keys are read via .get(key, default) so a missing block (or missing key)
+    falls back to the defaults and the mechanism stays effective.
+    """
+    vs = forum_rules.get("veteran_supply", {}) if isinstance(forum_rules, dict) else {}
+    plan = {}
+    for key, default in _DEFAULT_VETERAN_SUPPLY.items():
+        raw = vs.get(key, default) if isinstance(vs, dict) else default
+        if key == "enabled":
+            plan[key] = bool(raw)
+        elif key == "ex_consul_probability":
+            plan[key] = float(raw)
+        else:
+            plan[key] = int(raw)
+    return plan
+
+
+def _build_cursus(fig: Figure, ct: int, offices: List[Tuple[str, int]]) -> None:
+    """Attach a full office cursus to a figure (all terms in the past).
+
+    Uses fig.add_office_history(office, start_turn): end_turn = start_turn + 1,
+    is_active=False, office=None — structurally identical to the terms written by
+    archive_office_holders (population_api). Each start_turn must be < ct (past).
+    """
+    for office_type, offset in offices:
+        start_turn = ct + offset
+        assert start_turn < ct, (
+            f"veteran cursus term must be in the past: {office_type} @ {start_turn}"
+        )
+        fig.add_office_history(office_type, start_turn)
+
+
+def _create_veteran_nobile(state: "GameState", slot: int, plan: Dict) -> Figure:
+    """Create a veteran nobile (ex-consul / ex-praetor) with a full office cursus.
+
+    slot 0 = censor-anchor: a fresh ex-consul (consul term within the cooldown
+    window) that is deterministically censor-eligible and consul-cooldown-blocked
+    this turn — guaranteeing >=1 censor candidate from turn 1.
+    slots >= 1: ex-consul with probability ex_consul_probability, else ex-praetor;
+    min_ex_consul_count-1 additional slots are forced ex-consul when configured.
+    """
+    ct = state.turn.turn_number
+    min_ages = state.config.get("political_rules", {}).get("min_ages", {})
+    min_age_consul = int(min_ages.get("consul", 40) or 40)
+    min_age_censor = int(min_ages.get("censor", 42) or 42)
+    age_min = int(plan["age_min"])
+    age_max = int(plan["age_max"])
+
+    if slot == 0:
+        # Censor-anchor: consul @ ct - censor_anchor_years_ago (fresh, cooldown-blocked)
+        anchor_ago = int(plan["censor_anchor_years_ago"])
+        is_ex_consul = True
+        age = random.randint(age_min, age_max)
+        offices = [
+            ("quaestor", -(anchor_ago + 4)),
+            ("praetor", -(anchor_ago + 2)),
+            ("consul", -anchor_ago),
+        ]
+    else:
+        h = random.randint(
+            int(plan["history_years_ago_min"]), int(plan["history_years_ago_max"])
+        )
+        forced_ex_consul = slot < max(0, int(plan["min_ex_consul_count"]))
+        is_ex_consul = forced_ex_consul or random.random() < float(plan["ex_consul_probability"])
+        if is_ex_consul:
+            # Age: consul-year age >= min_ages.consul AND current age >= censor gate
+            age = max(age_min, min_age_consul + h, min_age_censor) + random.randint(0, 3)
+            offices = [
+                ("quaestor", -(h + 4)),
+                ("praetor", -(h + 2)),
+                ("consul", -h),
+            ]
+        else:
+            age = random.randint(age_min, age_max)
+            offices = [
+                ("quaestor", -(h + 2)),
+                ("praetor", -h),
+            ]
+
+    fig = Figure.create_nobile(state.allocate_id(), None, age=age)
+    _build_cursus(fig, ct, offices)
+    if is_ex_consul:
+        fig.charisma = max(fig.charisma, 7)
+    else:
+        fig.intelligence = max(fig.intelligence, 7)
+    return fig
+
+
+def _resolve_veteran_slot_count(count: int, veteran_plan: Dict) -> int:
+    """Resolve k = number of reserved veteran-nobile slots this turn.
+
+    enabled=False -> 0 (fully restores prior behavior). count<=0 -> 0.
+    k = randint(min_veteran_nobiles, min(max_veteran_nobiles, count)).
+    """
+    if not veteran_plan.get("enabled", True):
+        return 0
+    if count <= 0:
+        return 0
+    min_v = max(0, int(veteran_plan.get("min_veteran_nobiles", 1)))
+    max_v = max(min_v, int(veteran_plan.get("max_veteran_nobiles", 2)))
+    return random.randint(min_v, min(max_v, count))
+
+
+def _generate_normal_figures(
+    state: "GameState",
+    count: int,
+    nobile_prob: float,
+    eques_prob: float,
+    veteran_plan: Dict,
+) -> List[Figure]:
+    """Shared core loop for normal (non-hero) figure generation.
+
+    Reserved slots [0, k) become veteran nobiles (E-G7-09 injection); the rest use
+    the existing class-probability roll (nobile / eques / plebeian). Total count
+    unchanged; registration side effects preserved (add_member + curia.add_figure).
+    """
+    new_figures: List[Figure] = []
+    count = max(0, int(count))
+    k = _resolve_veteran_slot_count(count, veteran_plan)
+    for i in range(count):
+        if i < k:
+            fig = _create_veteran_nobile(state, i, veteran_plan)
+        else:
+            tier_roll = random.random()
+            if tier_roll < nobile_prob:
+                fig = Figure.create_nobile(state.allocate_id(), None, age=random.randint(30, 50))
+            elif tier_roll < nobile_prob + eques_prob:
+                fig = Figure.create_eques(state.allocate_id(), None, age=random.randint(25, 40))
+            else:
+                fig = Figure.create_plebeian(state.allocate_id(), None, age=random.randint(20, 35))
+        state.add_member(fig)
+        state.curia.add_figure(fig)
+        new_figures.append(fig)
+    return new_figures
+
+
+def _veteran_supply_log_extra(new_figures: List[Figure], veteran_plan: Dict) -> Dict:
+    """Log extra describing the veteran-supply injection for this turn."""
+    return {
+        "enabled": bool(veteran_plan.get("enabled", True)),
+        "veteran_count": sum(1 for f in new_figures if f.office_history),
+        "ex_consul_count": sum(
+            1 for f in new_figures if any(t.office_type == "consul" for t in f.office_history)
+        ),
+        "config": {
+            "min_veteran_nobiles": veteran_plan.get("min_veteran_nobiles"),
+            "max_veteran_nobiles": veteran_plan.get("max_veteran_nobiles"),
+            "min_ex_consul_count": veteran_plan.get("min_ex_consul_count"),
+            "censor_anchor_years_ago": veteran_plan.get("censor_anchor_years_ago"),
+        },
+    }
 
 def generate_figures(state: "GameState") -> List[Figure]:
     """
@@ -47,18 +218,9 @@ def generate_figures(state: "GameState") -> List[Figure]:
     if pleb_prob < 0:
         pleb_prob = 0.65
 
-    # --- 2. Generate normal figures ---
-    for _ in range(max(0, count)):
-        tier_roll = random.random()
-        if tier_roll < nobile_prob:
-            fig = Figure.create_nobile(state.allocate_id(), None, age=random.randint(30, 50))
-        elif tier_roll < nobile_prob + eques_prob:
-            fig = Figure.create_eques(state.allocate_id(), None, age=random.randint(25, 40))
-        else:
-            fig = Figure.create_plebeian(state.allocate_id(), None, age=random.randint(20, 35))
-        state.add_member(fig)
-        state.curia.add_figure(fig)
-        new_figures.append(fig)
+    # --- 2. Generate normal figures (shared core loop w/ veteran supply) ---
+    veteran_plan = _read_veteran_supply_config(forum_rules)
+    new_figures = _generate_normal_figures(state, count, nobile_prob, eques_prob, veteran_plan)
 
     # --- 3. Debug log: figure generation ---
     class_counts = {"nobile": 0, "eques": 0, "plebeian": 0}
@@ -71,6 +233,7 @@ def generate_figures(state: "GameState") -> List[Figure]:
         extra={
             "figure_ids": [fig.id for fig in new_figures],
             "classes": class_counts,
+            "veteran_supply": _veteran_supply_log_extra(new_figures, veteran_plan),
         },
     )
 
@@ -216,17 +379,9 @@ def generate_market_figures(state: "GameState") -> List[Figure]:
     nobile_prob = float(probs.get("nobile", 0.1) or 0.1)
     eques_prob = float(probs.get("eques", 0.25) or 0.25)
 
-    for _ in range(max(0, count)):
-        tier_roll = random.random()
-        if tier_roll < nobile_prob:
-            fig = Figure.create_nobile(state.allocate_id(), None, age=random.randint(30, 50))
-        elif tier_roll < nobile_prob + eques_prob:
-            fig = Figure.create_eques(state.allocate_id(), None, age=random.randint(25, 40))
-        else:
-            fig = Figure.create_plebeian(state.allocate_id(), None, age=random.randint(20, 35))
-        state.add_member(fig)
-        state.curia.add_figure(fig)
-        new_figures.append(fig)
+    # 共享核心循环（E-G7-09 veteran supply 注入；无 hero）
+    veteran_plan = _read_veteran_supply_config(forum_rules)
+    new_figures = _generate_normal_figures(state, count, nobile_prob, eques_prob, veteran_plan)
 
     class_counts = {"nobile": 0, "eques": 0, "plebeian": 0}
     for fig in new_figures:
@@ -238,6 +393,7 @@ def generate_market_figures(state: "GameState") -> List[Figure]:
         extra={
             "figure_ids": [fig.id for fig in new_figures],
             "classes": class_counts,
+            "veteran_supply": _veteran_supply_log_extra(new_figures, veteran_plan),
         },
     )
 

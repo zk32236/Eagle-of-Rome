@@ -15,6 +15,49 @@ Rectangle {
     property string recruitDialogFigureName: ""
     property int recruitDialogBaseCost: 0
     property string recruitDialogAmount: ""
+    // WP-E F5：公地认购数量对话框
+    property int landDialogFigureId: 0
+    property string landDialogFigureName: ""
+    property string landDialogAmount: ""
+
+    // WP-E F5：viewer 对指定 figure 是否已有 pending 认购请求（可追踪，017-04）
+    function viewerHasLandPending(figureId) {
+        var requests = sessionStore.forumViewerLandRequests || []
+        for (var i = 0; i < requests.length; i++) {
+            if (requests[i].figure_id === figureId) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function viewerPendingLandAmount(figureId) {
+        var requests = sessionStore.forumViewerLandRequests || []
+        for (var i = 0; i < requests.length; i++) {
+            if (requests[i].figure_id === figureId) {
+                return requests[i].requested_amount
+            }
+        }
+        return 0
+    }
+
+    function openLandDialog(figureId, figureName) {
+        root.landDialogFigureId = figureId
+        root.landDialogFigureName = figureName
+        root.landDialogAmount = ""
+        landDialog.open()
+        landAmountField.forceActiveFocus()
+    }
+
+    function confirmLandDialog() {
+        var amount = parseInt(root.landDialogAmount, 10)
+        if (isNaN(amount) || amount <= 0) {
+            showFeedback("error", "请输入有效的认购数量（1~999）。")
+            return
+        }
+        landDialog.close()
+        root.callAndReport(sessionStore.doBuyLand(root.landDialogFigureId, amount))
+    }
 
     function showFeedback(type, message) {
         var cp = root.parent
@@ -85,7 +128,7 @@ Rectangle {
             id: announceArea
             objectName: "announceArea"
             Layout.fillWidth: true
-            Layout.preferredHeight: sessionStore.forumResolved ? Math.min(138, 58 + Math.max(1, root.forumResolutionLines().length) * 18) : (sessionStore.forumWarThreats.length > 0 ? 60 + Math.min(sessionStore.forumWarThreats.length, 4) * 16 : 60)
+            Layout.preferredHeight: sessionStore.forumResolved ? Math.min(138, 58 + Math.max(1, root.forumResolutionLines().length) * 18) : ((sessionStore.forumWarThreats.length > 0 || sessionStore.forumWarEvents.length > 0) ? 60 + Math.min(sessionStore.forumWarThreats.length + sessionStore.forumWarEvents.length, 4) * 16 : 60)
             color: "#D1FFF9EC"
             border.color: "#85A8753B"
             border.width: 1
@@ -132,9 +175,30 @@ Rectangle {
                     }
                 }
 
+                // WP-E F7（E-G7-14P/06P）：war_events 保留载体行（⚔️ 爆发 / ⚠️ 升级，权威字符串直读）
+                ColumnLayout {
+                    objectName: "announceWarEvents"
+                    visible: sessionStore.forumWarEvents.length > 0
+                    spacing: 2
+                    Repeater {
+                        model: sessionStore.forumWarEvents
+                        delegate: Text {
+                            text: modelData
+                            color: "#9A2D0A"
+                            font.pixelSize: 12
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                        }
+                    }
+                }
+
                 Text {
                     objectName: "announceWarThreatsEmpty"
+                    // WP-E F7：空态三条件（war_threats 空 && war_events 空 && !has_active_war）——
+                    // 权威存在即不再显示「无战争威胁」（06P-01）
                     visible: sessionStore.forumWarThreats.length === 0
+                             && sessionStore.forumWarEvents.length === 0
+                             && !sessionStore.forumHasActiveWar
                     text: "\u672c\u56de\u5408\u65e0\u6218\u4e89\u5a01\u80c1"
                     color: "#766652"
                     font.pixelSize: 12
@@ -524,12 +588,47 @@ Rectangle {
 
                             SectionTitle { title: "🏡 公地认购" }
 
+                            // WP-E F5：label/value/enabledAction 状态机（E-06/E-ODR-03）
                             MarketActionRow {
-                                label: sessionStore.forumLandQuota > 0 ? ("出售 " + sessionStore.forumLandQuota + "C 国家公地") : "本回合暂无可认购公地"
-                                value: sessionStore.forumLandQuota > 0 ? (sessionStore.forumLandQuota + " C") : ""
+                                objectName: "publicLandPurchaseRow"
+                                label: sessionStore.forumLandSaleTotal > 0
+                                    ? ("本回合出售 " + sessionStore.forumLandSaleTotal + "C 国家公地")
+                                    : "本回合暂无可认购公地"
+                                value: {
+                                    if (root.viewerHasLandPending(root.selectedOwnFigureId)) {
+                                        return "已提交认购 " + root.viewerPendingLandAmount(root.selectedOwnFigureId) + " C（待结算）"
+                                    }
+                                    if (sessionStore.forumLandQuota > 0) {
+                                        return "剩余 " + sessionStore.forumLandQuota + " C 可购"
+                                    }
+                                    if (sessionStore.forumLandSaleTotal > 0) {
+                                        return "已全部认购"
+                                    }
+                                    return ""
+                                }
                                 actionText: "认购"
-                                enabledAction: root.marketUnlocked && sessionStore.canExecuteForum && sessionStore.forumLandQuota > 0 && root.selectedOwnFigureId > 0
-                                onTriggered: root.callAndReport(sessionStore.doBuyLand(root.selectedOwnFigureId, 1))
+                                enabledAction: root.marketUnlocked && sessionStore.canExecuteForum
+                                    && sessionStore.forumLandQuota > 0
+                                    && root.selectedOwnFigureId > 0
+                                    && !sessionStore.forumResolved
+                                    && !root.viewerHasLandPending(root.selectedOwnFigureId)
+                                onTriggered: root.openLandDialog(root.selectedOwnFigureId, "")
+                            }
+
+                            // WP-E F5：resolve 后结构化分配行（E-11）
+                            Repeater {
+                                model: sessionStore.forumLandAllocation
+                                delegate: Text {
+                                    Layout.fillWidth: true
+                                    Layout.leftMargin: 12
+                                    Layout.rightMargin: 12
+                                    text: (modelData.status === "insufficient_wealth")
+                                        ? "⚠️ " + modelData.name + " 资金不足"
+                                        : "🏞️ " + modelData.name + " 认购 " + modelData.allocated_amount + " C，花费 " + modelData.cost + " T"
+                                    color: modelData.status === "allocated" || modelData.status === "partial" ? "#2E251B" : "#9A2D0A"
+                                    font.pixelSize: 11
+                                    wrapMode: Text.Wrap
+                                }
                             }
 
                             SectionTitle { title: "🏆 凯旋投票" }
@@ -706,6 +805,115 @@ Rectangle {
                 Button {
                     text: "关闭"
                     onClicked: recruitDialog.close()
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // WP-E F5：公地认购数量对话框（E-07/E-ODR-01，仿 recruitDialog 模式）
+    // 价格上下文 = landPricePerUnit 权威值（R-05 禁硬编码/禁 QML 定价）
+    // ══════════════════════════════════════════════════════════════════
+    Dialog {
+        id: landDialog
+        objectName: "landDialog"
+        modal: true
+        focus: true
+        dim: true
+        width: Math.min(root.width - 80, 560)
+        x: Math.max(0, (root.width - width) / 2)
+        y: Math.max(0, (root.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape
+        background: Rectangle {
+            color: "#FFF9EC"
+            border.color: "#BD8F52"
+            border.width: 1
+            radius: 8
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 10
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Text {
+                    text: "🏡 认购国家公地"
+                    color: "#84250A"
+                    font.pixelSize: 15
+                    font.bold: true
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                }
+
+                Button {
+                    text: "X"
+                    flat: true
+                    onClicked: landDialog.close()
+                }
+            }
+
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#D9C29B" }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                Text { text: "单价"; color: "#766652"; font.pixelSize: 12; Layout.fillWidth: true }
+                Text { text: sessionStore.forumLandPricePerUnit + " T/单位"; color: "#2E251B"; font.pixelSize: 12; font.bold: true }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                Text { text: "剩余可购"; color: "#766652"; font.pixelSize: 12; Layout.fillWidth: true }
+                Text { text: sessionStore.forumLandQuota + " C"; color: "#2E251B"; font.pixelSize: 12; font.bold: true }
+            }
+
+            Text { text: "输入认购数量:"; color: "#766652"; font.pixelSize: 12 }
+
+            TextField {
+                id: landAmountField
+                objectName: "landAmountField"
+                Layout.fillWidth: true
+                text: root.landDialogAmount
+                selectByMouse: true
+                inputMethodHints: Qt.ImhDigitsOnly
+                validator: IntValidator { bottom: 1; top: 999 }
+                onTextChanged: root.landDialogAmount = text
+                Keys.onReturnPressed: root.confirmLandDialog()
+                Keys.onEnterPressed: root.confirmLandDialog()
+            }
+
+            // 价格上下文（权威展示；QML 无经济规则——R-05）
+            Text {
+                text: {
+                    var qty = parseInt(root.landDialogAmount, 10)
+                    var unit = parseInt(sessionStore.forumLandPricePerUnit, 10) || 0
+                    var total = (isNaN(qty) || qty <= 0) ? 0 : qty * unit
+                    return "单价 " + unit + " T/单位 · 总价 " + total + " T"
+                }
+                color: "#766652"
+                font.pixelSize: 12
+                Layout.fillWidth: true
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 4
+
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    text: "确认"
+                    highlighted: true
+                    enabled: root.landDialogAmount.length > 0
+                    onClicked: root.confirmLandDialog()
+                }
+
+                Button {
+                    text: "关闭"
+                    onClicked: landDialog.close()
                 }
             }
         }

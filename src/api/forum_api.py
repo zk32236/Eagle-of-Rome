@@ -28,6 +28,7 @@ def get_forum_view(state: GameState, viewer_player_id: str) -> dict:
         result = state.get_phase_result("forum")
         result_data = result.get("data", {}) if isinstance(result, dict) else {}
         pending = state.get_forum_pending()
+        war_system = state.get_war_system()
         has_market_actions = any(
             pending.get(key)
             for key in ("market_opened", "recruitment_bids", "contract_bids", "land_purchases", "triumph_votes")
@@ -51,8 +52,23 @@ def get_forum_view(state: GameState, viewer_player_id: str) -> dict:
             "available_figures": _available_figure_rows(state),
             "pending_contracts": _pending_contract_rows(state),
             "land_sale_quota": int(getattr(state, "pending_land_sale_quota", 0) or 0),
+            # WP-E F5（E-06）：历史事实载体 + 权威价格展示上下文 + viewer 作用域 pending + 结构化分配
+            "land_sale_total": int(getattr(state, "turn_land_sale_total", 0) or 0),
+            "land_price_per_unit": int(state.get_economic_rule("land_price_per_unit", 10)),
+            "viewer_land_requests": [
+                {"figure_id": fig_id, "requested_amount": amount}
+                for fig_id, amount in pending.get("land_purchases", [])
+                if state.get_member(fig_id) is not None
+                and state.get_member(fig_id).faction_id == viewer.faction_id
+            ],
+            "land_allocation": result_data.get("land_allocation", [])
+            if isinstance(result_data, dict)
+            else [],
             "triumph_wars": _triumph_war_rows(state),
             "war_threats": _war_threat_rows(state),
+            # WP-E F7（E-G7-14P/06P）：war_events 保留载体 + has_active_war（权威访问器）
+            "war_events": state.get_forum_war_events(),
+            "has_active_war": bool(war_system.get_active_wars()) if war_system else False,
             "pending_actions": {
                 "retirements": len(pending.get("retirements", [])),
                 "recruitment_bids": len(pending.get("recruitment_bids", [])),
@@ -154,6 +170,10 @@ def initialize_forum_turn(state: GameState) -> dict:
     ws = state.get_war_system()
     if ws:
         war_events = ws.check_triggers(state.turn.year, verbose=False) + ws.escalate_threats()
+
+    # WP-E F7（E-G7-14P/06P）：war_events 写入保留载体（open_market 丢弃问题收敛——
+    # 权威字符串直读，生命周期归 WP-G，零裁决零修改）
+    state.set_forum_war_events(war_events)
 
     # ④ fleet construction completion（副产物）
     completed_fleets: List[int] = []
@@ -348,6 +368,12 @@ def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int
             actual_warranty = int(theoretical_warranty * cost_ratio)
             actual_warranty = max(0, actual_warranty)
 
+    # WP-E F7（E-G7-07）：恰一次防重——同 (contract_id, figure_id) 已出价 → 显式拒绝
+    pending = state.get_forum_pending()
+    for bid in pending.get("contract_bids", []):
+        if len(bid) >= 2 and bid[0] == contract_id and bid[1] == figure_id:
+            return api_response(False, "该人物已对本合同出价")
+
     # 存储出价（7元组）
     state.add_forum_action(
         "contract_bids",
@@ -383,6 +409,13 @@ def buy_land(state: GameState, player_id: str, figure_id: int, amount: int) -> d
     total_cost = amount * land_price
     if figure.wealth < total_cost:
         return api_response(False, i18n.get("error_insufficient_wealth"))
+
+    # WP-E F5（E-09/R-08）：per-figure 防重——同人物本回合已提交 → 显式拒绝
+    # （不采用静默替换，避免隐含语义；E-10 失败面显式反馈）
+    pending = state.get_forum_pending()
+    for fig_id, _ in pending.get("land_purchases", []):
+        if fig_id == figure_id:
+            return api_response(False, "该人物本回合已提交公地认购请求")
 
     # 记录操作，最终结算时会扣除财富和配额
     state.add_forum_action("land_purchases", (figure_id, amount))
@@ -600,9 +633,10 @@ def resolve_forum(state: GameState) -> dict:
                     f"✅ 工程合同 {contract.name} 中标者: {figure.name} ({winner_faction_name})，出价 {amount}"
                 )
 
-    # 3. 公地认购结算
+    # 3. 公地认购结算（WP-E F5：无条件配额处置 + 结构化 land_allocation）
+    land_allocation: List[Dict[str, Any]] = []
+    quota = state.pending_land_sale_quota
     if pending["land_purchases"]:
-        quota = state.pending_land_sale_quota
         if quota <= 0:
             results.append("📭 本回合无可售公地配额")
         else:
@@ -614,6 +648,14 @@ def resolve_forum(state: GameState) -> dict:
                     purchases_with_influence.append((figure, amount, figure.influence))
                 else:
                     results.append(f"⚠️ 人物 {fig_id} 不存在或已死亡，认购请求无效")
+                    land_allocation.append({
+                        "figure_id": fig_id,
+                        "name": figure.get_formal_name() if figure else str(fig_id),
+                        "requested_amount": amount,
+                        "allocated_amount": 0,
+                        "cost": 0,
+                        "status": "skipped_dead",
+                    })
             purchases_with_influence.sort(key=lambda x: x[2], reverse=True)
 
             land_price = state.get_economic_rule("land_price_per_unit", 10)
@@ -624,6 +666,14 @@ def resolve_forum(state: GameState) -> dict:
                 max_buy_by_wealth = figure.wealth // land_price
                 if max_buy_by_wealth <= 0:
                     results.append(f"⚠️ {figure.get_formal_name()} 资金不足，无法认购")
+                    land_allocation.append({
+                        "figure_id": figure.id,
+                        "name": figure.get_formal_name(),
+                        "requested_amount": amount,
+                        "allocated_amount": 0,
+                        "cost": 0,
+                        "status": "insufficient_wealth",
+                    })
                     continue
 
                 actual_buy = min(amount, remaining_quota, max_buy_by_wealth)
@@ -633,17 +683,39 @@ def resolve_forum(state: GameState) -> dict:
                 cost = actual_buy * land_price
                 if not figure.buy_land(actual_buy, land_price):
                     results.append(f"⚠️ {figure.get_formal_name()} 资金不足，无法认购")
+                    land_allocation.append({
+                        "figure_id": figure.id,
+                        "name": figure.get_formal_name(),
+                        "requested_amount": amount,
+                        "allocated_amount": 0,
+                        "cost": 0,
+                        "status": "insufficient_wealth",
+                    })
                     continue
                 figure.update_influence()
                 state.add_treasury(cost)
                 state.add_national_public_land(-actual_buy)
 
                 remaining_quota -= actual_buy
+                status = "allocated" if actual_buy >= amount else "partial"
+                land_allocation.append({
+                    "figure_id": figure.id,
+                    "name": figure.get_formal_name(),
+                    "requested_amount": amount,
+                    "allocated_amount": actual_buy,
+                    "cost": cost,
+                    "status": status,
+                })
                 results.append(f"✅ {figure.get_formal_name()} 认购 {actual_buy} C 公地，花费 {cost} 塔兰特")
 
             if remaining_quota > 0:
                 results.append(f"📭 剩余未售公地配额 {remaining_quota} C 作废")
             state.clear_pending_land_sale_quota()
+    elif quota > 0:
+        # WP-E F5/G-14 收敛：无认购但配额>0 → 无条件「未售作废」+ 清空（与 :645 既有语义一致，
+        # 非新产品语义；消除跨年残留）
+        results.append(f"📭 本回合公地未售，配额 {quota} C 作废")
+        state.clear_pending_land_sale_quota()
 
     # 4. 凯旋投票结算
     war_system = state.get_war_system()
@@ -700,7 +772,7 @@ def resolve_forum(state: GameState) -> dict:
     state.clear_forum_pending()
 
     message = "\n".join(results) if results else i18n.get("info_no_forum_actions")
-    data = {"results": results}
+    data = {"results": results, "land_allocation": land_allocation}
     state.record_phase_result("forum", {"success": True, "message": message, "data": data})
     return api_response(True, message, data=data)
 

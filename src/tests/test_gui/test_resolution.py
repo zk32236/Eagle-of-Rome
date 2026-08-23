@@ -53,11 +53,14 @@ class TestResolutionAdapter:
         assert "summary" in view
         assert "is_current_player" in view
 
-    def test_get_resolution_view_has_five_steps(self):
-        """步进状态正好五个"""
+    def test_get_resolution_view_has_four_steps(self):
+        """步进状态正好四个（WP-E R-3：无第五步「决算完成」）"""
         adapter, state, players = self.setup_adapter()
         view = adapter.get_resolution_view(players[0])
-        assert len(view["step_statuses"]) == 5
+        assert len(view["step_statuses"]) == 4
+        names = [s["name"] for s in view["step_statuses"]]
+        assert "next_year" not in names
+        assert names == ["governor_return", "contract_expiry", "risk_check", "annual_decay"]
 
     def test_get_resolution_view_steps_all_pending_when_not_resolved(self):
         """未结算时全部 pending"""
@@ -67,7 +70,10 @@ class TestResolutionAdapter:
             assert step["status"] == "pending"
 
     def test_get_resolution_view_after_execution(self):
-        """结算后步骤全部 completed，且有结果数据"""
+        """execute_resolution 后 resolved=True；步骤仍 pending（read-model 未写，诚实反映未执行）。
+
+        WP-E R-2：step_statuses 由 read-model 驱动（结算后全部 completed）。
+        """
         adapter, state, players = self.setup_adapter()
         player_id = players[0]
         _make_resolution_ready(state, player_id)
@@ -78,8 +84,9 @@ class TestResolutionAdapter:
 
         view = adapter.get_resolution_view(player_id)
         assert view["resolved"] is True
+        # 预结算（无 read-model）→ 全部 pending（步骤尚未真实执行）
         for step in view["step_statuses"]:
-            assert step["status"] == "completed"
+            assert step["status"] == "pending"
 
         # 检查结果结构
         assert isinstance(view["results"], dict)
@@ -87,6 +94,13 @@ class TestResolutionAdapter:
         assert "contracts_expired" in view["results"]
         assert "treasury" in view["results"]
         assert "legion_status" in view["results"]
+        # 新字段（WP-E R-2）
+        assert view["results"]["settled"] is False
+        assert view["results"]["settled_year"] is None
+        assert "treasury_before" in view["results"]
+        assert "treasury_after" in view["results"]
+        assert "contract_expiries" in view["results"]
+        assert "decay" in view["results"]
 
         # 检查总结结构
         assert isinstance(view["summary"], dict)
@@ -188,10 +202,10 @@ class TestResolutionStore:
         assert store.canAdvanceResolution is False
 
     def test_resolution_initial_steps_all_pending(self):
-        """初始步骤全部 pending"""
+        """初始步骤全部 pending（四步）"""
         store, state, players = self.setup_store()
         steps = store.resolutionStepStatuses
-        assert len(steps) == 5
+        assert len(steps) == 4
         for step in steps:
             assert step["status"] == "pending"
 
@@ -216,9 +230,10 @@ class TestResolutionStore:
         # 结算应已自动触发
         assert state.is_phase_executed("resolution")
 
-        # Store resolution 状态更新
+        # Store resolution 状态更新（预结算：resolved=True，步骤 pending——read-model 未写）
         assert store.resolutionResolved is True
-        assert store.resolutionStepStatuses[0]["status"] == "completed"
+        assert store.resolutionStepStatuses[0]["status"] == "pending"
+        assert store.resolutionSettled is False
 
     def test_auto_settlement_idempotent(self):
         """二次进入 resolution 不重复结算"""

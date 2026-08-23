@@ -86,3 +86,36 @@ combat 命令                             # phase_combat.py
 - 共享用例仅用于 `auto_resolve`（AI 自动）路径；玩家交互路径仍使用原始 `select_war → do_combat_action → confirm → advance` 各步骤
 - S2 将类似的统一模式应用到 Resolution 阶段
 - 如果后续需要玩家交互路径也使用共享用例，需扩展 `auto_resolve_combat` 以支持增量/单场模式
+
+## 6. WP-E 更新（2026-08-23，GUI-BETA-R1）
+
+### 6.1 `_war_card` 新字段（E-G7-11）
+
+`combat_api._war_card`（:47-76）新增：
+
+```python
+{
+    ...既有字段,
+    "truce_end_turn": war.truce_end_turn,
+    "truce_remaining_turns": max(0, war.truce_end_turn - state.turn.turn_number)
+        if war.truce_end_turn else None,
+}
+```
+
+- state 参数已在 `_war_card` 签名内，权威计算（禁 QML 猜测，R-05）；
+  `truce_end_turn` 为 None → `truce_remaining_turns` 为 None → CombatStage TRUCE_LOCKED 卡
+  「⏳ 和约剩余 X 回合」行不显示。
+- TRUCE_LOCKED 卡新增倒计时行（CombatStage.qml），DTO 直读。
+
+### 6.2 TRUCE 卡军团投影边界（E-POST-R1-07P）
+
+- 投影链：`_war_card` legions_assigned/legion_numbers（直读 war 实体）→ CombatStage.qml:552-557。
+- 实体镜像方向验证：展示 = 权威实体；mobilized=0 案例——实体 `legions_assigned > 0` 而展示 0
+  → 投影 bug（WP-E 内修）；实体本身 0 → 底层状态错（WP-G traceability 移交，禁 QML 掩盖）。
+- traceability：`03-da-evidence/traceability/wpe-slice9-legion-projection-2026-08-23.md`。
+
+## 7. 版本日志
+| 版本 | 日期 | 摘要 |
+|:-----|:-----|:------|
+| v1.1 | 2026-08-23 | GUI-BETA-R1 WP-E（Slice 11 PU-04）：新增 §6 —— `_war_card` TRUCE 剩余回合字段（E-G7-11）+ TRUCE 卡军团投影边界（07P） |
+| v1.0 | 2026-07-12 | 初版 |

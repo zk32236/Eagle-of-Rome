@@ -229,6 +229,8 @@ load_from_dict(data):
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.9 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §9：candidate supply 来源补注（E-G7-09 veteran supply，资格契约 REVIEWED-NO-CHANGE）+ Population 转换公示时序（门控 total>0，E-ODR-04） |
+| v1.8 | 2026-08-09 | DA-Exec (AC-12 M2-BUG3 R2) | §7 实现落地：`set_vote_completed`/`get_vote_completed` API 从设计目标→磁盘实现（game_state.py）；`resolve_population_slice` 增加 once guard（get_phase_result 防重复结算，保全两阶段模式）；`doResolveElection` 调用链切换到 `resolve_population_slice`（FC-09 满足）；turn_order 保持全序（含 AI）供 drain 遍历 |
 | v1.7 | 2026-08-02 | DA-Exec (WP-02b v3.0) | 新增 §7.3 GUI selection map → Session 固定五条 → handoff/resolve_population_slice 单一调用链；明确无显式弃权控件、clone-and-reassign、submitting 与双区 AsNeeded scrollbar |
 | v1.6 | 2026-08-01 | DA-Exec (WP-02b v2.1) | v2.1 返工：移除 choice 枚举，vote 记录改为 3-tuple；ABSTAIN=figure_id=0 (FC-03)；修复 office="" bug（通过 record_population_vote 写入）；移除 inline resolve_election（FC-09）；新增 FC-01 batch 完整性、FC-04 重复 office 拒绝；更新 §4, §7 |
 | v1.5 | 2026-07-31 | DA-Exec (WP-02b V4 Pro) | 新增 batch_vote() 批量投票原子提交 + ABSTAIN 枚举 + vote completion 按玩家隔离 + check_and_commit_vote() 事务调用链 (§4, §7) |
@@ -236,5 +238,31 @@ load_from_dict(data):
 | v1.3 | 2026-07-30 | DA-Exec (WP-02a) | 新增 `batch_campaign()` 批量原子提交；新增 `committed_batches` 幂等守卫字段 |
 | v1.2 | 2026-07-17 | Audit Sub-Agent | 行数修正 |
 | v1.0 | 2026-07-13 | 初版 | — |
-| v1.6 | 2026-08-01 | DA-Exec (EOR20260801-02 B2 Pilot ATTEMPT-1) | FC-07 冻结值对齐：全文档 RLock → threading.Lock（§5 L100, §6.2 L134, §6.3 表 L183-184, §6.4 序列化 L195）；CI-1 Frozen Value Preservation |
-| v1.8 | 2026-08-09 | DA-Exec (AC-12 M2-BUG3 R2) | §7 实现落地：`set_vote_completed`/`get_vote_completed` API 从设计目标→磁盘实现（game_state.py）；`resolve_population_slice` 增加 once guard（get_phase_result 防重复结算，保全两阶段模式）；`doResolveElection` 调用链切换到 `resolve_population_slice`（FC-09 满足）；turn_order 保持全序（含 AI）供 drain 遍历 |
+
+## 9. WP-E 更新（2026-08-23）
+
+### 9.1 candidate supply 来源补注（E-G7-09）
+
+- **市场资深贵族供给（veteran supply）**：市场生成链（`figure_generation_system`
+  共享核心循环）每回合注入 1-2 名 ex-consul/ex-praetor 贵族（`forum_rules.veteran_supply`，
+  见 `technical-mappings/MVP0.5-07_人物类型系统.md §4`）→ 高阶官职（consul/censor）
+  候选供给从 T1 起不再依赖前任选举胜者归档，消除「无存活 ex-consul → censor 零候选」
+  的冻结规则不可避免空池。
+- **REVIEWED-NO-CHANGE（资格契约段）**：`can_hold_office`（figure.py:307-402）资格
+  契约**零改动**——注入者与归档者同权经 `get_candidates` read-model
+  （population_api.py:844-905）处理；注入保证的是「市场每回合产出合格者」，派系门槛
+  （faction_id ≠ None）仍由真实招募链（`recruit_figure` + `resolve_forum`）满足，
+  无候选 read-model 补丁（R-14 合规，非 spawn hack）。
+- 8 回合证据：`03-da-evidence/runtime/wpe-eg7-09-*-with-injection-8turns-2026-08-23.md`
+  （稀疏供给 censor 零候选 1 → 0；富供给全官职零候选 == 0）。
+
+### 9.2 Population 转换公示时序（E-ODR-04）
+
+- `PopulationStage.qml:186` 门控由 `populationResolved && total > 0` 改为 `total > 0`——
+  战场指挥官转换（`convert_battlefield_commanders`，population_api.py:1064-1145）
+  结果在选举解析前即公示（banner 上移至阶段顶部公告区）；数据源不变
+  （`begin_population_phase` phase result 权威输出），零转换逻辑复制；
+  转换缺失 → 无 fallback 文案（fail-closed，E-13 分类：转换逻辑缺陷 → WP-E 内修正；
+  War lifecycle 缺陷 → WP-G 移交）。
+- phase-result 生命周期：`begin_population_phase` 幂等（`resolve_population_slice`
+  once guard），转换结果跨 refresh 稳定直读存储结果。

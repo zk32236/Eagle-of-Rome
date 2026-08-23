@@ -48,6 +48,7 @@ CLI phase_forum._generate_contracts()
 ## 5. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.3 | 2026-08-23 | GUI-BETA-R1 WP-E（Slice 11 PU-04）：tax-farming 收入确定性证明映射（E-G7-12）——**零代码变更**；权威路径 = `src/core/service/economic_service.py` `collect_contract_revenues`（:247-270）仅对 ACTIVE 合同计收；确定性证据 = 三态回归测试（no-contract / active / expiry-removal）+ 证明矩阵（`03-da-evidence/runtime/wpe-eg7-12-taxfarming-proof-matrix-2026-08-23.md`）；同 state 重入 → 同 rows |
 | v1.2 | 2026-08-22 | GUI-BETA-R1 WP-C-R1: 包税预算权威值域（senate_budget tax_farming 比率 + _budget_range_for_contract + _populate_proposal 谓词） |
 | v1.1 | 2026-07-25 | 新增包税合同生成调用链 + forum_api 引用 |
 | v1.0 | 2026-07-12 | 初版 |

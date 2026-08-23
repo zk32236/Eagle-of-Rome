@@ -76,6 +76,13 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
         "threat_level": war.threat_level,
         "status": war.status.value if hasattr(war.status, 'value') else str(war.status),
         "has_commander": commander_id >= 0,
+        # WP-E F7（E-G7-11）：TRUCE 剩余回合权威计算（禁 QML 猜测 R-05）
+        "truce_end_turn": war.truce_end_turn,
+        "truce_remaining_turns": (
+            max(0, war.truce_end_turn - state.turn.turn_number)
+            if war.truce_end_turn
+            else None
+        ),
     }
 
 

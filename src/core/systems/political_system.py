@@ -508,6 +508,8 @@ class PoliticalSystem:
                 percent = proposal.get("percent")
                 if act_type == "sale":
                     self.state.set_pending_land_sale_quota(amount_C)
+                    # WP-E F5：并行写入本年度出售总量（amount_C = P-6/AU-7 唯一权威值，零换算）
+                    self.state.set_turn_land_sale_total(amount_C)
                     return {"success": True, "message": f"卖地法案通过，出售 {amount_C} C 公地"}
                 self.state.add_pending_land_act({
                     "type": "distribution",

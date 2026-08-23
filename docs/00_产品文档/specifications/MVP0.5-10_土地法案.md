@@ -215,7 +215,14 @@ state.add_pending_land_act({
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.2 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §10：sale 法案并行写入 turn_land_sale_total（同 tech 映射 v1.3，GUI-BETA-011） |
 | v1.1 | 2026-07-13 | Audit Subagent (DS) | 修正5.2边界情况：land类型手动提案无重复检查（与代码一致） |
 | v1.0 | 2026-07-13 | Document Officer (DA) | 初版创建 |
 
 > **维护规则：** 本文件为活文档，每次修改规格说明正文或技术映射时，必须在版本日志中追加新条目。版本号递增规则：大功能修改升主版本（v1→v2），小修小改升次版本（v1.0→v1.1）。
+
+## 10. WP-E 更新（2026-08-23）
+
+- **sale 法案双写入**：`political_system.py:510` 执行 sale 时并行 `set_pending_land_sale_quota(amount_C)` +
+  `set_turn_land_sale_total(amount_C)`（同一 amount_C 权威值零换算）——quota 供 Forum resolve 消费
+  （remaining），total 供本年度展示（贯穿 resolve 稳定，次年清除）。

@@ -63,6 +63,31 @@ PHASE_SEQUENCE = ["mortality", "revenue", "forum", "population", "senate", "comb
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.3 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §6：Resolution 四步事件身份 read-model + 两段式年度推进；市场生成段补注（veteran supply 注入） |
 | v1.2 | 2026-08-01 | DA-Exec G5-R1 | §4 删除「batch内自动结算」旧说法，对齐 FC-09（resolve_population_slice 统一触发） |
 | v1.1 | 2026-07-31 | DA-Exec (WP-02b V4 Pro) | 新增人口阶段 vote 子步骤事务描述：batch_vote 原子提交 + ABSTAIN + per-player completion + resolution 自动触发 (§4) |
 | v1.0 | 2026-07-12 | Document Officer Worker L | 初版创建 |
+
+## 6. WP-E 更新（2026-08-23）
+
+### 6.1 Resolution 阶段：四步事件身份 read-model + 两段式年度推进
+
+- **read-model（`_resolution_settlement`，game_state.py）**：`_commit_settlement`
+  在 A1~A7 apply 后、`_turn.advance_year()` 前承接 A5/A6/A7 返回值 + A3/A4 新形状，
+  写入独立 read-model（settled_turn/settled_year/next_year/treasury_before/after /
+governor_returns/contract_expiries/truce_expiries/decay）——`execute_resolution`
+  入口（幂等 guard 之后）清除旧 settlement（新年度重入）。
+- **step_definitions 5→4**：`get_resolution_view`（session_api.py:665-713）删除「决算完成」
+  第五步；四步骤事件行（总督返回 / 合同到期身份 / 风险检查「当前状态」/ 年度衰减）
+  全部有 read-model 源（R-1，禁累计快照编造）。
+- **职责边界**：`execute_resolution`（resolution_api.py:21-93）= 业务执行
+  （apply A1~A7）；`advance_year`（game_state.py:1341）= 年度滚轮；GUI 两段式
+  （`doAdvanceResolution` session_store.py:1178-1213）：第一段 advance_year 成功
+  → `_resolution_settled=True` + 刷新 + 反馈（不跳转）；第二段 → 导航 mortality。
+
+### 6.2 市场生成段补注（E-G7-09）
+
+- 普通人物生成（Phase 2 广场/Forum）含 **veteran supply 注入**：每回合 1-2 名
+  ex-consul/ex-praetor 贵族（`figure_generation_system` 共享核心循环 +
+  `forum_rules.veteran_supply`，见 `MVP0.5-07_人物类型系统.md §4`）——
+  市场总量不变（`new_figures_count`），hero 生成零注入。

@@ -207,6 +207,16 @@ add_national_public_land(amount)
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.1 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §10：三载体语义分离（turn_land_sale_total / pending_land_sale_quota=remaining / land_allocation）+ buy_land 防重 + resolve 无条件配额处置（同 tech 映射 §3，GUI-BETA-011/017） |
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent E | 初版创建 |
 
 > **维护规则：** 本文件为活文档，每次修改规格说明正文或技术映射时，必须在版本日志中追加新条目。版本号递增规则：大功能修改升主版本（v1→v2），小修小改升次版本（v1.0→v1.1）。
+
+## 10. WP-E 更新（2026-08-23）
+
+- **三载体语义分离**：`_turn_land_sale_total`（本年度出售总额，sale 法案并行写入，次年清除）/
+  `_pending_land_sale_quota`（remaining_purchasable，resolve 无条件处置后清）/
+  `land_allocation`（resolve 结构化分配结果）。
+- **buy_land 防重**：pending 内同 figure 已有认购请求 → 显式拒绝（非静默替换）。
+- **resolve_forum 无条件配额处置**：无认购且 quota>0 → 「📭 本回合公地未售，配额 X C 作废」+ clear（G-14 收敛）。
+- **经济价格权威值**：`land_price_per_unit` 经 `get_economic_rule` 读取（禁硬编码）。

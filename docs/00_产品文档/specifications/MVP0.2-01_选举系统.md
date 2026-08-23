@@ -324,7 +324,27 @@ IF eligible_candidates(office) == 0
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.4 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §8：candidate supply 来源补注（E-G7-09 veteran supply，资格契约 REVIEWED-NO-CHANGE）+ Population 转换公示时序（门控 total>0，E-ODR-04） |
 | v1.3 | 2026-08-17 | DA-Execute | WP-03：新增 §2.8 NO-CANDIDATE/VACANCY CONTRACT（no-candidate/vacancy 语义写回）；§2.2.5 补 GUI resolve 时机注（FUNC-09 一致性） |
 | v1.2 | 2026-07-17 | Audit Sub-Agent | 审计修复：修正 §2.2.4 卸任表格冗余表述 `is_absent=False 且 is_absent 不在战场` → `is_absent=False（即在罗马）` |
 | v1.1 | 2026-07-17 | Audit Sub-Agent | 审计修复：修正 §2.3 提名数量默认值（3→2）及冷却期描述；修正 §2.4 字段名 `land`→`land_private`；修正 §2.6 限制描述；修正 §5 AC #7 提名人数（3→2） |
 | v1.0 | 2026-07-13 | Document Officer Sub-Agent | 初版创建 |
+
+## 8. WP-E 更新（2026-08-23）
+
+### 8.1 candidate supply 来源补注（E-G7-09）
+
+- **市场资深贵族供给（veteran supply）**：市场生成链（`figure_generation_system` 共享核心
+  循环）每回合注入 1-2 名 ex-consul/ex-praetor 贵族（`forum_rules.veteran_supply`，
+  见 `technical-mappings/MVP0.5-07_人物类型系统.md §4`）→ 高阶官职（consul/censor）候选
+  供给从 T1 起不再依赖前任选举胜者归档，消除「无存活 ex-consul → censor 零候选」的冻结
+  规则不可避免空池（E-G7-09-01 证据：稀疏供给 8 回合 censor 零候选 1 → 0）。
+- **REVIEWED-NO-CHANGE（资格契约段）**：`can_hold_office` 资格契约零改动——注入者与
+  归档者同权经 `get_candidates` read-model 处理；派系门槛（faction_id ≠ None）仍由真实
+  招募链满足，无候选 read-model 补丁（非 spawn hack，E-G7-09-02 合规）。
+
+### 8.2 Population 转换公示时序（E-ODR-04）
+
+- `PopulationStage.qml` 门控由 `populationResolved && total > 0` 改为 `total > 0`：
+  战场指挥官转换结果在选举解析前即公示；数据源不变（`begin_population_phase` phase
+  result 权威输出）；转换缺失 → 无 fallback 文案（fail-closed）。

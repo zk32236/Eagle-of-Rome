@@ -468,6 +468,16 @@ Rectangle {
                             font.bold: true
                         }
                     }
+
+                    // WP-E F7（E-G7-11）：和约剩余回合（DTO 直读；null → 不显示）
+                    Text {
+                        visible: !isEmptySlot && isTruceLocked && warData && warData.truce_remaining_turns !== null && warData.truce_remaining_turns !== undefined
+                        text: "⏳ 和约剩余 " + warData.truce_remaining_turns + " 回合"
+                        color: "#5B5B76"
+                        font.pixelSize: theme.smallSize
+                        font.bold: true
+                        Layout.alignment: Qt.AlignRight
+                    }
                 }
             }
 

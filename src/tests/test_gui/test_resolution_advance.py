@@ -62,7 +62,8 @@ class TestResolutionAdvance:
         assert "下一回合" not in label  # 不再是通用阶段推进
 
     def test_advance_current_phase_dispatches_resolution(self):
-        """doAdvanceCurrentPhase 将 resolution 分派到 doAdvanceResolution"""
+        """doAdvanceCurrentPhase 将 resolution 分派到 doAdvanceResolution（两段式：
+        第一段结算不跳转，第二段导航 mortality）"""
         store, state, players = self.setup_store()
         player_id = players[0]
         _make_resolution_ready(state, player_id)
@@ -73,17 +74,22 @@ class TestResolutionAdvance:
         assert store.resolutionResolved is True
         assert store.canAdvanceResolution is True
 
-        # 通过统一分派调用
+        # 第一段：通过统一分派调用 → 执行年度结算，不跳转
         result = store.doAdvanceCurrentPhase()
-        # 应执行 advance_year，返回 success
         assert result["success"], f"advance failed: {result.get('message')}"
+        assert store.selectedPhaseId == "resolution"
+        assert store.resolutionSettled is True
+
+        # 第二段：再次调用 → 导航 mortality
+        result2 = store.doAdvanceCurrentPhase()
+        assert result2["success"]
         assert store.selectedPhaseId == "mortality"
 
     # ------------------------------------------------------------------
-    # 2. doAdvanceResolution success path
+    # 2. doAdvanceResolution success path（两段式）
     # ------------------------------------------------------------------
     def test_do_advance_resolution_success(self):
-        """结算完成 + 当前玩家时 doAdvanceResolution 成功，回到天命阶段"""
+        """结算完成 + 当前玩家：第一段 advance_year 成功不跳转，第二段回到天命阶段"""
         store, state, players = self.setup_store()
         player_id = players[0]
         _make_resolution_ready(state, player_id)
@@ -92,15 +98,21 @@ class TestResolutionAdvance:
         store.selectPhase("resolution")
         assert store.resolutionResolved is True
 
+        # 第一段：执行年度结算（成功，不跳转）
         result = store.doAdvanceResolution()
         assert result["success"], f"Advance failed: {result.get('message')}"
+        assert store.selectedPhaseId == "resolution"
+        assert store.resolutionSettled is True
 
-        # 回到天命阶段
+        # 第二段：导航 mortality
+        result2 = store.doAdvanceResolution()
+        assert result2["success"]
         assert store.selectedPhaseId == "mortality"
-        # phaseChanged 信号应发射（可以通过副作用验证——selectedPhaseId 已更新）
+        # 瞬态标记复位（read-model 仍保 settled=True 直到新年 execute_resolution 清空——F3 设计）
+        assert store._resolution_settled is False
 
     def test_do_advance_resolution_updates_snapshot(self):
-        """成功后 snapshot 被刷新"""
+        """两段式：第一段结算后 snapshot 刷新（yearDisplay 更新），第二段导航 mortality"""
         store, state, players = self.setup_store()
         player_id = players[0]
         _make_resolution_ready(state, player_id)
@@ -109,21 +121,32 @@ class TestResolutionAdvance:
         store.selectPhase("resolution")
         before_turn = store.turnNumber
 
+        # 第一段：advance_year 成功，仍停留 resolution（selectedPhaseId 维持 review 阶段）
         result = store.doAdvanceResolution()
         assert result["success"]
-
-        # 快照已刷新
+        assert store.selectedPhaseId == "resolution"
+        assert store.resolutionSettled is True
+        # 权威快照 current_phase_id 已随新年滚轮指向 mortality（executed_phases 清空），
+        # 展示层 selectedPhaseId 停留在 resolution 以审阅四步结果（F3/R-5）
         assert store.currentPhaseId == "mortality"
-        # 回合数（yearDisplay）在 advance_year 后应更新
-        # 注：实际 advance_year 是否增加 turn 视实现而定，此处仅检查不抛异常
+
+        # 第二段：导航 mortality
+        result2 = store.doAdvanceResolution()
+        assert result2["success"]
+        assert store.selectedPhaseId == "mortality"
+        # 快照已刷新（回合数在 advance_year 后已更新）
+        assert store.turnNumber == before_turn + 1 or store.yearDisplay != ""
 
     def test_do_advance_resolution_phase_changed_emitted(self):
-        """成功后 phaseChanged 信号发射"""
+        """第二段（导航 mortality）时 phaseChanged 信号发射"""
         store, state, players = self.setup_store()
         player_id = players[0]
         _make_resolution_ready(state, player_id)
         store.refreshSnapshot()
         store.selectPhase("resolution")
+
+        # 第一段：结算
+        store.doAdvanceResolution()
 
         signals = []
         store.phaseChanged.connect(lambda: signals.append(1))

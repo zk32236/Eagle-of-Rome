@@ -357,3 +357,19 @@ Element | Region | Type | DTO Field (Required) | Current DTO | Store Property | 
 *报告生成: 奥古斯都 (OC) | 2026-07-10 22:28*
 *代码基准: `main` (65bbf67)*
 *附注: 此报告应配合 `GUI_CONTROL_MAPPING_MATRIX.md` 和 `GUI_PHASE_INTEGRATION_PLAN.md` 使用*
+
+---
+
+## WP-E 缺口闭合记录（2026-08-23，GUI-BETA-R1）
+
+| 原缺口 | 闭合状态 | 落地 |
+|:--|:--|:--|
+| land_sale_quota 语义缺口（total/remaining 未分离） | ✅ 闭合 | `_turn_land_sale_total`（新载体）+ `_pending_land_sale_quota`（remaining 语义澄清）→ DTO `land_sale_total` / `land_sale_quota` 分离（GUI-BETA-011-01） |
+| viewer pending 字段缺失 | ✅ 闭合 | DTO `viewer_land_requests`（按 figure.faction_id 过滤派生 `[{figure_id, requested_amount}]`）；QML 提交后行「已提交 X C（待结算）」+ 动作禁用 |
+| resolution 事件无身份（仅计数/THREAT 误标） | ✅ 闭合 | read-model `_resolution_settlement` → `get_resolution_view` 四步事件行（governor_returns 含身份 / contract_expiries 身份行 / truce_expiries 真实事件替换 THREAT 误标 / decay per-figure）——G7-05 拒绝编造 |
+| war threat 展示无权威载体 | ✅ 闭合 | `_forum_war_events` 保留载体 + `war_events` / `has_active_war` DTO 字段；空态门控三条件（06P-01/02） |
+| market 候选人供给依赖前任归档 | ✅ 闭合（E-G7-09） | veteran supply 注入（`figure_generation_system` 共享核心循环 + `forum_rules.veteran_supply`）→ 8 回合 censor 零候选 1→0（runtime 证据） |
+
+---
+
+*WP-E 缺口闭合 | 2026-08-23 | 详见 03-da-evidence/（WP-E 证据台账）*

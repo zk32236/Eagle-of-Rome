@@ -67,6 +67,11 @@ class GameState:
         self._executed_phases: Set[str] = set()
         self._phase_results: Dict[str, Any] = {}
 
+        # WP-E R-1（F1）：本年决算 read-model（独立于 _phase_results，不受 commit 尾部清空影响）
+        self._resolution_settlement: Optional[Dict[str, Any]] = None
+        # WP-E F7：论坛阶段 war_events 保留载体（initialize_forum_turn 写入；A2 段清除）
+        self._forum_war_events: List[str] = []
+
         # 年度推进重入 guard（FC-04，瞬态，不持久化 FC-10）
         self._year_advance_in_progress: bool = False
 
@@ -131,6 +136,7 @@ class GameState:
 
         # 元老院阶段临时存储
         self._pending_land_sale_quota: int = 0  # 新增：贵族买地法案待售公地数量
+        self._turn_land_sale_total: int = 0  # WP-E F5：本年度国家公地出售总量（历史事实载体）
         self._senate_pending = {
             "proposals": [],  # 列表，每个元素为提案字典
             "votes": {},  # {player_id: {proposal_id: bool}}
@@ -163,6 +169,8 @@ class GameState:
         self._contracts.clear()
         self._executed_phases.clear()
         self._phase_results.clear()
+        self._resolution_settlement = None
+        self._forum_war_events = []
         self._year_advance_in_progress = False
 
         # MVP 0.5 重置新增字段
@@ -198,6 +206,7 @@ class GameState:
         self._vote_completed_by_player.clear()
         self._batch_guard_lock = threading.Lock()  # fresh runtime lock, 不序列化
         self._pending_land_sale_quota: int = 0  # 新增：贵族买地法案待售公地数量
+        self._turn_land_sale_total: int = 0  # WP-E F5：本年度国家公地出售总量（历史事实载体）
         self.clear_senate_pending()
 
     #========================= 功能函数 ===================================
@@ -943,6 +952,8 @@ class GameState:
         instance._contracts = []
         instance._executed_phases = set()
         instance._phase_results = {}
+        instance._resolution_settlement = None
+        instance._forum_war_events = []
         instance._year_advance_in_progress = False
         instance._initialize_mortality_pool()
 
@@ -999,6 +1010,7 @@ class GameState:
         instance._vote_completed_by_player = {}
         instance._batch_guard_lock = threading.Lock()
         instance._pending_land_sale_quota = 0
+        instance._turn_land_sale_total = 0
         instance._senate_pending = {
             "proposals": [],
             "votes": {},
@@ -1371,7 +1383,13 @@ class GameState:
         }
 
     def _commit_settlement(self, plan: Dict[str, Any]) -> None:
-        """应用计划 + 原 Phase B。所有步骤均为纯赋值 / 确定性重算 / 无异常点 clear。"""
+        """应用计划 + 原 Phase B。所有步骤均为纯赋值 / 确定性重算 / 无异常点 clear。
+
+        WP-E R-1（F1）：在 A1~A7 全部 apply 之后、_turn.advance_year() 之前承接
+        A3/A4/A5/A6/A7 的 apply 返回值，组装 _resolution_settlement read-model
+        （独立属性，不受尾部 _executed_phases/_phase_results 清空影响）。
+        """
+        treasury_before = self.treasury
         # A1：删除无派系 curia 人物 + 重建 available_figures
         self._apply_curia_cleanup(plan["curia_removals"])
         # A2：pending 清空（clear 类，无异常点）
@@ -1379,19 +1397,83 @@ class GameState:
         self.clear_forum_pending()
         self.clear_senate_pending()
         self.clear_pending_land_acts()
+        # WP-E F5：turn 级公地出售总量随年度滚轮作废（与「未售配额作废」生命周期对齐）
+        self._turn_land_sale_total = 0
+        # WP-E F7：war_events 保留载体随年度滚轮作废（与 clear_forum_pending 同区）
+        self._forum_war_events = []
         # A3+A4：赋 member 衰减目标 + update_influence（确定性重算）
-        self._apply_member_decay(plan["member_updates"])
+        decay = self._apply_member_decay(plan["member_updates"])
         # A5：合同过期
-        self._apply_contract_expiration(plan["contracts_to_expire"])
+        contract_expiries = self._apply_contract_expiration(plan["contracts_to_expire"])
         # A6：总督交接
-        self._apply_governor_transitions(plan["governor_transitions"])
+        governor_transitions = self._apply_governor_transitions(plan["governor_transitions"])
         # A7：和约到期
-        self._apply_truce_expiry(plan["truce_expiries"])
+        truce_expiries = self._apply_truce_expiry(plan["truce_expiries"])
+        # ── WP-E R-1（F1）：read-model 写入（_turn.advance_year() 前；只承接已产出物 + 命名富化）──
+        self._resolution_settlement = self._build_resolution_settlement(
+            settled_turn=self._turn.turn_number if self._turn else 0,
+            settled_year=self._turn.year if self._turn else 0,
+            treasury_before=treasury_before,
+            treasury_after=self.treasury,
+            decay=decay,
+            contract_expiries=contract_expiries,
+            governor_transitions=governor_transitions,
+            truce_expiries=truce_expiries,
+        )
         # ── 原 Phase B（COMMIT，最后一步，B1-B3 无异常点）──
         if self._turn:
             self._turn.advance_year()
         self._executed_phases.clear()
         self._phase_results.clear()
+
+    def _build_resolution_settlement(
+        self,
+        *,
+        settled_turn: int,
+        settled_year: int,
+        treasury_before: int,
+        treasury_after: int,
+        decay: List[Dict[str, Any]],
+        contract_expiries: List[Dict[str, Any]],
+        governor_transitions: List[Dict[str, Any]],
+        truce_expiries: List[str],
+    ) -> Dict[str, Any]:
+        """组装本年决算 read-model（WP-E R-1 / F1）。
+
+        - governor_returns：仅保留真实交接/返回事件行（old 或 new 存在），行内补全
+          province_name / old_governor_name / new_governor_name（self.get_member 命名富化，
+          非业务重算）；
+        - 零业务执行复制：所有字段均为 A3~A7 apply 已产出物或本段直接捕获。
+        """
+        governor_returns: List[Dict[str, Any]] = []
+        for row in governor_transitions:
+            old_id = row.get("old_governor_id")
+            new_id = row.get("new_governor_id")
+            if old_id is None and new_id is None:
+                # 无旧总督返回且无候任上任 → 不构成事件（E-03）
+                continue
+            province = self.get_province(row.get("province_id")) if row.get("province_id") is not None else None
+            old_fig = self.get_member(old_id) if old_id is not None else None
+            new_fig = self.get_member(new_id) if new_id is not None else None
+            governor_returns.append({
+                "province_id": row.get("province_id"),
+                "province_name": province.name if province else None,
+                "old_governor_id": old_id,
+                "old_governor_name": old_fig.get_formal_name() if old_fig else None,
+                "new_governor_id": new_id,
+                "new_governor_name": new_fig.get_formal_name() if new_fig else None,
+            })
+        return {
+            "settled_turn": settled_turn,
+            "settled_year": settled_year,
+            "next_year": settled_year + 1,
+            "treasury_before": treasury_before,
+            "treasury_after": treasury_after,
+            "governor_returns": governor_returns,
+            "contract_expiries": contract_expiries,
+            "truce_expiries": list(truce_expiries),
+            "decay": decay,
+        }
 
     # ---------- A1 curia 清理（plan/apply） ----------
 
@@ -1441,18 +1523,39 @@ class GameState:
             }
         return updates
 
-    def _apply_member_decay(self, updates: Dict[int, Dict[str, Any]]) -> None:
-        """应用 member 衰减目标值（纯赋值 + 确定性重算 update_influence）。"""
+    def _apply_member_decay(self, updates: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """应用 member 衰减目标值（纯赋值 + 确定性重算 update_influence）。
+
+        WP-E R-1（F1 A3/A4 新形状）：返回 per-figure 变化行
+        [{figure_id, name, age: {before, after},
+          veterans: {before, after} | None, popularity: {before, after} | None}]
+        （veterans/popularity 仅变化时存在；age 恒 +1）；零存活 → []。
+        """
+        rows: List[Dict[str, Any]] = []
         for member in self.get_living_members():
             target = updates.get(member.id)
             if target is None:
                 continue
+            before_age = member.age
+            before_veterans = member.veterans
+            before_popularity = member.popularity
             member.age = target["age"]
             member.veterans = target["veterans"]
             member.popularity = target["popularity"]
             member._temp_influence_tasks = target["temp_influence_tasks"]
             if target["needs_influence_update"]:
                 member.update_influence()
+            row: Dict[str, Any] = {
+                "figure_id": member.id,
+                "name": member.get_formal_name(),
+                "age": {"before": before_age, "after": target["age"]},
+            }
+            if before_veterans != target["veterans"]:
+                row["veterans"] = {"before": before_veterans, "after": target["veterans"]}
+            if before_popularity != target["popularity"]:
+                row["popularity"] = {"before": before_popularity, "after": target["popularity"]}
+            rows.append(row)
+        return rows
 
     # ---------- A5 合同过期（plan/apply） ----------
 
@@ -1467,17 +1570,28 @@ class GameState:
             and (current_turn - contract.create_turn) >= 3
         ]
 
-    def _apply_contract_expiration(self, contracts: List[Any]) -> int:
-        """应用合同过期（status→EXPIRED，纯赋值）。返回过期数量。"""
+    def _apply_contract_expiration(self, contracts: List[Any]) -> List[Dict[str, Any]]:
+        """应用合同过期（status→EXPIRED，纯赋值）。
+
+        WP-E R-1（F1 A5 新形状）：返回过期合同身份行
+        [{contract_id, name, contract_type, turns_pending}]。
+        """
         current_turn = self._turn.turn_number if self._turn else 0
+        rows: List[Dict[str, Any]] = []
         for contract in contracts:
             turns_pending = current_turn - contract.create_turn
             contract.expire()
+            rows.append({
+                "contract_id": contract.id,
+                "name": contract.name,
+                "contract_type": contract.contract_type.name,
+                "turns_pending": turns_pending,
+            })
             self.log_event(
                 f"合同 {contract.id} ({contract.contract_type.name}) 已过期，存在 {turns_pending} 回合",
                 level=logging.DEBUG
             )
-        return len(contracts)
+        return rows
 
     # ---------- A6 总督交接（plan/apply） ----------
 
@@ -1591,8 +1705,8 @@ class GameState:
     # ========== P1: 年度推进附加处理（薄包装，保留幂等单测语义） ==========
 
     def process_contract_expiration(self) -> int:
-        """P1: 处理合同过期 - 所有 PENDING 合同存在 ≥3 回合则过期（薄包装）。"""
-        return self._apply_contract_expiration(self._plan_contract_expiration())
+        """P1: 处理合同过期 - 所有 PENDING 合同存在 ≥3 回合则过期（薄包装，int 契约保持）。"""
+        return len(self._apply_contract_expiration(self._plan_contract_expiration()))
 
     def process_governor_transitions(self) -> list:
         """P1: 处理总督交接 - 旧总督返回 + 候任总督上任（薄包装）。"""
@@ -1629,6 +1743,36 @@ class GameState:
     def clear_phase_result(self, phase_id: str) -> None:
         """清除阶段结算结果。"""
         self._phase_results.pop(phase_id, None)
+
+    # ========== WP-E R-1（F1）：Resolution 结算 read-model 访问器 ==========
+
+    def set_resolution_settlement(self, settlement: Optional[Dict[str, Any]]) -> None:
+        """写入本年决算 read-model（deepcopy，防外部突变）。"""
+        self._resolution_settlement = copy.deepcopy(settlement)
+
+    def get_resolution_settlement(self) -> Optional[Dict[str, Any]]:
+        """读取本年决算 read-model（deepcopy，仿 get_phase_result 模式）。"""
+        if self._resolution_settlement is None:
+            return None
+        return copy.deepcopy(self._resolution_settlement)
+
+    def clear_resolution_settlement(self) -> None:
+        """清除本年决算 read-model（新一年 execute_resolution 开始时调用，防跨年残留泄漏）。"""
+        self._resolution_settlement = None
+
+    # ========== WP-E F7：论坛 war_events 保留载体访问器 ==========
+
+    def set_forum_war_events(self, events: List[str]) -> None:
+        """写入本回合 war_events（initialize_forum_turn 权威产出；deepcopy 防外部突变）。"""
+        self._forum_war_events = copy.deepcopy(list(events))
+
+    def get_forum_war_events(self) -> List[str]:
+        """读取本回合 war_events（deepcopy）。"""
+        return copy.deepcopy(self._forum_war_events)
+
+    def clear_forum_war_events(self) -> None:
+        """清除本回合 war_events（_commit_settlement A2 段调用，与 clear_forum_pending 同区）。"""
+        self._forum_war_events = []
 
     # ========== 战争/军事系统 ==========
 
@@ -1776,7 +1920,7 @@ class GameState:
 
     @property
     def pending_land_sale_quota(self) -> int:
-        """获取待售公地配额"""
+        """获取待售公地配额（remaining_purchasable 语义，WP-E F5 澄清）"""
         return self._pending_land_sale_quota
 
     def set_pending_land_sale_quota(self, quota: int) -> None:
@@ -1791,6 +1935,20 @@ class GameState:
     def clear_pending_land_sale_quota(self) -> None:
         """清除待售公地配额（公示结算后调用）"""
         self._pending_land_sale_quota = 0
+
+    @property
+    def turn_land_sale_total(self) -> int:
+        """本年度国家公地出售总量（历史事实载体，稳定贯穿 resolve；次年滚轮作废）"""
+        return self._turn_land_sale_total
+
+    def set_turn_land_sale_total(self, total: int) -> None:
+        """写入本年度国家公地出售总量（政治系统 sale 法案并行写入，WP-E F5）"""
+        self._turn_land_sale_total = total
+        self.log_event(
+            f"记录本年度公地出售总量: {total} C",
+            level=logging.DEBUG,
+            extra={"turn_land_sale_total": total}
+        )
 
     @property
     def active_events(self) -> Dict[str, Any]:

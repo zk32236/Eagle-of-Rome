@@ -119,9 +119,9 @@ class TestResolutionViewSuccess:
         # resolved = True
         assert data["resolved"] is True
 
-        # step_statuses: 五步，全部 completed
-        assert len(data["step_statuses"]) == 5
-        assert all(s["status"] == "completed" for s in data["step_statuses"])
+        # step_statuses: 四步（WP-E R-3：无第五步「决算完成」）；预结算（无 read-model）→ pending
+        assert len(data["step_statuses"]) == 4
+        assert all(s["status"] == "pending" for s in data["step_statuses"])
 
         # results
         results = data["results"]
@@ -131,6 +131,14 @@ class TestResolutionViewSuccess:
         assert "dominant_faction" in results
         assert "treasury" in results
         assert "legion_status" in results
+        # WP-E R-2 新字段
+        assert results["settled"] is False
+        assert "settled_year" in results
+        assert "next_year" in results
+        assert "treasury_before" in results
+        assert "treasury_after" in results
+        assert "contract_expiries" in results
+        assert "decay" in results
 
         # warnings
         assert isinstance(data["warnings"], list)
@@ -153,25 +161,26 @@ class TestResolutionViewSuccess:
 
         expected_names = [
             "governor_return", "contract_expiry", "risk_check",
-            "annual_decay", "next_year",
+            "annual_decay",
         ]
         expected_displays = [
-            "总督返回", "合同到期", "风险检查", "年度衰减", "决算完成",
+            "总督返回", "合同到期", "风险检查", "年度衰减",
         ]
         for i, step in enumerate(steps):
             assert step["step"] == i + 1
             assert step["name"] == expected_names[i]
             assert step["display"] == expected_displays[i]
-            assert step["status"] == "completed"
+            # 预结算（无 read-model）→ pending（read-model 驱动，WP-E R-2）
+            assert step["status"] == "pending"
 
-    def test_resolution_step5_display_name(self):
-        """步骤 5 display =「决算完成」（语义修正：不与「推进下一年度」混滑）"""
+    def test_no_fifth_step(self):
+        """无第五步「决算完成」（WP-E R-3/E-02）。"""
         state, viewer_id = _make_minimal_state()
         result = session_api.get_resolution_view(state, viewer_id)
         steps = result["data"]["step_statuses"]
-        step5 = next(s for s in steps if s["step"] == 5)
-        assert step5["name"] == "next_year"
-        assert step5["display"] == "决算完成"
+        assert len(steps) == 4
+        assert all(s["step"] != 5 for s in steps)
+        assert all(s["name"] != "next_year" for s in steps)
 
 
 # ===========================================================================
@@ -281,8 +290,8 @@ class TestResolutionViewReadonly:
         data = result["data"]
         assert data["resolved"] is True
         assert data["is_current_player"] is False
-        # 业务数据仍然可见
-        assert len(data["step_statuses"]) == 5
+        # 业务数据仍然可见（四步，WP-E R-3）
+        assert len(data["step_statuses"]) == 4
 
 
 # ===========================================================================
@@ -290,14 +299,14 @@ class TestResolutionViewReadonly:
 # ===========================================================================
 
 class TestResolutionViewStepCount:
-    """验证五步进度条完整性。"""
+    """验证四步进度条完整性（WP-E R-3：无第五步）。"""
 
-    def test_exactly_five_steps(self):
+    def test_exactly_four_steps(self):
         state, viewer_id = _make_minimal_state()
         state.mark_phase_executed("resolution")
 
         result = session_api.get_resolution_view(state, viewer_id)
-        assert len(result["data"]["step_statuses"]) == 5
+        assert len(result["data"]["step_statuses"]) == 4
 
 
 # ===========================================================================

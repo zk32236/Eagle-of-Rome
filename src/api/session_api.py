@@ -669,23 +669,26 @@ def get_resolution_view(state: GameState, viewer_player_id: str) -> dict:
     仅包含业务事实，不包含 Store 私有状态。
     can_advance / is_advancing 由 Store 组合，API 不返回。
 
-    五步进度采用二态模型（resolve 前全部 pending → resolve 后全部 completed）。
+    四步进度由 read-model 驱动（WP-E R-2/F2）：
+    - resolved 双源 = is_phase_executed("resolution") OR read-model 存在（结算后 executed_phases 已清空，
+      必须由 read-model 维持「已结算」显示，同时阻止 _on_refresh 重执行）；
+    - 预结算（read-model 不存在）→ 全部 pending；结算后 → 全部 completed（诚实反映步骤是否真执行过）。
     """
     try:
         viewer = state.get_player(viewer_player_id)
         if not viewer:
             return api_response(False, "Viewer player not found")
 
-        resolved = state.is_phase_executed("resolution")
-        status = "completed" if resolved else "pending"
+        settlement = state.get_resolution_settlement()
+        resolved = state.is_phase_executed("resolution") or settlement is not None
+        status = "completed" if settlement is not None else "pending"
 
-        # 五步进度（二态模型）
+        # 四步进度（read-model 驱动；无第五步「决算完成」）
         step_definitions = [
             {"step": 1, "name": "governor_return", "display": "总督返回"},
             {"step": 2, "name": "contract_expiry", "display": "合同到期"},
             {"step": 3, "name": "risk_check", "display": "风险检查"},
             {"step": 4, "name": "annual_decay", "display": "年度衰减"},
-            {"step": 5, "name": "next_year", "display": "决算完成"},
         ]
         step_statuses = [{**sd, "status": status} for sd in step_definitions]
 
@@ -695,7 +698,7 @@ def get_resolution_view(state: GameState, viewer_player_id: str) -> dict:
         else:
             results = _empty_resolution_results()
 
-        # 风险警告
+        # 风险警告（F4：权威现状扫描，不进 read-model；结算后展示）
         warnings = _build_resolution_warnings(state) if resolved else []
 
         # 年度总结
@@ -719,36 +722,33 @@ def get_resolution_view(state: GameState, viewer_player_id: str) -> dict:
 
 
 def _build_resolution_results(state: GameState) -> dict:
-    """从游戏状态提取结算结果。"""
-    # 总督轮换记录 - 检查有候任总督的行省
-    governor_transitions = []
-    for province in state.get_all_provinces():
-        desig_id = province.governor_designate_id
-        if desig_id is not None:
-            designate = state.get_member(desig_id)
-            if designate:
-                governor = state.get_member(province.governor_id)
-                governor_transitions.append({
-                    "province": province.name,
-                    "governor": designate.get_formal_name(),
-                    "old_governor": governor.get_formal_name() if governor else None,
-                })
+    """从 read-model 提取结算结果（WP-E R-2/F2）。
 
-    # 合同到期数量
-    expired_count = 0
-    for contract in state.contracts:
-        c_status = getattr(contract, "status", None)
-        if c_status is not None:
-            status_name = getattr(c_status, "name", str(c_status))
-            if status_name == "EXPIRED":
-                expired_count += 1
+    四步骤事件行全部有 read-model 源（governor_returns / contract_expiries /
+    truce_expiries / decay + treasury_before/after）；预结算（无 read-model）→
+    四步骤字段全空，但 S2（victory/legion_recovery/key_events）仍由
+    execute_resolution phase result 提供（预结算即权威已发生事实）。
+    """
+    settlement = state.get_resolution_settlement()
 
-    # 和约到期（转为威胁的战争）
-    truce_expired = []
-    war_system = state.get_war_system()
-    if war_system:
-        threat_wars = war_system.get_threat_wars()
-        truce_expired = [w.name for w in threat_wars]
+    if settlement:
+        governor_transitions = [
+            {
+                "province": row.get("province_name"),
+                "old_governor": row.get("old_governor_name"),
+                "governor": row.get("new_governor_name"),
+                "promoted": row.get("new_governor_id") is not None,
+            }
+            for row in settlement.get("governor_returns", [])
+        ]
+        contract_expiries = settlement.get("contract_expiries", [])
+        truce_expired = settlement.get("truce_expiries", [])
+        decay = settlement.get("decay", [])
+    else:
+        governor_transitions = []
+        contract_expiries = []
+        truce_expired = []
+        decay = []
 
     # 元老院主导派系
     total_influence = 0
@@ -784,9 +784,16 @@ def _build_resolution_results(state: GameState) -> dict:
             legion_status = "destroyed"
 
     result = {
+        "settled": settlement is not None,
+        "settled_year": settlement.get("settled_year") if settlement else None,
+        "next_year": settlement.get("next_year") if settlement else None,
+        "treasury_before": settlement.get("treasury_before") if settlement else None,
+        "treasury_after": settlement.get("treasury_after") if settlement else None,
         "governor_transitions": governor_transitions,
-        "contracts_expired": expired_count,
+        "contract_expiries": contract_expiries,
+        "contracts_expired": len(contract_expiries),
         "truce_expired": truce_expired,
+        "decay": decay,
         "dominant_faction": dominant_faction,
         "treasury": state.treasury,
         "legion_status": legion_status,
@@ -805,9 +812,16 @@ def _build_resolution_results(state: GameState) -> dict:
 
 def _empty_resolution_results() -> dict:
     return {
+        "settled": False,
+        "settled_year": None,
+        "next_year": None,
+        "treasury_before": None,
+        "treasury_after": None,
         "governor_transitions": [],
+        "contract_expiries": [],
         "contracts_expired": 0,
         "truce_expired": [],
+        "decay": [],
         "dominant_faction": None,
         "treasury": 0,
         "legion_status": "unknown",
@@ -860,7 +874,9 @@ def _build_resolution_warnings(state: GameState) -> list:
 
 
 def _build_resolution_summary(state: GameState) -> dict:
-    """从游戏状态提取年度总结。"""
+    """从游戏状态提取年度总结（WP-E R-2：next_year / decay_details 由 read-model 驱动）。"""
+    settlement = state.get_resolution_settlement()
+
     # 元老院主导派系
     total_influence = 0
     faction_infos = []
@@ -882,20 +898,22 @@ def _build_resolution_summary(state: GameState) -> dict:
             "influence_share": round(top["influence"] / total_influence, 4),
         }
 
-    # 年份显示
+    # 年份显示（next_year 优先 read-model）
     current_year = state.turn.year if state.turn else 0
-    next_year = current_year + 1
+    next_year = settlement.get("next_year") if settlement else (current_year + 1)
     next_year_display = _format_year(next_year)
 
-    # 衰减状态
-    decay_applied = resolved = state.is_phase_executed("resolution")
+    # 衰减状态（decay_applied = read-model 存在；decay_details 动态）
+    decay_applied = settlement is not None
+    decay = settlement.get("decay", []) if settlement else []
+    decay_details = f"{len(decay)} 名成员受到年度衰减" if decay else "无变化"
 
     return {
         "dominant_faction": dominant,
         "treasury": state.treasury,
         "next_year": next_year_display,
         "decay_applied": decay_applied,
-        "decay_details": "影响力年度衰减已应用" if decay_applied else "",
+        "decay_details": decay_details,
         "current_year": _format_year(current_year),
     }
 

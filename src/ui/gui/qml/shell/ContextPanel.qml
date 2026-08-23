@@ -144,10 +144,10 @@ Rectangle {
                         font.bold: true
                     }
 
-                    // Layer 2: 灰色两行说明文字
+                    // Layer 2: 灰色两行说明文字（WP-E R-5 两段语义）
                     Text {
                         visible: sessionStore.selectedPhaseId === "resolution"
-                        text: "年度总结与决算公示，确认后推进到下一年度。"
+                        text: "执行年度结算 → 审阅四步结算结果 → 进入下一年度。"
                         color: "#766652"
                         font.pixelSize: 12
                         wrapMode: Text.Wrap

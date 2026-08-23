@@ -108,7 +108,19 @@
       "eques": 0.3,
       "plebeian": 0.2
     },
-    "enable_private_land_trade": false
+    "enable_private_land_trade": false,
+    "veteran_supply": {
+      "enabled": true,
+      "min_veteran_nobiles": 1,
+      "max_veteran_nobiles": 2,
+      "min_ex_consul_count": 1,
+      "censor_anchor_years_ago": 1,
+      "history_years_ago_min": 2,
+      "history_years_ago_max": 8,
+      "ex_consul_probability": 0.5,
+      "age_min": 45,
+      "age_max": 58
+    }
   },
   "mortality_rules": {
     "death_count": 1,

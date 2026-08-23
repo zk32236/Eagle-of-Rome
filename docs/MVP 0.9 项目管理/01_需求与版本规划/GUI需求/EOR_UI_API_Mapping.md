@@ -531,6 +531,35 @@ AutoWarTakeoverDecider     # 元老院-接管战争
 |-------------|----------------|---------|------|
 | v0.1（草案） | — | — | CODEX 原始 mapping，仅覆盖人口+元老院只读 |
 | **v2.0（当前）** | **V2.0** | **V3.23** | 完整覆盖 7 阶段，含多玩家/AI/i18n |
+| v2.1（WP-E，2026-08-23） | GUI-BETA-R1 WP-E | — | Forum DTO 新字段 + buy_land 防重 + doAdvanceResolution 两段式（见附录 D） |
+
+## 附录 D: WP-E 更新（2026-08-23，GUI-BETA-R1）
+
+### D.1 Forum DTO 新字段（`get_forum_view`）
+
+| 字段 | 语义 | 权威源 |
+|:--|:--|:--|
+| `land_sale_total` | 本年度公地出售总额 | `turn_land_sale_total`（game_state） |
+| `land_price_per_unit` | 公地单价 | `state.get_economic_rule("land_price_per_unit")`（权威，禁硬编码） |
+| `viewer_land_requests` | 当前查看者派系的认购请求（按 faction_id 过滤派生） | `pending["land_purchases"]` |
+| `land_allocation` | resolve 后结构化分配结果 | `resolve_forum` 返回 `land_allocation` |
+| `war_events` | 本回合战争事件字符串（保留载体） | `state._forum_war_events` |
+| `has_active_war` | 是否存在活跃战争 | `ws.get_active_wars()`（war_system 权威） |
+
+### D.2 buy_land 防重语义（E-G7-07 同族）
+
+- `buy_land`：pending 内已存在同 figure 认购 → 显式拒绝「该人物本回合已提交公地认购请求」
+  （E-10 失败面；非静默替换）；quantity 由 landDialog 配置（IntValidator 1..999），
+  不再固定 amount=1。
+- `place_bid`：同 (contract_id, figure_id) 已出价 → 显式拒绝「该人物已对本合同出价」（E-G7-07 恰一次）。
+
+### D.3 doAdvanceResolution 两段式（GUI-BETA-005）
+
+- 第一段：`advance_year` 成功 → `_resolution_settled=True` + 刷新 + 反馈（**不跳转**）；
+  失败 → 停留 + 刷新 + 反馈（FC-06 失败不变式）。
+- 第二段：已结算 → 导航 mortality + 状态复位。
+- `advanceCurrentPhaseText`：resolution 标签动态化（未结算「⚙️ 执行年度结算」/
+  已结算「⏭️ 进入下一年度」）。
 
 ---
 

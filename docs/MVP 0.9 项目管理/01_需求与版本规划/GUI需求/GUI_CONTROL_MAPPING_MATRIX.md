@@ -323,3 +323,16 @@
 ### 修正后状态
 
 ✅ **可以进入下一阶段：** `GUI_DTO_GAP_REPORT.md` + `GUI_PHASE_INTEGRATION_PLAN.md`
+
+## WP-E 更新（2026-08-23，GUI-BETA-R1）
+
+| # | 控件/区域 | 变更 |
+|:--|:--|:--|
+| 1 | ForumStage.qml 公地行（:528-532） | amount=1 硬编码 → **landDialog**（quantity 输入，IntValidator 1..999，价格上下文「单价 P T/单位 · 总价 Q T」P=landPricePerUnit 权威值）；label/value/enabledAction 状态机（total>0/remaining>0/viewer pending/forumResolved 条件） |
+| 2 | ForumStage.qml 公地提交后行 | 「已提交 X C（待结算）」+ 动作禁用（viewer pending 可追踪） |
+| 3 | ForumStage.qml landAllocation Repeater | resolve 后每条分配行（X 认购 Y C 花费 Z T / 资金不足） |
+| 4 | ForumStage.qml announceWarThreats/Empty | THREAT 行保留 + 新增 war_events 行（⚔️ 爆发/⚠️ 升级权威字符串直读）；空态门控改三条件（war_threats 空 && war_events 空 && !has_active_war） |
+| 5 | PopulationStage.qml :186 门控 | `populationResolved && total > 0` → **`total > 0`**（选举解析前即显转换公告）；banner 上移至顶部公告区；无 fallback 文案 |
+| 6 | ResolutionStage.qml | resultsPanel 四步分节（总督返回/合同到期身份行/风险检查/年度衰减）+ 和约到期行（read-model 真实事件）；`resolutionStepBar` 4 块（5→4）；国库行用 treasury_before/after 真实 delta |
+| 7 | CombatStage.qml TRUCE_LOCKED 卡 | 「⏳ 和约剩余 X 回合」行（`truce_remaining_turns` DTO 直读；null → 不显示） |
+| 8 | ContextPanel.qml :140-146 | 摘要文案微调（两段语义：「执行年度结算 → 审阅 → 进入下一年度」） |

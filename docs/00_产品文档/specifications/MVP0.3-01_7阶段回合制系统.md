@@ -248,4 +248,5 @@ if self.state.is_phase_executed("senate"):
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.1 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §7 注：Resolution 阶段 read-model + 两段式年度推进（GUI）；市场生成段 veteran supply 注入（E-G7-09，同 tech 映射 §6） |
 | v1.0 | 2026-07-12 | Document Officer Worker L | 初版创建 |
