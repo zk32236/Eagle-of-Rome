@@ -1,8 +1,8 @@
 # MVP0.5-20-sys — 元老院系统 API 映射
 
 > **技术映射 — Senate API**  
-> **版本：** v1.0  
-> **日期：** 2026-07-26  
+> **版本：** v1.3  
+> **日期：** 2026-08-23（v1.0 初版 2026-07-26）  
 
 ---
 
@@ -61,9 +61,75 @@ phase_senate.py (CLI) → senate_api.py (API) → 对应 Core/Entity
 - war 分支：war 不存在→拒绝；非 int→拒绝；<min(1)→拒绝；>pool→拒绝；多战争总和 > 可用池→拒绝「可用军团不足」。
 - helper 经函数内 lazy import 共享（D-1：`political_system` 不在模块顶层 import `senate_api`，避免循环导入）。
 
-## 5. 版本日志
+## 5. WP-D Senate Proposal Flow 契约（GUI-BETA-R1 WP-D，2026-08-23）
+
+> 本节落 WP-D（GUI-BETA-004/013/023 + 019 residual + Consul/Tribune Authority P1×2）最终实现契约。
+> 权威语义来源：Grill-Lite v1.1（D-01~D-10）+ ODR-WP-D-01（CLOSED——方案 B + 防线 1/2）。
+> 所有 file:line 锚以最终 commit `4d09b17` 工作树实证为准（不凭报告转述）。
+
+### 5.1 Consul Proposal Authority 契约（四层守卫）
+
+- **Core 单一谓词：** `political_system.py:741-747` `_is_eligible_consul(member)` = `office=="consul"` + 未死亡 + 未 absent（单一事实源，消除 GUI/Core 双判定）。
+- **执政官查找：** `political_system.py:778-795` `_find_consul_for_faction` —— 主循环消费谓词；fallback 四条件（faction 归属 + office==consul + 未 absent + 未死亡），任一不满足 → `return None` **fail-closed**（非执政官派系不再误判通过，P1 根因消除）。
+- **API 委托：** `senate_api.py:304-312` `_viewer_eligible_consul` 委托 `_is_eligible_consul`（无独立判定逻辑）。
+- **GUI 门禁：** `SenateStage.qml:693` 提案 CheckBox `enabled: sessionStore.canCreateSenateProposal`；提交按钮 `SenateStage.qml:885` `enabled: (canCreateSenateProposal || canTriggerAIProposer) && !hasZeroValueLandSelection()`（非执政官可经主按钮触发 AI proposer——frozen §11 Scenario B，偏离 D-7）。
+- **AI 路由：** `session_store.py:1255-1267` `doSubmitSenateProposals` —— viewer_has_consul → `propose_many`（0…N）；非执政官 → `adapter.call(senate_api.auto_submit_proposals, state)`（AI 为决策者；复用 adapter 统一反馈映射，不新增 api_adapter 方法，偏离 D-8）。
+- **API 负向：** 未授权手动提案 mutation fail-closed（`propose` 经 `_populate_proposal` 权威谓词；测试 test_senate_authority.py）。
+
+### 5.2 Senate DTO capability 字段（get_senate_view data，senate_api.py:459 起）
+
+| 字段 | 语义 | 来源（senate_api.py:516-529） |
+|:--|:--|:--|
+| `viewer_has_consul` | viewer 派系存在 eligible 执政官 | `_viewer_eligible_consul` |
+| `can_select_proposal` | viewer 可手选/配置提案（= viewer_has_consul；**不再含 `len(options)>0` 条件**） | `viewer_has_consul` |
+| `can_create_proposal` | 可提交 = actionable + step==proposal + viewer_has_consul | `can_create` |
+| `can_trigger_ai_proposer` | 非执政官派系可触发 AI proposer = actionable + step==proposal + !viewer_has_consul | `can_trigger_ai` |
+| `can_veto` / `can_auto_veto` / `viewer_has_tribune` | Tribune 否决权 authority 态（D-10，详见 MVP0.5-09 v1.1） | `_viewer_has_tribune` |
+
+SessionStore 透传（session_store.py:355-363 / :400-402）：`canSelectSenateProposal` / `canTriggerAIProposer` / `senatePublicAnnouncement`。
+
+### 5.3 Zero-Proposal 生命周期（propose_many 空批合法 + senate_proposal_decision_complete）
+
+- **人类空批：** `senate_api.py:738-769` `propose_many` —— 空批 = 合法政治决策「本会期不提交法案」→ `senate_proposal_decision_complete = True`（:744）+ success；非空批成功路径同样置位（:762，供 step 区分「未决策」vs「已决策为空」）。
+- **AI 空批：** `senate_api.py:771-1030` `auto_submit_proposals` —— 成功返回前置 `senate_proposal_decision_complete = True`（:1024；0 提案也合法，D-05/D-09）。
+- **状态存储：** `game_state.py:264-270` `senate_proposal_decision_complete` property（存 `_senate_pending["decision_complete"]`，__init__ :134-141）；随 `clear_senate_pending`（:250-256）自动重置；to_dict :751-753 / load_from_dict :907-913 / create_for_testing 三处同步。
+- **step 推导：** `senate_api.py:505` 读取 + :565-571 —— `not decision_complete` → proposal；decision_complete 且无 proposals → **results**（Path A：0 提案跳过 vote/veto 空结算）；否则 vote → veto。
+- **空结算 hook：** `session_store.py:1269-1279` —— 提交后 created 空且 submitted 空 → `adapter.resolve_senate()`（Path A 全链：resolve → record_phase_result → advance 可过，P2-01）。
+
+### 5.4 AI proposer 0…N + 空批
+
+- **执政官查找（`senate_api.py:795-800`）：** 主循环校验 `office=="consul" + 未 absent + 未死亡`；fallback 校验 leader 同条件（全局执政官语义）。
+- **提案生成 0…N：** war（威胁 + 军团值域）/ peace / governor / budget / land（land 决策器默认 populares→distribution、optimates→sale）；无适用对象或决策器拒绝 → 0 提案，仍 success + decision_complete。
+- **空批不阻断阶段推进（D-09）：** 旧规则「phase cannot advance before a valid proposal exists」已被「proposal decision complete，结果可合法为 ∅」替代（Grill-Lite §14.2）。
+
+### 5.5 Public Announcement DTO（公示）
+
+- **组装：** `senate_api.py:1147-1160` `resolve_senate` → `phase_data["public_announcement"] = {enacted_proposals: [{proposal_id, type, title, key_parameters}], direct_actions}`；随 `record_phase_result("senate")` 持久化。
+- **准入规则（D-06）：** 仅 **final enacted** 进公示；rejected/vetoed 留在 Proposal/Vote/Veto history，**不进公示**。
+- **key_parameters（D-08，senate_api.py:102-127）：** land→`{act_type, amount_C, percent}`；war→`{war_id, legions}`；budget→`{contract_id, modified_budget}`；governor→`{province_id, candidate_id}`；peace→`{war_id}`。值全部来自 authoritative proposal dict（禁 QML 推导）。
+- **回读：** `get_senate_view`（senate_api.py:572）`public_announcement` 经 result_data 回读；SessionStore `senatePublicAnnouncement`（session_store.py:400-402，回退 `{}`）。
+- **渲染：** `SenateStage.qml:127-156`（`_announcementEnactedText` / `_directActionText`）+ 结果面板 `:452-473`（「✅ 最终通过」+「⚡ 直接生效」区块；rejected 维持既有 veto 区展示，D-06 分离语义）。
+
+### 5.6 参数连续性（Proposal→Vote→Veto→Result）
+
+- 提案 payload 于 `_populate_proposal`（political_system.py:797 起）冻结：land amount_C / war legions / budget modified_budget / governor candidate / peace war_id。
+- label 为权威摘要载体（senate_api.py:60-85）：land「卖地法案 — 出售 N C（约 M%）」；war/budget 同源含参。
+- Vote/Veto 阶段复用 submitted_proposals + label（QML `voteParamDescription` land/war/budget 分支置空 = label 为准，SenateStage.qml:360-365）。
+- Announcement key_parameters 值来自 authoritative proposal/result DTO（禁 QML 重推导，023 连续性满足）。
+
+### 5.7 Takeover Direct Action（独立于 vote/veto 链）
+
+- **入口：** `senate_api.py:586-628` `takeover_war` —— 权限校验（faction 成员 office==consul + 未 absent + 未死亡，:625，fail-closed）→ 活跃外战 + 幂等校验 → `execute_war_takeover_direct` 直接执行。
+- **记录：** 成功分支 `senate_api.py:665-672` `record_senate_direct_action({action_type:"takeover", war_id, war_name, commander_id, commander_name, legions})`。
+- **存储：** `game_state.py:272-278` `record_senate_direct_action` / `get_senate_direct_actions`（`_senate_pending["direct_actions"]`，与 proposals 同生命周期，clear 自动重置，随 to_dict/from_dict 序列化）。
+- **快照：** `political_system.py:296-308` resolve_senate 结算循环后、clear_senate_pending 前快照 → senate_api 组装公示（AU-5）。
+- **view 透传：** `senate_api.py:571` `data.direct_actions` 实时 pending；结算后被清空，持久副本在 public_announcement。
+- **链外性（D-02/D-07）：** 不创建 proposal、不进入 calculate_vote_result / record_veto / execute_passed_proposal；公示按「已生效事项」展示（⚡ 直接生效）。
+
+## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.3 | 2026-08-23 | GUI-BETA-R1 WP-D: 新增 §5 Senate Proposal Flow 契约（Consul 四层守卫 + DTO capability 四字段 + Zero-proposal 生命周期 + AI 0…N/空批 + Public Announcement DTO + 参数连续性 + Takeover Direct Action）——Trial Audit P1-PC-02/P1-PC-03 文档闭合 |
 | v1.2 | 2026-08-22 | GUI-BETA-R1 WP-C-R1: 提案链值域改接（_budget_range_for_contract/_legion_options_for_war helper + FC-01/FC-03 数据源 + auto_submit P1-a 同值域 + _populate_proposal 权威谓词 + process_war_takeover 执行期征召） |
 | v1.1 | 2026-07-26 | 新增 auto_vote() 方法（Wave-04 Finale, C-10e） |
 | v1.0 | 2026-07-26 | 初版 — Wave-03 senate_api assign_governors + process_war_takeover |
