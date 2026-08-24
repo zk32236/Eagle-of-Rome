@@ -169,7 +169,10 @@ Rectangle {
 
                         Text {
                             anchors.centerIn: parent
-                            text: advanceBtn.canAdvance ? sessionStore.advanceCurrentPhaseText : "⏭️ 推进到下一阶段"
+                            // P2-01（Pre-G5 §11）：Resolution 按钮语义「⏭️ 进入下一年度」与 enabled 状态无关——
+                            // disabled 时不得回退「⏭️ 推进到下一阶段」；仅 Resolution 走 store 标签，其余阶段保持原回退
+                            text: (advanceBtn.canAdvance || sessionStore.selectedPhaseId === "resolution")
+                                  ? sessionStore.advanceCurrentPhaseText : "⏭️ 推进到下一阶段"
                             color: advanceBtn.canAdvance ? theme.headerText : theme.textMuted
                             font.pixelSize: theme.buttonSize
                             font.bold: true

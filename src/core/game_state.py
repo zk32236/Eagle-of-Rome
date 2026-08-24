@@ -1524,12 +1524,14 @@ class GameState:
         return updates
 
     def _apply_member_decay(self, updates: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """应用 member 衰减目标值（纯赋值 + 确定性重算 update_influence）。
+        """应用 member 衰减目标值（纯赋值 + 无条件确定性重算 update_influence）。
 
-        WP-E R-1（F1 A3/A4 新形状）：返回 per-figure 变化行
-        [{figure_id, name, age: {before, after},
+        WP-E R-1（F1 A3/A4 新形状）+ G7R NC-2/NC-3：返回 per-figure 变化行
+        [{figure_id, name, faction_id, age: {before, after},
+          influence_before, influence_after, influence_delta_decay,
           veterans: {before, after} | None, popularity: {before, after} | None}]
-        （veterans/popularity 仅变化时存在；age 恒 +1）；零存活 → []。
+        （veterans/popularity 仅变化时存在；age 恒 +1；faction_id + 权威影响力量三字段恒写，
+        作 faction 级 decay-only parity 权威源，pre-A6 构造——ODR-C1）；零存活 → []。
         """
         rows: List[Dict[str, Any]] = []
         for member in self.get_living_members():
@@ -1539,16 +1541,25 @@ class GameState:
             before_age = member.age
             before_veterans = member.veterans
             before_popularity = member.popularity
+            # NC-3：衰减前权威值须在 member.age 写入【前】捕获（pre-A6，decay-only）
+            influence_before = member.influence
             member.age = target["age"]
             member.veterans = target["veterans"]
             member.popularity = target["popularity"]
             member._temp_influence_tasks = target["temp_influence_tasks"]
-            if target["needs_influence_update"]:
-                member.update_influence()
+            # NC-2（G7R-Delta-04 方案①）：无条件 update_influence——no-temp 成员衰减后
+            # 权威 _influence 恒等于 _compute_influence(post-decay inputs)（权威收敛）
+            member.update_influence()
+            influence_after = member.influence
+            influence_delta_decay = influence_after - influence_before
             row: Dict[str, Any] = {
                 "figure_id": member.id,
                 "name": member.get_formal_name(),
+                "faction_id": member.faction_id,
                 "age": {"before": before_age, "after": target["age"]},
+                "influence_before": influence_before,
+                "influence_after": influence_after,
+                "influence_delta_decay": influence_delta_decay,
             }
             if before_veterans != target["veterans"]:
                 row["veterans"] = {"before": before_veterans, "after": target["veterans"]}
