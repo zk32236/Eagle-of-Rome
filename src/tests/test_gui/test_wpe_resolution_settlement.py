@@ -195,23 +195,28 @@ def test_process_contract_expiration_int_contract():
 # ---------------------------------------------------------------------------
 
 def test_read_model_decay_rows():
-    """A3/A4 衰减 → per-figure 行：age 恒有（+1），veterans/popularity 仅变化时存在。"""
+    """A3/A4 衰减 → preview.faction_influence 派系聚合（decay-only，ODR-C1；无 per-figure 行）。"""
+    from src.core.entities.entities import Faction
     state = _make_state()
-    fig = Figure(id=1, name="Marcus", age=40, veterans=100, popularity=50)
+    fig = Figure(id=1, name="Marcus", age=40, veterans=100, popularity=50, faction_id="Optimates")
     state.add_member(fig)
+    faction = Faction(id="Optimates", name="贵族派")
+    faction.member_ids = [1]
+    state._factions["Optimates"] = faction
 
+    preview = session_api._build_resolution_preview(state)
+    assert len(preview["faction_influence"]) == 1
+    row = preview["faction_influence"][0]
+    assert row["faction_id"] == "Optimates"
+    assert row["faction_name"] == "贵族派"
+    # before = 当前影响力（只读）；after = 纯函数衰减重算（decay-only）
+    assert row["influence_before"] == fig.influence
+    assert row["influence_after"] < row["influence_before"]
+    assert row["influence_delta"] == row["influence_after"] - row["influence_before"]
+    # 读 model 仍为内部 parity 源（decay 行保留，非展示）
     state.advance_year()
-
     settlement = state.get_resolution_settlement()
     assert len(settlement["decay"]) == 1
-    row = settlement["decay"][0]
-    assert row["figure_id"] == 1
-    assert row["name"] == "Marcus"
-    assert row["age"] == {"before": 40, "after": 41}
-    assert row["veterans"]["before"] == 100
-    assert row["veterans"]["after"] < 100
-    assert row["popularity"]["before"] == 50
-    assert row["popularity"]["after"] < 50
 
 
 def test_read_model_decay_empty_no_living_members():
@@ -318,7 +323,8 @@ def test_execute_resolution_idempotent_guard_does_not_clear():
 # ---------------------------------------------------------------------------
 
 def test_read_model_full_four_step_events():
-    """组合：总督返回 + 合同到期 + 和约到期 + 年度衰减 同时产出。"""
+    """组合：总督返回 + 合同到期 + 和约到期 + 年度衰减（派系聚合）→ preview 四类目事实。"""
+    from src.core.entities.entities import Faction
     state = _make_state()
     # A6：交接行省
     old_gov = Figure(id=101, name="Old Gov", is_absent=True, office="proconsul")
@@ -341,81 +347,111 @@ def test_read_model_full_four_step_events():
     war.set_peace_treaty({"status": "approved"})
     war.set_truce_end_turn(4)
     ws._truce_wars.append(war)
-    # A3+A4：存活成员（含交接人物，衰减行亦含 designate 等）
-    fig = Figure(id=1, name="Marcus", age=40, veterans=100, popularity=50)
+    # A3+A4：存活成员（归属派系，供派系聚合）
+    fig = Figure(id=1, name="Marcus", age=40, veterans=100, popularity=50, faction_id="Optimates")
     state.add_member(fig)
+    faction = Faction(id="Optimates", name="贵族派")
+    faction.member_ids = [1]
+    state._factions["Optimates"] = faction
 
+    preview = session_api._build_resolution_preview(state)
+    # 总督返回（guard：old_fig 存在且未死；designate 升任 → successor_name）
+    assert len(preview["governor_returns"]) == 1
+    gr = preview["governor_returns"][0]
+    assert gr["province_id"] == 1
+    assert gr["province_name"] == "Sicilia"
+    assert gr["governor_name"] == "Old Gov"
+    assert gr["successor_name"] == "New Gov"
+    # 合同到期（身份行）
+    assert len(preview["contract_expiries"]) == 1
+    assert preview["contract_expiries"][0]["contract_type"] == "PUBLIC_WORKS"
+    # 和约到期
+    assert preview["truce_expiries"] == [{"war_name": "Truce War"}]
+    # 年度衰减（派系聚合，无 per-figure 行）
+    assert len(preview["faction_influence"]) == 1
+    assert preview["faction_influence"][0]["faction_name"] == "贵族派"
+    assert preview["faction_influence"][0]["influence_delta"] < 0
+
+    # read-model（内部 parity 源）仍按既有形状产出
     state.advance_year()
-
     settlement = state.get_resolution_settlement()
     assert len(settlement["governor_returns"]) == 1
     assert len(settlement["contract_expiries"]) == 1
     assert settlement["truce_expiries"] == ["Truce War"]
-    # 衰减行：3 个存活成员（old_gov / designate / Marcus）
     assert len(settlement["decay"]) == 3
-    decay_ids = {row["figure_id"] for row in settlement["decay"]}
-    assert {1, 101, 102} == decay_ids
 
 
 # ---------------------------------------------------------------------------
 # 8. Slice 2 — 视图 DTO（get_resolution_view 四步 / 双源 / read-model 驱动）
 # ---------------------------------------------------------------------------
 
-def test_resolution_view_four_steps_after_advance(adapter_session):
-    """advance_year 后 get_resolution_view：四步全部 completed（read-model 驱动），无第五步。"""
+def test_resolution_view_preview_categories_after_advance(adapter_session):
+    """advance_year 后 get_resolution_view：preview 四类目存在、无 step_statuses 键（E-02）；
+    resolved 单源化 → False（settlement 不再参与门控）。"""
     adapter, state, player_id = adapter_session
     state.mark_phase_executed("combat")
     adapter.execute_phase("resolution", player_id)
     adapter.advance_year(player_id)
 
+    view = adapter.get_resolution_view(player_id)
+    assert "step_statuses" not in view, "step_statuses 键必须移除（E-02）"
+    preview = view["preview"]
+    for key in ["governor_returns", "contract_expiries", "truce_expiries", "faction_influence"]:
+        assert key in preview, key
+    assert isinstance(preview["faction_influence"], list)
+    # resolved 单源化：advance 后 False → results 为空；read-model 事实经 settlement 访问器（parity 源）
+    assert view["resolved"] is False
+    results = view["results"]
+    assert "settled" not in results, "results.settled 必须移除（D10 §3）"
+    assert results["settled_year"] is None
+    settlement = state.get_resolution_settlement()
+    assert settlement is not None
+    assert settlement["next_year"] == settlement["settled_year"] + 1
+    assert "treasury_before" in settlement and "treasury_after" in settlement
+    assert isinstance(settlement["contract_expiries"], list)
+    assert isinstance(settlement["decay"], list)
+    assert isinstance(settlement["governor_returns"], list)
+    assert isinstance(settlement["truce_expiries"], list)
+
+
+def test_resolution_view_resolved_single_source(adapter_session):
+    """resolved 单源化（D2 §4.2）：仅 is_phase_executed；advance 后 read-model 仍在但 resolved=False。"""
+    adapter, state, player_id = adapter_session
+    state.mark_phase_executed("combat")
+    adapter.execute_phase("resolution", player_id)
+    assert state.is_phase_executed("resolution")
     view = adapter.get_resolution_view(player_id)
     assert view["resolved"] is True
-    steps = view["step_statuses"]
-    assert len(steps) == 4
-    names = [s["name"] for s in steps]
-    assert "next_year" not in names
-    assert names == ["governor_return", "contract_expiry", "risk_check", "annual_decay"]
-    for s in steps:
-        assert s["status"] == "completed"
-    # read-model 驱动的结算结果字段
-    results = view["results"]
-    assert results["settled"] is True
-    assert results["settled_year"] is not None
-    assert results["next_year"] == results["settled_year"] + 1
-    assert "treasury_before" in results and "treasury_after" in results
-    assert "contract_expiries" in results
-    assert "decay" in results
-    assert isinstance(results["governor_transitions"], list)
-    assert isinstance(results["truce_expired"], list)
 
-
-def test_resolution_view_resolved_dual_source(adapter_session):
-    """F2 双源：advance_year 后 executed_phases 已清空，但 read-model 维持 resolved=True。"""
-    adapter, state, player_id = adapter_session
-    state.mark_phase_executed("combat")
-    adapter.execute_phase("resolution", player_id)
     adapter.advance_year(player_id)
-
-    # advance_year 清空 executed_phases（_commit_settlement 尾部）
+    # advance 后 executed_phases 已清空，但 read-model 仍存在 → 单源化下 resolved=False（旧双源会 True）
     assert not state.is_phase_executed("resolution")
-    view = adapter.get_resolution_view(player_id)
-    assert view["resolved"] is True  # 由 read-model 维持
+    assert state.get_resolution_settlement() is not None
+    view2 = adapter.get_resolution_view(player_id)
+    assert view2["resolved"] is False
+    assert view2["preview"]["faction_influence"] is not None
 
 
-def test_resolution_view_summary_next_year_from_readmodel(adapter_session):
-    """summary.next_year 由 read-model 驱动（结算年 + 1）。"""
+def test_resolution_view_summary_next_year(adapter_session):
+    """summary.next_year 展示（结算后 = 结算年 + 1；resolved=False 时为空态——单源化）。"""
     adapter, state, player_id = adapter_session
     state.mark_phase_executed("combat")
     adapter.execute_phase("resolution", player_id)
-    adapter.advance_year(player_id)
 
+    # 结算后（未 advance）：resolved=True → summary 可见
     view = adapter.get_resolution_view(player_id)
-    settlement = state.get_resolution_settlement()
+    assert view["resolved"] is True
     summary = view["summary"]
     assert summary["next_year"] != ""
     assert "BC" in summary["next_year"] or "AD" in summary["next_year"]
-    assert summary["decay_applied"] is True
-    assert settlement["next_year"] is not None
+    # 结算后但未 advance → read-model 未写 → decay_applied 诚实为 False
+    assert summary["decay_applied"] is False
+
+    # advance 后：resolved=False → summary 空态（面板隐藏，非展示陈旧数据）
+    adapter.advance_year(player_id)
+    view2 = adapter.get_resolution_view(player_id)
+    assert view2["resolved"] is False
+    assert view2["summary"]["next_year"] == ""
 
 
 def test_resolution_view_warnings_kept_as_current_scan(adapter_session):
@@ -430,47 +466,16 @@ def test_resolution_view_warnings_kept_as_current_scan(adapter_session):
 
 
 # ---------------------------------------------------------------------------
-# 9. Slice 2 — 两段式推进（F3）
+# 9. 单命令推进（E-05，两段式语义废除）
 # ---------------------------------------------------------------------------
 
-def test_two_stage_advance_first_stage_no_navigation(store_session):
-    """第一段：advance_year 成功 → 不跳转，resolutionSettled=True，仍停留 resolution。"""
+def test_advance_failure_stays_and_retryable(store_session):
+    """单命令失败：停留 resolution + advancing 复位 + 可重试（EC-09）。"""
     store, state, player_id = store_session
     state.mark_phase_executed("combat")
     store.refreshSnapshot()
     store.selectPhase("resolution")
     assert store.resolutionResolved is True
-
-    feedback = store.doAdvanceResolution()
-    assert feedback["success"]
-    assert store.selectedPhaseId == "resolution"  # 不跳转
-    assert store.resolutionSettled is True
-    # 标签动态化
-    assert "进入下一年度" in store.advanceCurrentPhaseText
-
-
-def test_two_stage_advance_second_stage_navigates(store_session):
-    """第二段：已结算 → 导航 mortality + 状态复位。"""
-    store, state, player_id = store_session
-    state.mark_phase_executed("combat")
-    store.refreshSnapshot()
-    store.selectPhase("resolution")
-    store.doAdvanceResolution()  # 第一段
-    assert store.selectedPhaseId == "resolution"
-
-    feedback = store.doAdvanceResolution()  # 第二段
-    assert feedback["success"]
-    assert store.selectedPhaseId == "mortality"
-    # 瞬态标记复位（read-model 仍保 settled=True 直到新年 execute_resolution 清空——F3 设计）
-    assert store._resolution_settled is False
-
-
-def test_two_stage_advance_failure_stays(store_session):
-    """第一段失败：停留 + 刷新 + 反馈（FC-06 失败不变式）。"""
-    store, state, player_id = store_session
-    state.mark_phase_executed("combat")
-    store.refreshSnapshot()
-    store.selectPhase("resolution")
 
     original_advance = store._adapter.advance_year
     def failing_advance(pid):
@@ -480,28 +485,46 @@ def test_two_stage_advance_failure_stays(store_session):
         feedback = store.doAdvanceResolution()
         assert not feedback["success"]
         assert store.selectedPhaseId == "resolution"
-        assert store.resolutionSettled is False
+        assert store.isResolutionAdvancing is False
         assert store.resolutionResolved is True
     finally:
         store._adapter.advance_year = original_advance
 
+    # 可重试：恢复后再次调用 → 直入 mortality
+    feedback2 = store.doAdvanceResolution()
+    assert feedback2["success"]
+    assert store.selectedPhaseId == "mortality"
 
-def test_on_refresh_does_not_retrigger_execute_after_settlement(store_session):
-    """F3 关键正确性：结算后 resolved 双源阻止 _on_refresh 重执行 execute_resolution。"""
+
+def test_on_refresh_resolved_single_source_prevents_reexecute(store_session):
+    """resolved 单源化：自动结算后 resolved=True（is_phase_executed）→ _on_refresh 不重执行；
+    advance 后 resolved=False → 跨年不毒化（EC-02/A4）。"""
     store, state, player_id = store_session
     state.mark_phase_executed("combat")
     store.refreshSnapshot()
     store.selectPhase("resolution")
-    store.doAdvanceResolution()  # 第一段：结算完成
-    assert store.resolutionSettled is True
+    assert store.resolutionResolved is True
+    assert state.is_phase_executed("resolution")
 
-    # 模拟 _on_refresh（结算后 _executed_phases 已清空，read-model 维持 resolved）
-    store._on_refresh()
-    # 不应重触发（_executeResolution 会再执行 execute_resolution——combat 未执行则失败；
-    # 双源 resolved=True 使触发条件不成立）
-    assert store.resolutionSettled is True
-    view = store.resolutionView
-    assert view.get("resolved", False) is True
+    # 结算后 _on_refresh：resolved=True → 不重触发 execute_resolution
+    execute_calls = []
+    original_execute = store._adapter.execute_phase
+    def counting_execute(phase, pid):
+        execute_calls.append(phase)
+        return original_execute(phase, pid)
+    store._adapter.execute_phase = counting_execute
+    try:
+        store._on_refresh()
+    finally:
+        store._adapter.execute_phase = original_execute
+    assert "resolution" not in execute_calls, "resolved=True 时 _on_refresh 不得重触发 execute_resolution"
+    assert store.resolutionResolved is True
+
+    # 单命令 advance → 新年 resolved=False（单源）→ 跨年不毒化
+    feedback = store.doAdvanceResolution()
+    assert feedback["success"]
+    assert store.selectedPhaseId == "mortality"
+    assert store.resolutionResolved is False
 
 
 # ---------------------------------------------------------------------------
@@ -559,38 +582,8 @@ def _all_qquick_items(root):
         pending.extend(item.childItems())
 
 
-def test_render_step_bar_has_four_children(store_session):
-    """RENDER：resolutionStepBar 子项 == 4（无第五块「决算完成」）。"""
-    import os
-    from PySide6.QtCore import QUrl, QObject
-    from PySide6.QtGui import QGuiApplication
-    from PySide6.QtQuick import QQuickItem
-
-    store, state, player_id = store_session
-    state.mark_phase_executed("combat")
-    store.refreshSnapshot()
-    store.selectPhase("resolution")
-
-    engine, qml_dir = _create_qml_engine(store)
-    engine.load(QUrl.fromLocalFile(os.path.join(qml_dir, "Main.qml")))
-    QGuiApplication.processEvents()
-    root = engine.rootObjects()[0]
-    assert root is not None
-
-    step_bar = root.findChild(QObject, "resolutionStepBar")
-    assert step_bar is not None, "resolutionStepBar not found"
-    # Repeater 生成的 step 块为 QQuickRectangle 视觉子项（childItems 穿透 Repeater）
-    step_blocks = [
-        i for i in _all_qquick_items(step_bar)
-        if isinstance(i, QQuickItem) and i.property("color") is not None and i.parentItem() is not None
-    ]
-    # 精确过滤：delegate Rectangle 具有 color 属性且直接属于 stepBar 的视觉子树（Repeater 容器内）
-    delegate_rects = [i for i in _all_qquick_items(step_bar) if str(i.metaObject().className()).startswith("QQuickRectangle")]
-    assert len(delegate_rects) == 4, f"expected 4 step blocks, got {len(delegate_rects)}"
-
-
-def test_render_four_step_sections_present(store_session):
-    """RENDER：结算后四步分节 objectName 全部存在 + summaryPanel 保留。"""
+def test_render_four_categories_and_risk_zone_present(store_session):
+    """RENDER：四类目 + 独立风险区 + summaryPanel objectName 全部存在；无 resolutionStepBar（E-02）。"""
     import os
     from PySide6.QtCore import QUrl, QObject
     from PySide6.QtGui import QGuiApplication
@@ -599,7 +592,8 @@ def test_render_four_step_sections_present(store_session):
     state.mark_phase_executed("combat")
     store.refreshSnapshot()
     store.selectPhase("resolution")
-    store.doAdvanceResolution()  # 第一段结算（面板可见前提）
+    # 门控 resolutionResolved（G7R：预结算即可见）——无需 advance
+    assert store.resolutionResolved is True
 
     engine, qml_dir = _create_qml_engine(store)
     engine.load(QUrl.fromLocalFile(os.path.join(qml_dir, "Main.qml")))
@@ -611,9 +605,11 @@ def test_render_four_step_sections_present(store_session):
         "resolutionResultsPanel",
         "resolutionGovernorReturnSection",
         "resolutionContractExpirySection",
-        "resolutionRiskCheckSection",
-        "resolutionAnnualDecaySection",
         "resolutionTruceExpirySection",
+        "resolutionAnnualDecaySection",
+        "resolutionRiskCheckSection",
         "resolutionSummaryPanel",
     ]:
         assert root.findChild(QObject, object_name) is not None, object_name
+    # E-02：无可见顺序 StepBar
+    assert root.findChild(QObject, "resolutionStepBar") is None, "resolutionStepBar 必须移除（E-02）"

@@ -12,6 +12,7 @@ from src.api import faction_api
 from src.api import figure_api
 from src.core.game_state import GameState
 from src.core.scenario_loader import ScenarioLoader
+from src.core.entities.figure import _compute_influence
 
 
 logger = logging.getLogger("EOR-GUI")
@@ -669,30 +670,24 @@ def get_resolution_view(state: GameState, viewer_player_id: str) -> dict:
     仅包含业务事实，不包含 Store 私有状态。
     can_advance / is_advancing 由 Store 组合，API 不返回。
 
-    四步进度由 read-model 驱动（WP-E R-2/F2）：
-    - resolved 双源 = is_phase_executed("resolution") OR read-model 存在（结算后 executed_phases 已清空，
-      必须由 read-model 维持「已结算」显示，同时阻止 _on_refresh 重执行）；
-    - 预结算（read-model 不存在）→ 全部 pending；结算后 → 全部 completed（诚实反映步骤是否真执行过）。
+    WP-E-G7R（D2 §4.2）：resolved 单源化 = is_phase_executed("resolution")——
+    advance 后 executed_phases 已清空 → resolved=False → 新年入口自动结算可靠触发
+    （消除跨年毒化）；settlement read-model 仅保留为 EC-10 parity 源，不再参与门控。
+    preview = _build_resolution_preview 只读投影（直连 _plan_*，R-23，零变异 EC-01），
+    四信息类目（总督返回/合同到期/和约到期/派系聚合衰减），不再提供 step_statuses 顺序工作流。
     """
     try:
         viewer = state.get_player(viewer_player_id)
         if not viewer:
             return api_response(False, "Viewer player not found")
 
-        settlement = state.get_resolution_settlement()
-        resolved = state.is_phase_executed("resolution") or settlement is not None
-        status = "completed" if settlement is not None else "pending"
+        # resolved 单源化（D2 §4.2）：仅 is_phase_executed；settlement 不再参与门控
+        resolved = state.is_phase_executed("resolution")
 
-        # 四步进度（read-model 驱动；无第五步「决算完成」）
-        step_definitions = [
-            {"step": 1, "name": "governor_return", "display": "总督返回"},
-            {"step": 2, "name": "contract_expiry", "display": "合同到期"},
-            {"step": 3, "name": "risk_check", "display": "风险检查"},
-            {"step": 4, "name": "annual_decay", "display": "年度衰减"},
-        ]
-        step_statuses = [{**sd, "status": status} for sd in step_definitions]
+        # 只读年度预览投影（每次重算，确定性、零变异）
+        preview = _build_resolution_preview(state)
 
-        # 结算结果
+        # 结算结果（read-model 事实；treasury_before/after 降为内部 parity/审计字段，无可见消费者）
         if resolved:
             results = _build_resolution_results(state)
         else:
@@ -709,7 +704,7 @@ def get_resolution_view(state: GameState, viewer_player_id: str) -> dict:
 
         data = {
             "resolved": resolved,
-            "step_statuses": step_statuses,
+            "preview": preview,
             "results": results,
             "warnings": warnings,
             "summary": summary,
@@ -719,6 +714,95 @@ def get_resolution_view(state: GameState, viewer_player_id: str) -> dict:
     except Exception as e:
         logger.exception("Resolution view failed")
         return api_response(False, f"Resolution view failed: {e}", errors=[str(e)])
+
+
+def _build_resolution_preview(state: GameState) -> dict:
+    """只读 year-end 投影（D3 §1/§2 + ODR-C1）。
+
+    - 直连 state._plan_settlement()（共享规划语义，R-23：无第二套实现）；
+      只读字段读取 + 命名富化，零变异（EC-01，测试锁定等价快照）。
+    - 唯一判定谓词 governor return guard = old_fig is not None and not old_fig.is_dead
+      （1 行布尔，与 _apply_governor_transitions 同语义，注释锁定 + parity EC-10）。
+    - faction_influence = decay-only 聚合（ODR-C1）：before/after/delta 仅反映衰减分量
+      （veterans/popularity/temp_tasks 衰减后的影响力重算）；office/land/family 恒定，
+      不叠加总督交接影响（交接归「总督返回」类目）。
+    """
+    plan = state._plan_settlement()
+
+    # 1. 总督返回（A6 规划；guard 对齐 _apply_governor_transitions :1621-1666）
+    governor_returns = []
+    for t in plan["governor_transitions"]:
+        old_fig = t["old_fig"]
+        if old_fig is None or old_fig.is_dead:
+            continue
+        province = t["province"]
+        designate = t["designate"]
+        governor_returns.append({
+            "province_id": province.province_id,
+            "province_name": province.name,
+            "governor_name": old_fig.get_formal_name(),
+            "successor_name": (
+                designate.get_formal_name()
+                if (t["promote"] and designate is not None) else None
+            ),
+        })
+
+    # 2. 合同到期（A5 规划，身份行——禁仅计数 005-03）
+    contract_expiries = [
+        {
+            "contract_id": c.id,
+            "name": c.name,
+            "contract_type": c.contract_type.name,
+        }
+        for c in plan["contracts_to_expire"]
+    ]
+
+    # 3. 和约到期（A7 规划）
+    truce_expiries = [{"war_name": w.name} for w in plan["truce_expiries"]]
+
+    # 4. 派系聚合影响力（decay-only，ODR-C1；每派系恒一行）
+    member_updates = plan["member_updates"]
+    faction_influence = []
+    for faction in state.factions.values():
+        members = [m for m in state.get_living_members() if m.faction_id == faction.id]
+        before_total = 0
+        after_total = 0
+        for m in members:
+            before_total += getattr(m, "influence", 0) or 0
+            target = member_updates.get(m.id)
+            if target is None:
+                veterans_after = m.veterans
+                popularity_after = m.popularity
+                temp_tasks = m._temp_influence_tasks
+                temp_after = m.get_temp_influence()
+            else:
+                veterans_after = target["veterans"]
+                popularity_after = target["popularity"]
+                temp_tasks = target["temp_influence_tasks"]
+                temp_after = sum(t["per_turn"] for t in temp_tasks)
+            after_total += _compute_influence(
+                m.land_private,
+                veterans_after,
+                popularity_after,
+                m.family_prestige,
+                m.get_office_influence_bonus(),
+                temp_after,
+            )
+        delta = after_total - before_total
+        faction_influence.append({
+            "faction_id": faction.id,
+            "faction_name": faction.name,
+            "influence_before": before_total,
+            "influence_after": after_total,
+            "influence_delta": delta,
+        })
+
+    return {
+        "governor_returns": governor_returns,
+        "contract_expiries": contract_expiries,
+        "truce_expiries": truce_expiries,
+        "faction_influence": faction_influence,
+    }
 
 
 def _build_resolution_results(state: GameState) -> dict:
@@ -784,11 +868,13 @@ def _build_resolution_results(state: GameState) -> dict:
             legion_status = "destroyed"
 
     result = {
-        "settled": settlement is not None,
+        # D10 §3 disposition：settled 键移除（无可见消费者；resolved 单源化后不复需要）
         "settled_year": settlement.get("settled_year") if settlement else None,
         "next_year": settlement.get("next_year") if settlement else None,
+        # treasury_before/after：内部 parity/审计字段（EC-10 比对源），非可见消费者，不做展示
         "treasury_before": settlement.get("treasury_before") if settlement else None,
         "treasury_after": settlement.get("treasury_after") if settlement else None,
+        # 四步 read-model 行：内部 parity 源（EC-10 比对对象），不删除（D2 §4.2）
         "governor_transitions": governor_transitions,
         "contract_expiries": contract_expiries,
         "contracts_expired": len(contract_expiries),
@@ -812,7 +898,6 @@ def _build_resolution_results(state: GameState) -> dict:
 
 def _empty_resolution_results() -> dict:
     return {
-        "settled": False,
         "settled_year": None,
         "next_year": None,
         "treasury_before": None,
@@ -903,10 +988,17 @@ def _build_resolution_summary(state: GameState) -> dict:
     next_year = settlement.get("next_year") if settlement else (current_year + 1)
     next_year_display = _format_year(next_year)
 
-    # 衰减状态（decay_applied = read-model 存在；decay_details 动态）
+    # 衰减状态（decay_applied = read-model 存在；decay_details = 派系聚合描述，R-21 禁 per-figure dump）
     decay_applied = settlement is not None
-    decay = settlement.get("decay", []) if settlement else []
-    decay_details = f"{len(decay)} 名成员受到年度衰减" if decay else "无变化"
+    preview = _build_resolution_preview(state)
+    changed_factions = [
+        f for f in preview["faction_influence"]
+        if f["influence_delta"] != 0
+    ]
+    decay_details = (
+        f"{len(changed_factions)} 个派系受到年度衰减"
+        if changed_factions else "无派系影响力变化"
+    )
 
     return {
         "dominant_faction": dominant,

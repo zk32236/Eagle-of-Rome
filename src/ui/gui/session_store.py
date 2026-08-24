@@ -64,7 +64,6 @@ class GuiSessionStore(QObject):
         self._resolution_view: Dict[str, Any] = {}
         self._resolution_resolving: bool = False
         self._resolution_advancing: bool = False
-        self._resolution_settled: bool = False  # WP-E R-5：两段式第一段（advance_year 成功）标记
         self._revenue_result: Dict[str, Any] = {}
         self._mortality_result: Dict[str, Any] = {}
         self._current_player_id: str = ""
@@ -612,10 +611,6 @@ class GuiSessionStore(QObject):
     def resolutionView(self) -> Dict[str, Any]:
         return self._resolution_view
 
-    @Property(list, notify=resolutionViewChanged)
-    def resolutionStepStatuses(self) -> list:
-        return self._resolution_view.get("step_statuses", [])
-
     @Property(dict, notify=resolutionViewChanged)
     def resolutionResults(self) -> dict:
         return self._resolution_view.get("results", {})
@@ -631,11 +626,6 @@ class GuiSessionStore(QObject):
     @Property(bool, notify=resolutionViewChanged)
     def resolutionResolved(self) -> bool:
         return self._resolution_view.get("resolved", False)
-
-    @Property(bool, notify=resolutionViewChanged)
-    def resolutionSettled(self) -> bool:
-        """结算 read-model 已写入（两段式第一段完成；读 view results.settled 双源）。"""
-        return self._resolution_settled or self._resolution_view.get("results", {}).get("settled", False)
 
     @Property(bool, notify=resolutionViewChanged)
     def isResolutionResolving(self) -> bool:
@@ -722,9 +712,7 @@ class GuiSessionStore(QObject):
         dispatch = self._PHASE_ADVANCE_DISPATCH.get(self.selectedPhaseId)
         if not dispatch:
             return "\u23ed\ufe0f 推进到下一阶段"
-        # WP-E R-5：resolution 按钮标签两段语义动态化
-        if self.selectedPhaseId == "resolution":
-            return "\u23ed\ufe0f 进入下一年度" if self.resolutionSettled else "\u2699\ufe0f 执行年度结算"
+        # WP-E-G7R：resolution 按钮标签唯一化（E-05 单命令，无两段标签）——统一走 dispatch label
         return dispatch["label"]
 
     # -----------------------------------------------------------------------
@@ -1211,72 +1199,59 @@ class GuiSessionStore(QObject):
     # -----------------------------------------------------------------------
     @Slot(result=dict)
     def doAdvanceResolution(self) -> dict:
-        """两段式年度推进（WP-E R-5/F3，纯展示流，不动业务执行）。
+        """单命令年度推进（E-05 / D2 §2.1）：一键 → advance_year 恰好一次 → 直连 Mortality。
 
-        第一段（未结算）：执行 advance_year；成功 → _resolution_settled=True +
-        刷新 resolution view + 反馈，不跳转（展示四步骤真实事实）；失败 → 停留 +
-        刷新 + 反馈（FC-06 失败不变式由 game_api 保证）。
-        第二段（已结算）：退化为导航 → mortality + 状态复位。
+        成功分支直接导航 mortality（删除原第二段导航分支）；失败分支停留 resolution +
+        刷新 view（advancing 复位 → 可重试，EC-09）；finally 补发 phaseChanged（P0 修复：
+        闭合 QML 按钮绑定 notify 缺口，对照 _executeResolution finally 既有模式）。
         """
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
-        if self._resolution_advancing:
+        if self._resolution_advancing:                      # 重入 guard（双击/重复分派，EC-08）
             feedback = self._feedback(False, "正在推进中，请稍候", "warning")
             self._raise_feedback(feedback)
             return feedback
 
-        # 第二段：已结算 → 导航 mortality + 状态复位
-        if self.resolutionSettled:
-            self._reset_phase_caches()
-            self._refresh_snapshot()
-            self._selected_phase_id = "mortality"
-            self._selected_phase_summary = self._summary_from_phase(
-                self._phase_by_id("mortality")
-            )
-            self._resolution_settled = False
-            self.phaseChanged.emit()
-            feedback = self._feedback(True, "已进入下一年度（天命阶段）", "success")
-            self._raise_feedback(feedback)
-            return feedback
-
-        if not self.canAdvanceResolution:
+        if not self.canAdvanceResolution:                    # 结算未完成前置
             feedback = self._feedback(False, "决算尚未完成，无法推进", "error")
             self._raise_feedback(feedback)
             return feedback
 
-        # 第一段：执行年度结算，成功后停留展示四步骤结果
         self._resolution_advancing = True
         self.resolutionAdvancingChanged.emit()
         self.resolutionViewChanged.emit()
 
         try:
+            # 权威推进唯一入口（恰好一次；game_api.advance_year 内部重入 guard + 原子性保留）
             feedback = self._adapter.advance_year(self._viewer_id)
             if feedback.get("success"):
-                self._resolution_settled = True
-                # 不跳转：adapter 成功回调（_on_refresh → _refresh_snapshot）会把当前阶段
-                # 重同步为 mortality（executed_phases 已清空），此处显式停留 resolution
-                # 以展示四步骤真实结算结果（F3/R-5 两段式第一段）
-                self._selected_phase_id = "resolution"
+                # ── 单命令：直接导航 Mortality（原第二段导航分支已删除）──
+                self._reset_phase_caches()
+                self._refresh_snapshot()   # executed_phases 已清 → snapshot 重同步 current_phase_id=mortality
+                self._selected_phase_id = "mortality"
                 self._selected_phase_summary = self._summary_from_phase(
-                    self._phase_by_id("resolution")
+                    self._phase_by_id("mortality")
                 )
-                self._refresh_resolution_view()
-                self.phaseChanged.emit()
+                self.phaseChanged.emit()                    # 通知按钮绑定 + 阶段导航
+                self._raise_feedback(
+                    self._feedback(True, "已进入下一年度（天命阶段）", "success")
+                )
             else:
-                # 失败：停留在 Phase 7，保留结算结果
+                # 失败：停留 resolution，刷新 view，advancing 复位 → 可重试（EC-09）
                 logger.warning(f"Year advance failed: {feedback.get('message')}")
                 self._refresh_resolution_view()
-            self._raise_feedback(feedback)
+                self._raise_feedback(feedback)
             return feedback
         finally:
             self._resolution_advancing = False
             self.resolutionAdvancingChanged.emit()
             self.resolutionViewChanged.emit()
+            self.phaseChanged.emit()                        # ← P0 修复：finally 补发，闭合 notify 缺口
 
     @Slot(result=dict)
     def doAdvanceCurrentPhase(self) -> dict:
-        """Unified dispatch: advance button based on selectedPhaseId（WP-E R-5：
-        两段式 review 期间 selectedPhaseId=resolution 维持，分派到 doAdvanceResolution）。"""
+        """Unified dispatch: advance button based on selectedPhaseId（WP-E-G7R：
+        resolution 分派到单命令 doAdvanceResolution——一键直达 Mortality）。"""
         phase_id = self.selectedPhaseId
         if phase_id == "mortality":
             return self.doAdvanceMortality()

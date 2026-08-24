@@ -8,16 +8,14 @@ import "../components"
 /*!
  * \brief ResolutionStage — Phase 7: 决算阶段 (Resolution/Settlement)
  *
- * Visual redesign per EOR_GUI_Prototype_v3.25.1 HTML prototype.
- * 5 visual sections:
- *   1. Five-step progress bar (numbered circles + arrows)
- *   2. Event cards (info-box style)
- *   3. Risk warnings (level-colored warn-box)
- *   4. Annual summary (list-item table with name-value alignment)
- *   5. "进入下一年度" button (btn primary)
+ * WP-E-G7R（D4 §0 目标结构）——四信息类目 + 独立风险区 + 年度总结：
+ *   A. 年度结算预览（将来时 E-03）——四信息类目（非顺序工作流，无 StepBar）：
+ *      1. 总督返回  2. 合同到期  3. 和约到期  4. 年度衰减（派系聚合，decay-only）
+ *   B. 风险检查（当前状态 / 现在时）——独立区
+ *   C. 年度总结（现状 + next_year；国库行 = 现状值 ODR-C2）
  *
- * All data driven by sessionStore resolution DTO properties.
- * No backend/API/Store changes — QML-only visual redo.
+ * 数据驱动：sessionStore.resolutionView.preview.*（只读投影，直连 _plan_*）。
+ * 无 StepBar / 无「决算完成」第五块 / 无 x/4 进度隐喻（E-02）。
  */
 Rectangle {
     id: root
@@ -47,22 +45,6 @@ Rectangle {
         return "⚪"
     }
 
-    // ── Step status helpers (block-style) ──
-    function stepBlockColor(status) {
-        if (status === "completed") return "#2E9D4D"
-        return "#D4C8B8"
-    }
-
-    function stepBorderColor(status) {
-        if (status === "completed") return "#228B22"
-        return "#BFA88C"
-    }
-
-    function stepTextColor(status) {
-        if (status === "completed") return "#FFFFFF"
-        return "#766652"
-    }
-
     // ── Content ──
     ColumnLayout {
         anchors.fill: parent
@@ -71,61 +53,6 @@ Rectangle {
         anchors.leftMargin: 12
         anchors.rightMargin: 12
         spacing: 12
-
-        // ══════════════════════════════════════════════════════════════════
-        // Spacer: from subtitle bottom to StepBar top
-        // ══════════════════════════════════════════════════════════════════
-        Item {
-            id: stepBarSpacer
-            Layout.fillWidth: true
-            Layout.preferredHeight: 34
-        }
-
-        // ══════════════════════════════════════════════════════════════════
-        // Section 1: StepBar — Block style (五等分步骤块)
-        // Loading(S0): gray #D4C8B8 bg, #BFA88C border, ⏳ icon + pending text
-        // Resolved(S1): green #2E9D4D bg, #228B22 border, ✅ icon + completed text
-        // Height: 44px, radius: 6px, border: 1px, block spacing: 4px
-        // ══════════════════════════════════════════════════════════════════
-        RowLayout {
-            id: stepBar
-            objectName: "resolutionStepBar"
-            Layout.fillWidth: true
-            Layout.preferredHeight: 44
-            spacing: 4
-
-            Repeater {
-                model: sessionStore.resolutionStepStatuses || []
-
-                delegate: Rectangle {
-                    readonly property var stepData: modelData || {}
-                    readonly property string stepStatus: stepData.status || "pending"
-                    readonly property string stepName: stepData.display || stepData.name || ("步骤 " + (index + 1))
-
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 44
-                    color: stepBlockColor(stepStatus)
-                    border.color: stepBorderColor(stepStatus)
-                    border.width: 1
-                    radius: 6
-
-                    RowLayout {
-                        anchors.centerIn: parent
-                        spacing: 6
-
-                        Text {
-                            text: stepStatus === "completed" ? "✅" : "⏳"
-                            font.pixelSize: theme.bodySize
-                        }
-                        Text {
-                            text: stepName
-                            color: stepTextColor(stepStatus)
-                            font.pixelSize: theme.bodySize
-                        }
-                    }
-                }
-            }
-        }
 
         // ══════════════════════════════════════════════════════════════════
         // LoadingBar — 仅 S0 (loading) 态可见
@@ -160,19 +87,18 @@ Rectangle {
         }
 
         // ══════════════════════════════════════════════════════════════════
-        // Section 2: Event Cards — 四步分节（WP-E R-2/F2，read-model 驱动）
-        // 1. 🏛️ 总督返回  2. 📜 合同到期（身份行） 3. ⚠️ 风险检查（当前状态）
-        // 4. 📉 年度衰减 + 🤝 和约到期（真实 A7 事件，红字）
-        // 门控 = resolutionSettled && !isResolutionResolving（F3）
+        // A 区：四信息类目（将来时 E-03，preview 只读投影；非顺序工作流 E-02）
+        // 1. 🏛️ 总督返回  2. 📜 合同到期（身份行） 3. 🤝 和约到期 4. 📉 年度衰减（派系聚合）
+        // 门控 = resolutionResolved && !isResolutionResolving（G7R：预结算即可见）
         // ══════════════════════════════════════════════════════════════════
         ColumnLayout {
             id: resultsPanel
             objectName: "resolutionResultsPanel"
-            visible: sessionStore.resolutionSettled && !sessionStore.isResolutionResolving
+            visible: sessionStore.resolutionResolved && !sessionStore.isResolutionResolving
             Layout.fillWidth: true
             spacing: 4
 
-            // ── 分节 1：🏛️ 总督返回 ──
+            // ── 分节 1：🏛️ 总督返回（preview.governor_returns，E-03 将来时）──
             ColumnLayout {
                 id: governorReturnSection
                 objectName: "resolutionGovernorReturnSection"
@@ -199,28 +125,42 @@ Rectangle {
                     }
                 }
                 Repeater {
-                    model: (sessionStore.resolutionResults.governor_transitions || [])
-                    delegate: Text {
+                    model: (sessionStore.resolutionView.preview.governor_returns || [])
+                    delegate: ColumnLayout {
                         readonly property var gt: modelData || {}
-                        text: (gt.old_governor || "前任") + " 返回罗马 · 行省 " + (gt.province || "")
-                            + (gt.promoted ? " · 新任总督 " + (gt.governor || "") : "")
-                        color: "#3A3530"
-                        font.pixelSize: 12
                         Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        lineHeight: 1.5
+                        spacing: 1
+                        Text {
+                            text: (gt.province_name || "") + "总督" + (gt.governor_name || "") + "将返回罗马"
+                            color: "#3A3530"
+                            font.pixelSize: 12
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            lineHeight: 1.5
+                        }
+                        Text {
+                            visible: gt.successor_name !== undefined && gt.successor_name !== null && gt.successor_name !== ""
+                            text: (gt.province_name || "") + "总督将由" + gt.successor_name + "接任"
+                            color: "#6C8FA1"
+                            font.pixelSize: 12
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            lineHeight: 1.5
+                        }
                     }
                 }
                 Text {
-                    visible: (sessionStore.resolutionResults.governor_transitions || []).length === 0
-                    text: "无变化"
+                    id: governorReturnEmpty
+                    objectName: "resolutionGovernorReturnEmpty"
+                    visible: (sessionStore.resolutionView.preview.governor_returns || []).length === 0
+                    text: "本年度结束时无总督返回"
                     color: "#766652"
                     font.pixelSize: 12
                     Layout.fillWidth: true
                 }
             }
 
-            // ── 分节 2：📜 合同到期（身份行）──
+            // ── 分节 2：📜 合同到期（身份行，preview.contract_expiries，E-03 将来时）──
             ColumnLayout {
                 id: contractExpirySection
                 objectName: "resolutionContractExpirySection"
@@ -247,11 +187,10 @@ Rectangle {
                     }
                 }
                 Repeater {
-                    model: (sessionStore.resolutionResults.contract_expiries || [])
+                    model: (sessionStore.resolutionView.preview.contract_expiries || [])
                     delegate: Text {
                         readonly property var ce: modelData || {}
-                        text: "合同 " + (ce.name || ("#" + ce.contract_id)) + "（" + (ce.contract_type || "")
-                            + "）已过期 · 存在 " + (ce.turns_pending || 0) + " 回合"
+                        text: (ce.name || ("#" + ce.contract_id)) + " → 将于本年度结束时到期"
                         color: "#3A3530"
                         font.pixelSize: 12
                         Layout.fillWidth: true
@@ -260,131 +199,17 @@ Rectangle {
                     }
                 }
                 Text {
-                    visible: (sessionStore.resolutionResults.contract_expiries || []).length === 0
-                    text: "无变化"
+                    id: contractExpiryEmpty
+                    objectName: "resolutionContractExpiryEmpty"
+                    visible: (sessionStore.resolutionView.preview.contract_expiries || []).length === 0
+                    text: "本年度结束时无合同到期"
                     color: "#766652"
                     font.pixelSize: 12
                     Layout.fillWidth: true
                 }
             }
 
-            // ── 分节 3：⚠️ 风险检查（当前状态）——F4 权威现状扫描 ──
-            ColumnLayout {
-                id: riskCheckSection
-                objectName: "resolutionRiskCheckSection"
-                Layout.fillWidth: true
-                spacing: 4
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 28
-                    color: "#FFFDF5"
-                    border.color: "#C9A84C"
-                    border.width: 1
-                    radius: 6
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        spacing: 6
-                        Text {
-                            text: "⚠️ 风险检查（当前状态）"
-                            color: "#3A3530"
-                            font.pixelSize: 12
-                            font.bold: true
-                        }
-                    }
-                }
-                Repeater {
-                    model: sessionStore.resolutionWarnings || []
-                    delegate: Rectangle {
-                        readonly property var w: modelData || {}
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 28
-                        radius: 4
-                        color: warningBg(w.level || "info")
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            spacing: 6
-                            Text {
-                                text: "⚠️"
-                                font.pixelSize: 12
-                                color: warningColor(w.level || "info")
-                            }
-                            Text {
-                                text: w.message || ""
-                                color: warningColor(w.level || "info")
-                                font.pixelSize: 12
-                                font.bold: (w.level || "") === "critical"
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                            }
-                        }
-                    }
-                }
-                Text {
-                    visible: (sessionStore.resolutionWarnings || []).length === 0
-                    text: "无风险事件"
-                    color: "#766652"
-                    font.pixelSize: 12
-                    Layout.fillWidth: true
-                }
-            }
-
-            // ── 分节 4：📉 年度衰减（per-figure 行）──
-            ColumnLayout {
-                id: annualDecaySection
-                objectName: "resolutionAnnualDecaySection"
-                Layout.fillWidth: true
-                spacing: 4
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 28
-                    color: "#FFFDF5"
-                    border.color: "#C9A84C"
-                    border.width: 1
-                    radius: 6
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        spacing: 6
-                        Text {
-                            text: "📉 年度衰减"
-                            color: "#3A3530"
-                            font.pixelSize: 12
-                            font.bold: true
-                        }
-                    }
-                }
-                Repeater {
-                    model: (sessionStore.resolutionResults.decay || [])
-                    delegate: Text {
-                        readonly property var d: modelData || {}
-                        readonly property var age: d.age || {}
-                        readonly property var veterans: d.veterans || null
-                        readonly property var popularity: d.popularity || null
-                        text: (d.name || "") + "：年龄 " + (age.before ?? "") + "→" + (age.after ?? "")
-                            + (veterans ? " · 老兵 " + veterans.before + "→" + veterans.after : "")
-                            + (popularity ? " · 声望 " + popularity.before + "→" + popularity.after : "")
-                        color: "#3A3530"
-                        font.pixelSize: 12
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        lineHeight: 1.5
-                    }
-                }
-                Text {
-                    visible: (sessionStore.resolutionResults.decay || []).length === 0
-                    text: "无变化"
-                    color: "#766652"
-                    font.pixelSize: 12
-                    Layout.fillWidth: true
-                }
-            }
-
-            // ── 🤝 和约到期（真实 A7 事件，红字；空态「无和约到期」）──
+            // ── 分节 3：🤝 和约到期（preview.truce_expiries，E-03 将来时）──
             ColumnLayout {
                 id: truceExpirySection
                 objectName: "resolutionTruceExpirySection"
@@ -411,20 +236,83 @@ Rectangle {
                     }
                 }
                 Repeater {
-                    model: (sessionStore.resolutionResults.truce_expired || [])
+                    model: (sessionStore.resolutionView.preview.truce_expiries || [])
                     delegate: Text {
-                        readonly property var warName: modelData || ""
-                        text: "🤝 和约到期：" + warName
+                        readonly property var tw: modelData || {}
+                        text: (tw.war_name || "") + " → 和约将在本年度结束时到期"
                         color: "#C45151"
                         font.pixelSize: 12
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
+                        lineHeight: 1.5
                     }
                 }
                 Text {
-                    visible: (sessionStore.resolutionResults.truce_expired || []).length === 0
-                    text: "无和约到期"
+                    id: truceExpiryEmpty
+                    objectName: "resolutionTruceExpiryEmpty"
+                    visible: (sessionStore.resolutionView.preview.truce_expiries || []).length === 0
+                    text: "本年度结束时无和约到期"
                     color: "#C45151"
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+            }
+
+            // ── 分节 4：📉 年度衰减（派系聚合 preview.faction_influence，decay-only ODR-C1）──
+            // 禁 per-figure age/veterans/popularity dump（R-21）
+            ColumnLayout {
+                id: annualDecaySection
+                objectName: "resolutionAnnualDecaySection"
+                Layout.fillWidth: true
+                spacing: 4
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 28
+                    color: "#FFFDF5"
+                    border.color: "#C9A84C"
+                    border.width: 1
+                    radius: 6
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 8
+                        anchors.rightMargin: 8
+                        spacing: 6
+                        Text {
+                            text: "📉 年度衰减"
+                            color: "#3A3530"
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                    }
+                }
+                Repeater {
+                    model: (sessionStore.resolutionView.preview.faction_influence || [])
+                    delegate: Text {
+                        readonly property var fi: modelData || {}
+                        readonly property int delta: parseInt(fi.influence_delta) || 0
+                        readonly property string factionName: fi.faction_name || ""
+                        text: {
+                            if (delta < 0) {
+                                return factionName + " → 将减少 " + (-delta) + " 点影响力，降至 " + fi.influence_after
+                            }
+                            if (delta === 0) {
+                                return factionName + " → 影响力无变化，仍为 " + fi.influence_after
+                            }
+                            return factionName + " → 将增加 " + delta + " 点影响力，升至 " + fi.influence_after
+                        }
+                        color: "#3A3530"
+                        font.pixelSize: 12
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        lineHeight: 1.5
+                    }
+                }
+                Text {
+                    id: annualDecayEmpty
+                    objectName: "resolutionAnnualDecayEmpty"
+                    visible: (sessionStore.resolutionView.preview.faction_influence || []).length === 0
+                    text: "本年度结束时无派系影响力衰减"
+                    color: "#766652"
                     font.pixelSize: 12
                     Layout.fillWidth: true
                 }
@@ -432,14 +320,82 @@ Rectangle {
         }
 
         // ══════════════════════════════════════════════════════════════════
-        // Section 4: Annual Summary — HTML list-item table style
-        // Background: #fff, border: 1px solid #D4A574, padding: 5px 10px
-        // 4 rows: 主导派系, 国库年度净变化, 临时影响力衰减, 下一年度
+        // B 区：风险检查（独立区，现在时；F4 权威现状扫描，不并入四类目）
+        // ══════════════════════════════════════════════════════════════════
+        ColumnLayout {
+            id: riskCheckSection
+            objectName: "resolutionRiskCheckSection"
+            visible: sessionStore.resolutionResolved && !sessionStore.isResolutionResolving
+            Layout.fillWidth: true
+            spacing: 4
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 28
+                color: "#FFFDF5"
+                border.color: "#C9A84C"
+                border.width: 1
+                radius: 6
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 8
+                    anchors.rightMargin: 8
+                    spacing: 6
+                    Text {
+                        text: "⚠️ 风险检查"
+                        color: "#3A3530"
+                        font.pixelSize: 12
+                        font.bold: true
+                    }
+                }
+            }
+            Repeater {
+                model: sessionStore.resolutionWarnings || []
+                delegate: Rectangle {
+                    readonly property var w: modelData || {}
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 28
+                    radius: 4
+                    color: warningBg(w.level || "info")
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 8
+                        anchors.rightMargin: 8
+                        spacing: 6
+                        Text {
+                            text: "⚠️"
+                            font.pixelSize: 12
+                            color: warningColor(w.level || "info")
+                        }
+                        Text {
+                            text: w.message || ""
+                            color: warningColor(w.level || "info")
+                            font.pixelSize: 12
+                            font.bold: (w.level || "") === "critical"
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+            }
+            Text {
+                id: riskCheckEmpty
+                objectName: "resolutionRiskCheckEmpty"
+                visible: (sessionStore.resolutionWarnings || []).length === 0
+                text: "当前无重大年度风险"
+                color: "#766652"
+                font.pixelSize: 12
+                Layout.fillWidth: true
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        // C 区：年度总结 — HTML list-item table style
+        // 4 rows: 主导派系, 国库（现状值 ODR-C2）, 临时影响力衰减, 下一年度
         // ══════════════════════════════════════════════════════════════════
         ColumnLayout {
             id: summaryPanel
             objectName: "resolutionSummaryPanel"
-            visible: sessionStore.resolutionSettled && !sessionStore.isResolutionResolving
+            visible: sessionStore.resolutionResolved && !sessionStore.isResolutionResolving
             Layout.fillWidth: true
             spacing: 3
 
@@ -489,7 +445,7 @@ Rectangle {
                 }
             }
 
-            // Row 2: Treasury settlement change (真实 delta = treasury_after - treasury_before，P2-3)
+            // Row 2: Treasury — 现状值（ODR-C2：保留国库现状 + 删「年度净变化」delta 行）
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 28
@@ -505,17 +461,14 @@ Rectangle {
                     spacing: 8
 
                     Text {
-                        text: "国库结算变化"
+                        text: "国库"
                         color: "#3A3530"
                         font.pixelSize: 12
                     }
                     Item { Layout.fillWidth: true }
                     Text {
-                        readonly property int beforeTreasury: parseInt(sessionStore.resolutionResults.treasury_before) || 0
-                        readonly property int afterTreasury: parseInt(sessionStore.resolutionResults.treasury_after) || 0
-                        readonly property int treasuryDelta: afterTreasury - beforeTreasury
-                        text: (treasuryDelta >= 0 ? "+" : "") + treasuryDelta + " T"
-                        color: treasuryDelta >= 0 ? "#228B22" : "#C45151"
+                        text: (parseInt(sessionStore.resolutionSummary.treasury) || 0) + " C"
+                        color: "#3A3530"
                         font.pixelSize: 12
                         font.bold: true
                     }

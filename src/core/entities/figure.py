@@ -89,6 +89,25 @@ class OfficeTerm:
     is_active: bool = True
 
 
+def _compute_influence(
+    land_private: int,
+    veterans: int,
+    popularity: int,
+    family_prestige: int,
+    office_bonus: int,
+    temp_influence: int,
+) -> int:
+    """计算人物影响力（纯函数，零变异）。
+
+    WP-E-G7R（D3 §3.1 方案 A）：从 update_influence 提取的只读公式——
+    update_influence 与 resolution preview 派系聚合共用同一实现，杜绝第二套公式（R-23）。
+    仅做算术，不触碰任何状态；调用方负责传入目标值。
+    """
+    base = land_private * 10 + veterans * 10 + popularity
+    family_bonus = family_prestige * 10
+    return base + family_bonus + office_bonus + temp_influence
+
+
 @dataclass
 class Figure:
     """
@@ -230,10 +249,17 @@ class Figure:
         member.set_state(self)  # 新增
 
     def update_influence(self) -> int:
-        base = self._land_private * 10 + self.veterans * 10 + self.popularity
-        family_bonus = self.family_prestige * 10
+        # WP-E-G7R：公式收敛到模块级纯函数 _compute_influence（行为逐字节零变化）
         office_bonus = self.get_office_influence_bonus()
-        new_influence = base + family_bonus + office_bonus + self.get_temp_influence()
+        temp_influence = self.get_temp_influence()
+        new_influence = _compute_influence(
+            self._land_private,
+            self.veterans,
+            self.popularity,
+            self.family_prestige,
+            office_bonus,
+            temp_influence,
+        )
         old_influence = self._influence
         self._influence = new_influence
 
@@ -251,7 +277,7 @@ class Figure:
                     "popularity": self.popularity,
                     "family": self.family_prestige,
                     "office_bonus": office_bonus,
-                    "temp": self.get_temp_influence()
+                    "temp": temp_influence
                 }
             )
         return self._influence

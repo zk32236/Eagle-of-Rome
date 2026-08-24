@@ -108,9 +108,10 @@ class TestResolutionViewSuccess:
         assert result["success"] is True
         data = result["data"]
 
-        # 顶层结构
+        # 顶层结构（WP-E-G7R：step_statuses 移除 → preview 四类目）
         assert "resolved" in data
-        assert "step_statuses" in data
+        assert "step_statuses" not in data
+        assert "preview" in data
         assert "results" in data
         assert "warnings" in data
         assert "summary" in data
@@ -119,9 +120,15 @@ class TestResolutionViewSuccess:
         # resolved = True
         assert data["resolved"] is True
 
-        # step_statuses: 四步（WP-E R-3：无第五步「决算完成」）；预结算（无 read-model）→ pending
-        assert len(data["step_statuses"]) == 4
-        assert all(s["status"] == "pending" for s in data["step_statuses"])
+        # preview 四类目（G7R：governor_returns/contract_expiries/truce_expiries/faction_influence）
+        preview = data["preview"]
+        assert set(preview.keys()) == {
+            "governor_returns", "contract_expiries", "truce_expiries", "faction_influence",
+        }
+        assert isinstance(preview["governor_returns"], list)
+        assert isinstance(preview["contract_expiries"], list)
+        assert isinstance(preview["truce_expiries"], list)
+        assert isinstance(preview["faction_influence"], list)
 
         # results
         results = data["results"]
@@ -131,8 +138,8 @@ class TestResolutionViewSuccess:
         assert "dominant_faction" in results
         assert "treasury" in results
         assert "legion_status" in results
-        # WP-E R-2 新字段
-        assert results["settled"] is False
+        # WP-E R-2 新字段（settled 已移除，D10 §3）
+        assert "settled" not in results
         assert "settled_year" in results
         assert "next_year" in results
         assert "treasury_before" in results
@@ -152,35 +159,32 @@ class TestResolutionViewSuccess:
         assert "current_year" in summary
         assert data["is_current_player"] is True
 
-    def test_step_statuses_have_correct_labels(self):
+    def test_preview_has_four_category_keys(self):
+        """preview 四信息类目键（E-02：无 step_statuses 顺序工作流；R-21：派系聚合无 per-figure）。"""
         state, viewer_id = _make_minimal_state()
         state.mark_phase_executed("resolution")
 
         result = session_api.get_resolution_view(state, viewer_id)
-        steps = result["data"]["step_statuses"]
-
-        expected_names = [
-            "governor_return", "contract_expiry", "risk_check",
-            "annual_decay",
-        ]
-        expected_displays = [
-            "总督返回", "合同到期", "风险检查", "年度衰减",
-        ]
-        for i, step in enumerate(steps):
-            assert step["step"] == i + 1
-            assert step["name"] == expected_names[i]
-            assert step["display"] == expected_displays[i]
-            # 预结算（无 read-model）→ pending（read-model 驱动，WP-E R-2）
-            assert step["status"] == "pending"
+        preview = result["data"]["preview"]
+        assert set(preview.keys()) == {
+            "governor_returns", "contract_expiries", "truce_expiries", "faction_influence",
+        }
+        # 派系聚合行字段（decay-only，ODR-C1）
+        for row in preview["faction_influence"]:
+            assert set(row.keys()) == {
+                "faction_id", "faction_name", "influence_before", "influence_after", "influence_delta",
+            }
 
     def test_no_fifth_step(self):
-        """无第五步「决算完成」（WP-E R-3/E-02）。"""
+        """无第五步「决算完成」（WP-E-G7R E-02：无 step_statuses / 无 x/4 进度隐喻）。"""
         state, viewer_id = _make_minimal_state()
         result = session_api.get_resolution_view(state, viewer_id)
-        steps = result["data"]["step_statuses"]
-        assert len(steps) == 4
-        assert all(s["step"] != 5 for s in steps)
-        assert all(s["name"] != "next_year" for s in steps)
+        data = result["data"]
+        assert "step_statuses" not in data
+        preview = data["preview"]
+        assert set(preview.keys()) == {
+            "governor_returns", "contract_expiries", "truce_expiries", "faction_influence",
+        }
 
 
 # ===========================================================================
@@ -200,7 +204,10 @@ class TestResolutionViewEmpty:
         data = result["data"]
 
         assert data["resolved"] is False
-        assert all(s["status"] == "pending" for s in data["step_statuses"])
+        # preview 只读投影恒存在（四类目键）
+        assert set(data["preview"].keys()) == {
+            "governor_returns", "contract_expiries", "truce_expiries", "faction_influence",
+        }
         assert data["results"]["governor_transitions"] == []
         assert data["results"]["contracts_expired"] == 0
         assert data["warnings"] == []
@@ -290,23 +297,27 @@ class TestResolutionViewReadonly:
         data = result["data"]
         assert data["resolved"] is True
         assert data["is_current_player"] is False
-        # 业务数据仍然可见（四步，WP-E R-3）
-        assert len(data["step_statuses"]) == 4
+        # 业务数据仍然可见（preview 四类目，G7R）
+        assert set(data["preview"].keys()) == {
+            "governor_returns", "contract_expiries", "truce_expiries", "faction_influence",
+        }
 
 
 # ===========================================================================
-# 边界：步数完整性
+# 边界：preview 类目完整性
 # ===========================================================================
 
-class TestResolutionViewStepCount:
-    """验证四步进度条完整性（WP-E R-3：无第五步）。"""
+class TestResolutionViewCategoryCount:
+    """preview 四信息类目完整性（E-02：无 step_statuses / 无第五步）。"""
 
-    def test_exactly_four_steps(self):
+    def test_exactly_four_preview_categories(self):
         state, viewer_id = _make_minimal_state()
         state.mark_phase_executed("resolution")
 
         result = session_api.get_resolution_view(state, viewer_id)
-        assert len(result["data"]["step_statuses"]) == 4
+        data = result["data"]
+        assert "step_statuses" not in data
+        assert len(data["preview"]) == 4
 
 
 # ===========================================================================

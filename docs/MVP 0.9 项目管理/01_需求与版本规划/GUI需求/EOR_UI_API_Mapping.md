@@ -532,6 +532,7 @@ AutoWarTakeoverDecider     # 元老院-接管战争
 | v0.1（草案） | — | — | CODEX 原始 mapping，仅覆盖人口+元老院只读 |
 | **v2.0（当前）** | **V2.0** | **V3.23** | 完整覆盖 7 阶段，含多玩家/AI/i18n |
 | v2.1（WP-E，2026-08-23） | GUI-BETA-R1 WP-E | — | Forum DTO 新字段 + buy_land 防重 + doAdvanceResolution 两段式（见附录 D） |
+| **v2.2（WP-E-G7R，2026-08-24）** | GUI-BETA-R1 WP-E-G7R | — | doAdvanceResolution 单命令重写（附录 D.3 修订）+ preview DTO（附录 D.4，005-01~14 traceability） |
 
 ## 附录 D: WP-E 更新（2026-08-23，GUI-BETA-R1）
 
@@ -553,13 +554,51 @@ AutoWarTakeoverDecider     # 元老院-接管战争
   不再固定 amount=1。
 - `place_bid`：同 (contract_id, figure_id) 已出价 → 显式拒绝「该人物已对本合同出价」（E-G7-07 恰一次）。
 
-### D.3 doAdvanceResolution 两段式（GUI-BETA-005）
+### D.3 doAdvanceResolution 单命令（WP-E-G7R 修订，E-05 / GUI-BETA-005）
 
-- 第一段：`advance_year` 成功 → `_resolution_settled=True` + 刷新 + 反馈（**不跳转**）；
-  失败 → 停留 + 刷新 + 反馈（FC-06 失败不变式）。
-- 第二段：已结算 → 导航 mortality + 状态复位。
-- `advanceCurrentPhaseText`：resolution 标签动态化（未结算「⚙️ 执行年度结算」/
-  已结算「⏭️ 进入下一年度」）。
+- **单命令语义**：一键 → `advance_year` 恰好一次 → 成功**直接导航 mortality**
+  （删除原第二段导航分支）；失败 → 停留 resolution + `_refresh_resolution_view()`
+  + advancing 复位 → **可重试**（EC-09）；finally 补发 `phaseChanged`（P0
+  notify 闭合：复位后按钮绑定重算 enabled）。
+- **重入防护（EC-08）**：`_resolution_advancing` guard + 成功后
+  `selectedPhaseId="mortality"`（后续点击分派 mortality）+ `game_api.advance_year`
+  内部重入 guard → 双点击 ≤1 次推进。
+- **标签唯一化**：`advanceCurrentPhaseText` 无两段标签，统一
+  「⏭️ 进入下一年度」（`_PHASE_ADVANCE_DISPATCH["resolution"]["label"]`）。
+- **退役字段**：`_resolution_settled` / `resolutionSettled` /
+  `resolutionStepStatuses` 删除；`get_resolution_view` 的 `step_statuses` 键
+  与 `results.settled` 键移除；`resolved` 单源化 =
+  `is_phase_executed("resolution")`（跨年毒化闭合）。
+
+### D.4 Resolution Preview DTO + 005-01~14 目标行为（WP-E-G7R，Doc-7 traceability）
+
+**preview 四信息类目**（`get_resolution_view` 返回体 `preview` 键，只读投影，
+直连 `_plan_*`，零变异 EC-01）：
+
+| 类目 | DTO 字段 | E-03/E-04 呈现契约 |
+|:--|:--|:--|
+| 1. 总督返回 | `preview.governor_returns[]`（province_name/governor_name/successor_name） | `{province}总督{governor}将返回罗马`；空态「本年度结束时无总督返回」 |
+| 2. 合同到期 | `preview.contract_expiries[]`（contract_id/name/contract_type，身份行） | `{contract_name} → 将于本年度结束时到期`；空态「本年度结束时无合同到期」 |
+| 3. 和约到期 | `preview.truce_expiries[]`（war_name） | `{war_name} → 和约将在本年度结束时到期`；空态「本年度结束时无和约到期」 |
+| 4. 年度衰减 | `preview.faction_influence[]`（faction_name/influence_before/after/delta） | 派系聚合（decay-only，ODR-C1）；`{faction} → 将减少 {abs(delta)} 点影响力，降至 {after}`；空态「本年度结束时无派系影响力衰减」 |
+| 独立 B 区 | `warnings`（现状扫描，现在时） | 「⚠️ 风险检查」独立区；空态「当前无重大年度风险」 |
+
+**GUI-BETA-005 目标行为（005-01~14，acceptance traceability 载体 = 本附录 D.4）**：
+
+| ID | 目标行为 | 落地（测试） |
+|:--|:--|:--|
+| 005-01 | 无顺序 StepBar / 无 x/4 进度隐喻 | `test_no_visible_stepbar`（EC-03） |
+| 005-02 | 总督返回将来时文案 | `test_future_tense_copy_family`（EC-04） |
+| 005-03 | 合同到期身份行（禁仅计数） | `test_future_tense_copy_family` + `test_read_model_contract_expiries_identity_rows` |
+| 005-04 | 风险检查独立现在时区 | `test_render_four_categories_and_risk_zone_present` |
+| 005-05 | 年度衰减派系聚合（禁 per-figure） | `test_faction_influence_aggregate_projection` + `test_no_per_figure_decay_dump`（EC-05） |
+| 005-06 | 空态显式（E-04） | `test_preview_empty_states` |
+| 005-07 | 无 StepBar（E-02） | `test_no_visible_stepbar`（EC-03） |
+| 005-09 | 和约到期将来时文案 | `test_future_tense_copy_family`（EC-04） |
+| 005-11 | preview 零变异 + 刷新稳定 | `test_preview_zero_mutation`（EC-01）/ `test_preview_refresh_stable`（EC-02） |
+| 005-12 | 单命令 → advance 恰好一次 → mortality | `test_single_command_advance_navigates_mortality` / `test_advance_year_called_exactly_once`（EC-07） |
+| 005-13 | preview=commit parity | `test_preview_commit_parity`（EC-10，decay-only ODR-C1） |
+| 005-14 | 失败可重试 + 双点击 ≤1 | `test_advance_failure_no_partial_and_retryable`（EC-09）/ `test_double_click_advances_at_most_once`（EC-08） |
 
 ---
 

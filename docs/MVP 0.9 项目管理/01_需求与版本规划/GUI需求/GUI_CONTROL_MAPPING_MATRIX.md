@@ -41,7 +41,7 @@
 |---|------------|--------|------|---------------|-------------|-----------|---------------|--------|------------|----------------|-------------|----------------|-------------|-------------|----------------|----------------------|----------|
 | C1 | 当前阶段标题 | ContextPanel | Read-only | "当前阶段" + 描述文本 | `Store.selectedPhaseSummary` | `selected_phase_summary` | 同上 | 无 | 总是 | 公开 | 总是 | N/A | "尚未迁移"等 | Transport→默认描述 | Existing | Reuse (style update) | `ContextPanel.qml:51-68`, `session_api.py:454-510` |
 | C2 | 推进到下一阶段按钮 | ContextPanel | Action | "⏭️ 推进到下一阶段" | N/A | N/A | 当前无通用 `advancePhase` Slot | 点击推进 | **仅当前阶段可推进** | 仅当前玩家 | **依赖: 当前玩家+可推进状态** | **Store 无通用 canAdvance 属性** | 隐藏/disabled | Transport→disabled | **Adapter Gap** (已有 advance_mortality 但无通用 advancePhase) | Phase 1 新增通用 Slot | `v3.25.1.html:1788` |
-| C3 | 进度指示 (x/y) | ContextPanel | Read-only | "流程 4/4" | `Store.phaseNavigation[].executed` + 子步骤计数 | 无子步骤计数 | N/A | 无 | 总是 | 公开 | 总是 | N/A | "0/0" | Transport→"0/0" | **DTO Gap** (无子步骤计数字段) | Phase 2 新增 | `v3.25.1.html:1793` |
+| C3 | 进度指示 (x/y) | ContextPanel | Read-only | "流程"（**「4 / 4」计数字样已删除**，E-02 无 x/4 进度隐喻） | `Store.phaseNavigation[].executed` | 无子步骤计数 | N/A | 无 | 总是 | 公开 | 总是 | N/A | N/A | Transport→无计数 | **DTO Gap** (无子步骤计数字段) | Phase 2 新增（已删计数） | `ContextPanel.qml:240-252` |
 | C4 | 状态标签 | ContextPanel | Read-only | "可操作"/"只读"/"占位" | `Store.selectedPhaseSummary.status_text` | `selected_phase_summary.status_text` | 同上 | 无 | 总是 | 公开 | 总是 | N/A | "后续任务承接" | Transport→"未知" | Existing | Reuse (style update) | `session_store.py:294-308` |
 | C5 | 派系名 | ContextPanel | Read-only | "Optimates" | `Store.viewerFactionName` | `faction_resources.name` | 同上 | 无 | 总是 | 仅本派系 | 总是 | N/A | "" | Transport→"" | Existing | Reuse | `ContextPanel.qml:85` |
 | C6 | 人物数 | ContextPanel | Read-only | "5 人" | `Store.factionMemberCount` | `faction_resources.member_count` | 同上 | 无 | 总是 | 仅本派系 | 总是 | N/A | "0 人" | Transport→"0 人" | Existing | Reuse | `ContextPanel.qml:52-55` |
@@ -333,6 +333,6 @@
 | 3 | ForumStage.qml landAllocation Repeater | resolve 后每条分配行（X 认购 Y C 花费 Z T / 资金不足） |
 | 4 | ForumStage.qml announceWarThreats/Empty | THREAT 行保留 + 新增 war_events 行（⚔️ 爆发/⚠️ 升级权威字符串直读）；空态门控改三条件（war_threats 空 && war_events 空 && !has_active_war） |
 | 5 | PopulationStage.qml :186 门控 | `populationResolved && total > 0` → **`total > 0`**（选举解析前即显转换公告）；banner 上移至顶部公告区；无 fallback 文案 |
-| 6 | ResolutionStage.qml | resultsPanel 四步分节（总督返回/合同到期身份行/风险检查/年度衰减）+ 和约到期行（read-model 真实事件）；`resolutionStepBar` 4 块（5→4）；国库行用 treasury_before/after 真实 delta |
+| 6 | ResolutionStage.qml | resultsPanel 四类目（总督返回/合同到期身份行/和约到期/年度衰减派系聚合，`preview` 只读投影）+ 独立风险区（B 区，现在时）+ summaryPanel（国库现状值 ODR-C2）；**`resolutionStepBar` 删除**（E-02 无 StepBar）；门控 `resolutionResolved && !isResolutionResolving` |
 | 7 | CombatStage.qml TRUCE_LOCKED 卡 | 「⏳ 和约剩余 X 回合」行（`truce_remaining_turns` DTO 直读；null → 不显示） |
-| 8 | ContextPanel.qml :140-146 | 摘要文案微调（两段语义：「执行年度结算 → 审阅 → 进入下一年度」） |
+| 8 | ContextPanel.qml :140-146 | 两段引导文案删除（E-05 单命令）；「4 / 4」计数字样删除（E-02 无 x/4）；唯一「⏭️ 进入下一年度」 |

@@ -47,33 +47,34 @@ class TestResolutionAdapter:
         assert isinstance(view, dict)
         assert "resolved" in view
         assert view["resolved"] is False
-        assert "step_statuses" in view
+        assert "preview" in view
         assert "results" in view
         assert "warnings" in view
         assert "summary" in view
         assert "is_current_player" in view
 
-    def test_get_resolution_view_has_four_steps(self):
-        """步进状态正好四个（WP-E R-3：无第五步「决算完成」）"""
+    def test_get_resolution_view_has_four_categories(self):
+        """preview 四信息类目（WP-E-G7R E-02：无 step_statuses 顺序工作流）"""
         adapter, state, players = self.setup_adapter()
         view = adapter.get_resolution_view(players[0])
-        assert len(view["step_statuses"]) == 4
-        names = [s["name"] for s in view["step_statuses"]]
-        assert "next_year" not in names
-        assert names == ["governor_return", "contract_expiry", "risk_check", "annual_decay"]
+        assert "step_statuses" not in view
+        preview = view["preview"]
+        assert set(preview.keys()) == {
+            "governor_returns", "contract_expiries", "truce_expiries", "faction_influence",
+        }
 
-    def test_get_resolution_view_steps_all_pending_when_not_resolved(self):
-        """未结算时全部 pending"""
+    def test_get_resolution_view_preview_is_readonly_projection_when_not_resolved(self):
+        """未结算时 preview 仍为只读投影（四类目字段存在；resolved=False 不影响投影）"""
         adapter, state, players = self.setup_adapter()
         view = adapter.get_resolution_view(players[0])
-        for step in view["step_statuses"]:
-            assert step["status"] == "pending"
+        preview = view["preview"]
+        assert isinstance(preview["governor_returns"], list)
+        assert isinstance(preview["contract_expiries"], list)
+        assert isinstance(preview["truce_expiries"], list)
+        assert isinstance(preview["faction_influence"], list)
 
     def test_get_resolution_view_after_execution(self):
-        """execute_resolution 后 resolved=True；步骤仍 pending（read-model 未写，诚实反映未执行）。
-
-        WP-E R-2：step_statuses 由 read-model 驱动（结算后全部 completed）。
-        """
+        """execute_resolution 后 resolved=True（单源化）；preview 四类目只读投影可见。"""
         adapter, state, players = self.setup_adapter()
         player_id = players[0]
         _make_resolution_ready(state, player_id)
@@ -84,9 +85,11 @@ class TestResolutionAdapter:
 
         view = adapter.get_resolution_view(player_id)
         assert view["resolved"] is True
-        # 预结算（无 read-model）→ 全部 pending（步骤尚未真实执行）
-        for step in view["step_statuses"]:
-            assert step["status"] == "pending"
+        # preview 四类目存在（G7R 只读投影）
+        preview = view["preview"]
+        assert set(preview.keys()) == {
+            "governor_returns", "contract_expiries", "truce_expiries", "faction_influence",
+        }
 
         # 检查结果结构
         assert isinstance(view["results"], dict)
@@ -94,8 +97,8 @@ class TestResolutionAdapter:
         assert "contracts_expired" in view["results"]
         assert "treasury" in view["results"]
         assert "legion_status" in view["results"]
-        # 新字段（WP-E R-2）
-        assert view["results"]["settled"] is False
+        # 新字段（WP-E R-2）：settled 已移除（D10 §3），treasury_before/after 降内部 parity 源
+        assert "settled" not in view["results"]
         assert view["results"]["settled_year"] is None
         assert "treasury_before" in view["results"]
         assert "treasury_after" in view["results"]
@@ -183,17 +186,20 @@ class TestResolutionStore:
         return store, state, players
 
     def test_resolution_properties_exist(self):
-        """Resolution 只读属性均存在"""
+        """Resolution 只读属性均存在（G7R：resolutionStepStatuses/resolutionSettled 已退役）"""
         store, state, players = self.setup_store()
         # 初始未结算
         assert hasattr(store, "resolutionView")
-        assert hasattr(store, "resolutionStepStatuses")
         assert hasattr(store, "resolutionResults")
         assert hasattr(store, "resolutionWarnings")
         assert hasattr(store, "resolutionSummary")
         assert hasattr(store, "resolutionResolved")
         assert hasattr(store, "canAdvanceResolution")
         assert hasattr(store, "isResolutionResolving")
+        # 退役字段（E-02/D2 §3）
+        assert not hasattr(store, "resolutionStepStatuses")
+        assert not hasattr(store, "resolutionSettled")
+        assert not hasattr(store, "_resolution_settled")
 
     def test_resolution_initial_not_resolved(self):
         """初始状态未结算"""
@@ -201,13 +207,13 @@ class TestResolutionStore:
         assert store.resolutionResolved is False
         assert store.canAdvanceResolution is False
 
-    def test_resolution_initial_steps_all_pending(self):
-        """初始步骤全部 pending（四步）"""
+    def test_resolution_initial_preview_keys_present(self):
+        """初始 preview 四类目键存在（E-04 空态语义由 QML 呈现；preview 恒为只读投影）"""
         store, state, players = self.setup_store()
-        steps = store.resolutionStepStatuses
-        assert len(steps) == 4
-        for step in steps:
-            assert step["status"] == "pending"
+        preview = store.resolutionView.get("preview", {})
+        assert set(preview.keys()) == {
+            "governor_returns", "contract_expiries", "truce_expiries", "faction_influence",
+        }
 
     def test_select_phase_resolution_triggers_auto_settlement(self):
         """selectPhase('resolution') 自动触发结算"""
@@ -230,10 +236,9 @@ class TestResolutionStore:
         # 结算应已自动触发
         assert state.is_phase_executed("resolution")
 
-        # Store resolution 状态更新（预结算：resolved=True，步骤 pending——read-model 未写）
+        # Store resolution 状态更新（resolved 单源化：is_phase_executed）
         assert store.resolutionResolved is True
-        assert store.resolutionStepStatuses[0]["status"] == "pending"
-        assert store.resolutionSettled is False
+        assert store.resolutionView.get("preview", {}).get("governor_returns") is not None
 
     def test_auto_settlement_idempotent(self):
         """二次进入 resolution 不重复结算"""
@@ -309,7 +314,7 @@ class TestResolutionStore:
         view = store.resolutionView
         assert isinstance(view, dict)
         assert "resolved" in view
-        assert "step_statuses" in view
+        assert "preview" in view
         assert "results" in view
         assert "warnings" in view
         assert "summary" in view

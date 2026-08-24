@@ -63,6 +63,7 @@ PHASE_SEQUENCE = ["mortality", "revenue", "forum", "population", "senate", "comb
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.4 | 2026-08-24 | DA-Exec (WP-E-G7R) | §6.1 两段式 → 单命令；step_definitions 移除（preview 四类目替代）；resolved 单源化；新增 §7 Resolution Preview DTO（只读投影 + 零变异 + parity 契约） |
 | v1.3 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §6：Resolution 四步事件身份 read-model + 两段式年度推进；市场生成段补注（veteran supply 注入） |
 | v1.2 | 2026-08-01 | DA-Exec G5-R1 | §4 删除「batch内自动结算」旧说法，对齐 FC-09（resolve_population_slice 统一触发） |
 | v1.1 | 2026-07-31 | DA-Exec (WP-02b V4 Pro) | 新增人口阶段 vote 子步骤事务描述：batch_vote 原子提交 + ABSTAIN + per-player completion + resolution 自动触发 (§4) |
@@ -70,20 +71,27 @@ PHASE_SEQUENCE = ["mortality", "revenue", "forum", "population", "senate", "comb
 
 ## 6. WP-E 更新（2026-08-23）
 
-### 6.1 Resolution 阶段：四步事件身份 read-model + 两段式年度推进
+### 6.1 Resolution 阶段：settlement read-model + 单命令年度推进（WP-E-G7R 修订）
 
 - **read-model（`_resolution_settlement`，game_state.py）**：`_commit_settlement`
   在 A1~A7 apply 后、`_turn.advance_year()` 前承接 A5/A6/A7 返回值 + A3/A4 新形状，
   写入独立 read-model（settled_turn/settled_year/next_year/treasury_before/after /
 governor_returns/contract_expiries/truce_expiries/decay）——`execute_resolution`
-  入口（幂等 guard 之后）清除旧 settlement（新年度重入）。
-- **step_definitions 5→4**：`get_resolution_view`（session_api.py:665-713）删除「决算完成」
-  第五步；四步骤事件行（总督返回 / 合同到期身份 / 风险检查「当前状态」/ 年度衰减）
-  全部有 read-model 源（R-1，禁累计快照编造）。
+  入口（幂等 guard 之后）清除旧 settlement（新年度重入）。**read-model 不再参与
+  `resolved` 门控，保留为 EC-10 preview=commit parity 比对源（内部）。**
+- **step_statuses 移除（WP-E-G7R E-02）**：`get_resolution_view`（session_api.py）
+  不再提供顺序 step_definitions/step_statuses；改由 `preview` 四信息类目
+  （governor_returns/contract_expiries/truce_expiries/faction_influence）替代
+  ——非顺序工作流，无 StepBar、无「决算完成」第五块、无 x/4 进度隐喻。
+- **resolved 单源化（D2 §4.2）**：`resolved = is_phase_executed("resolution")`（删
+  `or settlement is not None`）——advance 后 executed_phases 已清空 → resolved=False
+  → 新年入口自动结算可靠触发（消除跨年毒化）；`results.settled` 键移除
+  （D10 §3），treasury_before/after 降内部 parity/审计字段。
 - **职责边界**：`execute_resolution`（resolution_api.py:21-93）= 业务执行
-  （apply A1~A7）；`advance_year`（game_state.py:1341）= 年度滚轮；GUI 两段式
-  （`doAdvanceResolution` session_store.py:1178-1213）：第一段 advance_year 成功
-  → `_resolution_settled=True` + 刷新 + 反馈（不跳转）；第二段 → 导航 mortality。
+  （apply A1~A7）；`advance_year`（game_state.py:1341）= 年度滚轮；GUI 单命令
+  （`doAdvanceResolution` session_store.py）：一键 → advance_year 恰好一次 →
+  成功直接导航 mortality（E-05）；失败停留 resolution 可重试（EC-09）；
+  finally 补发 phaseChanged（P0 notify 闭合）。
 
 ### 6.2 市场生成段补注（E-G7-09）
 
@@ -91,3 +99,54 @@ governor_returns/contract_expiries/truce_expiries/decay）——`execute_resolut
   ex-consul/ex-praetor 贵族（`figure_generation_system` 共享核心循环 +
   `forum_rules.veteran_supply`，见 `MVP0.5-07_人物类型系统.md §4`）——
   市场总量不变（`new_figures_count`），hero 生成零注入。
+
+## 7. Resolution Preview DTO（WP-E-G7R，Doc-6）
+
+### 7.1 投影函数与调用链
+
+`session_api._build_resolution_preview(state) -> dict`：只读 year-end 投影，
+每次 `_refresh_resolution_view()` 重算（无状态、确定性、零变异——EC-01）。
+直连 `state._plan_settlement()`（`game_state.py:1369-1383`）及各 `_plan_*`
+（member_decay/contract_expiration/governor_transitions/truce_expiry）——
+**共享规划语义（R-23），无第二套年终规划实现**。preview 只做只读字段读取与
+命名富化，不触碰 `_apply_*` / `update_influence` 写调用。唯一判定谓词
+（governor return guard = `old_fig is not None and not old_fig.is_dead`）为
+1 行布尔，与 `_apply_governor_transitions` 同语义（parity 测试 EC-10 锁定）。
+
+### 7.2 DTO 字段（四类目）
+
+```python
+{
+  "governor_returns": [
+    {"province_id": int, "province_name": str,
+     "governor_name": str,        # 旧总督 formal name（将返回罗马者）
+     "successor_name": Optional[str]}   # 若 designate 升任（E-03 附加行）
+  ],
+  "contract_expiries": [
+    {"contract_id": int, "name": str, "contract_type": str}   # 身份行，非计数
+  ],
+  "truce_expiries": [
+    {"war_name": str}
+  ],
+  "faction_influence": [
+    {"faction_id": str, "faction_name": str,
+     "influence_before": int, "influence_after": int, "influence_delta": int}
+  ],
+}
+```
+
+- `faction_influence` = **decay-only 聚合（ODR-C1）**：before = Σ 成员当前影响力
+  （只读）；after = `figure._compute_influence` 纯函数以衰减目标值只读重算
+  （veterans/popularity/temp_tasks 衰减；office/land/family 恒定）；
+  delta = after − before。总督交接带来的影响力变化不并入（归属「总督返回」类目）。
+- 每派系恒一行；全局空仅当 `state.factions` 为空（E-04 空态）。
+
+### 7.3 契约
+
+- **零变异（EC-01）**：调用前后 state 等价快照零变化（`test_preview_zero_mutation`）。
+- **刷新稳定（EC-02）**：重复调用同结果（`test_preview_refresh_stable`）。
+- **preview=commit parity（EC-10）**：preview 四类事实 == advance 后
+  settlement/权威状态；faction 比较对象 = decay-only 分量（ODR-C1）
+  （`test_preview_commit_parity`）。
+- **挂载点**：`get_resolution_view` 返回体 `preview` 键（QML 消费
+  `sessionStore.resolutionView.preview.*`）。

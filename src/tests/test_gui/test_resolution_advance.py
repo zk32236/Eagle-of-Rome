@@ -54,16 +54,26 @@ class TestResolutionAdvance:
         assert "进入下一年度" in entry["label"]
 
     def test_resolution_advance_label_semantics(self):
-        """按钮文案「⏭️ 进入下一年度」精确映射 advance_year 跨年语义（非通用阶段推进）"""
+        """按钮文案「⏭️ 进入下一年度」精确映射 advance_year 跨年语义（非通用阶段推进）。
+
+        WP-E-G7R（E-05 单命令）：两段标签废弃 → 唯一「⏭️ 进入下一年度」（EC-06 前置标签断言）。
+        """
         store, state, players = self.setup_store()
         label = store._PHASE_ADVANCE_DISPATCH["resolution"]["label"]
         assert label == "\u23ed\ufe0f 进入下一年度"
         assert "下一年度" in label
         assert "下一回合" not in label  # 不再是通用阶段推进
+        # 无两段标签：resolution 阶段按钮文案恒为唯一标签（advanceCurrentPhaseText 直接返回 dispatch label）
+        player_id = players[0]
+        _make_resolution_ready(state, player_id)
+        store.refreshSnapshot()
+        store.selectPhase("resolution")
+        assert store.advanceCurrentPhaseText == "\u23ed\ufe0f 进入下一年度"
+        assert "执行年度结算" not in store.advanceCurrentPhaseText
 
     def test_advance_current_phase_dispatches_resolution(self):
-        """doAdvanceCurrentPhase 将 resolution 分派到 doAdvanceResolution（两段式：
-        第一段结算不跳转，第二段导航 mortality）"""
+        """doAdvanceCurrentPhase 将 resolution 分派到单命令 doAdvanceResolution（E-05：
+        一次调用 → 结算 + advance_year → 直入 mortality，无第二段）。"""
         store, state, players = self.setup_store()
         player_id = players[0]
         _make_resolution_ready(state, player_id)
@@ -74,22 +84,17 @@ class TestResolutionAdvance:
         assert store.resolutionResolved is True
         assert store.canAdvanceResolution is True
 
-        # 第一段：通过统一分派调用 → 执行年度结算，不跳转
+        # 单命令：通过统一分派调用 → 直达 mortality
         result = store.doAdvanceCurrentPhase()
         assert result["success"], f"advance failed: {result.get('message')}"
-        assert store.selectedPhaseId == "resolution"
-        assert store.resolutionSettled is True
-
-        # 第二段：再次调用 → 导航 mortality
-        result2 = store.doAdvanceCurrentPhase()
-        assert result2["success"]
         assert store.selectedPhaseId == "mortality"
+        assert store.currentPhaseId == "mortality"
 
     # ------------------------------------------------------------------
     # 2. doAdvanceResolution success path（两段式）
     # ------------------------------------------------------------------
     def test_do_advance_resolution_success(self):
-        """结算完成 + 当前玩家：第一段 advance_year 成功不跳转，第二段回到天命阶段"""
+        """结算完成 + 当前玩家：单命令 advance_year 成功 → 直入 mortality（EC-07）。"""
         store, state, players = self.setup_store()
         player_id = players[0]
         _make_resolution_ready(state, player_id)
@@ -98,21 +103,16 @@ class TestResolutionAdvance:
         store.selectPhase("resolution")
         assert store.resolutionResolved is True
 
-        # 第一段：执行年度结算（成功，不跳转）
+        # 单命令：执行年度结算 + 直接导航 mortality（无两段）
         result = store.doAdvanceResolution()
         assert result["success"], f"Advance failed: {result.get('message')}"
-        assert store.selectedPhaseId == "resolution"
-        assert store.resolutionSettled is True
-
-        # 第二段：导航 mortality
-        result2 = store.doAdvanceResolution()
-        assert result2["success"]
         assert store.selectedPhaseId == "mortality"
-        # 瞬态标记复位（read-model 仍保 settled=True 直到新年 execute_resolution 清空——F3 设计）
-        assert store._resolution_settled is False
+        assert store.currentPhaseId == "mortality"
+        # 推进瞬态标记复位（finally）
+        assert store.isResolutionAdvancing is False
 
     def test_do_advance_resolution_updates_snapshot(self):
-        """两段式：第一段结算后 snapshot 刷新（yearDisplay 更新），第二段导航 mortality"""
+        """单命令：advance_year 成功后 snapshot 刷新（yearDisplay 更新）+ 导航 mortality。"""
         store, state, players = self.setup_store()
         player_id = players[0]
         _make_resolution_ready(state, player_id)
@@ -121,39 +121,30 @@ class TestResolutionAdvance:
         store.selectPhase("resolution")
         before_turn = store.turnNumber
 
-        # 第一段：advance_year 成功，仍停留 resolution（selectedPhaseId 维持 review 阶段）
+        # 单命令：advance_year 成功 → 直接导航 mortality
         result = store.doAdvanceResolution()
         assert result["success"]
-        assert store.selectedPhaseId == "resolution"
-        assert store.resolutionSettled is True
-        # 权威快照 current_phase_id 已随新年滚轮指向 mortality（executed_phases 清空），
-        # 展示层 selectedPhaseId 停留在 resolution 以审阅四步结果（F3/R-5）
-        assert store.currentPhaseId == "mortality"
-
-        # 第二段：导航 mortality
-        result2 = store.doAdvanceResolution()
-        assert result2["success"]
         assert store.selectedPhaseId == "mortality"
         # 快照已刷新（回合数在 advance_year 后已更新）
         assert store.turnNumber == before_turn + 1 or store.yearDisplay != ""
+        assert store.currentPhaseId == "mortality"
 
     def test_do_advance_resolution_phase_changed_emitted(self):
-        """第二段（导航 mortality）时 phaseChanged 信号发射"""
+        """单命令成功：phaseChanged 信号发射（含 finally 补发——advancing 复位后仍有发射，P0）。"""
         store, state, players = self.setup_store()
         player_id = players[0]
         _make_resolution_ready(state, player_id)
         store.refreshSnapshot()
         store.selectPhase("resolution")
 
-        # 第一段：结算
-        store.doAdvanceResolution()
-
-        signals = []
-        store.phaseChanged.connect(lambda: signals.append(1))
+        advancing_at_emit = []
+        store.phaseChanged.connect(lambda: advancing_at_emit.append(store.isResolutionAdvancing))
 
         result = store.doAdvanceResolution()
         assert result["success"]
-        assert len(signals) >= 1
+        assert len(advancing_at_emit) >= 1
+        # finally 补发：存在 advancing=False 时的 phaseChanged（P0 notify 闭合）
+        assert any(v is False for v in advancing_at_emit)
 
     def test_do_advance_resolution_resets_resolving_flag(self):
         """doAdvanceResolution 完成后 _resolution_advancing 重置为 False"""
@@ -189,7 +180,7 @@ class TestResolutionAdvance:
         store._resolution_view = {
             "resolved": False,
             "is_current_player": True,
-            "step_statuses": [],
+            "preview": {},
             "results": {},
             "warnings": [],
             "summary": {},
@@ -319,7 +310,7 @@ class TestResolutionAdvance:
         assert not result["success"]
 
     def test_can_advance_resolution_tied_to_advancing_flag(self):
-        """_resolution_advancing 会影响 canAdvanceResolution"""
+        """P0 闭合：advancing 变化经 phaseChanged 驱动 canAdvanceCurrentPhase 重算（模拟 QML 绑定路径）。"""
         store, state, players = self.setup_store()
         player_id = players[0]
         _make_resolution_ready(state, player_id)
@@ -327,20 +318,19 @@ class TestResolutionAdvance:
         store.selectPhase("resolution")
 
         assert store.canAdvanceResolution is True
+        assert store.canAdvanceCurrentPhase is True
 
-        # 设置 advancing flag
+        # 模拟 QML 绑定路径：advancing=True → phaseChanged → 重算 False
         store._resolution_advancing = True
-        store.resolutionAdvancingChanged.emit()
-        store.resolutionViewChanged.emit()
-
+        store.phaseChanged.emit()
         assert store.canAdvanceResolution is False
+        assert store.canAdvanceCurrentPhase is False
 
-        # 重置
+        # finally 复位路径：advancing=False → phaseChanged → 重算 True（P0 闭合断言）
         store._resolution_advancing = False
-        store.resolutionAdvancingChanged.emit()
-        store.resolutionViewChanged.emit()
-
+        store.phaseChanged.emit()
         assert store.canAdvanceResolution is True
+        assert store.canAdvanceCurrentPhase is True
 
     # ------------------------------------------------------------------
     # 6. Loader / progress indicator 绑定
@@ -395,3 +385,134 @@ class TestResolutionAdvance:
         assert "success" in result
         assert "message" in result
         assert "feedback_type" in result
+
+    # ------------------------------------------------------------------
+    # 8. WP-E-G7R 新用例（EC-07 / EC-08 / EC-09 / P0）
+    # ------------------------------------------------------------------
+    def test_single_command_advance_navigates_mortality(self):
+        """EC-07 / 005-12：单次 doAdvanceResolution → 恰好一次推进 → selectedPhaseId=mortality。"""
+        store, state, players = self.setup_store()
+        player_id = players[0]
+        _make_resolution_ready(state, player_id)
+        store.refreshSnapshot()
+        store.selectPhase("resolution")
+        assert store.resolutionResolved is True
+
+        result = store.doAdvanceResolution()
+        assert result["success"]
+        assert store.selectedPhaseId == "mortality"
+        assert store.currentPhaseId == "mortality"
+        assert store.isResolutionAdvancing is False
+
+    def test_advance_year_called_exactly_once(self):
+        """EC-07（RUNTIME）：单次 doAdvanceResolution → adapter.advance_year 调用计数 == 1。"""
+        store, state, players = self.setup_store()
+        player_id = players[0]
+        _make_resolution_ready(state, player_id)
+        store.refreshSnapshot()
+        store.selectPhase("resolution")
+
+        calls = []
+        original_advance = store._adapter.advance_year
+
+        def counting_advance(pid):
+            calls.append(pid)
+            return original_advance(pid)
+
+        store._adapter.advance_year = counting_advance
+        try:
+            result = store.doAdvanceResolution()
+            assert result["success"]
+            assert len(calls) == 1, f"advance_year 必须恰好调用 1 次，实际 {len(calls)}"
+            assert store.selectedPhaseId == "mortality"
+        finally:
+            store._adapter.advance_year = original_advance
+
+    def test_double_click_advances_at_most_once(self):
+        """EC-08 / 005-14：连续两次调用 → 第二次被拒绝（重入/前置守卫）→ 推进 ≤1 次。"""
+        store, state, players = self.setup_store()
+        player_id = players[0]
+        _make_resolution_ready(state, player_id)
+        store.refreshSnapshot()
+        store.selectPhase("resolution")
+
+        calls = []
+        original_advance = store._adapter.advance_year
+
+        def counting_advance(pid):
+            calls.append(pid)
+            return original_advance(pid)
+
+        store._adapter.advance_year = counting_advance
+        try:
+            r1 = store.doAdvanceResolution()
+            assert r1["success"]
+            assert len(calls) == 1
+            # 第二击：已导航 mortality；直接再调 doAdvanceResolution 被前置守卫拒绝（resolved=False）
+            r2 = store.doAdvanceResolution()
+            assert not r2["success"]
+            assert len(calls) == 1, f"双点击必须 ≤1 次推进，实际 {len(calls)}"
+            assert store.selectedPhaseId == "mortality"
+        finally:
+            store._adapter.advance_year = original_advance
+
+    def test_advance_failure_no_partial_and_retryable(self):
+        """EC-09 / 005-14：注入失败 → 零半推进（year 不变）+ 停留 resolution + advancing 复位 + 可重试。"""
+        store, state, players = self.setup_store()
+        player_id = players[0]
+        _make_resolution_ready(state, player_id)
+        store.refreshSnapshot()
+        store.selectPhase("resolution")
+        assert store.resolutionResolved is True
+        year_before = state.turn.year if state.turn else 0
+
+        original_advance = store._adapter.advance_year
+
+        def failing_advance(pid):
+            return {"success": False, "message": "Simulated failure", "feedback_type": "error"}
+
+        store._adapter.advance_year = failing_advance
+        try:
+            result = store.doAdvanceResolution()
+            assert not result["success"]
+            # 停留 resolution + 零半推进 + advancing 复位
+            assert store.selectedPhaseId == "resolution"
+            assert store.isResolutionAdvancing is False
+            assert (state.turn.year if state.turn else 0) == year_before
+        finally:
+            store._adapter.advance_year = original_advance
+
+        # 可重试：恢复 adapter → 再次调用成功 → 直入 mortality + year 推进
+        result2 = store.doAdvanceResolution()
+        assert result2["success"]
+        assert store.selectedPhaseId == "mortality"
+        assert (state.turn.year if state.turn else 0) != year_before
+
+    def test_finally_emits_phase_changed(self):
+        """P0 / 005-12：失败路径 finally 复位后 phaseChanged 发射 → canAdvanceCurrentPhase 重算 True（可重试）。"""
+        store, state, players = self.setup_store()
+        player_id = players[0]
+        _make_resolution_ready(state, player_id)
+        store.refreshSnapshot()
+        store.selectPhase("resolution")
+
+        emitted_after_reset = []
+        store.phaseChanged.connect(lambda: emitted_after_reset.append(store.isResolutionAdvancing))
+
+        original_advance = store._adapter.advance_year
+
+        def failing_advance(pid):
+            return {"success": False, "message": "Simulated failure", "feedback_type": "error"}
+
+        store._adapter.advance_year = failing_advance
+        try:
+            result = store.doAdvanceResolution()
+            assert not result["success"]
+        finally:
+            store._adapter.advance_year = original_advance
+
+        # finally 补发：存在 advancing=False 时的 phaseChanged（闭合 notify 缺口）
+        assert any(v is False for v in emitted_after_reset), "finally 必须补发 phaseChanged（advancing=False 后）"
+        # 按钮绑定重算：失败后可重试
+        assert store.canAdvanceResolution is True
+        assert store.canAdvanceCurrentPhase is True

@@ -17,9 +17,15 @@
 3. **属性变化时**：人物私有土地、老兵数量、人气、官职、临时影响力任务等发生变化后
 4. **临时影响力衰减后**：决议阶段每回合处理临时影响力任务衰减
 
+> **WP-E-G7R（2026-08-24）**：影响力公式已提取为模块级纯函数
+> `_compute_influence(land_private, veterans, popularity, family_prestige, office_bonus, temp_influence)`；
+> `update_influence()` 内部改为调用纯函数后再写 `_influence`（对外行为零变化）；
+> resolution preview 派系聚合复用同一纯函数做只读重算（R-23 无第二套公式）。
+
 ### 2.2 系统行为（影响力输出）
 
 1. `Figure.update_influence()` 更新影响力并记录日志（DEBUG 级别）
+   - **WP-E-G7R**：内部经模块级纯函数 `_compute_influence(...)` 计算（行为零变化）
    - 日志内容：人物名称、旧值→新值、各分项明细
    - 仅在 `_state` 非空且值变化时记录
 2. `Figure.__repr__()` 显示影响力数值在人物摘要中
@@ -107,7 +113,7 @@ influence = base + family_bonus + office_bonus + temp_influence
 衰减规则：
 - 每回合调用 `decay_temp_influence_tasks()`，所有任务 `remaining -= 1`
 - `remaining > 0` 的任务保留，`<= 0` 的移除
-- `update_influence()` 会包含临时影响力计算结果
+- `update_influence()` 会包含临时影响力计算结果（经 `_compute_influence` 纯函数，WP-E-G7R）
 
 ### 3.6 可配置性
 
@@ -123,6 +129,7 @@ influence = base + family_bonus + office_bonus + temp_influence
 ### 3.7 影响力滞后更新
 
 - 影响力在 `update_influence()` 调用后才更新 `self._influence` 内部变量
+  （计算部分已收敛到 `_compute_influence` 纯函数，WP-E-G7R；行为零变化）
 - `__post_init__` 中自动调用一次，保证创建后初始值正确
 - 外部通过 `fig.influence` 属性（getter）读取 `self._influence`
 - `influence` setter 直接设置值，不触发重新计算

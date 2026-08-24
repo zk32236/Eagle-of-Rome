@@ -135,23 +135,13 @@ Rectangle {
                     }
 
                     // ── Resolution phase: three-layer info structure (T5, P1-08) ──
-                    // Layer 1: 红色摘要 — 阶段标题
+                    // Layer 1: 红色摘要 — 阶段标题（WP-E-G7R：删两段引导文案，E-05 单命令）
                     Text {
                         visible: sessionStore.selectedPhaseId === "resolution"
                         text: "📋 决算阶段"
                         color: "#8B2500"
                         font.pixelSize: 14
                         font.bold: true
-                    }
-
-                    // Layer 2: 灰色两行说明文字（WP-E R-5 两段语义）
-                    Text {
-                        visible: sessionStore.selectedPhaseId === "resolution"
-                        text: "执行年度结算 → 审阅四步结算结果 → 进入下一年度。"
-                        color: "#766652"
-                        font.pixelSize: 12
-                        wrapMode: Text.Wrap
-                        Layout.fillWidth: true
                     }
 
                     // Spacer 6px
@@ -244,12 +234,7 @@ Rectangle {
                                 font.pixelSize: theme.smallSize
                             }
                             Item { Layout.fillWidth: true }
-                            Text {
-                                text: "4 / 4"
-                                color: theme.accentPrimary
-                                font.pixelSize: theme.bodySize
-                                font.bold: true
-                            }
+                            // WP-E-G7R（E-02）：计数字样已删除（无 x/4 进度隐喻；保留其余进度行）
                         }
                     }
 
