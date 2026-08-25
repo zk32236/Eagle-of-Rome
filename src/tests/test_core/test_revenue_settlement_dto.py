@@ -129,12 +129,18 @@ class TestRevenueSettlementDTO:
             "warranty_rows",
             "maintenance",
             "debug_events",
+            "accounting_window",
         ]
         for key in required_keys:
             assert key in data, f"Missing required key: {key}"
 
         # treasury_delta 数学关系
         assert data["ending_treasury"] == data["starting_treasury"] + data["treasury_delta"]
+        window = data["accounting_window"]
+        assert window["basis"] == "republic_treasury_cash"
+        assert window["reconciled"] is True
+        assert sum(row["signed_amount"] for row in window["treasury_ledger_rows"]) == data["treasury_delta"]
+        assert window["displayed_net_total"] == data["treasury_delta"]
         # 有数据时 delta 不应为 0（行省/合同/私地均存在）
         assert data["treasury_delta"] != 0, "Expected non-zero delta with populated state"
 

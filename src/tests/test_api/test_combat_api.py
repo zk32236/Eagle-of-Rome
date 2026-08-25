@@ -61,7 +61,8 @@ class TestCombatAPI(unittest.TestCase):
             disaster_numbers=[2, 3],
         )
         self.war1.commander_id = 1
-        self.war1.legions_assigned = 4
+        for legion_number in (1, 2, 3, 4):
+            self.war1.add_legion_number(legion_number)
         self.war1.status = WarStatus.ACTIVE
         self.state._war_system._active_wars.append(self.war1)
 
@@ -75,7 +76,8 @@ class TestCombatAPI(unittest.TestCase):
             rewards={"treasury": 50},
             disaster_numbers=[2, 3],
         )
-        self.war2.legions_assigned = 2
+        for legion_number in (5, 6):
+            self.war2.add_legion_number(legion_number)
         self.war2.status = WarStatus.ACTIVE
         self.state._war_system._active_wars.append(self.war2)
 
@@ -397,6 +399,7 @@ class TestCombatAPI(unittest.TestCase):
 
     def test_war_card_legion_numbers(self):
         """legion_numbers 字段存在且为 List[int]（AC-3.3）"""
+        self.war1.clear_legion_numbers()
         self.war1.add_legion_number(3)
         self.war1.add_legion_number(4)
         card = combat_api._war_card(self.war1, self.state)

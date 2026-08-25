@@ -45,9 +45,17 @@ CLI phase_forum._generate_contracts()
 - **派生：** `senate_api._budget_range_for_contract(state, contract)` 产出 per-contract `{min, max, step, default}`；SenateStage FC-03 Slider from/to/stepSize/value 读 `budget_range`（config 缺 key → 禁用+「值域待定义」，不伪造 20-200）。
 - **谓词：** `political_system._populate_proposal` budget 分支权威拒绝（非 int / <min / >max / step 不齐）；affordability 不拦截（提交期无国库限制，决算期破产链不变）。
 
-## 4. 版本日志
+## 4. WP-E-R3 竞标与 Revenue 支出映射（2026-08-24）
+
+- HUMAN 工程竞标经显式 `selectedMarketActorId` → Store/Adapter → `forum_api.place_bid`，与 AI/CLI 使用同一 7 元组、防重和 `resolve_forum` winner 链。
+- QML 不重算骑士资格、金额范围、工期或质保；仅消费 `can_bid`、viewer pending 与权威反馈。
+- ACTIVE 工程合同的实际 `payment` 以负数逐合同进入 Republic treasury canonical ledger；`cost/tax/net_profit` 属人物/派系非国库分区。
+- Revenue 页面不再遗漏工程付款，也不以 residual 行平账；`reconciled=false` 必须显著报错。
+
+## 5. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.4 | 2026-08-24 | WP-E-R3：显式竞标 actor/viewer pending；公共工程 payment 纳入 canonical treasury ledger |
 | v1.3 | 2026-08-23 | GUI-BETA-R1 WP-E（Slice 11 PU-04）：`place_bid` 防重（E-G7-07）——同 (contract_id, figure_id) 已出价 → 显式拒绝「该人物已对本合同出价」（pending 恰一条，恰一次契约；双路反馈已存在） |
 | v1.2 | 2026-08-22 | GUI-BETA-R1 WP-C-R1: 预算权威值域（senate_budget config + _budget_range_for_contract + _populate_proposal 谓词 + FC-03 Slider 改接） |
 | v1.1 | 2026-07-25 | 新增工程合同生成调用链 + forum_api 引用 |

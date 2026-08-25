@@ -1689,23 +1689,15 @@ class GameState:
         ]
 
     def _apply_truce_expiry(self, wars: List[Any]) -> list:
-        """应用和约到期（战争容器回移 + status/commander/peace_treaty 突变，仅在 commit 段）。"""
+        """应用和约到期（委托 WarSystem canonical transition）。"""
         war_system = self.get_war_system()
         if not war_system:
             return []
         expired = []
         for war in wars:
-            # Advisor P2-c 裁定（2026-08-17）：到期返 ACTIVE（非 THREAT），
-            # preserve_commander=True 保留 commander/legion 连续性；
-            # 容器迁移在 WarSystem._move_to_active 内完成（禁在 GameState 复制容器操作）
-            # noinspection PyProtectedMember
-            war_system._move_to_active(war, preserve_commander=True)
-            war.clear_peace_treaty()
-            expired.append(war.name)
-            self.log_event(
-                f"和约到期: {war.name} (ID={war.id}) 恢复为活跃战争",
-                level=logging.DEBUG
-            )
+            result = war_system.reactivate_expired_truce(war)
+            if result.get("success"):
+                expired.append(war.name)
         if expired:
             self.log_event(
                 f"{len(expired)} 场战争和约到期",

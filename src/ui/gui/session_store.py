@@ -491,6 +491,10 @@ class GuiSessionStore(QObject):
         return self._forum_view.get("viewer_land_requests", [])
 
     @Property(list, notify=forumViewChanged)
+    def forumViewerContractBids(self) -> list:
+        return self._forum_view.get("viewer_contract_bids", [])
+
+    @Property(list, notify=forumViewChanged)
     def forumLandAllocation(self) -> list:
         return self._forum_view.get("land_allocation", [])
 
@@ -599,6 +603,10 @@ class GuiSessionStore(QObject):
     @Property(int, notify=combatViewChanged)
     def combatAvailableLegions(self) -> int:
         return self._combat_view.get("available_legion_count", 0)
+
+    @Property(int, notify=combatViewChanged)
+    def combatMobilizedLegions(self) -> int:
+        return self._combat_view.get("mobilized_legion_count", 0)
 
     @Property(dict, notify=queryResultChanged)
     def globalQueryResult(self) -> Dict[str, Any]:

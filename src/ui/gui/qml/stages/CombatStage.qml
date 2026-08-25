@@ -82,14 +82,7 @@ Rectangle {
             radius: 6
 
             readonly property int activeWarsCount: (sessionStore.combatActiveWars || []).length
-            readonly property int availableLegions: {
-                var total = 0
-                var wars = sessionStore.combatActiveWars || []
-                for (var i = 0; i < wars.length; i++) {
-                    total += (wars[i].legion_count || 0)
-                }
-                return total
-            }
+            readonly property int availableLegions: sessionStore.combatMobilizedLegions || 0
             readonly property int fleetCount: sessionStore.combatFleetCount || 0
             readonly property int availableLegionCount: sessionStore.combatAvailableLegions || 0
             readonly property int treasury: sessionStore.treasury || 0

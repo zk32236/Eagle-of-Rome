@@ -94,6 +94,7 @@ class War:
         self._indemnity_due: int = 0
         self._truce_end_turn: Optional[int] = None
         self._legion_numbers: List[int] = []
+        self._truce_recruit_target: int = 0
         self._combat_slot_index: int = -1  # 战斗槽位身份（-1 = 未分配）
 
         # ---------- MVP 0.7-2 新增 ----------
@@ -319,6 +320,19 @@ class War:
         return self._legion_numbers.copy()
 
     @property
+    def mobilized_legion_count(self) -> int:
+        """Return the identity-derived mobilized force count."""
+        return len(self._legion_numbers)
+
+    @property
+    def truce_recruit_target(self) -> int:
+        return self._truce_recruit_target
+
+    @truce_recruit_target.setter
+    def truce_recruit_target(self, value: int):
+        self._truce_recruit_target = max(0, int(value or 0))
+
+    @property
     def combat_slot_index(self) -> int:
         return self._combat_slot_index
 
@@ -389,9 +403,11 @@ class War:
     def add_legion_number(self, legion_num: int):
         if legion_num not in self._legion_numbers:
             self._legion_numbers.append(legion_num)
+            self._legions_assigned = len(self._legion_numbers)
 
     def clear_legion_numbers(self):
         self._legion_numbers.clear()
+        self._legions_assigned = 0
 
     def report_commander_casualty(self, status: str, turn: int):
         self._commander_status = status
@@ -485,6 +501,7 @@ class War:
             "indemnity_due": self._indemnity_due,
             "truce_end_turn": self._truce_end_turn,
             "legion_numbers": self._legion_numbers.copy(),
+            "truce_recruit_target": self._truce_recruit_target,
             "combat_slot_index": self._combat_slot_index,
             # MVP 0.7-2 新增
             "unlocked_provinces": self._unlocked_provinces.copy(),
@@ -557,7 +574,11 @@ class War:
         war._peace_treaty = data.get("peace_treaty")
         war._indemnity_due = data.get("indemnity_due", 0)
         war._truce_end_turn = data.get("truce_end_turn")
-        war._legion_numbers = data.get("legion_numbers", [])
+        war._legion_numbers = list(data.get("legion_numbers", []))
+        # Identity is authoritative. Legacy saves may contain a stale count,
+        # but a count without legion identities must never invent legions.
+        war._legions_assigned = len(war._legion_numbers)
+        war._truce_recruit_target = max(0, int(data.get("truce_recruit_target", 0) or 0))
         war._combat_slot_index = data.get("combat_slot_index", -1)
 
         # MVP 0.7-4 设置新增字段

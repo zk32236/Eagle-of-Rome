@@ -293,6 +293,148 @@ class WarSystem:
         self._legions_to_disband.clear()
         return result
 
+    def mobilize_war_legions(
+            self,
+            war: War,
+            requested_count: int,
+            commander_id: Optional[int],
+    ) -> Dict[str, Any]:
+        """Coordinate existing Military recruit/assign primitives for one war."""
+        requested = max(0, int(requested_count or 0))
+        ms = self.state.get_military_system()
+        if not war or not ms:
+            return {
+                "success": requested == 0,
+                "requested": requested,
+                "recruited_numbers": [],
+                "assigned": 0,
+                "shortfall": requested,
+                "errors": [] if requested == 0 else ["military_system_unavailable"],
+            }
+
+        existing = ms.get_legions_for_battle(war.id)
+        if existing:
+            numbers = [legion.number for legion in existing]
+            for number in numbers:
+                war.add_legion_number(number)
+            return {
+                "success": True,
+                "requested": requested,
+                "recruited_numbers": numbers,
+                "assigned": len(numbers),
+                "shortfall": max(0, requested - len(numbers)),
+                "errors": [],
+            }
+
+        recruit_count = min(requested, len(ms.get_available_legions()))
+        results = ms.recruit_multiple(recruit_count) if recruit_count else []
+        recruited_numbers = [number for number, success, *_ in results if success]
+        errors = [message for _, success, message in results if not success]
+        assigned = 0
+        if recruited_numbers:
+            assigned, assign_message = ms.assign_to_war(recruited_numbers, war.id, commander_id)
+            if assigned != len(recruited_numbers):
+                errors.append(assign_message)
+
+        return {
+            "success": assigned == len(recruited_numbers),
+            "requested": requested,
+            "recruited_numbers": war.legion_numbers,
+            "assigned": war.mobilized_legion_count,
+            "shortfall": max(0, requested - war.mobilized_legion_count),
+            "errors": errors,
+        }
+
+    def release_war_legions(
+            self,
+            war: War,
+            remember_for_truce: bool = False,
+            disband_now: bool = False,
+    ) -> Dict[str, Any]:
+        """Coordinate existing Military recall/disband primitives for one war."""
+        numbers = list(war.legion_numbers) if war else []
+        target = len(numbers)
+        ms = self.state.get_military_system()
+        errors: List[str] = []
+
+        if not war:
+            return {"success": False, "target": 0, "recalled": 0, "disbanded": 0,
+                    "numbers": [], "errors": ["war_unavailable"]}
+        if numbers and not ms:
+            return {"success": False, "target": target, "recalled": 0, "disbanded": 0,
+                    "numbers": numbers, "errors": ["military_system_unavailable"]}
+
+        # Fail closed before mutation when persisted identities do not match
+        # the Legion entities assigned to this war.
+        if ms:
+            for number in numbers:
+                legion = ms.get_legion_by_number(number)
+                if legion is None:
+                    errors.append(f"legion_not_found:{number}")
+                elif legion.war_id != war.id:
+                    errors.append(f"legion_war_mismatch:{number}")
+        if errors:
+            return {"success": False, "target": target, "recalled": 0, "disbanded": 0,
+                    "numbers": numbers, "errors": errors}
+
+        if remember_for_truce:
+            war.truce_recruit_target = target
+        recalled = ms.recall_from_war(war.id) if ms else 0
+        war.clear_legion_numbers()
+
+        disbanded = 0
+        if numbers and disband_now:
+            disbanded, errors = ms.disband_legions_for_war(numbers)
+        elif numbers:
+            self.add_legions_to_disband(numbers)
+
+        success = recalled == target and (not disband_now or disbanded == target) and not errors
+        return {
+            "success": success,
+            "target": target,
+            "recalled": recalled,
+            "disbanded": disbanded,
+            "numbers": numbers,
+            "errors": errors,
+        }
+
+    def reactivate_expired_truce(self, war: War) -> Dict[str, Any]:
+        """Reactivate an approved expired truce and restore its actual force."""
+        current_turn = self.state.turn.turn_number if self.state.turn else 0
+        treaty = war.peace_treaty if war else None
+        if (
+                not war
+                or war.status != WarStatus.TRUCE
+                or not treaty
+                or treaty.get("status") != "approved"
+                or not war.is_truce_expired(current_turn)
+        ):
+            return {"success": False, "requested": 0, "restored": 0,
+                    "numbers": [], "shortfall": 0, "errors": ["truce_not_expired"]}
+
+        requested = war.truce_recruit_target
+        if not self._move_to_active(war, preserve_commander=True):
+            return {"success": False, "requested": requested, "restored": 0,
+                    "numbers": [], "shortfall": requested, "errors": ["container_transition_failed"]}
+
+        mobilized = self.mobilize_war_legions(war, requested, war.commander_id)
+        war.clear_peace_treaty()
+        war.truce_recruit_target = 0
+        result = {
+            "success": True,
+            "requested": requested,
+            "restored": war.mobilized_legion_count,
+            "numbers": war.legion_numbers,
+            "shortfall": max(0, requested - war.mobilized_legion_count),
+            "errors": mobilized.get("errors", []),
+        }
+        self.state.log_event(
+            f"和约到期，战争恢复: {war.name}",
+            level=logging.INFO,
+            extra={"type": "truce_expired_reactivated", "war_id": war.id, **result},
+        )
+        return result
+
     def process_triumph_and_disbandment(self) -> dict:
         """
         Process all resolved wars for triumphs and legion disbandment.
@@ -471,23 +613,19 @@ class WarSystem:
         if not war or war.status != WarStatus.ACTIVE:
             return False
 
+        release = self.release_war_legions(war, remember_for_truce=False, disband_now=False)
+        if not release["success"]:
+            return False
+
         war.status = WarStatus.THREAT
         war.threat_level = threat_level
         war.commander_id = None
-        war.legions_assigned = 0
         war.fleets_assigned = 0
 
         if war in self._active_wars:
             self._active_wars.remove(war)
         if war not in self._threats:
             self._threats.append(war)
-
-        ms = self.state.get_military_system()
-        if ms:
-            ms.recall_from_war(war.id)
-            if war.legion_numbers:
-                self._legions_to_disband.extend(war.legion_numbers)
-            war.clear_legion_numbers()
 
         if self.state.naval_system:
             self.state.naval_system.recall_fleets_from_war(war.id)

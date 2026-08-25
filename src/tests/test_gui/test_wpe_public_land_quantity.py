@@ -286,6 +286,11 @@ def test_forum_view_dto_new_fields():
     assert data["land_price_per_unit"] == state.get_economic_rule("land_price_per_unit", 10)
     # viewer 作用域 pending（figure.faction_id == viewer.faction_id）
     assert data["viewer_land_requests"] == [{"figure_id": 1, "requested_amount": 80}]
+    # WP-E-R3：显式 actor 资格与 viewer pending 分载体；refresh/re-entry 稳定恢复 pending。
+    actor = next(row for row in data["my_figures"] if row["id"] == 1)
+    assert actor["can_buy_land"] is True
+    refreshed = forum_api.get_forum_view(state, "player_1")["data"]
+    assert refreshed["viewer_land_requests"] == data["viewer_land_requests"]
     # resolve 后结构化回读
     forum_api.resolve_forum(state)
     view2 = forum_api.get_forum_view(state, "player_1")

@@ -56,7 +56,7 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
             commander_martial = getattr(commander, 'martial', 0) or 0
             commander_id = war.commander_id
 
-    legions = war.legions_assigned
+    legions = war.mobilized_legion_count
     legion_power = legions * 2
     total_power = commander_martial + legion_power
     enemy_power = war.get_total_strength()
@@ -456,6 +456,9 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
             "all_resolved": all_resolved,
             "fleet_count": fleet_count,
             "available_legion_count": available_legion_count,
+            "mobilized_legion_count": sum(
+                card.get("legion_count", 0) for card in (war_cards + truce_cards)
+            ),
             "treasury": treasury,
             "active_wars": war_cards,
             "truce_wars": truce_cards,

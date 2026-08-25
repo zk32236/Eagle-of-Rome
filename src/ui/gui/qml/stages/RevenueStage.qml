@@ -30,6 +30,7 @@ Rectangle {
     // Convenience helpers for settled data
     property bool _isSettled: (sessionStore.revenueResult || {}).success
         || !!sessionStore.revenueView.settled_data
+    property var _accounting: _resultData.accounting_window || ({})
 
     // Get display name for a faction_id from factionStyleMap
     function factionDisplayName(factionId) {
@@ -61,9 +62,156 @@ Rectangle {
             }
         }
 
-        // ---- Sections 1+2: National Income | National Expenditure | Faction Treasury (L) || Private Land Income (R) ----
+        // Canonical basis rendering: each Republic treasury row appears exactly once.
         RowLayout {
             visible: _isSettled
+            Layout.fillWidth: true
+            spacing: 12
+
+            Rectangle {
+                objectName: "revenueCanonicalLedger"
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.max(120, canonicalLedgerCol.implicitHeight + 20)
+                color: "#FBF1DC"
+                border.color: "#A8753B"
+                border.width: 1
+                radius: 4
+
+                ColumnLayout {
+                    id: canonicalLedgerCol
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 6
+
+                    Text {
+                        text: "共和国国库（本次 Revenue 结算）"
+                        color: "#681B07"
+                        font.pixelSize: 14
+                        font.bold: true
+                    }
+
+                    Repeater {
+                        model: root._accounting.treasury_ledger_rows || []
+                        delegate: RowLayout {
+                            Layout.fillWidth: true
+                            Text {
+                                text: "  " + modelData.label
+                                color: "#2E251B"
+                                font.pixelSize: 12
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                text: (modelData.signed_amount > 0 ? "+" : "")
+                                      + modelData.signed_amount + " Talents"
+                                color: modelData.signed_amount >= 0 ? "#2C7A2C" : "#C45151"
+                                font.pixelSize: 12
+                                font.bold: true
+                            }
+                        }
+                    }
+
+                    Text {
+                        visible: (root._accounting.treasury_ledger_rows || []).length === 0
+                        text: "  本次无国库现金流水"
+                        color: "#766652"
+                        font.pixelSize: 12
+                    }
+                }
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Text {
+                    text: "人物财富（不计入国库净变化）"
+                    color: "#681B07"
+                    font.pixelSize: 13
+                    font.bold: true
+                }
+                Repeater {
+                    model: _resultData.private_land_rows || []
+                    delegate: Text {
+                        Layout.fillWidth: true
+                        text: "  " + modelData.name + " +" + modelData.income + " Talents"
+                        color: "#2E251B"
+                        font.pixelSize: 11
+                        elide: Text.ElideRight
+                    }
+                }
+                Repeater {
+                    model: _resultData.contract_rows || []
+                    delegate: Text {
+                        visible: (modelData.net_profit || 0) !== 0
+                        Layout.fillWidth: true
+                        text: "  合同 #" + modelData.contract_id + " 人物净收益 +" + (modelData.net_profit || 0) + " Talents"
+                        color: "#2E251B"
+                        font.pixelSize: 11
+                        elide: Text.ElideRight
+                    }
+                }
+
+                Text {
+                    text: "派系金库（不计入国库净变化；国库拨款已在国库支出列示）"
+                    color: "#681B07"
+                    font.pixelSize: 13
+                    font.bold: true
+                    wrapMode: Text.Wrap
+                }
+                Repeater {
+                    model: Object.keys(_resultData.faction_rows || {})
+                    delegate: Text {
+                        readonly property var row: (_resultData.faction_rows || {})[modelData] || ({})
+                        Layout.fillWidth: true
+                        text: "  " + root.factionDisplayName(modelData) + "：会员税 +" + (row.tax || 0)
+                              + " · 津贴 +" + (row.stipend || 0)
+                        color: "#2E251B"
+                        font.pixelSize: 11
+                        elide: Text.ElideRight
+                    }
+                }
+
+                Text {
+                    text: "合同质保事件（非现金）"
+                    color: "#681B07"
+                    font.pixelSize: 13
+                    font.bold: true
+                }
+                Repeater {
+                    model: _resultData.warranty_rows || []
+                    delegate: Text {
+                        Layout.fillWidth: true
+                        text: "  " + modelData.name + "：" + modelData.before + " → " + modelData.after
+                        color: "#766652"
+                        font.pixelSize: 11
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            objectName: "revenueReconciliationError"
+            visible: _isSettled && root._accounting.reconciled === false
+            Layout.fillWidth: true
+            Layout.preferredHeight: 34
+            color: "#F8D7D4"
+            border.color: "#A43B32"
+            border.width: 2
+            radius: 4
+            Text {
+                anchors.centerIn: parent
+                text: "⚠ 结算展示不一致：显示合计与国库净变化不相等"
+                color: "#84250A"
+                font.pixelSize: 12
+                font.bold: true
+            }
+        }
+
+        // Legacy detail blocks retained as non-rendered compatibility source;
+        // the visible page above consumes only the canonical accounting window.
+        RowLayout {
+            visible: false && _isSettled
             Layout.fillWidth: true
             spacing: 12
 
@@ -358,6 +506,7 @@ Rectangle {
 
         // ---- Section 3: Net Treasury Change (golden border) ----
         Rectangle {
+            objectName: "revenueCanonicalTotals"
             visible: _isSettled
             Layout.fillWidth: true
             Layout.preferredHeight: 46
@@ -371,9 +520,14 @@ Rectangle {
                 spacing: 20
 
                 Text {
-                    text: "国库净变化: " + (_resultData.treasury_delta >= 0 ? "+" : "") + (_resultData.treasury_delta || 0) + " Talents"
-                    color: (_resultData.treasury_delta || 0) >= 0 ? "#2C7A2C" : "#C45151"
-                    font.pixelSize: 15
+                    text: "显示收入 +" + (root._accounting.displayed_income_total || 0)
+                          + " · 显示支出 -" + (root._accounting.displayed_expense_total || 0)
+                          + " · 显示净额 " + ((root._accounting.displayed_net_total || 0) >= 0 ? "+" : "")
+                          + (root._accounting.displayed_net_total || 0)
+                          + " = 国库净变化 " + ((_resultData.treasury_delta || 0) >= 0 ? "+" : "")
+                          + (_resultData.treasury_delta || 0) + " Talents"
+                    color: root._accounting.reconciled === false ? "#C45151" : "#2C7A2C"
+                    font.pixelSize: 13
                     font.bold: true
                 }
 

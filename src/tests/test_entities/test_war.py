@@ -53,7 +53,8 @@ class TestWar:
         # 设置一些运行时字段
         original.status = WarStatus.ACTIVE
         original.commander_id = 101
-        original.legions_assigned = 4
+        for legion_number in (1, 2, 3, 4):
+            original.add_legion_number(legion_number)
         original.activation_turn = 10
 
         data = original.to_dict()

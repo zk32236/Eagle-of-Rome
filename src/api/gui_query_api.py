@@ -254,7 +254,7 @@ def _war_summary(state: GameState, war, status: str) -> Dict[str, Any]:
         "naval_required": getattr(war, "naval_required", False),
         "commander_id": getattr(war, "commander_id", None),
         "commander_name": commander_name,
-        "legions_assigned": getattr(war, "legions_assigned", 0),
+        "legions_assigned": getattr(war, "mobilized_legion_count", 0),
         "fleets_assigned": getattr(war, "fleets_assigned", 0),
     }
 

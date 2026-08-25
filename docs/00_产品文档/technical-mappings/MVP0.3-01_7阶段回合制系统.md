@@ -150,3 +150,11 @@ governor_returns/contract_expiries/truce_expiries/decay）——`execute_resolut
   （`test_preview_commit_parity`）。
 - **挂载点**：`get_resolution_view` 返回体 `preview` 键（QML 消费
   `sessionStore.resolutionView.preview.*`）。
+
+## 8. WP-E-R3 Revenue accounting window 与 A7 expiry 委托（2026-08-24）
+
+- Revenue 单次 settlement 完成后，在同一 settled data 中构造 `accounting_window`：starting/ending/delta、canonical treasury ledger、显示收入/支出/净额与 `reconciled`。
+- Ledger 只包含共和国国库现金：赔款、公地、包税、运营费、公共工程、维护实际 paid、赔款支出、派系 stipend；人物/派系会员税/质保分区且不进净额。
+- `sum(signed_amount) == treasury_delta` 才 reconciled；禁止 residual/平账假行，false 时 GUI 显著报错。
+- A7 `_apply_truce_expiry` 保持 plan/apply 容器边界，但 apply 委托 `WarSystem.reactivate_expired_truce`，不在 GameState 复制战争容器或征召逻辑。
+- D-11 继续批准回合起算；R3 仅改变 approved TRUCE 军团 lifecycle。

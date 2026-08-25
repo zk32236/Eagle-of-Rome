@@ -213,6 +213,10 @@ def test_beta_001_treasury_absolute():
     assert data["ending_treasury"] == 145
     assert data["treasury_delta"] == 3
     assert state.treasury == 145  # 绝对断言，不依赖 delta 公式
+    window = data["accounting_window"]
+    assert window["reconciled"] is True
+    assert sum(row["signed_amount"] for row in window["treasury_ledger_rows"]) == 3
+    assert sum(row["signed_amount"] for row in window["treasury_ledger_rows"] if row["key"] == "faction_stipend") == -15
 
 
 def test_beta_001_faction_paired_grant():
@@ -286,6 +290,20 @@ def test_save_load_treasury_145():
     restored.load_from_dict(state.to_dict())
 
     assert restored.treasury == 145
+
+
+def test_maintenance_rows_expose_actual_paid():
+    state = make_state()
+    military = state.get_military_system()
+    naval = getattr(state, "naval_system", None)
+
+    military_row = EconomicService(state).apply_military_maintenance()
+    naval_row = EconomicService(state).apply_naval_maintenance()
+
+    assert "paid" in military_row
+    assert military_row["paid"] >= 0
+    assert "paid" in naval_row
+    assert naval_row["paid"] >= 0
 
 
 def test_process_contract_warranty_expires_completed_contract():

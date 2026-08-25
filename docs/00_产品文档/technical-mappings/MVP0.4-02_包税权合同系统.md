@@ -45,9 +45,17 @@ CLI phase_forum._generate_contracts()
 - **派生：** `senate_api._budget_range_for_contract(state, contract)` 产出 per-contract `{min, max, step, default}`；SenateStage FC-03 Slider from/to/stepSize/value 读 `budget_range`。
 - **谓词：** `political_system._populate_proposal` budget 分支权威拒绝（非 int / <min / >max / step 不齐）；affordability 不拦截。
 
-## 5. 版本日志
+## 5. WP-E-R3 viewer bid 与 Revenue ledger（2026-08-24）
+
+- HUMAN/AI/CLI 继续汇入同一 `forum_api.place_bid`，新写保持 7 元组；winner 与合同状态机零改。
+- `get_forum_view.viewer_contract_bids` 将 legacy 4/5/7 元组正规化为 `{contract_id, figure_id, amount, profit_rate, status}`，且只暴露 viewer 派系。
+- HUMAN 必须显式选择 actor；pending 与 success/rejection 页内可见，refresh/re-entry 由 viewer DTO 恢复，不依赖 QML 本地成功标记。
+- Revenue 的 ACTIVE 包税 `treasury_gain` 每合同恰一次进入 `accounting_window.treasury_ledger_rows`；人物 `net_profit` 与派系会员税标记为非国库 basis。
+
+## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.4 | 2026-08-24 | WP-E-R3：viewer-scoped normalized bid DTO、显式 actor/反馈、包税国库 ledger 来源 |
 | v1.3 | 2026-08-23 | GUI-BETA-R1 WP-E（Slice 11 PU-04）：tax-farming 收入确定性证明映射（E-G7-12）——**零代码变更**；权威路径 = `src/core/service/economic_service.py` `collect_contract_revenues`（:247-270）仅对 ACTIVE 合同计收；确定性证据 = 三态回归测试（no-contract / active / expiry-removal）+ 证明矩阵（`03-da-evidence/runtime/wpe-eg7-12-taxfarming-proof-matrix-2026-08-23.md`）；同 state 重入 → 同 rows |
 | v1.2 | 2026-08-22 | GUI-BETA-R1 WP-C-R1: 包税预算权威值域（senate_budget tax_farming 比率 + _budget_range_for_contract + _populate_proposal 谓词） |
 | v1.1 | 2026-07-25 | 新增包税合同生成调用链 + forum_api 引用 |

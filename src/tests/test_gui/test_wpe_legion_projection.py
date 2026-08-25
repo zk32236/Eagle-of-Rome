@@ -63,39 +63,33 @@ def test_war_card_mirrors_zero_legions():
 
 
 # ---------------------------------------------------------------------------
-# 2. 07P-02：TRUCE 卡忠实（_move_to_truce 不清空；只入解散队列）
+# 2. 07P-02：ODR-R3-04 approved TRUCE authoritative zero
 # ---------------------------------------------------------------------------
 
-def test_truce_card_preserves_legion_projection():
-    """TRUCE 卡旧军团 = 实体镜像（_move_to_truce 不清空 war 字段——G1 实证复验）。"""
+def test_submitted_truce_card_preserves_legion_projection():
+    """尚未批准的 TRUCE 草案保持军团身份投影。"""
     state, ws, war = _make_state_with_war(status=WarStatus.TRUCE)
-    war.legions_assigned = 4
     for num in (201, 202, 203, 204):
         war.add_legion_number(num)
 
     card = combat_api._war_card(war, state)
     assert card["legion_count"] == 4
     assert card["legion_numbers"] == [201, 202, 203, 204]
-    # TRUCE 卡 DTO 新增字段（Slice 7）
     assert "truce_remaining_turns" in card
 
 
-def test_truce_moves_to_disband_queue_not_clear_fields():
-    """political_system.py:580 和约批准路径仅入解散队列，不清 war 字段（traceability 依据）。"""
-    from src.core.systems.political_system import PoliticalSystem
+def test_approved_truce_card_projects_authoritative_zero():
+    """批准后权威实体 list/count 已清零，DTO 不做 fake zero。"""
+    state, ws, war = _make_state_with_war(status=WarStatus.TRUCE)
+    war.set_peace_treaty({"status": "approved", "duration": 2, "indemnity": 0})
+    war.truce_recruit_target = 2
+    war.clear_legion_numbers()
 
-    state, ws, war = _make_state_with_war(status=WarStatus.ACTIVE)
-    war.legions_assigned = 2
-    for num in (301, 302):
-        war.add_legion_number(num)
-
-    ps = PoliticalSystem(state)
-    # 和约批准路径（对齐 political_system.py:555-591 语义）：add_legions_to_disband
-    ws.add_legions_to_disband(list(war.legion_numbers))
-    assert ws._legions_to_disband == [301, 302]
-    # war 字段未清空（WP-E 零改动；TRUCE 是否释放军团 = WP-G 生命周期语义）
-    assert war.legions_assigned == 2
-    assert war.legion_numbers == [301, 302]
+    card = combat_api._war_card(war, state)
+    assert war.mobilized_legion_count == 0
+    assert war.legions_assigned == 0
+    assert card["legion_count"] == 0
+    assert card["legion_numbers"] == []
 
 
 # ---------------------------------------------------------------------------

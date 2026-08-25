@@ -61,6 +61,9 @@ def get_forum_view(state: GameState, viewer_player_id: str) -> dict:
                 if state.get_member(fig_id) is not None
                 and state.get_member(fig_id).faction_id == viewer.faction_id
             ],
+            "viewer_contract_bids": _viewer_contract_bid_rows(
+                pending.get("contract_bids", []), viewer.faction_id
+            ),
             "land_allocation": result_data.get("land_allocation", [])
             if isinstance(result_data, dict)
             else [],
@@ -906,6 +909,26 @@ def _available_figure_row(figure: Figure) -> Dict[str, Any]:
 
 def _available_figure_rows(state: GameState) -> List[Dict[str, Any]]:
     return [_available_figure_row(figure) for figure in state.curia.get_all_available()]
+
+
+def _viewer_contract_bid_rows(bids: List[Any], faction_id: Optional[str]) -> List[Dict[str, Any]]:
+    """Normalize legacy 4/5/7 tuple bids into a viewer-scoped read model."""
+    rows: List[Dict[str, Any]] = []
+    for bid in bids:
+        if not isinstance(bid, (list, tuple)) or len(bid) not in {4, 5, 7}:
+            continue
+        contract_id, figure_id, bid_faction_id, amount = bid[:4]
+        if bid_faction_id != faction_id:
+            continue
+        profit_rate = bid[4] if len(bid) >= 5 else None
+        rows.append({
+            "contract_id": contract_id,
+            "figure_id": figure_id,
+            "amount": amount,
+            "profit_rate": profit_rate,
+            "status": "pending",
+        })
+    return rows
 
 
 def _pending_contract_rows(state: GameState) -> List[Dict[str, Any]]:

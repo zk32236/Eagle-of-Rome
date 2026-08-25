@@ -1,6 +1,6 @@
 """收入阶段经济结算服务。"""
 import logging
-from typing import Any, Dict, List, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from src.core.entities.contract import ContractStatus, ContractType
 
@@ -41,6 +41,7 @@ class EconomicService:
             }
             data["ending_treasury"] = self.state.treasury
             data["treasury_delta"] = data["ending_treasury"] - starting_treasury
+            data["accounting_window"] = self.build_accounting_window(data)
             return {"success": True, "message": "revenue phase settled", "data": data, "errors": errors}
         except Exception as exc:
             errors.append(str(exc))
@@ -288,18 +289,108 @@ class EconomicService:
     def apply_military_maintenance(self) -> Dict[str, Any]:
         military_system = self.state.get_military_system()
         if not military_system:
-            return {"available": False, "total": 0, "success": True, "message": ""}
+            return {"available": False, "total": 0, "paid": 0, "success": True, "message": ""}
         total_maintenance, _ = military_system.calculate_maintenance()
+        treasury_before = self.state.treasury
         success, msg = military_system.apply_maintenance(verbose=False)
-        return {"available": True, "total": total_maintenance, "success": success, "message": msg}
+        paid = max(0, treasury_before - self.state.treasury)
+        return {"available": True, "total": total_maintenance, "paid": paid,
+                "success": success, "message": msg}
 
     def apply_naval_maintenance(self) -> Dict[str, Any]:
         naval_system = getattr(self.state, "naval_system", None)
         if not naval_system:
-            return {"available": False, "total": 0, "success": True, "message": "警告：naval_system 为 None，跳过舰队维护费"}
+            return {"available": False, "total": 0, "paid": 0, "success": True,
+                    "message": "警告：naval_system 为 None，跳过舰队维护费"}
         total = naval_system.calculate_maintenance() if hasattr(naval_system, "calculate_maintenance") else 0
+        treasury_before = self.state.treasury
         success, msg = naval_system.apply_maintenance()
-        return {"available": True, "total": total, "success": success, "message": msg}
+        paid = max(0, treasury_before - self.state.treasury)
+        return {"available": True, "total": total, "paid": paid,
+                "success": success, "message": msg}
+
+    def build_accounting_window(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Build the canonical Republic-treasury cash ledger without residual rows."""
+        window_id = "current_revenue_settlement"
+        rows: List[Dict[str, Any]] = []
+
+        def add_row(key: str, label: str, category: str, signed_amount: int,
+                    source_id: Any = None, meta: Optional[Dict[str, Any]] = None) -> None:
+            amount = int(signed_amount or 0)
+            if amount == 0:
+                return
+            row = {
+                "key": key,
+                "label": label,
+                "category": category,
+                "signed_amount": amount,
+                "window_id": window_id,
+            }
+            if source_id is not None:
+                row["source_id"] = source_id
+            if meta:
+                row["meta"] = meta
+            rows.append(row)
+
+        for indemnity in data.get("indemnities", []):
+            kind = indemnity.get("kind")
+            if kind == "income":
+                add_row("indemnity_income", f"战争赔款：{indemnity.get('name', '')}",
+                        "indemnity", indemnity.get("amount", 0), indemnity.get("war_id"))
+            elif kind == "expense":
+                add_row("indemnity_expense", f"战争赔款：{indemnity.get('name', '')}",
+                        "indemnity", -abs(indemnity.get("amount", 0)), indemnity.get("war_id"))
+
+        public_land = data.get("public_land_income", {}) or {}
+        add_row("public_land_income", "国家公地收入", "public_land",
+                public_land.get("amount", 0))
+        national_opex = data.get("national_opex", {}) or {}
+        add_row("national_opex", "国家运营费", "operations",
+                -abs(national_opex.get("amount", 0)))
+
+        for contract in data.get("contract_rows", []):
+            contract_id = contract.get("contract_id")
+            if contract.get("type") == "tax_farming":
+                add_row("tax_farming_income", f"包税合同 #{contract_id}", "contract",
+                        contract.get("treasury_gain", 0), contract_id)
+            elif contract.get("type") == "public_works":
+                add_row("public_works_payment", f"公共工程合同 #{contract_id}", "contract",
+                        -abs(contract.get("payment", 0)), contract_id)
+
+        maintenance = data.get("maintenance", {}) or {}
+        military = maintenance.get("military", {}) or {}
+        naval = maintenance.get("naval", {}) or {}
+        add_row("military_maintenance", "军团维护实际支付", "maintenance",
+                -abs(military.get("paid", 0)), meta={"planned_total": military.get("total", 0)})
+        add_row("naval_maintenance", "舰队维护实际支付", "maintenance",
+                -abs(naval.get("paid", 0)), meta={"planned_total": naval.get("total", 0)})
+
+        for faction_id, faction in (data.get("faction_rows", {}) or {}).items():
+            add_row("faction_stipend", f"派系津贴：{faction_id}", "faction_stipend",
+                    -abs(faction.get("stipend", 0)), faction_id)
+
+        treasury_delta = int(data.get("treasury_delta", 0) or 0)
+        displayed_income = sum(row["signed_amount"] for row in rows if row["signed_amount"] > 0)
+        displayed_expense = -sum(row["signed_amount"] for row in rows if row["signed_amount"] < 0)
+        displayed_net = sum(row["signed_amount"] for row in rows)
+        return {
+            "id": window_id,
+            "basis": "republic_treasury_cash",
+            "starting_treasury": int(data.get("starting_treasury", 0) or 0),
+            "ending_treasury": int(data.get("ending_treasury", 0) or 0),
+            "treasury_delta": treasury_delta,
+            "treasury_ledger_rows": rows,
+            "displayed_income_total": displayed_income,
+            "displayed_expense_total": displayed_expense,
+            "displayed_net_total": displayed_net,
+            "reconciled": displayed_net == treasury_delta,
+            "non_treasury_sections": {
+                "private_land": "人物财富（不计入国库净变化）",
+                "faction": "派系金库（不计入国库净变化；国库拨款已在国库支出列示）",
+                "contracts": "合同人物收益（不计入国库净变化）",
+                "warranty": "合同质保事件（非现金）",
+            },
+        }
 
     def apply_faction_income(
             self,

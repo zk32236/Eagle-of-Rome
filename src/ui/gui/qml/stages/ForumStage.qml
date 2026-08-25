@@ -10,7 +10,13 @@ Rectangle {
 
     property bool marketUnlocked: sessionStore.forumCurrentStep !== "retirement" || sessionStore.forumResolved
     property int selectedMarketFigureId: sessionStore.forumAvailableFigures.length > 0 ? sessionStore.forumAvailableFigures[0].id : 0
-    property int selectedOwnFigureId: sessionStore.forumMyFigures.length > 0 ? sessionStore.forumMyFigures[0].id : 0
+    property int selectedRetirementFigureId: sessionStore.forumMyFigures.length > 0 ? sessionStore.forumMyFigures[0].id : 0
+    // ODR-R3-01: market actions require an explicit actor selection.
+    property int selectedMarketActorId: 0
+    property bool landSubmitBusy: false
+    property bool bidSubmitBusy: false
+    property string inlineNoticeType: ""
+    property string inlineNoticeMessage: ""
     property int recruitDialogFigureId: 0
     property string recruitDialogFigureName: ""
     property int recruitDialogBaseCost: 0
@@ -19,6 +25,36 @@ Rectangle {
     property int landDialogFigureId: 0
     property string landDialogFigureName: ""
     property string landDialogAmount: ""
+
+    function marketActorById(figureId) {
+        var figures = sessionStore.forumMyFigures || []
+        for (var i = 0; i < figures.length; i++) {
+            if (figures[i].id === figureId) return figures[i]
+        }
+        return null
+    }
+
+    function viewerPendingBid(contractId, figureId) {
+        var bids = sessionStore.forumViewerContractBids || []
+        for (var i = 0; i < bids.length; i++) {
+            if (bids[i].contract_id === contractId && bids[i].figure_id === figureId) {
+                return bids[i]
+            }
+        }
+        return null
+    }
+
+    function submitContractBid(contractId, amount) {
+        var actor = marketActorById(root.selectedMarketActorId)
+        if (!actor) {
+            root.callAndReport({"success": false, "message": "请先选择竞标人物"})
+            return
+        }
+        root.bidSubmitBusy = true
+        var result = sessionStore.doPlaceBid(actor.id, contractId, amount)
+        root.bidSubmitBusy = false
+        root.callAndReport(result)
+    }
 
     // WP-E F5：viewer 对指定 figure 是否已有 pending 认购请求（可追踪，017-04）
     function viewerHasLandPending(figureId) {
@@ -52,11 +88,14 @@ Rectangle {
     function confirmLandDialog() {
         var amount = parseInt(root.landDialogAmount, 10)
         if (isNaN(amount) || amount <= 0) {
-            showFeedback("error", "请输入有效的认购数量（1~999）。")
+            root.callAndReport({"success": false, "message": "请输入有效的认购数量（1~999）。"})
             return
         }
-        landDialog.close()
-        root.callAndReport(sessionStore.doBuyLand(root.landDialogFigureId, amount))
+        root.landSubmitBusy = true
+        var result = sessionStore.doBuyLand(root.landDialogFigureId, amount)
+        root.landSubmitBusy = false
+        root.callAndReport(result)
+        if (result.success) landDialog.close()
     }
 
     function showFeedback(type, message) {
@@ -70,8 +109,19 @@ Rectangle {
     }
 
     function callAndReport(result) {
-        if (!result.success) {
-            showFeedback("error", result.message)
+        var type = result.success ? "success" : "error"
+        root.inlineNoticeType = type
+        root.inlineNoticeMessage = result.message || (result.success ? "操作已提交（待结算）" : "操作失败")
+        showFeedback(type, root.inlineNoticeMessage)
+        return result
+    }
+
+    Connections {
+        target: sessionStore
+        function onForumViewChanged() {
+            if (root.selectedMarketActorId > 0 && !root.marketActorById(root.selectedMarketActorId)) {
+                root.selectedMarketActorId = 0
+            }
         }
     }
 
@@ -309,14 +359,14 @@ Rectangle {
                                     height: 46
                                     x: 12
                                     color: modelData.can_retire ? "#FFF9EC" : "#EEE3D0"
-                                    border.color: root.selectedOwnFigureId === modelData.id ? "#BD8F52" : "#55A8753B"
-                                    border.width: root.selectedOwnFigureId === modelData.id ? 2 : 1
+                                    border.color: root.selectedRetirementFigureId === modelData.id ? "#BD8F52" : "#55A8753B"
+                                    border.width: root.selectedRetirementFigureId === modelData.id ? 2 : 1
                                     radius: 4
 
                                     MouseArea {
                                         anchors.fill: parent
                                         enabled: modelData.can_retire
-                                        onClicked: root.selectedOwnFigureId = modelData.id
+                                        onClicked: root.selectedRetirementFigureId = modelData.id
                                     }
 
                                     Text {
@@ -372,7 +422,7 @@ Rectangle {
                                             enabled: modelData.can_retire && sessionStore.canExecuteForum && !root.marketUnlocked
                                             cursorShape: Qt.PointingHandCursor
                                             onClicked: {
-                                                root.selectedOwnFigureId = modelData.id
+                                                root.selectedRetirementFigureId = modelData.id
                                                 root.callAndReport(sessionStore.doRetireFigure(modelData.id))
                                             }
                                         }
@@ -564,6 +614,64 @@ Rectangle {
                                 font.pixelSize: 11
                             }
 
+                            SectionTitle { title: "👤 选择市场操作人物" }
+
+                            Text {
+                                objectName: "marketActorPrompt"
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 12
+                                Layout.rightMargin: 12
+                                text: {
+                                    var actor = root.marketActorById(root.selectedMarketActorId)
+                                    return actor ? ("当前操作人物：" + actor.name + " (#" + actor.id + ")") : "请先选择操作人物"
+                                }
+                                color: root.selectedMarketActorId > 0 ? "#2E251B" : "#9A2D0A"
+                                font.pixelSize: 11
+                                font.bold: true
+                            }
+
+                            Repeater {
+                                model: sessionStore.forumMyFigures
+                                delegate: MarketActionRow {
+                                    objectName: "marketActorOption_" + modelData.id
+                                    label: modelData.name + " · " + modelData.class_label + " · 财富 " + modelData.wealth + " T"
+                                    value: (modelData.can_bid ? "可竞标" : "不可竞标")
+                                           + " · " + (modelData.can_buy_land ? "可认购" : "不可认购")
+                                    actionText: root.selectedMarketActorId === modelData.id ? "已选择" : "选择"
+                                    enabledAction: root.marketUnlocked && sessionStore.canExecuteForum
+                                    onTriggered: root.selectedMarketActorId = modelData.id
+                                }
+                            }
+
+                            Text {
+                                visible: sessionStore.forumMyFigures.length === 0
+                                Layout.leftMargin: 12
+                                Layout.rightMargin: 12
+                                text: "无可用人物"
+                                color: "#9A2D0A"
+                                font.pixelSize: 11
+                            }
+
+                            Rectangle {
+                                objectName: "forumInlineNotice"
+                                visible: root.inlineNoticeMessage.length > 0
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 12
+                                Layout.rightMargin: 12
+                                Layout.preferredHeight: 30
+                                radius: 4
+                                color: root.inlineNoticeType === "success" ? "#DFF2E1" : "#F8D7D4"
+                                border.color: root.inlineNoticeType === "success" ? "#4E8A52" : "#A43B32"
+                                Text {
+                                    anchors.fill: parent
+                                    anchors.margins: 6
+                                    text: root.inlineNoticeMessage
+                                    color: root.inlineNoticeType === "success" ? "#245C2A" : "#84250A"
+                                    font.pixelSize: 11
+                                    elide: Text.ElideRight
+                                }
+                            }
+
                             SectionTitle { title: "📜 Pending Contract / 预算表决合同" }
 
                             Repeater {
@@ -571,10 +679,23 @@ Rectangle {
 
                                 delegate: MarketActionRow {
                                     label: modelData.name
-                                    value: modelData.status_label || ""
-                                    actionText: modelData.can_bid ? "竞标" : "待预算"
-                                    enabledAction: root.marketUnlocked && modelData.can_bid && sessionStore.canExecuteForum && root.selectedOwnFigureId > 0
-                                    onTriggered: root.callAndReport(sessionStore.doPlaceBid(root.selectedOwnFigureId, modelData.id, modelData.base_cost))
+                                    value: {
+                                        var actor = root.marketActorById(root.selectedMarketActorId)
+                                        if (!modelData.can_bid) return modelData.status_label || "待预算"
+                                        if (!actor) return "请先选择竞标人物"
+                                        if (!actor.can_bid) return "所选人物无竞标资格"
+                                        var pending = root.viewerPendingBid(modelData.id, actor.id)
+                                        if (pending) return actor.name + " 已出价 " + pending.amount + " T（待结算）"
+                                        return actor.name + " · 基准出价 " + modelData.base_cost + " T"
+                                    }
+                                    actionText: root.viewerPendingBid(modelData.id, root.selectedMarketActorId) ? "已提交" : (modelData.can_bid ? "竞标" : "待预算")
+                                    enabledAction: {
+                                        var actor = root.marketActorById(root.selectedMarketActorId)
+                                        return root.marketUnlocked && modelData.can_bid && sessionStore.canExecuteForum
+                                               && actor && actor.can_bid && !root.bidSubmitBusy
+                                               && !root.viewerPendingBid(modelData.id, actor.id)
+                                    }
+                                    onTriggered: root.submitContractBid(modelData.id, modelData.base_cost)
                                 }
                             }
 
@@ -588,31 +709,36 @@ Rectangle {
 
                             SectionTitle { title: "🏡 公地认购" }
 
-                            // WP-E F5：label/value/enabledAction 状态机（E-06/E-ODR-03）
                             MarketActionRow {
                                 objectName: "publicLandPurchaseRow"
                                 label: sessionStore.forumLandSaleTotal > 0
                                     ? ("本回合出售 " + sessionStore.forumLandSaleTotal + "C 国家公地")
                                     : "本回合暂无可认购公地"
                                 value: {
-                                    if (root.viewerHasLandPending(root.selectedOwnFigureId)) {
-                                        return "已提交认购 " + root.viewerPendingLandAmount(root.selectedOwnFigureId) + " C（待结算）"
+                                    var actor = root.marketActorById(root.selectedMarketActorId)
+                                    if (!actor) return "请先选择操作人物"
+                                    if (!actor.can_buy_land) return "所选人物无可用认购资格"
+                                    if (root.viewerHasLandPending(actor.id)) {
+                                        return actor.name + " 已提交 " + root.viewerPendingLandAmount(actor.id) + " C（待结算）"
                                     }
                                     if (sessionStore.forumLandQuota > 0) {
-                                        return "剩余 " + sessionStore.forumLandQuota + " C 可购"
+                                        return actor.name + " · 剩余 " + sessionStore.forumLandQuota + " C 可购"
                                     }
-                                    if (sessionStore.forumLandSaleTotal > 0) {
-                                        return "已全部认购"
-                                    }
-                                    return ""
+                                    if (sessionStore.forumLandSaleTotal > 0) return "已全部认购"
+                                    return "本回合暂无可认购公地"
                                 }
-                                actionText: "认购"
-                                enabledAction: root.marketUnlocked && sessionStore.canExecuteForum
-                                    && sessionStore.forumLandQuota > 0
-                                    && root.selectedOwnFigureId > 0
-                                    && !sessionStore.forumResolved
-                                    && !root.viewerHasLandPending(root.selectedOwnFigureId)
-                                onTriggered: root.openLandDialog(root.selectedOwnFigureId, "")
+                                actionText: root.viewerHasLandPending(root.selectedMarketActorId) ? "已提交" : "认购"
+                                enabledAction: {
+                                    var actor = root.marketActorById(root.selectedMarketActorId)
+                                    return root.marketUnlocked && sessionStore.canExecuteForum
+                                           && sessionStore.forumLandQuota > 0 && actor && actor.can_buy_land
+                                           && !sessionStore.forumResolved && !root.landSubmitBusy
+                                           && !root.viewerHasLandPending(actor.id)
+                                }
+                                onTriggered: {
+                                    var actor = root.marketActorById(root.selectedMarketActorId)
+                                    if (actor) root.openLandDialog(actor.id, actor.name)
+                                }
                             }
 
                             // WP-E F5：resolve 后结构化分配行（E-11）
@@ -839,7 +965,7 @@ Rectangle {
                 spacing: 8
 
                 Text {
-                    text: "🏡 认购国家公地"
+                    text: "🏡 认购国家公地 · " + root.landDialogFigureName + " (#" + root.landDialogFigureId + ")"
                     color: "#84250A"
                     font.pixelSize: 15
                     font.bold: true
@@ -905,14 +1031,15 @@ Rectangle {
                 Item { Layout.fillWidth: true }
 
                 Button {
-                    text: "确认"
+                    text: root.landSubmitBusy ? "提交中…" : "确认"
                     highlighted: true
-                    enabled: root.landDialogAmount.length > 0
+                    enabled: root.landDialogAmount.length > 0 && !root.landSubmitBusy
                     onClicked: root.confirmLandDialog()
                 }
 
                 Button {
                     text: "关闭"
+                    enabled: !root.landSubmitBusy
                     onClicked: landDialog.close()
                 }
             }

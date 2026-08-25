@@ -82,6 +82,33 @@ def test_same_state_reentry_same_rows():
     assert rows1 == rows2
 
 
+def test_accounting_window_tracks_no_active_and_expired_tax_contracts():
+    no_contract_state = _make_state()
+    no_contract_data = EconomicService(no_contract_state).settle_revenue_phase()["data"]
+    assert not any(
+        row["key"] == "tax_farming_income"
+        for row in no_contract_data["accounting_window"]["treasury_ledger_rows"]
+    )
+
+    active_state = _make_state()
+    active_contract = _make_active_contract(active_state)
+    active_data = EconomicService(active_state).settle_revenue_phase()["data"]
+    assert any(
+        row["key"] == "tax_farming_income" and row["source_id"] == active_contract.id
+        for row in active_data["accounting_window"]["treasury_ledger_rows"]
+    )
+    assert active_data["accounting_window"]["reconciled"] is True
+
+    expired_state = _make_state()
+    expired_contract = _make_active_contract(expired_state)
+    expired_contract.terminate()
+    expired_data = EconomicService(expired_state).settle_revenue_phase()["data"]
+    assert not any(
+        row["key"] == "tax_farming_income"
+        for row in expired_data["accounting_window"]["treasury_ledger_rows"]
+    )
+
+
 def test_only_active_contracts_considered():
     """仅 ACTIVE 合同进入 collect_contract_revenues（:247-270 语义）。"""
     state = _make_state()

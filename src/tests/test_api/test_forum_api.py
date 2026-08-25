@@ -170,6 +170,25 @@ class TestForumView:
         assert isinstance(data["war_threats"], list)
         assert "can_execute" in data
         assert "can_advance" in data
+        assert data["viewer_contract_bids"] == []
+
+    def test_viewer_contract_bids_normalize_legacy_tuples_and_scope(self, test_state):
+        test_state._forum_pending["contract_bids"] = [
+            (1, 2, "f1", 80),
+            (2, 4, "f1", 120, 0.25),
+            (1, 3, "f2", 70, 0.2, 3, 5),
+            (2, 2, "f1", 130, 0.2, 0, 0),
+            ("invalid",),
+        ]
+
+        rows = forum_api.get_forum_view(test_state, "p1")["data"]["viewer_contract_bids"]
+
+        assert rows == [
+            {"contract_id": 1, "figure_id": 2, "amount": 80, "profit_rate": None, "status": "pending"},
+            {"contract_id": 2, "figure_id": 4, "amount": 120, "profit_rate": 0.25, "status": "pending"},
+            {"contract_id": 2, "figure_id": 2, "amount": 130, "profit_rate": 0.2, "status": "pending"},
+        ]
+        assert all(row["figure_id"] != 3 for row in rows)
 
 
 class TestRetireFigure:

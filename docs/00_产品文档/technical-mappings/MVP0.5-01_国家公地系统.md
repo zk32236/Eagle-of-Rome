@@ -39,8 +39,16 @@ src/api/forum_api.py            # resolve_forum() 公地认购结算
 - 消费关系见 `MVP0.5-10_土地法案.md`（sale → quota + total 双写入）。
 - GUI 展示见 `MVP0.5-07_战斗阶段` 无关；Forum DTO 新字段见 `EOR_UI_API_Mapping.md`。
 
-## 4. 版本日志
+## 4. WP-E-R3 显式 HUMAN actor（2026-08-24）
+
+- Forum 市场 actor 与退休选择解耦；`selectedMarketActorId` 初始为 0，必须由玩家显式选择，不得默认本派系首成员。
+- QML 只消费 `my_figures[].can_buy_land` 并显示 actor id/name；最终资格、财富、配额、per-figure 防重仍由 `forum_api.buy_land` 权威校验。
+- success 仅表示 `(figure_id, quantity)` 请求已记录，页面必须标“待结算”；实际 allocated/partial/rejected 只来自 `resolve_forum.land_allocation`。
+- `viewer_land_requests` 支持 refresh/re-entry 恢复同一 actor+amount；重复提交不新增第二条。
+
+## 5. 版本日志
 | 版本 | 日期 | 修改人 | 修改说明 |
 |:--|:--|:--|:--|
+| v1.2 | 2026-08-24 | DA-Exec (WP-E-R3) | 显式 market actor、dialog identity、pending 待结算与 resolve actual result |
 | v1.1 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §3：三载体语义分离（total / remaining / allocation）+ buy_land 防重 + resolve 无条件配额处置（GUI-BETA-011/017） |
 | v1.0 | 2026-07-12 | Document Officer | 初版 |

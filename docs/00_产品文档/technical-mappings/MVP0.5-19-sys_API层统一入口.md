@@ -191,7 +191,14 @@ session_api, gui_query_api
 - **失败边界:** `batch_vote()` 失败不 handoff、不 resolve；Adapter/Store 不补 office、不物化 0、不判断全员、不直接调用 `resolve_election()`。
 - **FC-06/07 保持:** backend signature 仍为 `(player_id, frozenset((office, figure_id) ...))`，guard 仍使用 `threading.Lock`；GUI submitting 仅防重复交互，不替代二者。
 
-## 8. 版本日志
+## 8. WP-E-R3 Forum / Combat read-model（2026-08-24）
+
+- Forum：`get_forum_view.viewer_contract_bids` 只读正规化 4/5/7 元组并按 viewer faction 过滤；Store 暴露 `forumViewerContractBids`。
+- HUMAN action：ForumStage 显式 actor → `GuiSessionStore.doPlaceBid/doBuyLand` → Adapter → Forum API；success/failure 同时进入页内 notice 与 ContextPanel，durable pending 只来自 DTO。
+- Combat：`get_combat_view.mobilized_legion_count` 是 active+truce cards 的 canonical sum；Store 暴露 `combatMobilizedLegions`，QML 不再本地 active-only 求和。
+- D-11 `truce_remaining_turns` producer/起算点/文案保持不变。
+
+## 9. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
 | v1.7 | 2026-08-01 | WP-02b G5-R1: §7 更新至 v2.1（{office, figure_id} DTO, 无 choice, 无 inline resolution, Lock 非可重入, FC-09 前置条件, resolve_population_slice 结算入口）；新增 §7.2 |
@@ -204,5 +211,6 @@ session_api, gui_query_api
 | v1.0 | 2026-07-17 | 初版 |
 | v1.8 | 2026-08-01 | EOR20260801-02 B2 Pilot (DA ATTEMPT-1): §7.1 FC-06 signature 从 tuple(sorted(...)) 修正为 frozenset(...)（对齐 Contract Freeze Table FC-06 冻结值）；CI-1 Frozen Value Preservation |
 | v1.9 | 2026-08-02 | WP-02b v3.0: 新增 §7.3 Session selection-map 规范化、awaiting_players/resolved 响应与 PopulationStage → Store → Adapter → Session 正式调用链；旧 GUI batchVote 标记为兼容路径 |
+| v2.2 | 2026-08-24 | WP-E-R3：Forum viewer bid DTO/显式 actor action chain；Combat canonical overview passthrough |
 | v2.1 | 2026-08-22 | GUI-BETA-R1 WP-C-R1: senate_api 提案链权威值域（_budget_range_for_contract/_legion_options_for_war helper、auto_submit P1-a 同值域、_populate_proposal 权威谓词 chokepoint、process_war_takeover 执行期征召改接） |
 | v2.0 | 2026-08-21 | GUI-BETA-R1 WP-C: 新增 §3.4 canonical init（initialize_forum_turn + ODR-04 归属校验 + forum_initialized exactly-once）；open_market 切换 init（ODR-05 行形不变）；resolve_forum 前置 execute_land_acts；get_forum_view 新增 war_threats（016） |

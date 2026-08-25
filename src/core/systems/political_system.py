@@ -557,11 +557,25 @@ class PoliticalSystem:
         treaty = war.peace_treaty
         if not treaty or treaty.get("status") != "submitted":
             return
+        release = ws.release_war_legions(
+            war,
+            remember_for_truce=True,
+            disband_now=True,
+        )
+        if not release["success"]:
+            self.state.log_event(
+                f"停战批准失败，军团释放未完成: {war.name}",
+                level=logging.ERROR,
+                extra={
+                    "type": "treaty_approval_lifecycle_failed",
+                    "war_id": war.id,
+                    "errors": release["errors"],
+                },
+            )
+            return
+
         war.set_peace_treaty_status("approved")
         war.set_indemnity_due(treaty["indemnity"])
-        ms = self.state.get_military_system()
-        if ms:
-            ms.recall_from_war(war.id)
         if war.commander_id:
             commander = self.state.get_member(war.commander_id)
             if commander:
@@ -578,8 +592,6 @@ class PoliticalSystem:
                 )
                 print(f"      🔄 停战批准，指挥官 {commander.get_formal_name()} 返回罗马")
             war.commander_id = None
-        if war.legion_numbers:
-            ws.add_legions_to_disband(war.legion_numbers)
         end_turn = self.state.turn.turn_number + treaty["duration"]
         war.set_truce_end_turn(end_turn)
         war.status = WarStatus.TRUCE
@@ -593,6 +605,9 @@ class PoliticalSystem:
                 "indemnity": treaty.get("indemnity", 0),
                 "duration": treaty.get("duration", 0),
                 "end_turn": end_turn,
+                "truce_recruit_target": release["target"],
+                "disbanded_legions": release["disbanded"],
+                "mobilized_count_after": war.mobilized_legion_count,
             },
         )
 
@@ -1021,28 +1036,17 @@ class PoliticalSystem:
         return ws.get_war_by_id(proposal["war_id"]) if ws else None
 
     def _auto_recruit_and_assign_legions_for_war(self, war, consul_id: int):
-        ms = self.state.get_military_system()
-        if not ms:
+        ws = self.state.get_war_system()
+        if not ws:
             return
-        existing = ms.get_legions_for_battle(war.id)
-        if existing:
+        if war.mobilized_legion_count:
             return
         legions = getattr(war, "proposed_legions", 0)
         if legions <= 0:
             min_legions = self.state.config.get("testing.min_legions", 4)
             max_legions = self.state.config.get("testing.max_legions", 8)
             legions = random.randint(min_legions, max_legions)
-        available = ms.get_available_legions()
-        recruit_count = min(legions, len(available))
-        if recruit_count == 0:
-            return
-        results = ms.recruit_multiple(recruit_count)
-        recruited_numbers = [number for number, success, *_ in results if success]
-        if not recruited_numbers:
-            return
-        ms.assign_to_war(recruited_numbers, war.id, consul_id)
-        for number in recruited_numbers:
-            war.add_legion_number(number)
+        return ws.mobilize_war_legions(war, legions, consul_id)
 
     def execute_war_takeover_direct(self, war, consul_figure) -> bool:
         """DEV-13 玩家直接接管：先招募/分配军团，成功后回写 commander（FC-05 原子性）。
