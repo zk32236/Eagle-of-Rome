@@ -56,8 +56,13 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
             commander_martial = getattr(commander, 'martial', 0) or 0
             commander_id = war.commander_id
 
-    legions = war.legions_assigned
-    legion_power = legions * 2
+    # POST-07P（ODR-A/B）：计数/番号源 = 实时军团实体附着（legion.war_id == war.id）。
+    # war.legions_assigned 在 GUI 生产路径恒 0（写入路径缺口 = WP-G handoff）；
+    # war.legion_numbers 召回后残留旧号（ODR-B ① 禁以其判定存在性）。
+    ms = _military_system(state)
+    attached = ms.get_legions_for_battle(war.id) if ms else []
+    legion_count = len(attached)
+    legion_power = legion_count * 2
     total_power = commander_martial + legion_power
     enemy_power = war.get_total_strength()
 
@@ -69,8 +74,8 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
         "commander_name": commander_name,
         "commander_martial": commander_martial,
         "commander_id": commander_id,
-        "legion_count": legions,
-        "legion_numbers": war.legion_numbers,
+        "legion_count": legion_count,
+        "legion_numbers": [legion.number for legion in attached],
         "total_power": total_power,
         "enemy_power": enemy_power,
         "threat_level": war.threat_level,

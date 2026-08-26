@@ -246,6 +246,9 @@ def _war_summary(state: GameState, war, status: str) -> Dict[str, Any]:
     if getattr(war, "commander_id", None):
         commander = state.get_member(war.commander_id)
         commander_name = commander.get_formal_name() if commander else str(war.commander_id)
+    # POST-07P（ODR-A）：计数源 = 实时军团实体附着（与 _war_card 同源）
+    ms = state.get_military_system()
+    legions_assigned = len(ms.get_legions_for_battle(war.id)) if ms else 0
     return {
         "id": war.id,
         "name": war.name,
@@ -254,7 +257,7 @@ def _war_summary(state: GameState, war, status: str) -> Dict[str, Any]:
         "naval_required": getattr(war, "naval_required", False),
         "commander_id": getattr(war, "commander_id", None),
         "commander_name": commander_name,
-        "legions_assigned": getattr(war, "legions_assigned", 0),
+        "legions_assigned": legions_assigned,
         "fleets_assigned": getattr(war, "fleets_assigned", 0),
     }
 

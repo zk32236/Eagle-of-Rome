@@ -319,6 +319,63 @@ class TestPlaceBid:
         assert i18n.get("figure_not_found", id=2) in result["message"]
 
 
+# ========== WP-E F6（D-07）：viewer_contract_bids 派生测试 ==========
+class TestViewerContractBids:
+    """viewer 作用域 contract-bid 载体（R3-E-02 全链）——faction 作用域 / 元组兼容 / 恰一 / refresh / resolve 清空"""
+
+    def _rows(self, state):
+        view = forum_api.get_forum_view(state, "p1")
+        assert view["success"]
+        return view["data"]["viewer_contract_bids"]
+
+    def test_faction_scoped(self, test_state):
+        """仅暴露 viewer 本派系 pending（7 元组第 3 位 = 派系；不暴露他派系 bid）"""
+        test_state.add_forum_action("contract_bids", (1, 2, "f1", 80, 0.2, 4, 6))
+        test_state.add_forum_action("contract_bids", (2, 3, "f2", 120, 0.2, 0, 0))
+
+        rows = self._rows(test_state)
+        assert len(rows) == 1
+        assert rows[0] == {
+            "contract_id": 1,
+            "figure_id": 2,
+            "amount": 80,
+            "profit_rate": 0.2,
+            "status": "pending",
+        }
+
+    def test_exactly_one_pending_via_place_bid(self, test_state):
+        """place_bid 生产路径 → 恰一 7 元组 → DTO 恰一投影；防重拒绝后仍恰一"""
+        result = forum_api.place_bid(test_state, "p1", 2, 1, 80)
+        assert result["success"] is True
+        rows = self._rows(test_state)
+        assert len(rows) == 1
+        assert rows[0]["contract_id"] == 1
+        assert rows[0]["figure_id"] == 2
+        assert rows[0]["amount"] == 80
+        assert rows[0]["profit_rate"] == 0.2
+        assert rows[0]["status"] == "pending"
+        # 权威防重（place_bid (contract,figure) 唯一）：重复出价拒绝 → DTO 仍恰一
+        dup = forum_api.place_bid(test_state, "p1", 2, 1, 90)
+        assert dup["success"] is False
+        assert len(self._rows(test_state)) == 1
+
+    def test_refresh_reentry_deterministic(self, test_state):
+        """refresh/re-entry：同 state 同投影（确定性，禁循环 oracle）"""
+        test_state.add_forum_action("contract_bids", (1, 2, "f1", 80, 0.2, 4, 6))
+        first = self._rows(test_state)
+        second = self._rows(test_state)
+        assert first == second
+        assert first[0]["amount"] == 80  # 非空洞（值真实）
+
+    def test_resolve_forum_clears_pending_projection(self, test_state):
+        """resolve_forum 权威消费 pending → viewer_contract_bids 恢复空"""
+        test_state.add_forum_action("contract_bids", (1, 2, "f1", 80, 0.2, 4, 6))
+        assert len(self._rows(test_state)) == 1
+        result = forum_api.resolve_forum(test_state)
+        assert result["success"] is True
+        assert self._rows(test_state) == []
+
+
 # ========== buy_land 测试 ==========
 class TestBuyLand:
     """测试 buy_land API"""

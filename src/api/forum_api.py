@@ -61,6 +61,19 @@ def get_forum_view(state: GameState, viewer_player_id: str) -> dict:
                 if state.get_member(fig_id) is not None
                 and state.get_member(fig_id).faction_id == viewer.faction_id
             ],
+            # WP-E F6（D-07）：viewer 作用域 contract-bid 载体（7 元组第 3 位 = 派系；
+            # 仅暴露本派系 pending；不暴露他派系/不算 winner——place_bid 权威面零改）
+            "viewer_contract_bids": [
+                {
+                    "contract_id": bid[0],
+                    "figure_id": bid[1],
+                    "amount": bid[3],
+                    "profit_rate": bid[4] if len(bid) > 4 else None,
+                    "status": "pending",
+                }
+                for bid in pending.get("contract_bids", [])
+                if len(bid) > 2 and bid[2] == viewer.faction_id
+            ],
             "land_allocation": result_data.get("land_allocation", [])
             if isinstance(result_data, dict)
             else [],

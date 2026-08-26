@@ -61,9 +61,19 @@ class TestCombatAPI(unittest.TestCase):
             disaster_numbers=[2, 3],
         )
         self.war1.commander_id = 1
-        self.war1.legions_assigned = 4
+        self.war1.legions_assigned = 4  # 战斗公式消费者（_compute_combat_result，受保护面）
         self.war1.status = WarStatus.ACTIVE
         self.state._war_system._active_wars.append(self.war1)
+        # DEVIATION-DA-02（PM 已 ENDORSED 2026-08-25）：_war_card 计数/番号源 = 实时军团实体
+        # 附着（ODR-A/B），生产路径附着真实实体（recruit_legion + assign_to_war）——镜像语义
+        # = len(get_legions_for_battle(war.id))；断言意图保留（禁空洞化）。
+        # legions_assigned 属性保留：_compute_combat_result 仍读它（R3 变更面外，禁动）。
+        ms = self.state._military_system
+        for num in (1, 2, 3, 4):
+            ok, _ = ms.recruit_legion(num)
+            assert ok, f"recruit legion {num} failed"
+        assigned, msg = ms.assign_to_war([1, 2, 3, 4], self.war1.id, 1)
+        assert assigned == 4, msg
 
         # 第二场战争（无指挥官）
         self.war2 = War(
@@ -75,9 +85,14 @@ class TestCombatAPI(unittest.TestCase):
             rewards={"treasury": 50},
             disaster_numbers=[2, 3],
         )
-        self.war2.legions_assigned = 2
+        self.war2.legions_assigned = 2  # 战斗公式消费者（受保护面）
         self.war2.status = WarStatus.ACTIVE
         self.state._war_system._active_wars.append(self.war2)
+        for num in (5, 6):
+            ok, _ = ms.recruit_legion(num)
+            assert ok, f"recruit legion {num} failed"
+        assigned, msg = ms.assign_to_war([5, 6], self.war2.id, None)
+        assert assigned == 2, msg
 
         self.state.set_current_player("player_opt")
 
@@ -396,13 +411,15 @@ class TestCombatAPI(unittest.TestCase):
         self.assertEqual(card["enemy_name"], self.war1.name)
 
     def test_war_card_legion_numbers(self):
-        """legion_numbers 字段存在且为 List[int]（AC-3.3）"""
-        self.war1.add_legion_number(3)
-        self.war1.add_legion_number(4)
+        """legion_numbers 字段存在且为 List[int]，= 所附实体番号（AC-3.3 / DEVIATION-DA-02）"""
         card = combat_api._war_card(self.war1, self.state)
         self.assertIn("legion_numbers", card)
         self.assertIsInstance(card["legion_numbers"], list)
-        self.assertEqual(card["legion_numbers"], [3, 4])
+        # 镜像语义 = 所附实体番号（setUp 生产路径附着 1,2,3,4；原 [3,4] 注入值按实体附着重定）。
+        # 召回→重指派全链由 S2 test_truce_expiry_reassign_shows_new_numbers 覆盖（新鲜征召军团）。
+        self.assertEqual(card["legion_numbers"], [1, 2, 3, 4])
+        self.assertEqual(card["legion_count"], 4)
+        self.assertEqual(card["total_power"], 14)  # 6 (martial) + 4*2
 
     # ════════════════════════════════════════════════════════════════════
     # Test 21: AC-4.3 逐场结果留卡片内 — per-war result DTO 穿透

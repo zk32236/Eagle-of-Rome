@@ -41,6 +41,45 @@ Rectangle {
         return 0
     }
 
+    // WP-E F6（017）：公地认购可操作人物选项 —— DTO can_buy_land 权威布尔过滤，
+    // QML 不重算资格（禁第二套实现）；复用 selectedOwnFigureId（禁双选择体系）
+    function landActorOptions() {
+        var figures = sessionStore.forumMyFigures || []
+        var opts = []
+        for (var i = 0; i < figures.length; i++) {
+            var f = figures[i]
+            if (f.can_buy_land) {
+                opts.push({
+                    id: f.id,
+                    label: f.name + " · " + (f.class_label || "") + " · 财富 " + f.wealth
+                })
+            }
+        }
+        return opts
+    }
+
+    // WP-E F6（017）：当前所选 own figure 姓名（landDialog actor 身份展示）
+    function selectedOwnFigureName() {
+        var figures = sessionStore.forumMyFigures || []
+        for (var i = 0; i < figures.length; i++) {
+            if (figures[i].id === root.selectedOwnFigureId) {
+                return figures[i].name
+            }
+        }
+        return ""
+    }
+
+    // WP-E F6（D-07）：viewer 对指定合同是否已出价（持久 pending 态载体，只读 DTO）
+    function viewerBidForContract(contractId) {
+        var bids = sessionStore.forumViewerContractBids || []
+        for (var i = 0; i < bids.length; i++) {
+            if (bids[i].contract_id === contractId) {
+                return bids[i]
+            }
+        }
+        return null
+    }
+
     function openLandDialog(figureId, figureName) {
         root.landDialogFigureId = figureId
         root.landDialogFigureName = figureName
@@ -70,8 +109,11 @@ Rectangle {
     }
 
     function callAndReport(result) {
-        if (!result.success) {
-            showFeedback("error", result.message)
+        // WP-E F6（D-07）：双向反馈 —— success 与 failure 均显著呈现（原仅失败分支）
+        if (result && result.success) {
+            showFeedback("success", result.message || "操作成功")
+        } else {
+            showFeedback("error", result ? result.message : "操作失败")
         }
     }
 
@@ -571,9 +613,23 @@ Rectangle {
 
                                 delegate: MarketActionRow {
                                     label: modelData.name
-                                    value: modelData.status_label || ""
-                                    actionText: modelData.can_bid ? "竞标" : "待预算"
-                                    enabledAction: root.marketUnlocked && modelData.can_bid && sessionStore.canExecuteForum && root.selectedOwnFigureId > 0
+                                    value: {
+                                        var bid = root.viewerBidForContract(modelData.id)
+                                        if (bid) {
+                                            return "已出价 " + bid.amount + " T（待结算）"
+                                        }
+                                        if (modelData.can_bid && root.selectedOwnFigureId > 0) {
+                                            return root.selectedOwnFigureName() + " · 基准出价 " + modelData.base_cost + " T"
+                                        }
+                                        return modelData.status_label || ""
+                                    }
+                                    actionText: {
+                                        if (root.viewerBidForContract(modelData.id)) { return "已出价" }
+                                        return modelData.can_bid ? "竞标" : "待预算"
+                                    }
+                                    enabledAction: root.marketUnlocked && modelData.can_bid && sessionStore.canExecuteForum
+                                        && root.selectedOwnFigureId > 0
+                                        && !root.viewerBidForContract(modelData.id)
                                     onTriggered: root.callAndReport(sessionStore.doPlaceBid(root.selectedOwnFigureId, modelData.id, modelData.base_cost))
                                 }
                             }
@@ -587,6 +643,58 @@ Rectangle {
                             }
 
                             SectionTitle { title: "🏡 公地认购" }
+
+                            // WP-E F6（017）：actor 显式选择面 —— 公地认购块顶部内嵌窄选择行，
+                            // 复用 selectedOwnFigureId（禁双选择体系）；DTO can_buy_land 权威
+                            RowLayout {
+                                visible: root.landActorOptions().length > 0
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 12
+                                Layout.rightMargin: 12
+                                Layout.topMargin: 2
+                                spacing: 8
+
+                                Text {
+                                    text: "认购人物"
+                                    color: "#766652"
+                                    font.pixelSize: 11
+                                }
+
+                                ComboBox {
+                                    id: landActorCombo
+                                    objectName: "landActorCombo"
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 24
+                                    model: root.landActorOptions()
+                                    textRole: "label"
+                                    onActivated: root.selectedOwnFigureId = root.landActorOptions()[currentIndex].id
+                                    Component.onCompleted: {
+                                        var opts = root.landActorOptions()
+                                        if (opts.length === 0) { return }
+                                        var current = root.selectedOwnFigureId
+                                        var found = false
+                                        for (var i = 0; i < opts.length; i++) {
+                                            if (opts[i].id === current) { currentIndex = i; found = true; break }
+                                        }
+                                        if (!found) {
+                                            // 默认 figure 无认购资格 → 同步首个可认购人物（选择面与提交身份一致）
+                                            currentIndex = 0
+                                            root.selectedOwnFigureId = opts[0].id
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                visible: sessionStore.forumLandSaleTotal > 0 && root.landActorOptions().length === 0
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 12
+                                Layout.rightMargin: 12
+                                Layout.topMargin: 2
+                                text: "本回合无可用认购人物。"
+                                color: "#9A2D0A"
+                                font.pixelSize: 11
+                            }
 
                             // WP-E F5：label/value/enabledAction 状态机（E-06/E-ODR-03）
                             MarketActionRow {
@@ -609,10 +717,10 @@ Rectangle {
                                 actionText: "认购"
                                 enabledAction: root.marketUnlocked && sessionStore.canExecuteForum
                                     && sessionStore.forumLandQuota > 0
-                                    && root.selectedOwnFigureId > 0
+                                    && root.landActorOptions().length > 0
                                     && !sessionStore.forumResolved
                                     && !root.viewerHasLandPending(root.selectedOwnFigureId)
-                                onTriggered: root.openLandDialog(root.selectedOwnFigureId, "")
+                                onTriggered: root.openLandDialog(root.selectedOwnFigureId, root.selectedOwnFigureName())
                             }
 
                             // WP-E F5：resolve 后结构化分配行（E-11）
@@ -868,6 +976,14 @@ Rectangle {
 
                 Text { text: "剩余可购"; color: "#766652"; font.pixelSize: 12; Layout.fillWidth: true }
                 Text { text: sessionStore.forumLandQuota + " C"; color: "#2E251B"; font.pixelSize: 12; font.bold: true }
+            }
+
+            // WP-E F6（017）：对话框 actor 身份（openLandDialog 传名，禁空串）
+            RowLayout {
+                Layout.fillWidth: true
+
+                Text { text: "认购人物"; color: "#766652"; font.pixelSize: 12; Layout.fillWidth: true }
+                Text { text: root.landDialogFigureName || "—"; color: "#2E251B"; font.pixelSize: 12; font.bold: true }
             }
 
             Text { text: "输入认购数量:"; color: "#766652"; font.pixelSize: 12 }

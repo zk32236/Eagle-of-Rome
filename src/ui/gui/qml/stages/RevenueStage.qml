@@ -36,6 +36,27 @@ Rectangle {
         return factionStyle.factionName(factionId)
     }
 
+    // WP-E F6（D-12）：六项行级 read-model 辅助（事实均在 DTO，零 producer 改动）
+
+    // #1：包税合同收入行可见性 = 存在 tax_farming 行（禁仅 works 时显空「+0」）
+    function hasTaxFarmingContracts() {
+        var rows = _resultData.contract_rows || []
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].type === "tax_farming") return true
+        }
+        return false
+    }
+
+    // #2：工程合同付款合计（contract_rows[type=public_works].payment 扣国库）
+    function publicWorksPayment() {
+        var rows = _resultData.contract_rows || []
+        var total = 0
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].type === "public_works") total += rows[i].payment || 0
+        }
+        return total
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 10
@@ -94,24 +115,6 @@ Rectangle {
                         font.bold: true
                     }
 
-                    // 战争赔款
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: (_resultData.indemnities || []).length > 0
-                        Text { text: "  战争赔款收入"; color: "#2E251B"; font.pixelSize: 12; Layout.fillWidth: true }
-                        Text {
-                            text: {
-                                var total = 0
-                                var rows = _resultData.indemnities || []
-                                for (var i = 0; i < rows.length; i++) {
-                                    if (rows[i].kind === "income") total += rows[i].amount
-                                }
-                                return "+" + total + " Talents"
-                            }
-                            color: "#2C7A2C"; font.pixelSize: 12; font.bold: true
-                        }
-                    }
-
                     // 公地收益
                     RowLayout {
                         Layout.fillWidth: true
@@ -123,10 +126,10 @@ Rectangle {
                         }
                     }
 
-                    // 包税合同收入
+                    // 包税合同收入（WP-E F6 D-12 #1：可见性 = 存在 tax_farming 行）
                     RowLayout {
                         Layout.fillWidth: true
-                        visible: (_resultData.contract_rows || []).length > 0
+                        visible: root.hasTaxFarmingContracts()
                         Text { text: "  包税合同收入"; color: "#2E251B"; font.pixelSize: 12; Layout.fillWidth: true }
                         Text {
                             text: {
@@ -215,6 +218,17 @@ Rectangle {
                         }
                     }
 
+                    // WP-E F6（D-12 #2）：工程合同付款行（contract_rows[type=public_works].payment 扣国库；事实已在 DTO）
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: root.publicWorksPayment() > 0
+                        Text { text: "  工程合同付款"; color: "#2E251B"; font.pixelSize: 12; Layout.fillWidth: true }
+                        Text {
+                            text: "-" + root.publicWorksPayment() + " Talents"
+                            color: "#C45151"; font.pixelSize: 12; font.bold: true
+                        }
+                    }
+
                     // Expense indemnities
                     Repeater {
                         model: {
@@ -288,7 +302,8 @@ Rectangle {
                                         var stip = modelData.stipend || 0
                                         var tax = modelData.tax || 0
                                         var total = modelData.total !== undefined ? modelData.total : (stip + tax)
-                                        return "拨款 +" + stip + " · 会员 +" + tax + " · 合计 +" + total
+                                        // WP-E F6（D-12 #4）：basis 标签——拨款 = 国库支出 / 会员税 = 派系金库
+                                        return "拨款(国库支出) +" + stip + " · 会员税(派系金库) +" + tax + " · 合计 +" + total
                                     }
                                     color: "#2C7A2C"
                                     font.pixelSize: 11
@@ -300,6 +315,24 @@ Rectangle {
                 }
             }
 
+                    // WP-E F6（D-12 #3）：insufficient 赔款 notice（未发生现金流，不入合计——经济服务 :108 实证）
+                    Repeater {
+                        model: {
+                            var rows = _resultData.indemnities || []
+                            var warn = []
+                            for (var i = 0; i < rows.length; i++) {
+                                if (rows[i].kind === "insufficient") warn.push(rows[i])
+                            }
+                            return warn
+                        }
+                        delegate: Text {
+                            Layout.fillWidth: true
+                            text: "⚠️ 赔款不足: " + modelData.name + "（国库无力支付）"
+                            color: "#9A2D0A"
+                            font.pixelSize: 11
+                            wrapMode: Text.Wrap
+                        }
+                    }
             }
 
             // Right: Private Land Income (right column)
@@ -383,7 +416,7 @@ Rectangle {
                 }
 
                 Text {
-                    text: "新余额: " + (_resultData.ending_treasury || sessionStore.treasury) + " Talents"
+                    text: "新余额: " + (_resultData.ending_treasury || 0) + " Talents"
                     color: "#2E251B"
                     font.pixelSize: 15
                     font.bold: true

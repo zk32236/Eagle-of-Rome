@@ -487,6 +487,29 @@ def test_resolve_then_allocation_stable_after_refresh():
     assert store.forumLandSaleTotal == 300
 
 
+def test_my_figures_dto_carries_can_buy_land():
+    """017：actor 选择行数据源 = DTO can_buy_land 权威布尔（QML 不重算资格）。
+
+    冻结设计 §B.2：选择面只读消费 my_figures.can_buy_land（forum_api 权威），
+    禁 QML 从 class/wealth 重建资格；无 eligible 时公地行禁用（enabledAction 依赖）。
+    """
+    from src.core.entities.player import Player, PlayerType
+    from src.core.entities.entities import Faction
+    from src.api import forum_api
+
+    state = _make_state()
+    state.add_player(Player(player_id="p1", faction_id="f1", player_type=PlayerType.HUMAN))
+    state.add_faction(Faction(id="f1", name="F1"))
+    _add_figure(state, 1, "Marcus", wealth=5000, faction_id="f1")
+    _add_figure(state, 2, "Poor Lucius", wealth=0, faction_id="f1")
+
+    view = forum_api.get_forum_view(state, "p1")
+    assert view["success"]
+    rows = {f["id"]: f for f in view["data"]["my_figures"]}
+    assert rows[1]["can_buy_land"] is True
+    assert rows[2]["can_buy_land"] is False
+
+
 def test_land_quantity_invalid_rejected():
     """L7：非法 quantity 经 API 拒绝 → 显式反馈（L11）。"""
     store, state, viewer_id = _make_forum_store()

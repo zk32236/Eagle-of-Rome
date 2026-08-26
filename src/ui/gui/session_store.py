@@ -490,6 +490,11 @@ class GuiSessionStore(QObject):
     def forumViewerLandRequests(self) -> list:
         return self._forum_view.get("viewer_land_requests", [])
 
+    # WP-E F6（D-07）：viewer 作用域 contract-bid 只读透传（零本地业务缓存）
+    @Property(list, notify=forumViewChanged)
+    def forumViewerContractBids(self) -> list:
+        return self._forum_view.get("viewer_contract_bids", [])
+
     @Property(list, notify=forumViewChanged)
     def forumLandAllocation(self) -> list:
         return self._forum_view.get("land_allocation", [])
