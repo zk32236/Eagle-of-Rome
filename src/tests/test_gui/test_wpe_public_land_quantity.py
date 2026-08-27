@@ -587,14 +587,13 @@ def test_render_public_land_row_and_dialog_exist():
     land_dialog = root.findChild(QObject, "landDialog")
     assert land_dialog is not None, "landDialog not found"
     # 打开对话框 → contentItem 创建 → 数量输入框存在（IntValidator 1..999 由 QML 声明）
-    from PySide6.QtCore import QMetaObject, Q_ARG, Qt
+    from PySide6.QtCore import QMetaObject, Qt
     forum_stage = root.findChild(QObject, "forumStage")
+    # WP-E R4（017）：openLandDialog 0 参化（选人移入 Dialog，入口无需传 figure）
     invoked = QMetaObject.invokeMethod(
         forum_stage,
         "openLandDialog",
         Qt.DirectConnection,
-        Q_ARG("QVariant", 1),
-        Q_ARG("QVariant", "Marcus"),
     )
     assert invoked is True, "openLandDialog not invokable"
     QGuiApplication.processEvents()

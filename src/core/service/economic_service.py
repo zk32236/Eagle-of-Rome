@@ -288,10 +288,18 @@ class EconomicService:
     def apply_military_maintenance(self) -> Dict[str, Any]:
         military_system = self.state.get_military_system()
         if not military_system:
-            return {"available": False, "total": 0, "success": True, "message": ""}
-        total_maintenance, _ = military_system.calculate_maintenance()
+            return {"available": False, "total": 0, "charged": 0, "shortfall": 0,
+                    "disbanded": 0, "success": True, "message": ""}
+        before = self.state.treasury
+        total_before, _ = military_system.calculate_maintenance()
         success, msg = military_system.apply_maintenance(verbose=False)
-        return {"available": True, "total": total_maintenance, "success": success, "message": msg}
+        # DA-4（WP-E-R5 / FC-R5-B）：实扣 = 国库实际变化（单一事实源，与 treasury_delta 同源）
+        charged = before - self.state.treasury
+        shortfall = max(0, charged - before)
+        disbanded = getattr(military_system, "_last_maintenance_disbanded", 0)
+        return {"available": True, "total": total_before, "charged": charged,
+                "shortfall": shortfall, "disbanded": disbanded,
+                "success": success, "message": msg}
 
     def apply_naval_maintenance(self) -> Dict[str, Any]:
         naval_system = getattr(self.state, "naval_system", None)

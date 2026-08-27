@@ -57,6 +57,18 @@ Rectangle {
         return total
     }
 
+    // WP-E R4（D-12）：派系津贴合计（faction_rows[*].stipend 扣国库，F6:317-318 权威）
+    function factionStipendTotal() {
+        var rows = _resultData.faction_rows || {}
+        var total = 0
+        for (var key in rows) {
+            if (rows.hasOwnProperty(key)) {
+                total += rows[key].stipend || 0
+            }
+        }
+        return total
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 10
@@ -196,13 +208,14 @@ Rectangle {
                         }
                     }
 
-                    // 军团维护费
+                    // 军团维护费（WP-E-R5：行值 = 实扣 charged；短款时追加缺口提示）
                     RowLayout {
                         Layout.fillWidth: true
-                        visible: _resultData.maintenance && _resultData.maintenance.military && _resultData.maintenance.military.total
+                        visible: _resultData.maintenance && _resultData.maintenance.military && _resultData.maintenance.military.charged
                         Text { text: "  军团维护费"; color: "#2E251B"; font.pixelSize: 12; Layout.fillWidth: true }
                         Text {
-                            text: "-" + (_resultData.maintenance && _resultData.maintenance.military ? _resultData.maintenance.military.total : 0) + " Talents"
+                            text: "-" + (_resultData.maintenance && _resultData.maintenance.military ? _resultData.maintenance.military.charged : 0) + " Talents"
+                                  + (_resultData.maintenance && _resultData.maintenance.military && _resultData.maintenance.military.shortfall > 0 ? "（缺口 " + _resultData.maintenance.military.shortfall + "）" : "")
                             color: "#C45151"; font.pixelSize: 12; font.bold: true
                         }
                     }
@@ -225,6 +238,18 @@ Rectangle {
                         Text { text: "  工程合同付款"; color: "#2E251B"; font.pixelSize: 12; Layout.fillWidth: true }
                         Text {
                             text: "-" + root.publicWorksPayment() + " Talents"
+                            color: "#C45151"; font.pixelSize: 12; font.bold: true
+                        }
+                    }
+
+                    // WP-E R4（D-12）：派系津贴（国库拨款）行 —— Σ faction_rows[*].stipend 扣国库（F6:317-318）
+                    RowLayout {
+                        objectName: "factionStipendRow"
+                        Layout.fillWidth: true
+                        visible: root.factionStipendTotal() > 0
+                        Text { text: "  派系津贴(国库拨款)"; color: "#2E251B"; font.pixelSize: 12; Layout.fillWidth: true }
+                        Text {
+                            text: "-" + root.factionStipendTotal() + " Talents"
                             color: "#C45151"; font.pixelSize: 12; font.bold: true
                         }
                     }
@@ -303,7 +328,7 @@ Rectangle {
                                         var tax = modelData.tax || 0
                                         var total = modelData.total !== undefined ? modelData.total : (stip + tax)
                                         // WP-E F6（D-12 #4）：basis 标签——拨款 = 国库支出 / 会员税 = 派系金库
-                                        return "拨款(国库支出) +" + stip + " · 会员税(派系金库) +" + tax + " · 合计 +" + total
+                                        return "拨款(国库支出·见国家支出) +" + stip + " · 会员税(派系金库) +" + tax + " · 合计 +" + total
                                     }
                                     color: "#2C7A2C"
                                     font.pixelSize: 11

@@ -25,6 +25,9 @@ class MilitarySystem:
     def __init__(self, state: 'GameState'):
         self.state = state
         self._legions: List[Legion] = []
+        # DA-3（WP-E-R5）：属性兜底——economic_service 经 getattr 读取；
+        # 运行期每回合由 apply_maintenance 入口清零（ODR-R5-G3-1）
+        self._last_maintenance_disbanded = 0
         self._initialize_legions()
 
     def _initialize_legions(self):
@@ -265,28 +268,50 @@ class MilitarySystem:
     def apply_maintenance(self, verbose: bool = True) -> Tuple[bool, str]:
         """扣除维护费，verbose 控制是否打印详细消息"""
         terms = TerminologyService.get()
-        total, breakdown = self.calculate_maintenance()
+        # DA-1（WP-E-R5）：入口清零，防 total==0 早退读陈旧 disbanded 计数（ODR-R5-G3-1）
+        self._last_maintenance_disbanded = 0
+        total_before, _ = self.calculate_maintenance()
 
-        if total == 0:
-            if verbose:
-                return True, f"No {terms.legion} maintenance needed"
-            else:
-                return True, ""
+        if total_before == 0:
+            # 无现役军团：不扣款，但强制日志（FC-R5-C：不静默）
+            self.state.log_event(
+                "军团维护费: 无现役军团（应扣 0）",
+                extra={"type": "legion_maintenance", "total": 0, "charged": 0,
+                       "shortfall": 0, "disbanded": 0, "treasury_after": self.state.treasury})
+            return True, (f"No {terms.legion} maintenance needed" if verbose else "")
 
-        if self.state.treasury < total:
-            # 国库不足，强制解散部分军团
-            shortfall = total - self.state.treasury
-            disbanded = self._auto_disband_for_funds(shortfall)
-            if verbose:
-                return False, f"Treasury shortfall! {disbanded} {terms.legion}(s) disbanded"
-            else:
-                return False, ""
+        treasury_before = self.state.treasury
+        disbanded = 0
+        if treasury_before < total_before:
+            # 短款（FC-R5-A）：① 先裁军（非老兵+未指派，真实 savings）→ ② 重算应扣 → ③ 剩余差额照扣（国库可负）
+            disbanded = self._auto_disband_for_funds(total_before - treasury_before)
+            total_after, _ = self.calculate_maintenance()
         else:
-            self.state.treasury -= total
-            if verbose:
-                return True, f"Paid {total} {terms.currency} for {terms.legion} maintenance"
-            else:
-                return True, ""
+            # 足额：全扣（现状不变）
+            total_after = total_before
+
+        charged = total_after
+        self.state.treasury -= charged
+        shortfall = max(0, charged - treasury_before)
+        self._last_maintenance_disbanded = disbanded
+
+        # FC-R5-C：无条件强制日志（verbose=False 亦不静默；修复 G1 Q3 无 maintenance 事件）
+        self.state.log_event(
+            f"军团维护费结算: 应扣 {total_before} 实扣 {charged} 缺口 {shortfall} 解散 {disbanded}",
+            extra={"type": "legion_maintenance",
+                   "total": total_before, "charged": charged,
+                   "shortfall": shortfall, "disbanded": disbanded,
+                   "treasury_after": self.state.treasury})
+
+        if verbose:
+            msg = f"Paid {charged} {terms.currency} for {terms.legion} maintenance"
+            if shortfall > 0:
+                msg += f"（缺口 {shortfall}）"
+            if disbanded > 0:
+                msg += f"（解散 {disbanded} 军团）"
+        else:
+            msg = ""
+        return True, msg
 
     def _auto_disband_for_funds(self, shortfall: int) -> int:
         """自动解散军团以节省开支"""
@@ -301,9 +326,11 @@ class MilitarySystem:
         for legion in candidates:
             if savings >= shortfall:
                 break
-            legion.disband()
-            savings += 2  # 节省的维护费
-            disbanded += 1
+            # DA-2（WP-E-R5 / FC-R5-E）：savings 用真实维护费（非硬编码 2），disband 成功才累计
+            cost = legion.get_maintenance_cost(self.state)
+            if legion.disband():
+                savings += cost
+                disbanded += 1
 
         return disbanded
 

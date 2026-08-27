@@ -19,6 +19,12 @@ Rectangle {
     property int landDialogFigureId: 0
     property string landDialogFigureName: ""
     property string landDialogAmount: ""
+    // WP-E R4（D-07）：竞标 Dialog 状态载体
+    property int bidDialogContractId: 0
+    property int bidDialogFigureId: 0
+    property string bidDialogFigureName: ""
+    property string bidDialogContractName: ""
+    property string bidDialogAmount: ""
 
     // WP-E F5：viewer 对指定 figure 是否已有 pending 认购请求（可追踪，017-04）
     function viewerHasLandPending(figureId) {
@@ -69,6 +75,22 @@ Rectangle {
         return ""
     }
 
+    // WP-E R4（D-07）：竞标骑士选择器数据源 —— DTO can_bid（eques）权威过滤，QML 不发明资格规则
+    function equesBidOptions() {
+        var figures = sessionStore.forumMyFigures || []
+        var opts = []
+        for (var i = 0; i < figures.length; i++) {
+            var f = figures[i]
+            if (f.can_bid) {
+                opts.push({
+                    id: f.id,
+                    label: f.name + " · " + (f.class_label || "") + " · 财富 " + f.wealth
+                })
+            }
+        }
+        return opts
+    }
+
     // WP-E F6（D-07）：viewer 对指定合同是否已出价（持久 pending 态载体，只读 DTO）
     function viewerBidForContract(contractId) {
         var bids = sessionStore.forumViewerContractBids || []
@@ -80,15 +102,28 @@ Rectangle {
         return null
     }
 
-    function openLandDialog(figureId, figureName) {
-        root.landDialogFigureId = figureId
-        root.landDialogFigureName = figureName
+    function openLandDialog() {
+        // WP-E R4（017）：选人移入 Dialog；每次打开重置选中（防 stale/跨年残留）
+        var opts = root.landActorOptions()
+        root.landDialogFigureId = opts.length > 0 ? opts[0].id : 0
+        root.landDialogFigureName = opts.length > 0 ? opts[0].label : ""
         root.landDialogAmount = ""
+        if (landActorDialogCombo) {
+            landActorDialogCombo.currentIndex = 0
+        }
         landDialog.open()
         landAmountField.forceActiveFocus()
     }
 
     function confirmLandDialog() {
+        if (root.landDialogFigureId <= 0) {
+            showFeedback("error", "请选择认购人物。")
+            return
+        }
+        if (root.viewerHasLandPending(root.landDialogFigureId)) {
+            showFeedback("error", "该人物本回合已提交公地认购请求。")
+            return
+        }
         var amount = parseInt(root.landDialogAmount, 10)
         if (isNaN(amount) || amount <= 0) {
             showFeedback("error", "请输入有效的认购数量（1~999）。")
@@ -96,6 +131,36 @@ Rectangle {
         }
         landDialog.close()
         root.callAndReport(sessionStore.doBuyLand(root.landDialogFigureId, amount))
+    }
+
+    // WP-E R4（D-07）：竞标 Dialog 开/关 + 权威提交（复用 doPlaceBid 权威链）
+    function openBidDialog(contractId, contractName, baseCost) {
+        var opts = root.equesBidOptions()
+        root.bidDialogContractId = contractId
+        root.bidDialogContractName = contractName
+        root.bidDialogFigureId = opts.length > 0 ? opts[0].id : 0
+        root.bidDialogFigureName = opts.length > 0 ? opts[0].label : ""
+        root.bidDialogAmount = String(baseCost)
+        if (bidActorCombo) {
+            bidActorCombo.currentIndex = 0
+        }
+        bidDialog.open()
+        bidAmountField.forceActiveFocus()
+        bidAmountField.selectAll()
+    }
+
+    function confirmBidDialog() {
+        if (root.bidDialogFigureId <= 0) {
+            showFeedback("error", "请选择竞标骑士。")
+            return
+        }
+        var amount = parseInt(root.bidDialogAmount, 10)
+        if (isNaN(amount) || amount <= 0) {
+            showFeedback("error", "请输入有效的出价金额。")
+            return
+        }
+        bidDialog.close()
+        root.callAndReport(sessionStore.doPlaceBid(root.bidDialogFigureId, root.bidDialogContractId, amount))
     }
 
     function showFeedback(type, message) {
@@ -618,8 +683,8 @@ Rectangle {
                                         if (bid) {
                                             return "已出价 " + bid.amount + " T（待结算）"
                                         }
-                                        if (modelData.can_bid && root.selectedOwnFigureId > 0) {
-                                            return root.selectedOwnFigureName() + " · 基准出价 " + modelData.base_cost + " T"
+                                        if (modelData.can_bid && root.equesBidOptions().length > 0) {
+                                            return "基准出价 " + modelData.base_cost + " T"
                                         }
                                         return modelData.status_label || ""
                                     }
@@ -628,9 +693,9 @@ Rectangle {
                                         return modelData.can_bid ? "竞标" : "待预算"
                                     }
                                     enabledAction: root.marketUnlocked && modelData.can_bid && sessionStore.canExecuteForum
-                                        && root.selectedOwnFigureId > 0
+                                        && root.equesBidOptions().length > 0
                                         && !root.viewerBidForContract(modelData.id)
-                                    onTriggered: root.callAndReport(sessionStore.doPlaceBid(root.selectedOwnFigureId, modelData.id, modelData.base_cost))
+                                    onTriggered: root.openBidDialog(modelData.id, modelData.name, modelData.base_cost)
                                 }
                             }
 
@@ -643,47 +708,6 @@ Rectangle {
                             }
 
                             SectionTitle { title: "🏡 公地认购" }
-
-                            // WP-E F6（017）：actor 显式选择面 —— 公地认购块顶部内嵌窄选择行，
-                            // 复用 selectedOwnFigureId（禁双选择体系）；DTO can_buy_land 权威
-                            RowLayout {
-                                visible: root.landActorOptions().length > 0
-                                Layout.fillWidth: true
-                                Layout.leftMargin: 12
-                                Layout.rightMargin: 12
-                                Layout.topMargin: 2
-                                spacing: 8
-
-                                Text {
-                                    text: "认购人物"
-                                    color: "#766652"
-                                    font.pixelSize: 11
-                                }
-
-                                ComboBox {
-                                    id: landActorCombo
-                                    objectName: "landActorCombo"
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 24
-                                    model: root.landActorOptions()
-                                    textRole: "label"
-                                    onActivated: root.selectedOwnFigureId = root.landActorOptions()[currentIndex].id
-                                    Component.onCompleted: {
-                                        var opts = root.landActorOptions()
-                                        if (opts.length === 0) { return }
-                                        var current = root.selectedOwnFigureId
-                                        var found = false
-                                        for (var i = 0; i < opts.length; i++) {
-                                            if (opts[i].id === current) { currentIndex = i; found = true; break }
-                                        }
-                                        if (!found) {
-                                            // 默认 figure 无认购资格 → 同步首个可认购人物（选择面与提交身份一致）
-                                            currentIndex = 0
-                                            root.selectedOwnFigureId = opts[0].id
-                                        }
-                                    }
-                                }
-                            }
 
                             Text {
                                 visible: sessionStore.forumLandSaleTotal > 0 && root.landActorOptions().length === 0
@@ -703,9 +727,6 @@ Rectangle {
                                     ? ("本回合出售 " + sessionStore.forumLandSaleTotal + "C 国家公地")
                                     : "本回合暂无可认购公地"
                                 value: {
-                                    if (root.viewerHasLandPending(root.selectedOwnFigureId)) {
-                                        return "已提交认购 " + root.viewerPendingLandAmount(root.selectedOwnFigureId) + " C（待结算）"
-                                    }
                                     if (sessionStore.forumLandQuota > 0) {
                                         return "剩余 " + sessionStore.forumLandQuota + " C 可购"
                                     }
@@ -719,8 +740,7 @@ Rectangle {
                                     && sessionStore.forumLandQuota > 0
                                     && root.landActorOptions().length > 0
                                     && !sessionStore.forumResolved
-                                    && !root.viewerHasLandPending(root.selectedOwnFigureId)
-                                onTriggered: root.openLandDialog(root.selectedOwnFigureId, root.selectedOwnFigureName())
+                                onTriggered: root.openLandDialog()
                             }
 
                             // WP-E F5：resolve 后结构化分配行（E-11）
@@ -978,12 +998,27 @@ Rectangle {
                 Text { text: sessionStore.forumLandQuota + " C"; color: "#2E251B"; font.pixelSize: 12; font.bold: true }
             }
 
-            // WP-E F6（017）：对话框 actor 身份（openLandDialog 传名，禁空串）
+            // WP-E R4（017）：对话框内 actor 选择器（DTO can_buy_land 权威过滤，禁 QML 重算资格）
             RowLayout {
                 Layout.fillWidth: true
+                spacing: 8
 
-                Text { text: "认购人物"; color: "#766652"; font.pixelSize: 12; Layout.fillWidth: true }
-                Text { text: root.landDialogFigureName || "—"; color: "#2E251B"; font.pixelSize: 12; font.bold: true }
+                Text { text: "认购人物"; color: "#766652"; font.pixelSize: 12 }
+                ComboBox {
+                    id: landActorDialogCombo
+                    objectName: "landActorDialogCombo"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 24
+                    model: root.landActorOptions()
+                    textRole: "label"
+                    onActivated: {
+                        var opts = root.landActorOptions()
+                        if (currentIndex >= 0 && currentIndex < opts.length) {
+                            root.landDialogFigureId = opts[currentIndex].id
+                            root.landDialogFigureName = opts[currentIndex].label
+                        }
+                    }
+                }
             }
 
             Text { text: "输入认购数量:"; color: "#766652"; font.pixelSize: 12 }
@@ -1030,6 +1065,118 @@ Rectangle {
                 Button {
                     text: "关闭"
                     onClicked: landDialog.close()
+                }
+            }
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // WP-E R4（D-07）：竞标 Dialog（eques 选择器 + 出价金额 + 确认/关闭，仿 landDialog 模式）
+    // 资格 = DTO can_bid（eques）+ API 复检（F2:339-341）；金额范围由 Core 权威校验（F2:344-355）
+    // ════════════════════════════════════════════════════════════════════
+    Dialog {
+        id: bidDialog
+        objectName: "bidDialog"
+        modal: true
+        focus: true
+        dim: true
+        width: Math.min(root.width - 80, 560)
+        x: Math.max(0, (root.width - width) / 2)
+        y: Math.max(0, (root.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape
+        background: Rectangle {
+            color: "#FFF9EC"
+            border.color: "#BD8F52"
+            border.width: 1
+            radius: 8
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 10
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Text {
+                    text: "📜 竞标合同"
+                    color: "#84250A"
+                    font.pixelSize: 15
+                    font.bold: true
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                }
+
+                Button {
+                    text: "X"
+                    flat: true
+                    onClicked: bidDialog.close()
+                }
+            }
+
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#D9C29B" }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                Text { text: "合同"; color: "#766652"; font.pixelSize: 12; Layout.fillWidth: true }
+                Text { text: root.bidDialogContractName || "—"; color: "#2E251B"; font.pixelSize: 12; font.bold: true }
+            }
+
+            // 竞标骑士选择器（DTO can_bid 权威过滤）
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Text { text: "竞标骑士"; color: "#766652"; font.pixelSize: 12 }
+                ComboBox {
+                    id: bidActorCombo
+                    objectName: "bidActorCombo"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 24
+                    model: root.equesBidOptions()
+                    textRole: "label"
+                    onActivated: {
+                        var opts = root.equesBidOptions()
+                        if (currentIndex >= 0 && currentIndex < opts.length) {
+                            root.bidDialogFigureId = opts[currentIndex].id
+                            root.bidDialogFigureName = opts[currentIndex].label
+                        }
+                    }
+                }
+            }
+
+            Text { text: "输入出价金额:"; color: "#766652"; font.pixelSize: 12 }
+
+            TextField {
+                id: bidAmountField
+                objectName: "bidAmountField"
+                Layout.fillWidth: true
+                text: root.bidDialogAmount
+                selectByMouse: true
+                inputMethodHints: Qt.ImhDigitsOnly
+                validator: IntValidator { bottom: 1; top: 99999 }
+                onTextChanged: root.bidDialogAmount = text
+                Keys.onReturnPressed: root.confirmBidDialog()
+                Keys.onEnterPressed: root.confirmBidDialog()
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 4
+
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    text: "确认"
+                    highlighted: true
+                    enabled: root.bidDialogAmount.length > 0
+                    onClicked: root.confirmBidDialog()
+                }
+
+                Button {
+                    text: "关闭"
+                    onClicked: bidDialog.close()
                 }
             }
         }

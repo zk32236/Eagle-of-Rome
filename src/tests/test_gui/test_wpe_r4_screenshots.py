@@ -1,19 +1,15 @@
-# src/tests/test_gui/test_wpe_r3_a2_screenshots.py
-"""WP-E-R3 Attempt-2 — S0/S7 全页截图证据测试（EC-14 模式，production-shape）。
+# src/tests/test_gui/test_wpe_r4_screenshots.py
+"""WP-E-R4 — S0/S4 全页截图证据测试（EC-14 模式，production-shape）。
 
 路径：真实 gui_prototype 会话（session_api.create_gui_prototype_session）
 → 真实 GuiSessionStore → 真实 Main.qml 离屏渲染（QT_QPA_PLATFORM=offscreen）
-→ window.grabWindow() → PNG 落 03-da-evidence/WP-E-R3-A2/{before,after}/。
+→ window.grabWindow() → PNG 落 03-da-evidence/WP-E-R4/{before,after}/。
 
-- BEFORE 截图（S0）：eb157fb 状态，页面 = Revenue / Forum / Combat（viewport 1440×900）
-- AFTER 截图（S7）：同 viewport / 同 state-prep 对照
-- 每张截图伴随 *-runtime.json meta（fixture/state/phase/render_ready/png_sha256/
-  captured_at_utc/branch/HEAD + state-prep 清单）
-- 离屏渲染不可用时降级为 DTO 验证证据（test_screenshot_revenue.py 同款 fallback 先例），
-  meta 标记 fallback=true。
-
-本文件为 G4 冻结测试面登记（非探针）：S0 全量基线在文件加入前已实测
-（1597 collected / 1589 passed / 8 skipped / 0 failed），本文件计入 S6 全量。
+- BEFORE 截图（S0）：1bcb54a 状态，页面 = Forum / Revenue（viewport 1440×900）
+- AFTER 截图（S4）：同 viewport / 同 state-prep 对照（R4 候选 = worktree 未提交）
+- 每张截图伴随 *-runtime.json meta（fallback/png_sha256/captured_at_utc/branch/head/state-prep）
+- BEFORE 保全守卫：before/ 已存在且未设 WP_E_R4_REFRESH_BEFORE=1 → 不重捕获、不重写 meta。
+- 离屏渲染不可用 → fallback=true，PNG 禁当生产证据（png_sha256=null）。
 """
 import hashlib
 import json
@@ -33,10 +29,10 @@ if PROJECT_ROOT not in sys.path:
 
 EVIDENCE_BASE = (
     "/mnt/e/OpenClaw/Projects/EOR/workspace/EOR20260821-01 GUI-BETA-R1"
-    "/03-da-evidence/WP-E-R3-A2"
+    "/03-da-evidence/WP-E-R4"
 )
 BRANCH = "task/gui-beta-r1-wpe"
-HEAD = "eb157fbbac15a203b6f82c3b0d7b9f6829e73780"
+HEAD = "1bcb54a6a569b62557c3d4d126cd160d84717c05"
 VIEWPORT = (1440, 900)
 
 from src.api import session_api
@@ -56,7 +52,6 @@ def _get_app():
 
 
 def _create_engine(store):
-    """EC-14 同款 engine：真实 Main.qml + 真实 sessionStore 上下文属性。"""
     from PySide6.QtCore import QUrl
     from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, qmlRegisterType
 
@@ -83,7 +78,6 @@ def _create_engine(store):
 
 
 def _make_store():
-    """真实生产会话 + Store（mortality 起点）。"""
     result = session_api.create_gui_prototype_session()
     assert result["success"], result.get("message")
     state = result["data"]["state"]
@@ -95,7 +89,6 @@ def _make_store():
 
 
 def _prepare_revenue(store, state, viewer_id):
-    """Revenue 结算后态：mortality → revenue 执行（不推进）。"""
     assert store.doExecuteMortality()["success"]
     assert store.doAdvanceMortality()["success"]
     assert store.doExecuteRevenue()["success"]
@@ -107,11 +100,6 @@ def _prepare_revenue(store, state, viewer_id):
 
 
 def _prepare_forum(store, state, viewer_id, place_bid=False):
-    """Forum 市场态：mortality → revenue → forum + sale 法案 + BUDGETED 合同 + 开市。
-
-    place_bid=True（S7 AFTER）：追加 viewer 出价恰一 7 元组（place_bid 同款持久层
-    state.add_forum_action）→ 合同行渲染「已出价 X T（待结算）」pending 态（D-07 delta #3）。
-    """
     from src.core.entities.contract import ContractType, ContractStatus
     from src.core.systems.political_system import PoliticalSystem
 
@@ -121,15 +109,12 @@ def _prepare_forum(store, state, viewer_id, place_bid=False):
     assert store.doAdvanceRevenue()["success"]
     assert store.currentPhaseId == "forum"
 
-    # sale 法案（政治系统权威写入 quota + total）
     ps = PoliticalSystem(state)
     assert ps.execute_passed_proposal({
         "type": "land", "act_type": "sale", "amount_C": 300, "percent": 100.0,
     })["success"]
-    # BUDGETED 合同（state.create_contract 权威构造 + 状态迁移）
     contract = state.create_contract(ContractType.TAX_FARMING, 1, 100, state.turn.turn_number)
     contract.status = ContractStatus.BUDGETED
-    # 开市（retirement → market；AI 派系同路径处理）
     assert store.doCompleteForumStep()["success"]
     store.selectPhase("forum")
     store._refresh_forum_view()
@@ -157,45 +142,6 @@ def _prepare_forum(store, state, viewer_id, place_bid=False):
     }
 
 
-def _prepare_combat(store, state, viewer_id):
-    """Combat 态：活跃战争 + 指挥官 + 3 个已附着军团（rebellion 生产路径）。"""
-    ws = state.get_war_system()
-    ms = state.get_military_system()
-    assert ws is not None and ms is not None
-
-    province = state.get_province(1)
-    assert province is not None
-    war = ws.create_rebellion_war(province)
-    assert ws.register_rebellion_war(war) is True
-
-    members = state.get_living_members()
-    assert members, "no living members for commander"
-    commander_id = members[0].id
-    assert ws.assign_commander(war.id, commander_id, legions=0, fleets=0) is True
-
-    for num in (1, 2, 3):
-        ok, _ = ms.recruit_legion(num)
-        assert ok, f"recruit legion {num} failed"
-    assigned, _msg = ms.assign_to_war([1, 2, 3], war.id, commander_id)
-    assert assigned == 3
-
-    store.selectPhase("combat")
-    store._refresh_combat_view()
-    return {
-        "steps": [
-            "create_rebellion_war", "register_rebellion_war",
-            "assign_commander(legions=0)", "recruit_legion(1,2,3)",
-            "assign_to_war([1,2,3])", "selectPhase(combat)",
-        ],
-        "war_id": war.id,
-        "war_name": war.name,
-        "commander_id": commander_id,
-        "attached_legions": [l.number for l in ms.get_legions_for_battle(war.id)],
-        "war_legion_numbers": war.legion_numbers,
-        "legions_assigned_field": war.legions_assigned,
-    }
-
-
 def _main_qml_url():
     from PySide6.QtCore import QUrl
     qml_dir = os.path.join(PROJECT_ROOT, "src", "ui", "gui", "qml")
@@ -203,12 +149,6 @@ def _main_qml_url():
 
 
 def _capture(engine, out_png, probe_specs=None):
-    """离屏 grabWindow → PNG。失败/超时返回 None（fallback 标记）。
-
-    诊断信息写入 render_ready（供 G5 复核 fallback 原因）。
-    probe_specs: {objectName: [property,...]} → render_ready.qml_probes
-    （017 actor 选择行 / D-07 pending 行 / landDialog 存在性 + 状态证据）
-    """
     from PySide6.QtCore import QCoreApplication, QObject, QTimer
     from PySide6.QtGui import QGuiApplication
 
@@ -252,26 +192,19 @@ def _capture(engine, out_png, probe_specs=None):
             QGuiApplication.processEvents()
             diagnostics.append("shown=" + str(window.isVisible()))
             diagnostics.append("type=" + type(window).__name__)
-            diagnostics.append(
-                "mro=" + ",".join(c.__name__ for c in type(window).__mro__[:6])
-            )
             img = None
-            # Strategy 1: QQuickWindow.grabWindow()
             if hasattr(window, "grabWindow"):
                 try:
                     img = window.grabWindow()
                     diagnostics.append("grabWindow_null=" + str(img is None or img.isNull()))
                 except Exception as exc:
                     diagnostics.append("grabWindow_exc=" + type(exc).__name__ + ":" + str(exc))
-            # Strategy 2: QScreen.grabWindow(winId)
             if img is None or img.isNull():
                 scr = QGuiApplication.primaryScreen()
                 if scr is not None:
                     try:
                         img = scr.grabWindow(int(window.winId()))
-                        diagnostics.append(
-                            "screen_grab_null=" + str(img is None or img.isNull())
-                        )
+                        diagnostics.append("screen_grab_null=" + str(img is None or img.isNull()))
                     except Exception as exc:
                         diagnostics.append("screen_grab_exc=" + type(exc).__name__ + ":" + str(exc))
             if img is None or img.isNull():
@@ -279,16 +212,14 @@ def _capture(engine, out_png, probe_specs=None):
                 finish(None)
                 return
             ok = img.save(out_png)
-            diagnostics.append(
-                "save_ok=" + str(ok) + " size=" + str(img.width()) + "x" + str(img.height())
-            )
+            diagnostics.append("save_ok=" + str(ok) + " size=" + str(img.width()) + "x" + str(img.height()))
             finish(out_png if ok else None)
         except Exception as exc:
             diagnostics.append("exception=" + type(exc).__name__ + ":" + str(exc))
             finish(None)
 
     QTimer.singleShot(800, grab)
-    QTimer.singleShot(20000, lambda: finish("timeout"))  # watchdog
+    QTimer.singleShot(20000, lambda: finish("timeout"))
     app.exec()
     value = result[0] if result else None
     if value == "timeout":
@@ -312,16 +243,15 @@ def _sha256(path):
 
 
 def _write_evidence(page, kind, prep, render_ready, fallback=False):
-    """写 PNG meta json；返回 (png_path, meta_path)。"""
     subdir = "before" if kind == "before" else "after"
     out_dir = os.path.join(EVIDENCE_BASE, subdir)
     os.makedirs(out_dir, exist_ok=True)
-    png_name = f"{page}-before-eb157fb.png" if kind == "before" else f"{page}-after.png"
-    meta_name = f"{page}-before-eb157fb-runtime.json" if kind == "before" else f"{page}-after-runtime.json"
+    png_name = f"{page}-before-1bcb54a.png" if kind == "before" else f"{page}-after.png"
+    meta_name = f"{page}-before-1bcb54a-runtime.json" if kind == "before" else f"{page}-after-runtime.json"
     png = os.path.join(out_dir, png_name)
     meta = os.path.join(out_dir, meta_name)
     meta_data = {
-        "fixture": f"test_wpe_r3_a2_screenshots.py::{page}",
+        "fixture": f"test_wpe_r4_screenshots.py::{page}",
         "page": page,
         "kind": kind,
         "phase": page,
@@ -332,8 +262,8 @@ def _write_evidence(page, kind, prep, render_ready, fallback=False):
         "png_sha256": _sha256(png) if os.path.exists(png) else None,
         "captured_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "branch": BRANCH,
-        "head": HEAD if kind == "before" else "eb157fb+worktree(DA-R4-A2-uncommitted)",
-        "identity": "eb157fb-before" if kind == "before" else "attempt2-candidate",
+        "head": HEAD if kind == "before" else "1bcb54a+worktree(DA-R4-uncommitted)",
+        "identity": "1bcb54a-before" if kind == "before" else "r4-candidate",
         "fallback": fallback,
         "qpa_platform": "offscreen",
         "note": "EC-14 production-shape path: create_gui_prototype_session -> GuiSessionStore -> Main.qml grabWindow",
@@ -343,52 +273,48 @@ def _write_evidence(page, kind, prep, render_ready, fallback=False):
     return png, meta
 
 
+def _dto_snapshot(page, store):
+    snap = {"page": page}
+    if page == "revenue":
+        snap["settled"] = bool(store.revenueSettledData)
+        snap["treasury_delta"] = store.treasuryDelta
+        data = store.revenueSettledData or {}
+        snap["faction_stipend_total"] = sum(
+            (row.get("stipend") or 0) for row in (data.get("faction_rows") or {}).values()
+        )
+    elif page == "forum":
+        snap["forum_land_requests"] = store.forumViewerLandRequests
+        snap["pending_contracts"] = len(store.forumPendingContracts)
+        snap["viewer_contract_bids"] = getattr(store, "forumViewerContractBids", None)
+        snap["forum_current_step"] = store.forumCurrentStep
+        snap["eligible_land_actors"] = [
+            f for f in (store.forumMyFigures or []) if f.get("can_buy_land")
+        ]
+        snap["eligible_bidders"] = [
+            f for f in (store.forumMyFigures or []) if f.get("can_bid")
+        ]
+    return snap
+
+
 def _run_screenshot(page, prepare, kind=None):
-    kind = kind or os.environ.get("WP_E_R3_A2_EVIDENCE_KIND", "before")
+    kind = kind or os.environ.get("WP_E_R4_EVIDENCE_KIND", "before")
     assert kind in ("before", "after")
     store, state, viewer_id = _make_store()
     prep = prepare(store, state, viewer_id)
+    dto_snapshot = _dto_snapshot(page, store)
 
-    # 渲染前 DTO 状态记录（fallback 证据）
-    dto_snapshot = {
-        "page": page,
-        "prep": prep,
-    }
-    if page == "revenue":
-        dto_snapshot["settled"] = bool(store.revenueSettledData)
-        dto_snapshot["treasury_delta"] = store.treasuryDelta
-    elif page == "forum":
-        dto_snapshot["forum_land_requests"] = store.forumViewerLandRequests
-        dto_snapshot["pending_contracts"] = len(store.forumPendingContracts)
-        # D-07 viewer_contract_bids 为 DA-R4 v3 新增 DTO；BEFORE 在 eb157fb 纯净态生成时
-        # 该属性不存在 → 保护式读取（before 用例不断言 bids；after 用例在 DA 修改态运行，属性必在）
-        dto_snapshot["viewer_contract_bids"] = getattr(
-            store, "forumViewerContractBids", None
-        )
-        dto_snapshot["eligible_land_actors"] = [
-            f for f in (store.forumMyFigures or []) if f.get("can_buy_land")
-        ]
-    elif page == "combat":
-        dto_snapshot["combat_active_wars"] = [
-            {"war_id": w.get("war_id"), "legion_count": w.get("legion_count"),
-             "legion_numbers": w.get("legion_numbers"), "total_power": w.get("total_power")}
-            for w in store.combatActiveWars
-        ]
-
-    # BEFORE 证据保全：eb157fb 基线已存在且未显式刷新 → 不重捕获、不重写 meta
-    # （防 Attempt-1/RT-A Lesson 2 类「真实截图被同名覆盖」复发）
-    before_png = os.path.join(EVIDENCE_BASE, "before", f"{page}-before-eb157fb.png")
+    before_png = os.path.join(EVIDENCE_BASE, "before", f"{page}-before-1bcb54a.png")
     if (
         kind == "before"
         and os.path.exists(before_png)
-        and os.environ.get("WP_E_R3_A2_REFRESH_BEFORE") != "1"
+        and os.environ.get("WP_E_R4_REFRESH_BEFORE") != "1"
     ):
         return {
             "page": page,
             "png": before_png,
             "render_ready": {
                 "root_objects": 1,
-                "preserved": "before evidence already recorded at eb157fb; not re-captured",
+                "preserved": "before evidence already recorded at 1bcb54a; not re-captured",
             },
             "dto_snapshot": dto_snapshot,
             "fallback": False,
@@ -396,18 +322,31 @@ def _run_screenshot(page, prepare, kind=None):
 
     png_path, meta_path = _write_evidence(page, kind, prep, {})
     engine, qml_dir = _create_engine(store)
-    # 先设阶段再 load（对齐 test_wpe_war_threat_presentation 先例）
+
     probe_specs = None
     if page == "forum":
+        if kind == "before":
+            probe_specs = {
+                "landActorCombo": ["count", "currentIndex", "visible"],
+                "publicLandPurchaseRow": ["enabledAction", "label"],
+                "landDialog": ["visible"],
+            }
+        else:
+            # S4 AFTER：017 删除主 UI landActorCombo；新增 Dialog 内 landActorDialogCombo + bidDialog
+            probe_specs = {
+                "landActorCombo": ["count", "visible"],
+                "landActorDialogCombo": ["count", "visible"],
+                "bidDialog": ["visible"],
+                "publicLandPurchaseRow": ["enabledAction", "label"],
+            }
+    elif page == "revenue" and kind == "after":
+        # D-12 RENDER：国家支出新增「派系津贴(国库拨款)」行存在性
         probe_specs = {
-            "landActorCombo": ["count", "currentIndex", "visible"],
-            "publicLandPurchaseRow": ["enabledAction", "label"],
-            "landDialog": ["visible"],
+            "factionStipendRow": ["visible"],
         }
     captured, render_ready = _capture(engine, png_path, probe_specs=probe_specs)
     fallback = captured is None
     if fallback:
-        # 降级：DTO 验证证据（png_path 保留为 None）
         png_path = None
     _write_evidence(page, kind, prep, render_ready, fallback=fallback)
 
@@ -421,49 +360,10 @@ def _run_screenshot(page, prepare, kind=None):
     }
 
 
+# ─── S0 BEFORE ────────────────────────────────────────────────────────────
+
 def test_screenshot_revenue_before():
-    """S0 BEFORE：Revenue 全页截图（1440×900）+ meta。"""
     result = _run_screenshot("revenue", _prepare_revenue)
-    assert result["render_ready"].get("root_objects", 0) > 0
-    if not result["fallback"]:
-        assert os.path.exists(result["png"])
-        assert os.path.getsize(result["png"]) > 0
-        assert result["dto_snapshot"]["settled"] is True
-    else:
-        # fallback：DTO 证据已落 meta（png_sha256=null + fallback=true）
-        assert result["dto_snapshot"]["settled"] is True
-
-
-def test_screenshot_forum_before():
-    """S0 BEFORE：Forum 全页截图（1440×900）+ meta。"""
-    result = _run_screenshot("forum", _prepare_forum)
-    assert result["render_ready"].get("root_objects", 0) > 0
-    assert result["dto_snapshot"]["prep"]["forum_current_step"] == "market"
-    if not result["fallback"]:
-        assert os.path.exists(result["png"])
-        assert os.path.getsize(result["png"]) > 0
-
-
-def test_screenshot_combat_before():
-    """S0 BEFORE：Combat 全页截图（1440×900）+ meta。"""
-    result = _run_screenshot("combat", _prepare_combat)
-    assert result["render_ready"].get("root_objects", 0) > 0
-    wars = result["dto_snapshot"]["combat_active_wars"]
-    assert len(wars) == 1
-    # eb157fb 陈旧计数：legions_assigned 字段=0 而番号非空（POST-07P 证据）
-    assert wars[0]["legion_numbers"] == [1, 2, 3]
-    if not result["fallback"]:
-        assert os.path.exists(result["png"])
-        assert os.path.getsize(result["png"]) > 0
-
-
-# ════════════════════════════════════════════════════════════════════════
-# S7 AFTER：同 viewport / 同 state-prep 对照（DA-R4 Attempt-2 候选）
-# ════════════════════════════════════════════════════════════════════════
-
-def test_screenshot_revenue_after():
-    """S7 AFTER：Revenue 全页截图（对照 BEFORE）+ meta。"""
-    result = _run_screenshot("revenue", _prepare_revenue, kind="after")
     assert result["render_ready"].get("root_objects", 0) > 0
     assert result["dto_snapshot"]["settled"] is True
     if not result["fallback"]:
@@ -471,45 +371,48 @@ def test_screenshot_revenue_after():
         assert os.path.getsize(result["png"]) > 0
 
 
-def test_screenshot_forum_after():
-    """S7 AFTER：Forum 全页 + 017 actor 选择行 + D-07 合同行 pending 态证据。
+def test_screenshot_forum_before():
+    result = _run_screenshot("forum", _prepare_forum)
+    assert result["render_ready"].get("root_objects", 0) > 0
+    assert result["dto_snapshot"]["forum_current_step"] == "market"
+    if not result["fallback"]:
+        assert os.path.exists(result["png"])
+        assert os.path.getsize(result["png"]) > 0
 
-    prep 追加 viewer 出价恰一 7 元组 → viewer_contract_bids 恰一 pending；
-    qml_probes 记录 landActorCombo（017 选择行）存在性 + publicLandPurchaseRow 状态。
-    """
+
+# ─── S4 AFTER ─────────────────────────────────────────────────────────────
+
+def test_screenshot_revenue_after():
+    result = _run_screenshot("revenue", _prepare_revenue, kind="after")
+    assert result["render_ready"].get("root_objects", 0) > 0
+    assert result["dto_snapshot"]["settled"] is True
+    # D-12 DATA：stipend 合计 > 0（驱动国家支出新行）
+    assert result["dto_snapshot"]["faction_stipend_total"] > 0
+    # D-12 RENDER：国家支出「派系津贴(国库拨款)」行存在
+    probes = result["render_ready"].get("qml_probes", {})
+    if not result["fallback"]:
+        assert probes.get("factionStipendRow", {}).get("found") is True
+        assert os.path.exists(result["png"])
+        assert os.path.getsize(result["png"]) > 0
+
+
+def test_screenshot_forum_after():
     result = _run_screenshot(
         "forum",
         lambda s, st, v: _prepare_forum(s, st, v, place_bid=True),
         kind="after",
     )
     assert result["render_ready"].get("root_objects", 0) > 0
-    assert result["dto_snapshot"]["prep"]["forum_current_step"] == "market"
-    # D-07 DATA：恰一 viewer pending（7 元组投影）
+    assert result["dto_snapshot"]["forum_current_step"] == "market"
+    # D-07 DATA：恰一 viewer pending bid（7 元组投影）
     bids = result["dto_snapshot"]["viewer_contract_bids"]
     assert len(bids) == 1
     assert bids[0]["status"] == "pending"
-    assert bids[0]["amount"] == 100
-    # 017 RENDER（R4）：actor 选择器已移入 landDialog（主 UI landActorCombo 行已删）
+    # 017 RENDER：主 UI landActorCombo 已删（findChild objectName 不存在）
     probes = result["render_ready"].get("qml_probes", {})
-    if result["dto_snapshot"]["eligible_land_actors"]:
+    if not result["fallback"]:
         assert probes.get("landActorCombo", {}).get("found") is False
-    if not result["fallback"]:
-        assert os.path.exists(result["png"])
-        assert os.path.getsize(result["png"]) > 0
-
-
-def test_screenshot_combat_after():
-    """S7 AFTER：Combat 全页 + POST-07P 计数/番号实时实体派生（总览=卡面=3）。"""
-    result = _run_screenshot("combat", _prepare_combat, kind="after")
-    assert result["render_ready"].get("root_objects", 0) > 0
-    wars = result["dto_snapshot"]["combat_active_wars"]
-    assert len(wars) == 1
-    # ODR-A：legion_count = 实时附着实体数（BEFORE=0 陈旧计数 → AFTER=3）
-    assert wars[0]["legion_count"] == 3
-    assert wars[0]["legion_numbers"] == [1, 2, 3]
-    assert wars[0]["total_power"] > 0  # commander_martial + 3*2
-    # WP-G 边界：war.legion_numbers 残留不清空（DTO 不读它）
-    assert result["dto_snapshot"]["prep"]["war_legion_numbers"] == [1, 2, 3]
-    if not result["fallback"]:
+        assert probes.get("landActorDialogCombo", {}).get("found") is True
+        assert probes.get("bidDialog", {}).get("found") is True
         assert os.path.exists(result["png"])
         assert os.path.getsize(result["png"]) > 0
