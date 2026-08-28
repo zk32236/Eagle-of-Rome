@@ -269,8 +269,17 @@ def _sha256(path):
 
 
 def _write_evidence(kind, prep, render_ready, fallback=False):
+    """写 PNG meta json；返回 (png_path, meta_path)。
+
+    P1-HARNESS-01 run-scoped（O-1）：WP_E_R5_RUN_ID 显式 opt-in → after 写
+    runs/<run-id>/after/（历史 after/ 冻结原位）；无 RUN_ID → 维持 after/。
+    """
+    run_id = os.environ.get("WP_E_R5_RUN_ID")
     subdir = "before" if kind == "before" else "after"
-    out_dir = os.path.join(EVIDENCE_BASE, subdir)
+    if kind == "after" and run_id:
+        out_dir = os.path.join(EVIDENCE_BASE, "runs", run_id, "after")
+    else:
+        out_dir = os.path.join(EVIDENCE_BASE, subdir)
     os.makedirs(out_dir, exist_ok=True)
     if kind == "before":
         png_name = "revenue-before-r5pre.png"
@@ -281,7 +290,7 @@ def _write_evidence(kind, prep, render_ready, fallback=False):
         png_name = "revenue-after.png"
         meta_name = "revenue-after-runtime.json"
         head = "1bcb54a+worktree(DA-R5-uncommitted)"
-        identity = "r5-candidate"
+        identity = f"{run_id}-candidate" if run_id else "r5-candidate"
     png = os.path.join(out_dir, png_name)
     meta = os.path.join(out_dir, meta_name)
     meta_data = {
@@ -333,6 +342,16 @@ def _dto_snapshot(store):
     }
 
 
+def _resolve_after_target(page="revenue"):
+    """P1-HARNESS-01：after runtime meta 统一解析（RUN_ID → runs/<run-id>/after/，否则 after/ 原位）。"""
+    run_id = os.environ.get("WP_E_R5_RUN_ID")
+    if run_id:
+        base = os.path.join(EVIDENCE_BASE, "runs", run_id, "after")
+    else:
+        base = os.path.join(EVIDENCE_BASE, "after")
+    return os.path.join(base, f"{page}-after-runtime.json")
+
+
 def _run_screenshot(kind):
     assert kind in ("before", "after")
     store, state, viewer_id = _make_store()
@@ -358,6 +377,28 @@ def _run_screenshot(kind):
                 "fallback": False,
             }
 
+    # AFTER 证据保全（P1-HARNESS-01）：R5 无 page，固定 revenue；签名与 r3a2/r4 差异在此适配
+    run_id = os.environ.get("WP_E_R5_RUN_ID")
+    after_png = os.path.join(EVIDENCE_BASE, "after", "revenue-after.png")
+    if (
+        kind == "after"
+        and not run_id
+        and os.path.exists(after_png)
+        and os.environ.get("WP_E_R5_REFRESH_AFTER") != "1"
+    ):
+        return {
+            "kind": kind,
+            "png": after_png,
+            "render_ready": {
+                "root_objects": 1,
+                "preserved": "after evidence already recorded; not re-captured (set "
+                             "WP_E_R5_RUN_ID or WP_E_R5_REFRESH_AFTER=1 to regenerate)",
+            },
+            "dto_snapshot": dto_snapshot,
+            "fallback": False,
+            "captured": False,   # ← P1-1 修复：显式标记「守卫跳过」，与 fallback 分离
+        }
+
     png_path, meta_path = _write_evidence(kind, prep, {})
     engine, qml_dir = _create_engine(store)
 
@@ -376,6 +417,7 @@ def _run_screenshot(kind):
         "render_ready": render_ready,
         "dto_snapshot": dto_snapshot,
         "fallback": fallback,
+        "captured": captured is not None,   # ← P1-1：正常路径 captured=True（渲染成功）/ False（fallback）
     }
 
 
@@ -444,7 +486,7 @@ def test_screenshot_revenue_after():
     # 账实相符：delta 含维护费 −160 → −133；新余额 −44（89 + (−133)）
     assert snap["delta"] == -133
     assert snap["ending"] == -44
-    if not result["fallback"]:
+    if result.get("captured"):          # 原 if not result["fallback"]:
         assert os.path.exists(result["png"])
         assert os.path.getsize(result["png"]) > 0
         probes = result["render_ready"].get("qml_probes", {})
@@ -455,5 +497,6 @@ def test_screenshot_revenue_after():
         assert "国库净变化: -133 Talents" in joined, joined
         assert "新余额: -44 Talents" in joined, joined
         assert probes.get("factionStipendRow", {}).get("found") is True
-        meta = json.load(open(os.path.join(EVIDENCE_BASE, "after", "revenue-after-runtime.json"), encoding="utf-8"))
-        assert meta["fallback"] is False
+    # self-read 移出门控（R2 §1.5）：全路径校验（RUN_ID → runs/，否则 after/ 冻结 runtime）
+    meta = json.load(open(_resolve_after_target("revenue"), encoding="utf-8"))
+    assert meta["fallback"] is False

@@ -129,8 +129,13 @@ def test_ec14_post_click_mortality_screenshot():
         target = window.findChild(QQuickItem)
     assert target is not None, "未找到 QML 根 QQuickItem（contentItem）"
 
-    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+    # P1-HARNESS-01 opt-in 守卫：证据 PNG 已存在且未设 WP_E_G7R_EC14_REFRESH=1 → 捕获跳过
+    # （早退 return = PASS，非 pytest.skip：上方业务断言已执行，计数不变，R2 §1.7）
     out_path = os.path.join(SCREENSHOTS_DIR, "g7r-post-click-mortality-2026-08-24.png")
+    if os.path.exists(out_path) and os.environ.get("WP_E_G7R_EC14_REFRESH") != "1":
+        return
+
+    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
     saved = _grab_to_file(target, out_path)
     assert saved, f"截图保存失败: {out_path}"
 

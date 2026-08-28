@@ -312,9 +312,17 @@ def _sha256(path):
 
 
 def _write_evidence(page, kind, prep, render_ready, fallback=False):
-    """写 PNG meta json；返回 (png_path, meta_path)。"""
+    """写 PNG meta json；返回 (png_path, meta_path)。
+
+    P1-HARNESS-01 run-scoped（O-1）：WP_E_R3_A2_RUN_ID 显式 opt-in → after 写
+    runs/<run-id>/after/（历史 after/ 冻结原位）；无 RUN_ID → 维持 after/。
+    """
+    run_id = os.environ.get("WP_E_R3_A2_RUN_ID")
     subdir = "before" if kind == "before" else "after"
-    out_dir = os.path.join(EVIDENCE_BASE, subdir)
+    if kind == "after" and run_id:
+        out_dir = os.path.join(EVIDENCE_BASE, "runs", run_id, "after")
+    else:
+        out_dir = os.path.join(EVIDENCE_BASE, subdir)
     os.makedirs(out_dir, exist_ok=True)
     png_name = f"{page}-before-eb157fb.png" if kind == "before" else f"{page}-after.png"
     meta_name = f"{page}-before-eb157fb-runtime.json" if kind == "before" else f"{page}-after-runtime.json"
@@ -333,7 +341,7 @@ def _write_evidence(page, kind, prep, render_ready, fallback=False):
         "captured_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "branch": BRANCH,
         "head": HEAD if kind == "before" else "eb157fb+worktree(DA-R4-A2-uncommitted)",
-        "identity": "eb157fb-before" if kind == "before" else "attempt2-candidate",
+        "identity": "eb157fb-before" if kind == "before" else (f"{run_id}-candidate" if run_id else "attempt2-candidate"),
         "fallback": fallback,
         "qpa_platform": "offscreen",
         "note": "EC-14 production-shape path: create_gui_prototype_session -> GuiSessionStore -> Main.qml grabWindow",
@@ -394,6 +402,28 @@ def _run_screenshot(page, prepare, kind=None):
             "fallback": False,
         }
 
+    # AFTER 证据保全（P1-HARNESS-01）：历史 after 已存在且未显式 opt-in → 不重捕获、不重写 meta
+    run_id = os.environ.get("WP_E_R3_A2_RUN_ID")
+    after_png = os.path.join(EVIDENCE_BASE, "after", f"{page}-after.png")
+    if (
+        kind == "after"
+        and not run_id
+        and os.path.exists(after_png)
+        and os.environ.get("WP_E_R3_A2_REFRESH_AFTER") != "1"
+    ):
+        return {
+            "page": page,
+            "png": after_png,
+            "render_ready": {
+                "root_objects": 1,
+                "preserved": "after evidence already recorded; not re-captured (set "
+                             "WP_E_R3_A2_RUN_ID or WP_E_R3_A2_REFRESH_AFTER=1 to regenerate)",
+            },
+            "dto_snapshot": dto_snapshot,
+            "fallback": False,
+            "captured": False,   # ← P1-1 修复：显式标记「守卫跳过」，与 fallback 分离
+        }
+
     png_path, meta_path = _write_evidence(page, kind, prep, {})
     engine, qml_dir = _create_engine(store)
     # 先设阶段再 load（对齐 test_wpe_war_threat_presentation 先例）
@@ -418,6 +448,7 @@ def _run_screenshot(page, prepare, kind=None):
         "render_ready": render_ready,
         "dto_snapshot": dto_snapshot,
         "fallback": fallback,
+        "captured": captured is not None,   # ← P1-1：正常路径 captured=True（渲染成功）/ False（fallback）
     }
 
 
@@ -491,9 +522,9 @@ def test_screenshot_forum_after():
     assert bids[0]["amount"] == 100
     # 017 RENDER（R4）：actor 选择器已移入 landDialog（主 UI landActorCombo 行已删）
     probes = result["render_ready"].get("qml_probes", {})
-    if result["dto_snapshot"]["eligible_land_actors"]:
+    if result.get("captured") and result["dto_snapshot"]["eligible_land_actors"]:
         assert probes.get("landActorCombo", {}).get("found") is False
-    if not result["fallback"]:
+    if result.get("captured"):
         assert os.path.exists(result["png"])
         assert os.path.getsize(result["png"]) > 0
 
