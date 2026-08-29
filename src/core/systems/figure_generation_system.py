@@ -241,12 +241,16 @@ def generate_figures(state: "GameState") -> List[Figure]:
     if _should_spawn_hero(state):
         hero = _generate_hero(state)
         if hero:
+            # WP-F S2-4（021）：hero 身份写入实体持久字段（F-07/R-07，非瞬态响应）。
+            # 预登记偏离（G3 观察②/DA-Plan §7.3-②）：先算 hero_type（复用下方日志判定逻辑），再设字段。
+            hero_type = "historical" if state.hero_to_spawn and state.hero_to_spawn.get("type") == "historical" else "random"
+            hero.is_hero = True
+            hero.hero_type = hero_type
+
             state.add_member(hero)
             state.curia.add_figure(hero)
             new_figures.append(hero)
 
-            # Determine hero type for logging
-            hero_type = "historical" if state.hero_to_spawn and state.hero_to_spawn.get("type") == "historical" else "random"
             state.log_event(
                 f"figure_generation_system: hero spawned: {hero.get_formal_name()}",
                 level=logging.DEBUG,

@@ -88,7 +88,7 @@ def test_collect_private_land_income_records_faction_tax_float():
 
     rows = EconomicService(state).collect_private_land_income(faction_tax_collected, 0.1)
 
-    assert rows == [{"figure_id": 101, "name": figure.get_formal_name(), "income": 4, "wealth": figure.wealth}]
+    assert rows == [{"figure_id": 101, "name": figure.get_formal_name(), "income": 4, "wealth": figure.wealth, "faction_id": "senate"}]
     assert faction_tax_collected["senate"] == 0.5
 
 

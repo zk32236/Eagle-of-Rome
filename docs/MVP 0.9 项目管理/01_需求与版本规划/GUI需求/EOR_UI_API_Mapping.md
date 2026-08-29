@@ -201,10 +201,11 @@ get_forum_view(state, viewer_player_id):
   current_player_id: str
   current_step: "announce" | "retirement" | "market" | "resolution"
   my_figures: [{id, name, faction, influence, ...}]
-  available_figures: [{id, name, martial, intellect, charisma, zeal, class_tier, cost}]
+  available_figures: [{id, name, martial, intellect, charisma, zeal, class_tier, cost,
+                      is_hero, hero_type}]   # WP-F 021：is_hero/hero_type 由 Figure 实体持久字段透出（非瞬态）
   pending_contracts: [{id, name, type, base_cost, ...}]
   land_sale_quota: int
-  triumph_wars: [{war_id, commander_name, ...}]
+  triumph_wars: [{war_id, commander_name, commander_faction_id, ...}]  # WP-F 003：凯旋行补 commander_faction_id
 ```
 
 ### 操作映射
@@ -213,7 +214,7 @@ get_forum_view(state, viewer_player_id):
 |---------|---------|---------|
 | 本派系成员列表 | `my_figures` | figure_id: int |
 | 「解雇」按钮 | `forum_api.retire_figure(state, player_id, figure_id)` | figure_id: int |
-| 人才市场表格 | `available_figures` | 属性用纯数字 |
+| 人才市场表格 | `available_figures` | 属性用纯数字；姓名格 = 姓名 + 🌟（hero 时，星在名后，严格 `is_hero === true`），长名 ElideRight 截断（WP-F 021/F-POST-R1-03） |
 | 「招募」按钮 → 弹窗 | `forum_api.recruit_figure(state, player_id, figure_id, amount)` | amount: int |
 | 合同列表 | `pending_contracts` | — |
 | 「竞标」按钮 → 弹窗 | `forum_api.place_bid(state, player_id, figure_id, contract_id, amount, profit_rate)` | profit_rate: 0~1 float |
@@ -228,6 +229,17 @@ get_forum_view(state, viewer_player_id):
 ```
 子环节1（解雇）: 人类轮流 → AI 后台 → 全部完成 → 解锁子环节2
 子环节2（市场）: 人类轮流 → AI 后台 → 全部完成 → resolve_forum → 公示
+```
+
+### faction_style_map 消费链（WP-F 003 键名纠正）
+
+```text
+config faction_style_map 键 = 权威 faction_id 全名：optimates / populares / equites（+ 占位 f4/f5/f6）
+  → faction_api.get_faction_style_map()（零改动，迭代 state.factions）
+  → Store factionStyleMap（纯透传）
+  → FactionStyle.qml factionColor/Name/Short
+  → GUI 消费者（Senate/Forum/Combat/Revenue/Population/Resolution/Mortality/GovernorAppointmentPanel）
+未知/无派系 → 中性 fallback #3A3530（禁随机色）
 ```
 
 ---

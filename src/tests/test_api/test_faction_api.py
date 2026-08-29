@@ -72,18 +72,27 @@ def test_get_factions_status_empty_faction(mock_state, sample_faction):
 
 
 def test_get_faction_style_map_returns_complete_map():
-    """get_faction_style_map() 返回完整 map：包含所有派系及 fallback"""
+    """get_faction_style_map() 返回完整 map：六阵营全名键 + G2-B hex + fallback（F-F-01）"""
     state = GameState.create_for_testing({
         "faction_style_map": {
-            "opt": {"color": "#8B0000", "name": "Optimates", "id_display": "Opt", "order": 1},
-            "pop": {"color": "#006400", "name": "Populares", "id_display": "Pop", "order": 2},
+            "optimates": {"color": "#C62828", "name": "Optimates", "id_display": "Opt", "order": 1},
+            "populares": {"color": "#1565C0", "name": "Populares", "id_display": "Pop", "order": 2},
+            "equites": {"color": "#E65100", "name": "Equites", "id_display": "Equ", "order": 3},
+            "f4": {"color": "#6A1B9A", "name": "第四派系", "id_display": "F4", "order": 4},
+            "f5": {"color": "#00695C", "name": "第五派系", "id_display": "F5", "order": 5},
+            "f6": {"color": "#AD1457", "name": "第六派系", "id_display": "F6", "order": 6},
         },
         "faction_style_fallback": {"color": "#3A3530", "name": "未知派系", "id_display": "?"},
     })
-    opt = Faction(id="opt", name="Optimates")
-    pop = Faction(id="pop", name="Populares")
-    state.add_faction(opt)
-    state.add_faction(pop)
+    for fid, fname in [
+        ("optimates", "Optimates"),
+        ("populares", "Populares"),
+        ("equites", "Equites"),
+        ("f4", "第四派系"),
+        ("f5", "第五派系"),
+        ("f6", "第六派系"),
+    ]:
+        state.add_faction(Faction(id=fid, name=fname))
 
     result = faction_api.get_faction_style_map(state)
 
@@ -91,17 +100,20 @@ def test_get_faction_style_map_returns_complete_map():
     data = result["data"]
     assert "map" in data
     assert "fallback" in data
-    assert len(data["map"]) == 2
-    # opt
-    assert data["map"]["opt"]["color"] == "#8B0000"
-    assert data["map"]["opt"]["name"] == "Optimates"
-    assert data["map"]["opt"]["id_display"] == "Opt"
-    assert data["map"]["opt"]["order"] == 1
-    # pop
-    assert data["map"]["pop"]["color"] == "#006400"
-    assert data["map"]["pop"]["name"] == "Populares"
-    assert data["map"]["pop"]["id_display"] == "Pop"
-    assert data["map"]["pop"]["order"] == 2
+    assert len(data["map"]) == 6
+    expected = {
+        "optimates": ("#C62828", "Optimates", "Opt", 1),
+        "populares": ("#1565C0", "Populares", "Pop", 2),
+        "equites": ("#E65100", "Equites", "Equ", 3),
+        "f4": ("#6A1B9A", "第四派系", "F4", 4),
+        "f5": ("#00695C", "第五派系", "F5", 5),
+        "f6": ("#AD1457", "第六派系", "F6", 6),
+    }
+    for fid, (color, name, id_display, order) in expected.items():
+        assert data["map"][fid]["color"] == color
+        assert data["map"][fid]["name"] == name
+        assert data["map"][fid]["id_display"] == id_display
+        assert data["map"][fid]["order"] == order
     # fallback
     assert data["fallback"]["color"] == "#3A3530"
     assert data["fallback"]["name"] == "未知派系"
@@ -110,14 +122,14 @@ def test_get_faction_style_map_returns_complete_map():
 
 
 def test_get_faction_style_map_unknown_faction_fallback():
-    """未知 faction_id（不在 style_map 中）→ 使用 fallback 颜色，保留 faction.name"""
+    """未知 faction_id（第 7 id，不在 style_map 中）→ 使用 fallback 颜色 #3A3530（R-02）"""
     state = GameState.create_for_testing({
         "faction_style_map": {
-            "opt": {"color": "#8B0000", "name": "Optimates", "id_display": "Opt", "order": 1},
+            "optimates": {"color": "#C62828", "name": "Optimates", "id_display": "Opt", "order": 1},
         },
         "faction_style_fallback": {"color": "#3A3530", "name": "未知派系", "id_display": "?"},
     })
-    opt = Faction(id="opt", name="Optimates")
+    opt = Faction(id="optimates", name="Optimates")
     xyz = Faction(id="xyz", name="Rebels")
     state.add_faction(opt)
     state.add_faction(xyz)

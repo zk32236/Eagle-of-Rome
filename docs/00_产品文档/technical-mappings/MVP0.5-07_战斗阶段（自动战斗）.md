@@ -117,5 +117,6 @@ combat 命令                             # phase_combat.py
 ## 7. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.2 | 2026-08-29 | WP-F 003（S1-7）：`_war_card` 补 `commander_faction_id`；CombatStage 指挥官 label 着色 |
 | v1.1 | 2026-08-23 | GUI-BETA-R1 WP-E（Slice 11 PU-04）：新增 §6 —— `_war_card` TRUCE 剩余回合字段（E-G7-11）+ TRUCE 卡军团投影边界（07P） |
 | v1.0 | 2026-07-12 | 初版 |

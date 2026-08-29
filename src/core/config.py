@@ -97,29 +97,47 @@ class Config:
         },
         "terminology_preset": "original",
         "faction_style_map": {
-            "opt": {
-                "color": "#8B0000",
+            "optimates": {
+                "color": "#C62828",
                 "name": "Optimates",
                 "name_i18n": "贵族派",
                 "id_display": "Opt",
                 "id_display_i18n": "贵",
                 "order": 1,
             },
-            "pop": {
-                "color": "#006400",
+            "populares": {
+                "color": "#1565C0",
                 "name": "Populares",
                 "name_i18n": "平民派",
                 "id_display": "Pop",
                 "id_display_i18n": "平",
                 "order": 2,
             },
-            "equ": {
-                "color": "#00008B",
+            "equites": {
+                "color": "#E65100",
                 "name": "Equites",
                 "name_i18n": "骑士派",
                 "id_display": "Equ",
                 "id_display_i18n": "骑",
                 "order": 3,
+            },
+            "f4": {
+                "color": "#6A1B9A",
+                "name": "第四派系",
+                "id_display": "F4",
+                "order": 4,
+            },
+            "f5": {
+                "color": "#00695C",
+                "name": "第五派系",
+                "id_display": "F5",
+                "order": 5,
+            },
+            "f6": {
+                "color": "#AD1457",
+                "name": "第六派系",
+                "id_display": "F6",
+                "order": 6,
             },
         },
         "faction_style_fallback": {

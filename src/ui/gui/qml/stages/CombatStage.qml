@@ -2,11 +2,14 @@ import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
+import "../components"
 import "../i18n"
 
 Rectangle {
     id: root
     color: "transparent"
+
+    FactionStyle { id: factionStyle }
 
     // ── QML Helper Functions ──
     function hasCommander(war) {
@@ -470,13 +473,25 @@ Rectangle {
                     }
 
                     // WP-E F7（E-G7-11）：和约剩余回合（DTO 直读；null → 不显示）
-                    Text {
+                    // WP-F F-R3-04：视觉强调 = 标签位 pill（停战同系色 + 边框 + 间距），禁本地计算
+                    Rectangle {
                         visible: !isEmptySlot && isTruceLocked && warData && warData.truce_remaining_turns !== null && warData.truce_remaining_turns !== undefined
-                        text: "⏳ 和约剩余 " + warData.truce_remaining_turns + " 回合"
-                        color: "#5B5B76"
-                        font.pixelSize: theme.smallSize
-                        font.bold: true
                         Layout.alignment: Qt.AlignRight
+                        Layout.leftMargin: 6
+                        color: "#ECEBF2"
+                        border.color: "#8E8EA6"
+                        border.width: 1
+                        radius: 3
+                        Layout.preferredWidth: truceRemainLabel.implicitWidth + 8
+                        Layout.preferredHeight: 18
+                        Text {
+                            id: truceRemainLabel
+                            anchors.centerIn: parent
+                            text: "⏳ 和约剩余 " + warData.truce_remaining_turns + " 回合"
+                            color: "#3A3A55"
+                            font.pixelSize: theme.smallSize
+                            font.bold: true
+                        }
                     }
                 }
             }
@@ -499,7 +514,7 @@ Rectangle {
             Text {
                 visible: !isEmptySlot && !isResolved
                 text: "🎖️ " + (warData ? (warData.commander_name || "无指挥官") : "")
-                color: isResolved ? "#999999" : "#766652"
+                color: isResolved ? "#999999" : (warData && warData.commander_faction_id ? factionStyle.factionColor(warData.commander_faction_id) : "#766652")
                 font.pixelSize: theme.smallSize
                 elide: Text.ElideRight
                 Layout.fillWidth: true

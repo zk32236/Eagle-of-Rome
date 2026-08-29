@@ -494,3 +494,15 @@ The following must NOT be changed by DA:
 - Design guidelines: `EOR_GUI_Design_Guidelines_Codex_v4.0.md`
 - QML shell files: `src/ui/gui/qml/shell/`
 - Task template: `EOR_GUI_SA-DA_开发任务书规范模板_v1.1.md`
+
+---
+
+## 13. WP-F 布局影响评估（2026-08-29，展示条件项）
+
+| 变更 | 布局影响 | 结论 |
+|:--|:--|:--|
+| Mortality 预执行提示删除「事件类型：猝死」行（S3-1） | 提示卡 `Layout.preferredHeight = promptText.implicitHeight + 26` 自适应 → 高度随文本缩短 | ✅ 区域级契约未变，行高自适应，无需布局变更 |
+| Forum 公告区头行删除「西西里包税合同待竞标」（S3-2） | 单行文本缩短，无区域变化 | ✅ 无影响 |
+| Forum 公告区 ScrollView 包裹（F-R3-01） | 公告区有界滚动（`contentWidth: availableWidth`），高度表达式不变 | ✅ 区域边界不变，长内容内部滚动 |
+| Resolution 密集态 ScrollView（F-R3-02） | 内容区有界滚动，业务序列零改动 | ✅ 区域边界不变 |
+| Combat TRUCE 剩余回合 pill（F-R3-04） | 行内标签位替换纯文本，行高微增 2px，卡片布局自适应 | ✅ 无区域级影响 |

@@ -47,12 +47,32 @@ data/cards/heroes.json                 # 历史英雄数据
 | `figure_generation_system.py` | `src/core/systems/` | 英雄创建业务逻辑（从 CLI 下沉） |
 | `forum_api.py` | `src/api/` | API 层入口 |
 | `phase_forum.py` | `src/ui/commands/` | CLI shell（仅打印 + 委托） |
-| `figure.py` | `src/core/entities/` | Figure 实体（未修改） |
+| `figure.py` | `src/core/entities/` | Figure 实体（WP-F 021：增持久字段 `is_hero`/`hero_type`，见 §3.4） |
 | `heroes.json` | `data/cards/` | 历史英雄数据 |
+
+## 3.4 WP-F 021 — hero 身份持久化 + 读模型路径（2026-08-29，不重开 WP-C 生成规则）
+
+```text
+[Producer] figure_generation_system.generate_figures() 第 4 步
+             └─ hero.is_hero = True; hero.hero_type = <historical|random>   ← 实体持久字段（非瞬态响应）
+                   ↓ 同对象 state.add_member + curia.add_figure（对象不重建）
+[Entity]   Figure.is_hero / hero_type（figure.py，to_dict/from_dict 往返 snapshot-safe）
+                   ↓
+[DTO]      forum_api._available_figure_row() → available_figures（is_hero/hero_type 透出）
+                   ↓
+[Store]    GuiSessionStore.forumAvailableFigures（纯透传）
+                   ↓
+[QML]      ForumStage.qml 人才市场姓名格：姓名 + 🌟（星在名后，严格 is_hero === true）
+```
+
+- 权威源 = Figure 实体持久字段（refresh / Forum 重入 / 招募后身份保留；R-07 禁以 `generate_figures()` 瞬态响应为唯一真相）。
+- `hero_type` 权威 = `state.hero_to_spawn.type`（生成系统自身信号）；仅透传不裁决定义。
+- **生成规则语义零改动**（WP-C CLOSED：何时生成/概率/类型判定均未触碰）。
 
 ## 4. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.3 | 2026-08-29 | WP-F 021：Figure 持久字段 is_hero/hero_type + 生成写实体 + DTO 透出 + 人才市场 🌟（读模型路径，§3.4） |
 | v1.2 | 2026-08-21 | GUI-BETA-R1 WP-C: hero_to_spawn 标记新增 spawn_turn 戳（mortality L294/L310）；广场阶段消费入口改为 canonical init（initialize_forum_turn，含 ODR-04 回合归属校验） |
 | v1.1 | 2026-07-25 | 新增英雄生成调用链 + figure_generation_system + forum_api 引用 |
 | v1.0 | 2026-07-12 | 初版 |

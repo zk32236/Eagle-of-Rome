@@ -373,3 +373,21 @@ Element | Region | Type | DTO Field (Required) | Current DTO | Store Property | 
 ---
 
 *WP-E 缺口闭合 | 2026-08-23 | 详见 03-da-evidence/（WP-E 证据台账）*
+
+---
+
+## WP-F 缺口闭合记录（2026-08-29，GUI-BETA-R1）
+
+| 原缺口 | 闭合状态 | 落地 |
+|:--|:--|:--|
+| hero 身份仅瞬态响应（`generate_figures()` dict 标记，无持久 owner） | ✅ 闭合（021） | `Figure.is_hero`/`hero_type` 实体持久字段（S2-1~S2-3）+ 生成写实体（S2-4）+ `_available_figure_row()` 透出（S2-5）→ refresh/re-entry/招募后身份保留（F-F-03 断言） |
+| Combat 指挥官行无 faction 字段（域有、DTO 缺） | ✅ 闭合（003） | `combat_api._war_card` 补 `commander_faction_id`（域 `state.get_member` 可得）；CombatStage 指挥官 label 着色 |
+| Revenue 地主收入行无 faction 字段 | ✅ 闭合（003） | `economic_service.collect_private_land_income` 行补 `faction_id`；RevenueStage 姓名着色（None → fallback） |
+| faction_style_map 键名（opt/pop/equ）与权威 faction_id 失配 → 三族色恒回退中性 | ✅ 闭合（003，裁决 A） | config 键改全名（optimates/populares/equites）+ 三族色 + F4~F6 占位槽；faction_api/Store/FactionStyle 消费面零改动 |
+| F12 英雄登场（:137）视觉呈现 | ✅ 关联 021 | 人才市场行 hero 星标（姓名 + 🌟，星在名后，严格 `is_hero === true`）+ 长名 ElideRight（F-POST-R1-03） |
+| Forum 静态伪运行时文案（西西里包税合同待竞标） | ✅ 闭合（010-02） | S3-2 只删不换（R-10）；真实 war_threats/pending_contracts DTO 链不动（R-12） |
+| Mortality 预执行伪事件预告（事件类型：猝死） | ✅ 闭合（007-01） | S3-1 删除；通用引导保留（007-02）；概率/逻辑零改动（R-11） |
+
+---
+
+*WP-F 缺口闭合 | 2026-08-29 | 详见 WP-F-GUIPolish/03-da-evidence/（DA 证据台账）*

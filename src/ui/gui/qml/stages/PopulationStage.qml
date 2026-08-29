@@ -315,10 +315,18 @@ Rectangle {
                                     Text {
                                         text: {
                                             var name = modelData.name
-                                            if (!sessionStore.populationResolved) return name
+                                            var nameColor = factionStyle.factionColor(modelData.faction_id)
+                                            if (!sessionStore.populationResolved) {
+                                                return '<font color="' + nameColor + '">' + name + '</font>'
+                                            }
                                             var score = root.scoreForCandidate(modelData.id, modelData.office)
-                                            return score !== undefined ? (name + " · " + score) : name
+                                            if (score === undefined) {
+                                                return '<font color="' + nameColor + '">' + name + '</font>'
+                                            }
+                                            return '<font color="' + nameColor + '">' + name + '</font>'
+                                                + '<font color="#1F1A12"> · ' + score + '</font>'
                                         }
+                                        textFormat: Text.RichText
                                         color: "#1F1A12"
                                         font.pixelSize: 12
                                         font.bold: sessionStore.populationResolved && root.scoreForCandidate(modelData.id, modelData.office) !== undefined
@@ -455,7 +463,7 @@ Rectangle {
                                         spacing: 8
                                         Text {
                                             text: modelData.name + " " + root.factionShort(modelData.faction_name)
-                                            color: "#2C1E12"
+                                            color: factionStyle.factionColor(modelData.faction_id)
                                             font.pixelSize: 12
                                             font.bold: true
                                             elide: Text.ElideRight
@@ -616,6 +624,13 @@ Rectangle {
                                             delegate: RadioButton {
                                                 objectName: "populationVoteCandidate_" + modelData.office + "_" + modelData.id
                                                 text: modelData.name + " (" + root.factionShort(modelData.faction_name) + ")"
+                                                contentItem: Text {
+                                                    text: parent.text
+                                                    color: factionStyle.factionColor(parent.modelData.faction_id)
+                                                    font: parent.font
+                                                    verticalAlignment: Text.AlignVCenter
+                                                    leftPadding: parent.indicator ? parent.indicator.width + parent.spacing : 0
+                                                }
                                                 checked: root.votedFigureId(modelData.office) === modelData.id
                                                 enabled: sessionStore.canVote && campaignSubmitted() && !sessionStore.populationResolved && !sessionStore.myVotes[modelData.office]
                                                 font.pixelSize: 12

@@ -268,12 +268,14 @@ def test_forum_war_threat_empty_state():
 
 
 def test_forum_no_stale_hardcoded_war_state():
-    """T016-6 + T016-10: 顶部不残留「第一次布匿战争进行中」战争状态；「西西里包税合同待竞标」保留。"""
+    """T016-6 + T016-10 + WP-F 010-02: 顶部不残留「第一次布匿战争进行中」；
+    静态伪运行时文案「西西里包税合同待竞标」已删除（S3-2，R-10 只删不换）；「广场阶段开始。」保留。"""
     store = _MockForumStore([])
     _engine, root = _load_qml("ForumStage.qml", store)
     joined = " ".join(_texts(root))
     assert "第一次布匿战争进行中" not in joined, "hard-coded war-state must not remain in top area"
-    assert "西西里包税合同待竞标" in joined, "static contract copy belongs to 010/WP-F, must be retained"
+    assert "西西里包税合同待竞标" not in joined, "WP-F 010-02: static 西西里 contract copy removed (S3-2, R-10)"
+    assert "广场阶段开始。" in joined, "WP-F 010-02: generic forum-phase lead-in retained"
 
 
 # ---------------------------------------------------------------------------

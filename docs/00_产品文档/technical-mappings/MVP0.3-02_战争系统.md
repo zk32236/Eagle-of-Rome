@@ -46,6 +46,7 @@ CRT 判定: combat_total = 2d6 + commander.martial + sum(legion_strengths) - war
 ## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.4 | 2026-08-29 | WP-F 003（S1-7）：`_war_card` 增 `commander_faction_id`（commander.faction_id，无指挥官 → None）；CombatStage 指挥官 label 经 FactionStyle 着色 |
 | v1.3 | 2026-08-23 | GUI-BETA-R1 WP-E（Slice 11 PU-04）：①TRUCE 剩余回合 DTO（combat_api.py `_war_card` 新增 `truce_end_turn` / `truce_remaining_turns` 权威计算）；②`_forum_war_events` 保留载体（forum_api.py `initialize_forum_turn` 写入 war_events，`get_forum_view` 暴露 `war_events` / `has_active_war`=ws.get_active_wars() 权威）；③TRUCE 卡军团投影边界（展示=实体镜像；实体错 → WP-G traceability 移交，禁 QML 掩盖） |
 | v1.2 | 2026-07-26 | 追加 process_triumph_and_disbandment() 方法（Wave-04 Finale, C-E1） |
 | v1.1 | 2026-07-26 | 追加 assign_rebellion_commanders() + auto_recruit_and_assign() 方法（Wave-03） |

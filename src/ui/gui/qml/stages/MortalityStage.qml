@@ -59,7 +59,8 @@ Rectangle {
                 id: promptText
                 anchors.fill: parent
                 anchors.margins: 13
-                text: "🎴 点击下方「执行天命」按钮，触发一个随机事件。\n事件类型：猝死"
+                // WP-F S3-1（007-01）：删除伪事件预告「事件类型：猝死」，保留通用随机事件引导（007-02，R-11）
+                text: "🎴 点击下方「执行天命」按钮，触发一个随机事件。"
                 color: "#2E251B"
                 font.pixelSize: theme.bodySize
                 wrapMode: Text.Wrap

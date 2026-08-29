@@ -204,6 +204,10 @@ class Figure:
     abandoned_by: Optional[str] = None  # 记录抛弃该人物的派系ID
     is_absent: bool = False  # 新增：是否离开罗马（出征）
 
+    # WP-F S2-1（021）：hero 身份持久字段（F-07 最小字段；hero_type 可选透传，非验收必需）
+    is_hero: bool = False
+    hero_type: Optional[str] = None
+
     # 历史记录
     office_history: List[OfficeTerm] = field(default_factory=list)
     festival_history: List[Dict] = field(default_factory=list)
@@ -718,6 +722,8 @@ class Figure:
             "is_available": self.is_available,
             "abandoned_by": self.abandoned_by,
             "is_absent": self.is_absent,
+            "is_hero": self.is_hero,
+            "hero_type": self.hero_type,
             "office_history": [
                 {
                     "office_type": term.office_type,
@@ -804,6 +810,8 @@ class Figure:
         figure._project_profit = data.get("_project_profit", 0)
         figure._influence = data.get("_influence", figure._influence)
         figure._temp_influence_tasks = data.get("_temp_influence_tasks", []).copy()
+        figure.is_hero = data.get("is_hero", False)
+        figure.hero_type = data.get("hero_type")
 
         return figure
 

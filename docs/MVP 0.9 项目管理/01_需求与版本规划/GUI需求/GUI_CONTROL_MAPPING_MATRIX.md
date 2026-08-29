@@ -336,3 +336,17 @@
 | 6 | ResolutionStage.qml | resultsPanel 四类目（总督返回/合同到期身份行/和约到期/年度衰减派系聚合，`preview` 只读投影）+ 独立风险区（B 区，现在时）+ summaryPanel（国库现状值 ODR-C2）；**`resolutionStepBar` 删除**（E-02 无 StepBar）；门控 `resolutionResolved && !isResolutionResolving` |
 | 7 | CombatStage.qml TRUCE_LOCKED 卡 | 「⏳ 和约剩余 X 回合」行（`truce_remaining_turns` DTO 直读；null → 不显示） |
 | 8 | ContextPanel.qml :140-146 | 两段引导文案删除（E-05 单命令）；「4 / 4」计数字样删除（E-02 无 x/4）；唯一「⏭️ 进入下一年度」 |
+
+## WP-F 更新（2026-08-29，GUI-BETA-R1）
+
+| # | 控件/区域 | 变更 |
+|:--|:--|:--|
+| 1 | SenateStage.qml 本地 `factionColor()` 三分支（:182-186） | 删除 → 共享 `FactionStyle { id: factionStyle }` 实例（J6 派系色行/主持行/席位占比/总督候选行全部走 `factionStyle.factionColor()`，map 驱动，R-01/R-04） |
+| 2 | GovernorAppointmentPanel.qml 本地 `factionColor()` 三分支（:44-50） | 删除 → FactionStyle 实例（:276 调用改） |
+| 3 | PopulationStage.qml 赞助行 :457 / 投票 RadioButton :618 | 姓名应用 `factionStyle.factionColor(modelData.faction_id)`（候选行与结果行统一共享 token） |
+| 4 | ForumStage.qml my-figures 行 / 凯旋行 | 新增 FactionStyle 实例；my-figures 姓名着色；凯旋 commander label 着色（`commander_faction_id` DTO） |
+| 5 | CombatStage.qml 指挥官行 :501 | `commander_faction_id` DTO 直读 → factionColor（resolved 态保持灰 #999999，状态通道不毁） |
+| 6 | RevenueStage.qml 地主行 :397 | `faction_id` DTO 直读 → factionColor（None → fallback #3A3530） |
+| 7 | ResolutionStage.qml 年度衰减派系行 :289-310 | 整行 `factionColor(faction_name)`（与主导行同源） |
+| 8 | ForumStage.qml 人才市场姓名格 :631 | Row 结构：姓名（中性 #2E251B + ElideRight）+ 🌟（`is_hero === true`，名后）——021/F-POST-R1-03 |
+| 9 | Theme.qml :52-56 | 死令牌 `factionOpt/Pop/Equ` 删除（双源真相消除） |

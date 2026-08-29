@@ -50,11 +50,6 @@ QtObject {
     readonly property color statusInfo: "#6C8FA1"
     readonly property color statusMuted: "#877663"
 
-    // ======================== Faction Colors ========================
-    readonly property color factionOpt: "#8B0000"
-    readonly property color factionPop: "#006400"
-    readonly property color factionEqu: "#00008B"
-
     // ======================== Buttons ========================
     readonly property color btnBg: "#D7B06E"
     readonly property color btnHover: "#B87333"

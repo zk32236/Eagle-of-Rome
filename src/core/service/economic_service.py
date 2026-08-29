@@ -235,6 +235,7 @@ class EconomicService:
                         "name": fig.get_formal_name(),
                         "income": net_income_int,
                         "wealth": fig.wealth,
+                        "faction_id": fig.faction_id,
                     })
             except Exception as exc:
                 self.state.log_exception(

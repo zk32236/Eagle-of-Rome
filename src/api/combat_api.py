@@ -49,6 +49,7 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
     commander_name = ""
     commander_martial = 0
     commander_id = -1
+    commander = None
     if war.commander_id is not None:
         commander = state.get_member(war.commander_id)
         if commander:
@@ -74,6 +75,7 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
         "commander_name": commander_name,
         "commander_martial": commander_martial,
         "commander_id": commander_id,
+        "commander_faction_id": commander.faction_id if commander else None,
         "legion_count": legion_count,
         "legion_numbers": [legion.number for legion in attached],
         "total_power": total_power,

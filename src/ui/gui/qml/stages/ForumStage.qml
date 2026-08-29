@@ -3,10 +3,14 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import Qt5Compat.GraphicalEffects
 
+import "../components"
+
 Rectangle {
     id: root
     objectName: "forumStage"
     color: "transparent"
+
+    FactionStyle { id: factionStyle }
 
     property bool marketUnlocked: sessionStore.forumCurrentStep !== "retirement" || sessionStore.forumResolved
     property int selectedMarketFigureId: sessionStore.forumAvailableFigures.length > 0 ? sessionStore.forumAvailableFigures[0].id : 0
@@ -45,6 +49,22 @@ Rectangle {
             }
         }
         return 0
+    }
+
+    // WP-F F-R3-03：Public Land 稳定 id 去重——同权威身份（figure_id+结果）仅渲染一次；
+    // 禁模糊名匹配；真不同 action（不同状态/金额）保持两行。纯渲染防御层，不动 DTO/业务。
+    function landAllocationRows() {
+        var rows = sessionStore.forumLandAllocation || []
+        var seen = {}
+        var out = []
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i]
+            var key = String(r.figure_id) + "|" + (r.status || "") + "|" + (r.allocated_amount || 0) + "|" + (r.cost || 0)
+            if (seen[key]) continue
+            seen[key] = true
+            out.push(r)
+        }
+        return out
     }
 
     // WP-E F6（017）：公地认购可操作人物选项 —— DTO can_buy_land 权威布尔过滤，
@@ -241,13 +261,20 @@ Rectangle {
             border.width: 1
             radius: 5
 
-            ColumnLayout {
+            // WP-F F-R3-01：长/多行公告内容 → 有界滚动（禁丢权威行/禁重算优先级/禁藏真实状态）
+            ScrollView {
                 anchors.fill: parent
                 anchors.margins: 10
-                spacing: 4
+                clip: true
+                contentWidth: availableWidth
+
+                ColumnLayout {
+                    width: parent.width
+                    spacing: 4
 
                 Text {
-                    text: sessionStore.forumResolved ? "[\u516c\u793a\u533a] \u5e02\u573a\u7ed3\u7b97\u7ed3\u679c" : "\u5e7f\u573a\u9636\u6bb5\u5f00\u59cb\u3002\u897f\u897f\u91cc\u5305\u7a0e\u5408\u540c\u5f85\u7ade\u6807\u3002"
+                    // WP-F S3-2（010-02）：删除静态伪运行时文案「西西里包税合同待竞标」（R-10 只删不换）
+                    text: sessionStore.forumResolved ? "[\u516c\u793a\u533a] \u5e02\u573a\u7ed3\u7b97\u7ed3\u679c" : "\u5e7f\u573a\u9636\u6bb5\u5f00\u59cb\u3002"
                     color: "#2E251B"
                     font.pixelSize: 13
                     font.bold: true
@@ -311,6 +338,7 @@ Rectangle {
                     font.pixelSize: 12
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
+                }
                 }
             }
         }
@@ -434,7 +462,7 @@ Rectangle {
                                         anchors.rightMargin: 8
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: modelData.name
-                                        color: "#2E251B"
+                                        color: factionStyle.factionColor(modelData.faction_id)
                                         font.pixelSize: 12
                                         font.bold: true
                                         elide: Text.ElideRight
@@ -628,7 +656,28 @@ Rectangle {
                                         anchors.margins: 7
                                         spacing: 8
 
-                                        MarketValueCell { text: modelData.name; font.bold: true; Layout.preferredWidth: 158; Layout.minimumWidth: 138; elide: Text.ElideNone; horizontalAlignment: Text.AlignLeft }
+                                        // WP-F S2-6（021 + F-POST-R1-03）：姓名格 = Row 结构
+                                        // 左缘对齐 + 名后星 + 长名截断（R-06/R-08/R-09 严格三值）
+                                        RowLayout {
+                                            Layout.preferredWidth: 158; Layout.minimumWidth: 138
+                                            spacing: 2
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: modelData.name
+                                                font.bold: true
+                                                font.pixelSize: 11
+                                                elide: Text.ElideRight          // F-POST-R1-03：长名 ellipsis
+                                                horizontalAlignment: Text.AlignLeft
+                                                verticalAlignment: Text.AlignVCenter
+                                                color: "#2E251B"                // 人才市场无 faction，中性（G2-A §4）
+                                            }
+                                            Text {
+                                                visible: modelData.is_hero === true   // R-06/R-09：严格三值，禁猜
+                                                text: "🌟"
+                                                font.pixelSize: 11
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+                                        }
                                         MarketValueCell { text: modelData.martial; Layout.preferredWidth: 24 }
                                         MarketValueCell { text: modelData.intellect; Layout.preferredWidth: 24 }
                                         MarketValueCell { text: modelData.charisma; Layout.preferredWidth: 24 }
@@ -744,8 +793,9 @@ Rectangle {
                             }
 
                             // WP-E F5：resolve 后结构化分配行（E-11）
+                            // WP-F F-R3-03：同权威身份仅渲染一次（稳定 id 去重，禁模糊名匹配）
                             Repeater {
-                                model: sessionStore.forumLandAllocation
+                                model: root.landAllocationRows()
                                 delegate: Text {
                                     Layout.fillWidth: true
                                     Layout.leftMargin: 12
@@ -766,6 +816,7 @@ Rectangle {
 
                                 delegate: MarketActionRow {
                                     label: modelData.name + " · " + modelData.commander_name
+                                    labelColor: modelData.commander_faction_id ? factionStyle.factionColor(modelData.commander_faction_id) : "#2E251B"
                                     value: "士兵份额 " + modelData.soldier_share
                                     actionText: "赞成"
                                     enabledAction: root.marketUnlocked && sessionStore.canExecuteForum
@@ -1217,6 +1268,7 @@ Rectangle {
         property string value: ""
         property string actionText: ""
         property bool enabledAction: false
+        property color labelColor: "#2E251B"
         signal triggered()
 
         Layout.fillWidth: true
@@ -1235,7 +1287,7 @@ Rectangle {
 
             Text {
                 text: label
-                color: "#2E251B"
+                color: labelColor
                 font.pixelSize: 11
                 Layout.fillWidth: true
                 elide: Text.ElideRight

@@ -914,6 +914,9 @@ def _available_figure_row(figure: Figure) -> Dict[str, Any]:
         "class_tier": _tier_value(figure.class_tier),
         "class_label": _tier_label(figure.class_tier),
         "cost": max(10, getattr(figure, "influence", 0)),
+        # WP-F S2-5（021）：hero 身份从 Figure 实体持久字段透出（R-07，非瞬态）
+        "is_hero": bool(getattr(figure, "is_hero", False)),
+        "hero_type": getattr(figure, "hero_type", None),
     }
 
 
@@ -981,6 +984,7 @@ def _triumph_war_rows(state: GameState) -> List[Dict[str, Any]]:
             "name": war.name,
             "commander_id": war.triumph_commander_id,
             "commander_name": _figure_name(commander) if commander else "未知指挥官",
+            "commander_faction_id": commander.faction_id if commander else None,
             "soldier_share": war.soldier_share,
         })
     return rows

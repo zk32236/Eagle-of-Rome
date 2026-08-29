@@ -63,6 +63,7 @@ PHASE_SEQUENCE = ["mortality", "revenue", "forum", "population", "senate", "comb
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.5 | 2026-08-29 | DA-Exec (WP-F 003) | 阶段 GUI 视觉一致性：全局派系色走共享 FactionStyle（config 全名键 + 三族色 + F4~F6 占位）；展示层补注 |
 | v1.4 | 2026-08-24 | DA-Exec (WP-E-G7R) | §6.1 两段式 → 单命令；step_definitions 移除（preview 四类目替代）；resolved 单源化；新增 §7 Resolution Preview DTO（只读投影 + 零变异 + parity 契约） |
 | v1.3 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §6：Resolution 四步事件身份 read-model + 两段式年度推进；市场生成段补注（veteran supply 注入） |
 | v1.2 | 2026-08-01 | DA-Exec G5-R1 | §4 删除「batch内自动结算」旧说法，对齐 FC-09（resolve_population_slice 统一触发） |

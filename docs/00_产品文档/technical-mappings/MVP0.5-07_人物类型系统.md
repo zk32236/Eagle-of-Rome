@@ -48,7 +48,7 @@ CLI: phase_forum.py → forum_api.initialize_forum_turn(:138)
 | `figure_generation_system.py` | `src/core/systems/` | 人物生成业务逻辑（含 veteran supply 注入） |
 | `forum_api.py` | `src/api/` | API 层入口 |
 | `phase_forum.py` | `src/ui/commands/` | CLI shell（仅打印） |
-| `figure.py` | `src/core/entities/` | Figure 实体 + 工厂方法（未修改） |
+| `figure.py` | `src/core/entities/` | Figure 实体 + 工厂方法（WP-F 021：增持久字段 `is_hero`/`hero_type`，见 §3.5） |
 
 ## 4. 市场资深贵族供给（veteran supply）— E-G7-09（2026-08-23 新增）
 
@@ -116,9 +116,22 @@ create_* 工厂 / 序列化）、`population_api.py`（get_candidates / resolve_
 archive_office_holders）、`forum_api.py`（open_market / initialize_forum_turn /
 recruit_figure / resolve_forum）、hero 生成、GUI/QML/Store/DTO、WP-G 生命周期。
 
+### 3.5 Figure 实体字段表（WP-F 021，2026-08-29 增补）
+
+| 字段 | 类型 | 默认 | 语义 |
+|:-----|:-----|:-----|:-----|
+| `is_hero` | `bool` | `False` | hero 身份持久标记（驱动人才市场 🌟；refresh/re-entry/招募后保留） |
+| `hero_type` | `Optional[str]` | `None` | `"historical"` / `"random"` 透传（可选，非验收必需） |
+
+- 序列化：`to_dict()`/`from_dict()` 往返含两字段（snapshot-safe）。
+- 写入点：`figure_generation_system.generate_figures()` 第 4 步（hero 生成块，单点）。
+- 读模型：`forum_api._available_figure_row()` → `available_figures`（透出）。
+- 生成规则语义零改动（WP-C CLOSED）。
+
 ## 5. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.3 | 2026-08-29 | WP-F 021：Figure 实体字段表补 is_hero/hero_type（§3.5）；figure.py 引用更新 |
 | v1.2 | 2026-08-23 | 新增 §4 市场资深贵族供给（veteran supply，E-G7-09）；§3.2 调用链修正（open_market → initialize_forum_turn → forum_api.generate_figures → figure_generation_system.generate_figures；`_generate_market_figures` 无生产调用方） |
 | v1.1 | 2026-07-25 | 新增人物生成调用链说明 + figure_generation_system 引用 |
 | v1.0 | 2026-07-12 | 初版 |

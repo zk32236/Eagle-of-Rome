@@ -2,6 +2,7 @@ import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
+import "../components"
 import "../i18n"
 
 /**
@@ -40,14 +41,10 @@ Rectangle {
         return true
     })()
 
+    FactionStyle { id: factionStyle }
+
     // ---- WP-05V V3: 派系色（FC-08 冻结值：Opt=#8B0000 / Pop=#006400 / Equ=#00008B） ----
-    function factionColor(factionName) {
-        if (!factionName) return "#2C1E12"
-        if (factionName.indexOf("Optimates") >= 0) return "#8B0000"
-        if (factionName.indexOf("Populares") >= 0) return "#006400"
-        if (factionName.indexOf("Equites") >= 0) return "#00008B"
-        return "#2C1E12"
-    }
+    // WP-F S1-3 (003/R-01): 本地三分支硬编码已删除 → 共享 FactionStyle 实例（factionStyle.factionColor）。
 
     // ---- WP-05V V4: FC-09 阶级枚举名 → 中文标签 ----
     function classTierLabel(tier) {
@@ -273,7 +270,7 @@ Rectangle {
                                             spacing: 1
 
                                             Text {
-                                                text: '<font color="' + root.factionColor(modelData.faction_name) + '">' + (modelData.name || "") + "</font>"
+                                                text: '<font color="' + factionStyle.factionColor(modelData.faction_name) + '">' + (modelData.name || "") + "</font>"
                                                     + " \u00B7 " + root.classTierLabel(modelData.class_tier)
                                                 textFormat: Text.RichText
                                                 color: "#2C1E12"

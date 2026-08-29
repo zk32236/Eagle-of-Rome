@@ -2,6 +2,7 @@ import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
+import "../components"
 import "../i18n"
 
 Rectangle {
@@ -11,6 +12,8 @@ Rectangle {
     property var selectedProposalKeys: []
     property var selectedVetoProposalIds: []
     property bool proposalStepDone: sessionStore.senateCurrentStep !== "proposal"
+
+    FactionStyle { id: factionStyle }
 
     function itemText(item, fallbackName) {
         if (!item) return fallbackName || ""
@@ -178,14 +181,7 @@ Rectangle {
     }
 
     // ---- WP-05V V3: 派系色（FC-08 冻结值：Opt=#8B0000 / Pop=#006400 / Equ=#00008B） ----
-
-    function factionColor(factionName) {
-        if (!factionName) return "#2C1E12"
-        if (factionName.indexOf("Optimates") >= 0) return "#8B0000"
-        if (factionName.indexOf("Populares") >= 0) return "#006400"
-        if (factionName.indexOf("Equites") >= 0) return "#00008B"
-        return "#2C1E12"
-    }
+    // WP-F S1-2 (003/R-01): 本地三分支硬编码已删除 → 共享 FactionStyle 实例（factionStyle.factionColor）。
 
     // ---- WP-05V V4 (G6 Narrow): FC-09 阶级枚举名 → 中文标签 ----
     function classTierLabel(tier) {
@@ -215,7 +211,7 @@ Rectangle {
     function governorCandidateNameLine(proposal) {
         var c = governorCandidateInfo(proposal)
         if (!c) return ""
-        return '<font color="' + factionColor(c.faction_name) + '">' + (c.name || "") + "</font>"
+        return '<font color="' + factionStyle.factionColor(c.faction_name) + '">' + (c.name || "") + "</font>"
             + " · " + classTierLabel(c.class_tier)
     }
 
@@ -234,7 +230,7 @@ Rectangle {
         var parts = []
         for (var i = 0; i < rows.length; i++) {
             var name = rows[i].faction_name || rows[i].faction_id || ""
-            var color = factionColor(rows[i].faction_name)
+            var color = factionStyle.factionColor(rows[i].faction_name)
             parts.push('<font color="' + color + '">' + name + " " + (rows[i].percent || 0) + "%" + "</font>")
         }
         return "席位占比：" + parts.join(" · ")
@@ -245,11 +241,14 @@ Rectangle {
         var name = po.name || "暂无"
         var office = po.office || "官职未定"
         var factionName = po.faction_name || ""
-        var base = "会议主持：" + name + "（" + office + "）"
+        var base = "会议主持："
         if (factionName.length > 0) {
-            return base + ' · <font color="' + factionColor(factionName) + '">' + factionName + '</font>'
+            return base
+                + '<font color="' + factionStyle.factionColor(factionName) + '">' + name + '</font>'
+                + "（" + office + "）"
+                + ' · <font color="' + factionStyle.factionColor(factionName) + '">' + factionName + '</font>'
         }
-        return base
+        return base + name + "（" + office + "）"
     }
 
     function seatLine() {
@@ -418,7 +417,6 @@ Rectangle {
                     wrapMode: Text.Wrap
                 }
                 Text { text: root.seatLineRich(); textFormat: Text.RichText; color: "#9A2D0A"; font.pixelSize: 12; font.bold: true; Layout.fillWidth: true; wrapMode: Text.Wrap }
-                Text { text: "※ 最终通过法案及政府运作结果将在此展示"; color: "#766652"; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.Wrap }
             }
         }
 
@@ -588,8 +586,9 @@ Rectangle {
                     }
 
                     // DEV-13: 战争接管（直接职权，无需表决）
+                    // WP-F G7-02：无目标 → 折叠/隐藏（WP-G 权威状态驱动，零业务移除）
                     Rectangle {
-                        visible: sessionStore.senateCurrentStep === "proposal"
+                        visible: sessionStore.senateCurrentStep === "proposal" && (sessionStore.senateTakeoverOptions || []).length > 0
                         Layout.fillWidth: true
                         Layout.preferredHeight: 92
                         radius: 4

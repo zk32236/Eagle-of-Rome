@@ -688,15 +688,30 @@ label.text = i18n.get("ui.treasury.display", amount=142)
 
 ### 5.2 常用 CSS 变量
 ```css
---opt: #8B0000;     /* Optimates */
---pop: #006400;     /* Populares */
---equ: #00008B;     /* Equites */
+/* WP-F 003（2026-08-29）：键 = 权威 faction_id 全名；三族色族 F-02；F4~F6 占位槽 */
+--optimates: #C62828;  /* Optimates 贵族派 — RED 族 */
+--populares: #1565C0;  /* Populares 平民派 — BLUE 族 */
+--equites:   #E65100;  /* Equites 骑士派   — ORANGE 族 */
+--f4: #6A1B9A;  /* 第四派系占位 — PURPLE */
+--f5: #00695C;  /* 第五派系占位 — TEAL */
+--f6: #AD1457;  /* 第六派系占位 — ROSE */
+--faction-unknown: #3A3530;  /* 未知/无派系中性 fallback（禁随机色） */
 --header-bg: #8B2500;   /* 深红 */
 --header-text: #FFD700; /* 金色 */
 --bronze: #C9A84C;      /* 青铜色 */
 --panel-border: #D4A574; /* 边框色 */
 --success: #228B22;
 --error: #C45151;
+```
+
+> **派系身份通道（F-05）：** 派系色仅用于**姓名文本色**（可选 3px 左缘条）；状态（selected/hover/disabled/dead/completed）用边框/背景/图标通道，永不改写姓名色（G2-C 通道分离）。
+
+### 5.2.1 hero 标记（WP-F 021，F-ODR-02）
+
+```text
+人才市场行：人物姓名 + 🌟（星在名后，严格 modelData.is_hero === true）
+普通人物：无星（R-09）；hero 身份权威 = Figure 实体持久字段（is_hero），非瞬态响应（R-07）
+长名：姓名 ElideRight 截断，不遮属性列（F-POST-R1-03）
 ```
 
 ### 5.3 文件路径

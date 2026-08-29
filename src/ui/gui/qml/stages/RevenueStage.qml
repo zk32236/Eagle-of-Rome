@@ -395,7 +395,7 @@ Rectangle {
                             Text {
                                 id: nameText
                                 text: "  " + (modelData.name || ("人物#" + modelData.figure_id))
-                                color: "#2E251B"
+                                color: factionStyle.factionColor(modelData.faction_id)
                                 font.pixelSize: 12
                                 Layout.fillWidth: true
                                 wrapMode: Text.WrapAnywhere

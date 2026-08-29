@@ -46,13 +46,19 @@ Rectangle {
     }
 
     // ── Content ──
-    ColumnLayout {
+    // WP-F F-R3-02：密集态 → 有界滚动（紧凑/滚动；禁改业务序列/禁假 StepBar——本项目无 StepBar，E-02 已守）
+    ScrollView {
         anchors.fill: parent
         anchors.topMargin: 14
         anchors.bottomMargin: 14
         anchors.leftMargin: 12
         anchors.rightMargin: 12
-        spacing: 12
+        clip: true
+        contentWidth: availableWidth
+
+        ColumnLayout {
+            width: parent.width
+            spacing: 12
 
         // ══════════════════════════════════════════════════════════════════
         // LoadingBar — 仅 S0 (loading) 态可见
@@ -300,7 +306,7 @@ Rectangle {
                             }
                             return factionName + " → 将增加 " + delta + " 点影响力，升至 " + fi.influence_after
                         }
-                        color: "#3A3530"
+                        color: factionStyle.factionColor(factionName)
                         font.pixelSize: 12
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
@@ -646,6 +652,6 @@ Rectangle {
             // ══════════════════════════════════════════════════════════════
         }
 
-
+        }
     }
 }

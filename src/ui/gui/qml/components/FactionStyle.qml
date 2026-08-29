@@ -7,8 +7,8 @@ import QtQuick 2.15
  * Provides factionColor(factionId) and factionName(factionId) for all stages.
  *
  * Usage (in any QML file that imports "../components"):
- *   FactionStyle.factionColor("opt")   → "#8B0000"
- *   FactionStyle.factionName("opt")    → "Optimates"
+ *   FactionStyle.factionColor("optimates") → "#C62828"
+ *   FactionStyle.factionName("optimates")  → "Optimates"
  *
  * Fallback: unknown faction_id → "#3A3530" / "未知派系"
  */
@@ -17,7 +17,7 @@ QtObject {
 
     /*!
      * Returns the hex color for a faction_id, or fallback color if unknown.
-     * Accepts either faction_id ("opt") or faction name ("Optimates").
+     * Accepts either faction_id ("optimates") or faction name ("Optimates").
      */
     function factionColor(factionIdOrName) {
         if (!factionIdOrName) return _fallbackColor()
