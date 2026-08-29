@@ -30,7 +30,7 @@ def state():
 
 @pytest.fixture
 def military_system(state):
-    """创建 MilitarySystem 实例（会自动初始化10个军团）"""
+    """创建 MilitarySystem 实例（会自动初始化25个军团）"""
     ms = MilitarySystem(state)
     return ms
 

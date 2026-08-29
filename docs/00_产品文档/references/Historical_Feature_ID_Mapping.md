@@ -18,7 +18,7 @@
 | HF-005 | **MVP0.2-02** | 术语隔离系统（Terminology） | 4套术语预设 | MVP 0.2 (Pre-2024) | CONFIRMED COMPLETE | NEWLY ASSIGNED | 增量开发报告02-23(5/5); README_MVP0.3.md |
 | HF-006 | **MVP0.3-04** | 场景加载器（Scenario Loader） | — | MVP 0.3 (2024) | CONFIRMED COMPLETE | NEWLY ASSIGNED | 增量开发报告02-23; README_MVP0.3.md |
 | HF-007 | **MVP0.3-02** | 战争系统（战斗CRT+战争走向） | 战争卡牌堆机制 | MVP 0.3 (2024) | CONFIRMED COMPLETE | NEWLY ASSIGNED | MANIFEST_MVP0.3.md; 增量开发报告02-28/03-01 |
-| HF-008 | **MVP0.3-03** | 军团系统 | 10军团池 | MVP 0.3 (2024) | CONFIRMED COMPLETE | NEWLY ASSIGNED | 增量开发报告02-28(恢复); 03-01(维护费) |
+| HF-008 | **MVP0.3-03** | 军团系统 | 25军团池 | MVP 0.3 (2024) | CONFIRMED COMPLETE | NEWLY ASSIGNED | 增量开发报告02-28(恢复); 03-01(维护费) |
 | HF-010 | **MVP0.4-03-sys** | 核心数据系统 | 影响力/金钱/土地 | MVP 0.4.5 | CONFIRMED COMPLETE | NEWLY ASSIGNED | 核心数据功能说明书.docx |
 | HF-011 | **MVP0.5-01** | 国家公地系统 | — | MVP 0.5 (02-23) | CONFIRMED COMPLETE | NEWLY ASSIGNED | 增量开发报告02-23 |
 | HF-012 | **MVP0.5-02** | 行省系统 | — | MVP 0.5 (02-23) | CONFIRMED COMPLETE | NEWLY ASSIGNED | 增量开发报告02-23 |

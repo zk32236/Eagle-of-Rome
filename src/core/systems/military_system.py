@@ -13,7 +13,7 @@ class MilitarySystem:
     军事管理系统
 
     职责：
-    1. 管理10个军团池
+    1. 管理25个军团池
     2. 征召/解散逻辑
     3. 维护费计算
     4. 军团指派到战争
@@ -31,7 +31,7 @@ class MilitarySystem:
         self._initialize_legions()
 
     def _initialize_legions(self):
-        """初始化10个军团"""
+        """初始化25个军团"""
         for i in range(1, self.MAX_LEGIONS + 1):
             legion = Legion(number=i)
             self._legions.append(legion)
