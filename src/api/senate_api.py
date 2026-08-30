@@ -590,6 +590,8 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "senate_result": senate_result or {},
             "direct_actions": state.get_senate_direct_actions(),
             "public_announcement": result_data.get("public_announcement", {}) if isinstance(result_data, dict) else {},
+            # WP-F R1-F-03：透传本轮每提案已算 vote result（resolve_senate 返回载体随 phase_data 落盘）
+            "vote_results": result_data.get("vote_results", []) if isinstance(result_data, dict) else [],
             "seat_shares": _seat_share_rows(state),
             "warnings": [{
                 "type": "info",

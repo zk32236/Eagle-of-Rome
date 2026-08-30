@@ -51,8 +51,8 @@ Rectangle {
         return 0
     }
 
-    // WP-F F-R3-03：Public Land 稳定 id 去重——同权威身份（figure_id+结果）仅渲染一次；
-    // 禁模糊名匹配；真不同 action（不同状态/金额）保持两行。纯渲染防御层，不动 DTO/业务。
+    // WP-F F-R3-03 / WP-F-R1 KEEP：结果 canonical 已收敛至公示区 announceArea（R1-F-05 语义纠正后），
+    // 本行级稳定 id 去重函数保留不删（任务包 §5.4 明示可保留无害；最小 diff，禁无关 refactor）。
     function landAllocationRows() {
         var rows = sessionStore.forumLandAllocation || []
         var seen = {}
@@ -69,12 +69,13 @@ Rectangle {
 
     // WP-E F6（017）：公地认购可操作人物选项 —— DTO can_buy_land 权威布尔过滤，
     // QML 不重算资格（禁第二套实现）；复用 selectedOwnFigureId（禁双选择体系）
+    // WP-F R1-F-05：eligible MINUS viewer pending——已提交认购的买家不出现在 Dialog 下拉（禁"可选后报错"）
     function landActorOptions() {
         var figures = sessionStore.forumMyFigures || []
         var opts = []
         for (var i = 0; i < figures.length; i++) {
             var f = figures[i]
-            if (f.can_buy_land) {
+            if (f.can_buy_land && !root.viewerHasLandPending(f.id)) {
                 opts.push({
                     id: f.id,
                     label: f.name + " · " + (f.class_label || "") + " · 财富 " + f.wealth
@@ -790,23 +791,6 @@ Rectangle {
                                     && root.landActorOptions().length > 0
                                     && !sessionStore.forumResolved
                                 onTriggered: root.openLandDialog()
-                            }
-
-                            // WP-E F5：resolve 后结构化分配行（E-11）
-                            // WP-F F-R3-03：同权威身份仅渲染一次（稳定 id 去重，禁模糊名匹配）
-                            Repeater {
-                                model: root.landAllocationRows()
-                                delegate: Text {
-                                    Layout.fillWidth: true
-                                    Layout.leftMargin: 12
-                                    Layout.rightMargin: 12
-                                    text: (modelData.status === "insufficient_wealth")
-                                        ? "⚠️ " + modelData.name + " 资金不足"
-                                        : "🏞️ " + modelData.name + " 认购 " + modelData.allocated_amount + " C，花费 " + modelData.cost + " T"
-                                    color: modelData.status === "allocated" || modelData.status === "partial" ? "#2E251B" : "#9A2D0A"
-                                    font.pixelSize: 11
-                                    wrapMode: Text.Wrap
-                                }
                             }
 
                             SectionTitle { title: "🏆 凯旋投票" }

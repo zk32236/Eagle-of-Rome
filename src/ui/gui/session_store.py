@@ -401,6 +401,11 @@ class GuiSessionStore(QObject):
         """WP-D AU-6：本轮最终生效事项公示（enacted_proposals + direct_actions）。"""
         return self._senate_view.get("senate_result", {}).get("data", {}).get("public_announcement", {})
 
+    @Property(list, notify=senateViewChanged)
+    def senateVoteResults(self) -> List[Dict[str, Any]]:
+        """WP-F R1-F-03：本轮每提案已算 vote result（support/oppose/total/passed/vetoed），只读透传。"""
+        return self._senate_view.get("vote_results", [])
+
     # -----------------------------------------------------------------------
     # 收入阶段属性
     # -----------------------------------------------------------------------

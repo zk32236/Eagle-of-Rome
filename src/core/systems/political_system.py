@@ -266,6 +266,8 @@ class PoliticalSystem:
         passed_proposals = []
         rejected_proposals = []
         rejected_peace_wars = []
+        # WP-F R1-F-03：本轮每提案已算 vote result 载体（透出权威已算值，禁重算/重跑投票）
+        vote_results = []
 
         for proposal in proposals:
             result = self.calculate_vote_result(proposal, vote_decider)
@@ -281,6 +283,16 @@ class PoliticalSystem:
                 peace_war = self._get_peace_war(proposal) if result["total_influence"] > 0 else None
                 if peace_war:
                     rejected_peace_wars.append(peace_war)
+
+            # WP-F R1-F-03：收集本轮每提案已算 vote result（proposal_id + support/oppose/total/passed/vetoed）
+            vote_results.append({
+                "proposal_id": proposal.get("id"),
+                "support_influence": result["support_influence"],
+                "oppose_influence": result["oppose_influence"],
+                "total_influence": result["total_influence"],
+                "passed": result["passed"],
+                "vetoed": result["vetoed"],
+            })
 
             self.state.log_event(
                 f"提案 {proposal.get('id')} 表决完成: {'通过' if result['passed'] and not result['vetoed'] else '未通过'}",
@@ -328,6 +340,7 @@ class PoliticalSystem:
             "passed_proposals_snapshot": [p.copy() for p in passed_proposals],
             "rejected_proposals_snapshot": [p.copy() for p in rejected_proposals],
             "direct_actions": direct_actions,
+            "vote_results": vote_results,
         })
 
     def build_issue_from_proposal(self, proposal: dict):

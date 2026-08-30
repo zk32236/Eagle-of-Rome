@@ -50,6 +50,22 @@ Rectangle {
         return item.result === "rejected" ? "#B3261E" : theme.statusSuccess
     }
 
+    // WP-F R1-F-03：per-proposal 支持率 helper（join 权威 vote_results，纯展示除法，禁重算/decider 重入）
+    function voteResultFor(proposalId) {
+        var rows = sessionStore.senateVoteResults || []
+        for (var i = 0; i < rows.length; i++) {
+            if (Number(rows[i].proposal_id) === Number(proposalId)) return rows[i]
+        }
+        return null
+    }
+    function supportRateText(vr) {
+        if (!vr || vr.total_influence <= 0) return "\u652f\u6301\u7387 \u2014"
+        var pct = Math.round(vr.support_influence * 100 / vr.total_influence)
+        if (vr.vetoed) return "\u672a\u901a\u8fc7 \u00b7 \u652f\u6301\u7387 " + pct + "%"
+        if (vr.passed) return "\u901a\u8fc7 \u00b7 \u652f\u6301\u7387 " + pct + "%"
+        return "\u672a\u901a\u8fc7 \u00b7 \u652f\u6301\u7387 " + pct + "%"
+    }
+
     function senateVoteButtonText() {
         if (sessionStore.senateCurrentStep === "proposal") return "\u7b49\u5f85\u6267\u653f\u5b98\u63d0\u4ea4\u6cd5\u6848"
         return "\u786e\u8ba4\u8868\u51b3 \u2192 \u79fb\u4ea4\u5426\u51b3\u73af\u8282"
@@ -516,43 +532,6 @@ Rectangle {
                     maximumLineCount: 3
                     elide: Text.ElideRight
                 }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 84
-                    Layout.minimumHeight: 72
-                    radius: 4
-                    color: "#FFF6E6"
-                    border.color: "#2E9D4D"
-                    border.width: 1
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.margins: 10
-                        spacing: 10
-                        Text {
-                            text: "\u653f\u5e9c\n\u8fd0\u4f5c"
-                            color: "#2C1E12"
-                            font.pixelSize: 12
-                            font.bold: true
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                            Layout.preferredWidth: 44
-                            Layout.fillHeight: true
-                        }
-                        Text {
-                            text: "\u2022 \u6700\u7ec8\u901a\u8fc7\uff1a" + root.passedResultText() + "\n\u2022 \u901a\u8fc7\u6cd5\u6848\u7eb3\u5165\u6267\u884c\uff0c\u56fd\u5e93\u3001\u516c\u5730\u4e0e\u5408\u540c\u7ed3\u679c\u540c\u6b65\u751f\u6548"
-                            color: "#2C1E12"
-                            font.pixelSize: 12
-                            font.bold: true
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            wrapMode: Text.Wrap
-                            maximumLineCount: 4
-                            elide: Text.ElideRight
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                    }
-                }
                 }
             }
         }
@@ -971,7 +950,7 @@ Rectangle {
                                 model: root.vetoCandidateRows()
                                 delegate: Rectangle {
                                     Layout.fillWidth: true
-                                    height: 48
+                                    height: sessionStore.senateCurrentStep === "results" ? 66 : 48
                                     radius: 4
                                     color: "#FFF6E6"
                                     border.color: "#E0B56C"
@@ -1011,6 +990,13 @@ Rectangle {
                                                 font.pixelSize: 10
                                                 Layout.fillWidth: true
                                                 elide: Text.ElideRight
+                                            }
+                                            Text {
+                                                visible: sessionStore.senateCurrentStep === "results"
+                                                text: root.supportRateText(root.voteResultFor(modelData.id))
+                                                color: "#766652"
+                                                font.pixelSize: 10
+                                                Layout.fillWidth: true
                                             }
                                         }
                                     }

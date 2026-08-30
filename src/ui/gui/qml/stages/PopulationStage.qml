@@ -361,7 +361,7 @@ Rectangle {
 
                             Text {
                                 text: result ? ("✅ " + result.figure_name) : "—"
-                                color: result ? "#008000" : "#2C1E12"
+                                color: result ? factionStyle.factionColor(result.faction_id) : "#2C1E12"
                                 font.pixelSize: 12
                                 font.bold: !!result
                                 elide: Text.ElideRight
@@ -626,7 +626,7 @@ Rectangle {
                                                 text: modelData.name + " (" + root.factionShort(modelData.faction_name) + ")"
                                                 contentItem: Text {
                                                     text: parent.text
-                                                    color: factionStyle.factionColor(parent.modelData.faction_id)
+                                                    color: factionStyle.factionColor(modelData.faction_id)
                                                     font: parent.font
                                                     verticalAlignment: Text.AlignVCenter
                                                     leftPadding: parent.indicator ? parent.indicator.width + parent.spacing : 0
