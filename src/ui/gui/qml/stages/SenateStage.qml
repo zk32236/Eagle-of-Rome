@@ -42,12 +42,12 @@ Rectangle {
 
     function resultMark(item) {
         if (!item) return "\u2713"
-        return item.result === "rejected" ? "\u2717" : "\u2713"
+        return (item.result === "rejected" || item.result === "vetoed") ? "\u2717" : "\u2713"
     }
 
     function resultMarkColor(item) {
         if (!item) return theme.statusSuccess
-        return item.result === "rejected" ? "#B3261E" : theme.statusSuccess
+        return (item.result === "rejected" || item.result === "vetoed") ? "#B3261E" : theme.statusSuccess
     }
 
     // WP-F R1-F-03：per-proposal 支持率 helper（join 权威 vote_results，纯展示除法，禁重算/decider 重入）
@@ -117,6 +117,38 @@ Rectangle {
     function rejectedResultText() {
         var text = resultTitleList(rejectedResultRows())
         return text.length > 0 ? text : "\u65e0"
+    }
+
+    // WP-F R3：被保民官否决（vetoed only）——缺陷 B：「保民官否决 N 项」权威计数
+    function vetoedResultRows() {
+        var rows = sessionStore.senateSubmittedProposals || []
+        var out = []
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].result === "vetoed") out.push(rows[i])
+        }
+        return out
+    }
+
+    // WP-F R3：Stage 3 结果态——进入否决环节的提案 = passed + vetoed（failed 排除）
+    function vetoResultRows() {
+        var rows = sessionStore.senateSubmittedProposals || []
+        var out = []
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].result === "passed" || rows[i].result === "vetoed") out.push(rows[i])
+        }
+        return out
+    }
+
+    // WP-F R3：vetoed 标题文案（镜像 rejectedResultText）
+    function vetoedResultText() {
+        var text = resultTitleList(vetoedResultRows())
+        return text.length > 0 ? text : "\u65e0"
+    }
+
+    // WP-F R3：Stage 3 Repeater 数据源——结果态用 passed+vetoed，活态保持 vetoCandidateRows（权威 passed-only 候选集）
+    function stageThreeRows() {
+        if (sessionStore.senateCurrentStep === "results") return root.vetoResultRows()
+        return root.vetoCandidateRows()
     }
 
     // S4: Governor assignment summary for results display
@@ -467,9 +499,22 @@ Rectangle {
                     width: parent.width
                     spacing: 6
                 Text {
-                    visible: root.rejectedResultRows().length > 0
-                    text: "\u26d4 \u4fdd\u6c11\u5b98\u5426\u51b3 " + root.rejectedResultRows().length + " \u9879\uff1a" + root.rejectedResultText()
+                    visible: root.vetoedResultRows().length > 0
+                    text: "\u26d4 \u4fdd\u6c11\u5b98\u5426\u51b3 " + root.vetoedResultRows().length + " \u9879\uff1a" + root.vetoedResultText()
                     color: "#B3261E"
+                    font.pixelSize: 12
+                    font.bold: true
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                }
+
+                // WP-F R3：未通过（只计 failed，rejectedResultRows 语义自然转为 failed）
+                Text {
+                    visible: root.rejectedResultRows().length > 0
+                    text: "\u26d4 \u672a\u901a\u8fc7 " + root.rejectedResultRows().length + " \u9879\uff1a" + root.rejectedResultText()
+                    color: "#8A6D3B"
                     font.pixelSize: 12
                     font.bold: true
                     Layout.fillWidth: true
@@ -970,7 +1015,7 @@ Rectangle {
                             width: parent.width
                             spacing: 6
                             Repeater {
-                                model: root.vetoCandidateRows()
+                                model: root.stageThreeRows()
                                 delegate: Rectangle {
                                     Layout.fillWidth: true
                                     height: sessionStore.senateCurrentStep === "results" ? 66 : 48

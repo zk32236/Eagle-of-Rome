@@ -507,11 +507,26 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
                 row["label"] = _proposal_label(state, proposal)
                 row["result"] = "passed"
                 proposals.append(row)
-            for proposal in result_data.get("rejected_proposals_snapshot", []) or []:
-                row = proposal.copy()
-                row["label"] = _proposal_label(state, proposal)
-                row["result"] = "rejected"
-                proposals.append(row)
+            # WP-F R3：vetoed / failed 分开打标签（缺陷 B 修复）；旧存档无新字段 → 退化 rejected 全部 "rejected"（容错）
+            vetoed_snapshot = result_data.get("vetoed_proposals_snapshot")
+            failed_snapshot = result_data.get("failed_proposals_snapshot")
+            if vetoed_snapshot is not None or failed_snapshot is not None:
+                for proposal in vetoed_snapshot or []:
+                    row = proposal.copy()
+                    row["label"] = _proposal_label(state, proposal)
+                    row["result"] = "vetoed"
+                    proposals.append(row)
+                for proposal in failed_snapshot or []:
+                    row = proposal.copy()
+                    row["label"] = _proposal_label(state, proposal)
+                    row["result"] = "rejected"
+                    proposals.append(row)
+            else:
+                for proposal in result_data.get("rejected_proposals_snapshot", []) or []:
+                    row = proposal.copy()
+                    row["label"] = _proposal_label(state, proposal)
+                    row["result"] = "rejected"
+                    proposals.append(row)
         player_votes = state.get_senate_votes_copy().get(viewer_player_id, {})
         voted_all = bool(proposals) and all(proposal.get("id") in player_votes for proposal in proposals)
         decision_complete = state.senate_proposal_decision_complete

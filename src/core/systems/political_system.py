@@ -298,7 +298,8 @@ class PoliticalSystem:
         )
 
         passed_proposals = []
-        rejected_proposals = []
+        vetoed_proposals = []      # 新增：被保民官否决（vetoed=True）
+        failed_proposals = []      # 新增：元老院表决未通过（failed）
         rejected_peace_wars = []
         # WP-F R1-F-03：本轮每提案已算 vote result 载体（透出权威已算值，禁重算/重跑投票）
         vote_results = []
@@ -306,14 +307,14 @@ class PoliticalSystem:
         for proposal in proposals:
             result = self.calculate_vote_result(proposal, vote_decider)
             if result["vetoed"]:
-                rejected_proposals.append(proposal)
+                vetoed_proposals.append(proposal)
                 peace_war = self._get_peace_war(proposal)
                 if peace_war:
                     rejected_peace_wars.append(peace_war)
             elif result["passed"]:
                 passed_proposals.append(proposal)
             else:
-                rejected_proposals.append(proposal)
+                failed_proposals.append(proposal)
                 peace_war = self._get_peace_war(proposal) if result["total_influence"] > 0 else None
                 if peace_war:
                     rejected_peace_wars.append(peace_war)
@@ -342,6 +343,9 @@ class PoliticalSystem:
                 },
             )
 
+        # WP-F R3：rejected 聚合（vetoed + failed）逐字保留既有语义（test_senate_r1.py:180-190 兼容）
+        rejected_proposals = vetoed_proposals + failed_proposals
+
         execution_messages = []
         for proposal in passed_proposals:
             execution = self.execute_passed_proposal(proposal)
@@ -369,10 +373,13 @@ class PoliticalSystem:
             "passed_proposals": [p["id"] for p in passed_proposals],
             "rejected_proposals": [p["id"] for p in rejected_proposals],
             "vetoed_proposals": list(vetoed),
+            "failed_proposals": [p["id"] for p in failed_proposals],
             "execution_results": execution_messages,
             "rejected_peace_wars": restored_peace_wars,
             "passed_proposals_snapshot": [p.copy() for p in passed_proposals],
             "rejected_proposals_snapshot": [p.copy() for p in rejected_proposals],
+            "vetoed_proposals_snapshot": [p.copy() for p in vetoed_proposals],
+            "failed_proposals_snapshot": [p.copy() for p in failed_proposals],
             "direct_actions": direct_actions,
             "vote_results": vote_results,
         })

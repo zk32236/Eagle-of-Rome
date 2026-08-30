@@ -142,10 +142,11 @@ class TestSenateAnnouncement(unittest.TestCase):
         self.assertIn("出售 300 C", enacted[0]["title"])
 
         # rejected/vetoed 留 history（view submitted_proposals result 标记）
+        # WP-F R3（缺陷 B）：vetoed 与 failed 分开打标签——vetoed 提案标 "vetoed"，failed 标 "rejected"
         view = senate_api.get_senate_view(self.state, "player1")
         rows = {r["id"]: r["result"] for r in view["data"]["submitted_proposals"]}
         self.assertEqual(rows[pid_rejected], "rejected")
-        self.assertEqual(rows[pid_vetoed], "rejected")
+        self.assertEqual(rows[pid_vetoed], "vetoed")
 
     # ---------------- 场景 I：仅 takeover ----------------
 
