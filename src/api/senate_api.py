@@ -391,13 +391,21 @@ def _build_governor_appointments(state: GameState) -> dict:
 
 
 def _passed_proposals_for_veto(state: GameState) -> List[Dict[str, Any]]:
-    politics = _political_system(state)
-    passed = []
-    for proposal in state.get_senate_proposals():
-        result = politics.calculate_vote_result(proposal)
-        if result.get("passed") and not result.get("vetoed"):
-            passed.append(proposal)
-    return passed
+    """WP-F R2-01（单一 producer 收敛）：委托 _build_vote_results_and_candidates 的
+    veto_candidate_ids（权威 passed-only 候选集），仅做 id → proposal 映射，零平行 passed 判定。
+    """
+    candidate_ids = set(_build_vote_results_and_candidates(state)["veto_candidate_ids"])
+    return [p for p in state.get_senate_proposals() if p.get("id") in candidate_ids]
+
+
+def _build_vote_results_and_candidates(state: GameState) -> Dict[str, Any]:
+    """WP-F R2-01：单一权威中间投影 producer 的 API 层薄委托。
+
+    权威实现 = PoliticalSystem.build_vote_results_and_candidates（唯一 passed-only 候选集
+    生产点，复用 calculate_vote_result，零重算/零重掷）。AI veto / Human-direct record_veto /
+    DTO / Store / QML 全消费者同源此 producer。
+    """
+    return _political_system(state).build_vote_results_and_candidates()
 
 
 def apply_auto_tribune_vetoes(
@@ -507,6 +515,16 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         player_votes = state.get_senate_votes_copy().get(viewer_player_id, {})
         voted_all = bool(proposals) and all(proposal.get("id") in player_votes for proposal in proposals)
         decision_complete = state.senate_proposal_decision_complete
+        # WP-F R2-01（D-1 derive(A) 主案）：voted_all 后执行中间投影——复用 calculate_vote_result
+        # （幂等 AI 回填：未投票派系首次决策即持久化，此后纯读零重掷），产出中间 vote_results
+        # （Stage 2 支持率载体）+ veto_candidate_ids（权威 passed-only 候选集）。
+        if voted_all:
+            projection = _build_vote_results_and_candidates(state)
+            projected_vote_results = projection["vote_results"]
+            veto_candidate_ids = projection["veto_candidate_ids"]
+        else:
+            projected_vote_results = []
+            veto_candidate_ids = []
         if result_data:
             current_step = "results"
         elif not decision_complete:
@@ -514,7 +532,9 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         elif not proposals:
             current_step = "results"  # Path A：0 提案 → 跳过 vote/veto，由提交处理函数直接 resolve（D-09）
         elif voted_all:
-            current_step = "tribune_veto"
+            # WP-F R2-01（D-2 对齐 CLI 先例 phase_senate.py:495-506）：zero-passed 收敛——
+            # 无 passed 提案 → 直接 results（跳过「否决空集」）；有候选才进 tribune_veto。
+            current_step = "tribune_veto" if len(veto_candidate_ids) > 0 else "results"
         else:
             current_step = "senate_vote"
         actionable = current_phase_id == "senate" and state.is_current_player(viewer_player_id)
@@ -590,8 +610,12 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "senate_result": senate_result or {},
             "direct_actions": state.get_senate_direct_actions(),
             "public_announcement": result_data.get("public_announcement", {}) if isinstance(result_data, dict) else {},
-            # WP-F R1-F-03：透传本轮每提案已算 vote result（resolve_senate 返回载体随 phase_data 落盘）
-            "vote_results": result_data.get("vote_results", []) if isinstance(result_data, dict) else [],
+            # WP-F R1-F-03 / R2-01：透传每提案已算 vote result——优先中间投影（voted_all 后
+            # Stage 2 即可读支持率）；非 voted_all / 结算后无 pending 提案时回退 phase_data
+            # 落盘值（R1 既有 results 展示行为不变）。
+            "vote_results": projected_vote_results if projected_vote_results else (result_data.get("vote_results", []) if isinstance(result_data, dict) else []),
+            # WP-F R2-01：权威 passed-only 否决候选 id 集（单一 producer，AI/Human/DTO/Store/QML 全消费者同源）
+            "veto_candidate_ids": veto_candidate_ids,
             "seat_shares": _seat_share_rows(state),
             "warnings": [{
                 "type": "info",

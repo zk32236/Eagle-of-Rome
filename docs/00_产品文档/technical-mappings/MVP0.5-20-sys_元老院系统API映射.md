@@ -200,10 +200,33 @@ can_trigger_ai_proposer / can_auto_veto  严格 mode=="AI"（D-3：NONE → 双 
   - **唯一触发点（C1，偏离 D-1 采纳）**：`auto_submit_proposals` 尾部（senate_api.py，GUI session_store:1265 / CLI phase_senate:1025 双入口共享同一活跃函数）——**严禁放回 resolve_senate**；auto_player_processor.py 为死代码（全仓零调用方）不选为触发点。CLI auto 模式经同入口继承 AI 接管（D-4 语义不回归）。
   - **provenance（C4）**：`record_senate_direct_action` payload 扩展为 10 字段——既有 6 字段（action_type/war_id/war_name/commander_id/commander_name/legions）+ `action:"takeover"`、`trigger_source:"human_explicit"|"ai_auto"`、`previous_status`、`resulting_status`（= war.status 执行前后值，takeover 不改 status → 均为 "active"，D-3 最小解释）；`get_senate_view` / `get_senate_direct_actions` 按 dict 透传不变 → 既有消费者零破坏。
 
+### 5.9 WP-F R2-01 Senate 中间投影 + Passed-Only 收敛（2026-08-30，v1.8）
+
+> 冻结语义来源：WP-F-R2 Task Package v1.0（§5~§8）+ SA Design（02-sa-design/WP-F-R2/SA-Design-WP-F-R2-V4Pro.md §4~§7）+ G4 DA-Plan（D-1~D-4）。GAME_RULE_CHANGE = NO（阈值/权重/AI 投票/Tribune 权威全部不变）。
+
+**① 中间 vote_results 投影（D-1 derive(A) 主案）：** `senate_api._build_vote_results_and_candidates(state)` 单一权威 producer——对每个已提交提案调 `calculate_vote_result`（复用唯一投票计算，零重算/零重掷），产出 `vote_results`（字段复用 resolve_senate 既有 schema：proposal_id/support_influence/oppose_influence/total_influence/passed/vetoed）+ `veto_candidate_ids`（passed 且未否决 id 集，即 `_passed_proposals_for_veto` 的 id 投影）。`get_senate_view` 在 `voted_all`（human 票冻结）后执行投影：
+
+```text
+投票完成（voted_all）→ 中间投影（Stage 2 支持率即时可读）
+→ 按 len(veto_candidate_ids) 分流：
+   >0 → current_step="tribune_veto"（Stage 3 仅渲染 passed 子集）
+   ==0 → current_step="results"（zero-passed 收敛，跳过「否决空集」）
+```
+
+- **首次决策非重入（ODR-R2-1 冻结）：** 投影可能触发未投票派系首次 AI 决策并幂等持久化（source="ai"，与 resolve_senate 最终计算同源同果）；刷新/重进纯读已冻结票，零 decider 重入、零随机重估。若评审不接受 view 副作用 → persist(B) 兜底案（vote() 完成时持久化中间快照，view 纯读）。
+- **DTO 新字段：** `get_senate_view` data dict 新增 `veto_candidate_ids`（list[int]，权威 passed-only 候选集）；`vote_results` 优先中间投影，非 voted_all / 结算后无 pending 提案时回退 phase_data 落盘值（R1 既有 results 展示行为不变）。
+- **Store：** `session_store.senateVetoCandidateIds`（只读透传 DTO list，notify=senateViewChanged）。
+- **QML：** Stage 2（元老院表决）delegate 追加支持率 Text（`supportRateText(voteResultFor(id))`，投票完成即显，纯展示除法禁阈值判定）；`vetoCandidateRows()` 改按 `senateVetoCandidateIds` 权威 id 映射 display rows（禁平行过滤/重算）。
+- **zero-passed 结算（D-2）：** `session_store.doSubmitSenateVotes` 尾部——提交成功后若 `current_step=="results"` 且 senate_result 未落盘 → 自动 `adapter.resolve_senate()`（对齐 CLI 先例 phase_senate.py:495-506 零提案跳过 + doSubmitSenateVetoes 否决后无条件 resolve 先例）；无新按钮/无 API 语义变更。
+
+**② record_veto fail-closed（D-3）：** `PoliticalSystem.record_veto` 对每个 proposal_id 增加四条件守卫——not submitted / vote not complete / Senate failed（passed==False）/ outside candidate set（passed-and-not-vetoed 判定合一）→ 跳过（零 `state.record_senate_veto` 调用，原语零改）+ `rejected_ids` 明细；全拒 → `success=False`（镜像 record_vote「全部未记录返 False」既有契约）；Tribune 权威（`_find_tribune_for_faction`）保留不变。
+
+**③ 消费者收敛：** AI veto（`apply_auto_tribune_vetoes`）已消费 `_passed_proposals_for_veto` 天然 passed-only（零改）；human/API veto 经新 guard；DTO/Store/QML 经 `veto_candidate_ids` 单一 producer —— 全消费者同源，无第二投票/否决算法。
+
 ## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
-| v1.7 | 2026-08-29 | WP-F 003（GUI 消费面）：senate_view 派系行/主持/总督候选人的 faction 字段消费改共享 FactionStyle（SenateStage 本地三分支 factionColor 删除 + GovernorAppointmentPanel 同改）；见 §6.1 |
+| v1.8 | 2026-08-30 | GUI-BETA-R1 WP-F-R2（R2-01）：①中间 vote_results 投影（`_build_vote_results_and_candidates`，voted_all 后，Stage 2 支持率即时可读，首次决策非重入）②`veto_candidate_ids` 权威 passed-only 候选集（DTO + `senateVetoCandidateIds` + QML 映射）③`record_veto` fail-closed 四条件 + `rejected_ids` + 全拒 success=False ④zero-passed 收敛（current_step=results + store 自动 resolve，D-2）；见 §5.9 |
 | v1.6 | 2026-08-23 | GUI-BETA-R1 WP-E（Slice 11 PU-04）：土地法案 sale → quota + total 双写入（political_system.py:510 `set_turn_land_sale_total` 并行）与 Forum resolve 消费关系（quota=remaining 消费、total 本年度稳定展示）；**REVIEWED-NO-CHANGE**：rejected/vetoed 展示段（senate rejected_proposals_snapshot 已有事件身份，仅验证不改）+ SenateStage.qml 相关段落（见实施报告 §7） |
 | v1.5 | 2026-08-23 | GUI-BETA-R1 WP-D-R2（Senate Authority Consolidation）: ①单一 authority resolver（resolve_proposal_control/resolve_veto_control，{mode,actor,authority_reason} HUMAN\|AI\|NONE + 三收敛 helper，退役 ≥10 处内联 duplicate）；②apply_auto_tribune_vetoes 人类 guard（viewer_player_id + fail-closed，decider 零构造零调用 + tribune_veto_human_guard 日志）；③can_select_proposal 三重 guard（R2-A-2）；④resolve_population_slice 尾部幂等 begin_population_phase（archive→convert→resolve 全序，R2-A-1）；⑤HUMAN vs AI 路由边界（store 读 veto_control_mode 不信任 cached can_auto_veto；can_trigger_ai/can_auto_veto 严格 mode==AI，D-3）+ provenance 5 字段（mode×2/actor×2/authority_reason dict） |
 | v1.3 | 2026-08-23 | GUI-BETA-R1 WP-D: 新增 §5 Senate Proposal Flow 契约（Consul 四层守卫 + DTO capability 四字段 + Zero-proposal 生命周期 + AI 0…N/空批 + Public Announcement DTO + 参数连续性 + Takeover Direct Action）——Trial Audit P1-PC-02/P1-PC-03 文档闭合 |

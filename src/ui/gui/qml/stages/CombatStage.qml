@@ -85,14 +85,10 @@ Rectangle {
             radius: 6
 
             readonly property int activeWarsCount: (sessionStore.combatActiveWars || []).length
-            readonly property int availableLegions: {
-                var total = 0
-                var wars = sessionStore.combatActiveWars || []
-                for (var i = 0; i < wars.length; i++) {
-                    total += (wars[i].legion_count || 0)
-                }
-                return total
-            }
+            // WP-F R2-02（F-02B/F-02F）：已动员军团改读权威字段 combatMobilizedLegions
+            // （= MilitarySystem.get_active_legions()，含 TRUCE 附着 ACTIVE）——替代本地
+            // combatActiveWars 累加（排除 TRUCE 缺陷）；QML 零生命周期推断。
+            readonly property int availableLegions: sessionStore.combatMobilizedLegions || 0
             readonly property int fleetCount: sessionStore.combatFleetCount || 0
             readonly property int availableLegionCount: sessionStore.combatAvailableLegions || 0
             readonly property int treasury: sessionStore.treasury || 0

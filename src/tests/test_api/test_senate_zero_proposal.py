@@ -111,14 +111,20 @@ class TestSenateZeroProposal(unittest.TestCase):
     # ---------------- Path B：投票全否决（Zero Survivor） ----------------
 
     def test_path_b_all_rejected_zero_survivor(self):
-        """Path B：全部 passed=False → veto 步空集 → resolve → enacted ∅；rejected 留 history。"""
+        """Path B：全部 passed=False → zero-passed 收敛（results，跳过否决空集）→ resolve → enacted ∅；rejected 留 history。
+
+        WP-F R2-01（Task Package §7.4）：零通过提案不进入 tribune_veto——禁止「否决空集」幽灵工作。
+        """
         self.state.senate_proposal_decision_complete = True
         pid = self.state.add_senate_proposal({"type": "war", "war_id": "w1", "legions": 4, "consul_id": 1})
         self.state.record_senate_vote("player1", pid, False)
         self.state.record_senate_vote("player2", pid, False)
 
         view = senate_api.get_senate_view(self.state, "player1")
-        self.assertEqual(view["data"]["current_step"], "tribune_veto")  # 全否决 → veto 步（passed 空集）
+        # WP-F R2-01：zero-passed → current_step="results"（跳过 tribune_veto，流程直接收敛）
+        self.assertEqual(view["data"]["current_step"], "results")
+        self.assertEqual(view["data"]["veto_candidate_ids"], [])
+        self.assertIs(view["data"]["can_advance"], True)
 
         resolved = senate_api.resolve_senate(self.state)
         self.assertTrue(resolved["success"])

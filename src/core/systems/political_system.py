@@ -234,8 +234,32 @@ class PoliticalSystem:
         if not tribune:
             return self._result(False, "只有保民官可以行使否决权")
 
+        # WP-F R2-01（D-3）：record_veto fail-closed 四条件——not submitted / vote not complete /
+        # Senate failed / outside candidate set（passed-and-not-vetoed 判定合一）→ 拒绝该 id 且
+        # 零否决状态变更（game_state.record_senate_veto 原语零改）；返回结构增加 rejected_ids 明细；
+        # 全拒 → success=False（镜像 record_vote「全部未记录返 False」既有契约，见上）。
+        # 否决候选唯一权威 = build_vote_results_and_candidates 的 veto_candidate_ids（单一 producer，
+        # 与 AI veto / DTO 路径同源同果）。
         vetoed = []
+        rejected_ids = []
+        proposals = self.state.get_senate_proposals()
+        votes = self.state.get_senate_votes_copy().get(player_id, {})
+        vote_complete = bool(proposals) and all(p["id"] in votes for p in proposals)
+        # WP-F R2-01（单一 producer）：否决候选集唯一来源 = build_vote_results_and_candidates
+        # 的 veto_candidate_ids（与 AI/DTO 路径同源）；禁内联 calculate_vote_result 重算
+        # passed-only（零平行判定）。
+        candidate_ids = set(self.build_vote_results_and_candidates()["veto_candidate_ids"])
         for proposal_id in proposal_ids:
+            proposal = next((p for p in proposals if p["id"] == proposal_id), None)
+            if proposal is None:
+                rejected_ids.append({"proposal_id": proposal_id, "reason": "not_submitted"})
+                continue
+            if not vote_complete:
+                rejected_ids.append({"proposal_id": proposal_id, "reason": "vote_not_complete"})
+                continue
+            if proposal_id not in candidate_ids:
+                rejected_ids.append({"proposal_id": proposal_id, "reason": "not_passed"})
+                continue
             if self.state.record_senate_veto(proposal_id):
                 vetoed.append(proposal_id)
                 self.state.log_event(
@@ -244,7 +268,17 @@ class PoliticalSystem:
                     extra={"player_id": player_id, "proposal_id": proposal_id},
                 )
 
-        return self._result(True, f"已否决 {len(vetoed)} 个提案", {"vetoed": vetoed})
+        if not vetoed:
+            return self._result(
+                False,
+                "否决被拒绝：提案未通过元老院表决",
+                {"vetoed": vetoed, "rejected_ids": rejected_ids},
+            )
+        return self._result(
+            True,
+            f"已否决 {len(vetoed)} 个提案",
+            {"vetoed": vetoed, "rejected_ids": rejected_ids},
+        )
 
     def resolve_senate(
         self,
@@ -379,6 +413,34 @@ class PoliticalSystem:
                 "proposer_faction": proposer_faction,
             }
         return None
+
+    def build_vote_results_and_candidates(self) -> Dict[str, Any]:
+        """WP-F R2-01：单一权威中间投影 producer（唯一 passed-only 候选集生产点）。
+
+        对每个已提交提案调 calculate_vote_result（复用唯一投票计算，零重算/零重掷）产出：
+        - vote_results：字段复用 resolve_senate 既有 schema（proposal_id / support_influence /
+          oppose_influence / total_influence / passed / vetoed）；
+        - veto_candidate_ids：passed 且未否决的提案 id（权威 passed-only 候选集）。
+
+        全消费者（AI veto / Human-direct record_veto / DTO / Store / QML）同源此 producer，
+        禁平行 passed-only 判定。首次调用可触发未投票 AI 派系首次决策并幂等持久化
+        （source="ai"，与 resolve_senate 最终计算同源同果）；此后纯读零重掷。
+        """
+        vote_results: List[Dict[str, Any]] = []
+        veto_candidate_ids: List[int] = []
+        for proposal in self.state.get_senate_proposals():
+            result = self.calculate_vote_result(proposal)
+            vote_results.append({
+                "proposal_id": proposal.get("id"),
+                "support_influence": result["support_influence"],
+                "oppose_influence": result["oppose_influence"],
+                "total_influence": result["total_influence"],
+                "passed": result["passed"],
+                "vetoed": result["vetoed"],
+            })
+            if result.get("passed") and not result.get("vetoed"):
+                veto_candidate_ids.append(proposal.get("id"))
+        return {"vote_results": vote_results, "veto_candidate_ids": veto_candidate_ids}
 
     def calculate_vote_result(self, proposal: dict, vote_decider: Optional[SenateVoteDecider] = None) -> dict:
         vote_decider = vote_decider or AutoSenateVoteDecider()

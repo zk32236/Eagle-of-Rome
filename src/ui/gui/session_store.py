@@ -406,6 +406,11 @@ class GuiSessionStore(QObject):
         """WP-F R1-F-03：本轮每提案已算 vote result（support/oppose/total/passed/vetoed），只读透传。"""
         return self._senate_view.get("vote_results", [])
 
+    @Property(list, notify=senateViewChanged)
+    def senateVetoCandidateIds(self) -> List[int]:
+        """WP-F R2-01：权威 passed-only 否决候选 id 集，只读透传 DTO（空集 = 无否决候选）。"""
+        return self._senate_view.get("veto_candidate_ids", [])
+
     # -----------------------------------------------------------------------
     # 收入阶段属性
     # -----------------------------------------------------------------------
@@ -609,6 +614,12 @@ class GuiSessionStore(QObject):
     @Property(int, notify=combatViewChanged)
     def combatAvailableLegions(self) -> int:
         return self._combat_view.get("available_legion_count", 0)
+
+    @Property(int, notify=combatViewChanged)
+    def combatMobilizedLegions(self) -> int:
+        """WP-F R2-02：权威已动员军团数（MilitarySystem.get_active_legions()，含 TRUCE 附着
+        ACTIVE 与未指派 ACTIVE；语义区别于 combatAvailableLegions 可征召池），只读透传 int。"""
+        return self._combat_view.get("mobilized_legion_count", 0)
 
     @Property(dict, notify=queryResultChanged)
     def globalQueryResult(self) -> Dict[str, Any]:
@@ -1339,6 +1350,18 @@ class GuiSessionStore(QObject):
         if feedback.get("success"):
             self._refresh_snapshot()
             self._refresh_senate_view()
+            # WP-F R2-01（D-2）：zero-passed 收敛结算——全部提案未通过 → current_step="results"
+            # 且 senate_result 未落盘（未 resolve）→ 自动结算（对齐 CLI 先例：否决环节零提案
+            # 直接跳过进结算 + 本文件 doSubmitSenateVetoes 否决后无条件 resolve 先例）；resolve_senate
+            # 幂等（落盘后 result_data 非空 → 条件不满足），passed>0 路径 step=tribune_veto 不触发。
+            if (
+                self._senate_view.get("current_step") == "results"
+                and not self._senate_view.get("senate_result")
+            ):
+                resolve_feedback = self._adapter.resolve_senate()
+                self._raise_feedback(resolve_feedback)
+                self._refresh_snapshot()
+                self._refresh_senate_view()
         self.senateViewChanged.emit()
         return feedback
 

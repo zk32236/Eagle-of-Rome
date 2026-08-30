@@ -163,6 +163,10 @@ class TestSenateAPI(unittest.TestCase):
         # 切换当前玩家为 player2（保民官所在派系）
         self.state._current_player_id = "player2"
         proposal_id = self.state.add_senate_proposal({"type": "war"})
+        # WP-F R2-01（fail-closed）：否决仅对「投票完成且通过元老院表决」的提案生效——
+        # 补齐双方票（通过）后再否决（原零票可否决断言已被 R2-01 取代）
+        self.state.record_senate_vote("player1", proposal_id, True)
+        self.state.record_senate_vote("player2", proposal_id, True)
         result = senate_api.veto(self.state, "player2", [proposal_id])
         self.assertTrue(result["success"])
         self.assertIn(proposal_id, self.state._senate_pending["vetoes"])

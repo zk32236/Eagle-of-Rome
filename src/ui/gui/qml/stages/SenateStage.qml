@@ -71,8 +71,18 @@ Rectangle {
         return "\u786e\u8ba4\u8868\u51b3 \u2192 \u79fb\u4ea4\u5426\u51b3\u73af\u8282"
     }
 
+    // WP-F R2-01（F-01B/C/D）：Stage 3 只渲染权威 passed-only 候选集——按后端
+    // senateVetoCandidateIds 映射 display rows（禁 QML 平行过滤/重算/阈值判定）
     function vetoCandidateRows() {
-        return sessionStore.senateSubmittedProposals || []
+        var ids = sessionStore.senateVetoCandidateIds || []
+        var rows = sessionStore.senateSubmittedProposals || []
+        var out = []
+        for (var i = 0; i < rows.length; i++) {
+            for (var j = 0; j < ids.length; j++) {
+                if (Number(rows[i].id) === Number(ids[j])) { out.push(rows[i]); break }
+            }
+        }
+        return out
     }
 
     function passedResultRows() {
@@ -912,7 +922,20 @@ Rectangle {
                             spacing: 6
                             Repeater {
                                 model: sessionStore.senateSubmittedProposals || []
-                                delegate: CheckBox { Layout.fillWidth: true; enabled: sessionStore.senateCurrentStep === "senate_vote"; text: (modelData.label || modelData.type) + root.voteParamDescription(modelData); checked: true; font.pixelSize: 12 }
+                                delegate: ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 2
+                                    CheckBox { Layout.fillWidth: true; enabled: sessionStore.senateCurrentStep === "senate_vote"; text: (modelData.label || modelData.type) + root.voteParamDescription(modelData); checked: true; font.pixelSize: 12 }
+                                    // WP-F R2-01（F-01A）：投票完成后（voted_all → 中间投影已产出）
+                                    // Stage 2 即显示权威通过/未通过 + 支持率（纯展示除法，禁 QML 阈值判定）
+                                    Text {
+                                        visible: root.voteResultFor(modelData.id) !== null
+                                        text: root.supportRateText(root.voteResultFor(modelData.id))
+                                        color: "#766652"
+                                        font.pixelSize: 10
+                                        Layout.fillWidth: true
+                                    }
+                                }
                             }
                         }
                     }

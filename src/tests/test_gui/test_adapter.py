@@ -199,6 +199,13 @@ class TestGuiApiAdapter:
 
         submitted_before_vote = list(store.senateSubmittedProposals)
 
+        # WP-F R2-01：voted_all 后 step 按实际通过数分流（AI/未投票派系决策随机）——
+        # 预录非 viewer 玩家支持票，保证提案确定性通过 → tribune_veto（测试确定性）
+        for p in state.get_all_players():
+            if p.player_id != player_id:
+                for prop in state.get_senate_proposals():
+                    state.record_senate_vote(p.player_id, prop["id"], True)
+
         feedback = store.doSubmitSenateVotes()
 
         assert feedback["success"]
@@ -218,6 +225,11 @@ class TestGuiApiAdapter:
         store = GuiSessionStore(state)
         store.initialize(player_id)
         store.doSubmitSenateProposals([{"type": "land", "params": {"act_type": "sale", "amount_C": 300}}])
+        # WP-F R2-01：预录非 viewer 玩家支持票（decider 对 land 随机 → 测试确定性通过）
+        for p in state.get_all_players():
+            if p.player_id != player_id:
+                for prop in state.get_senate_proposals():
+                    state.record_senate_vote(p.player_id, prop["id"], True)
         store.doSubmitSenateVotes()
 
         feedback = store.doSubmitSenateVetoes([])
@@ -251,6 +263,11 @@ class TestGuiApiAdapter:
         store = GuiSessionStore(state)
         store.initialize(player_id)
         store.doSubmitSenateProposals([{"type": "land", "params": {"act_type": "sale", "amount_C": 300}}])
+        # WP-F R2-01：预录非 viewer 玩家支持票 → 提案确定性通过 → tribune_veto
+        for p in state.get_all_players():
+            if p.player_id != player_id:
+                for prop in state.get_senate_proposals():
+                    state.record_senate_vote(p.player_id, prop["id"], True)
         store.doSubmitSenateVotes()
 
         assert store.senateCurrentStep == "tribune_veto"

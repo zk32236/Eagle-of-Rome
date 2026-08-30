@@ -293,6 +293,12 @@ def test_tf07b_senate_support_rate_real_store_render_visible():
         "consul_id": 1, "description": "公地分配法案 50 C", "label": "分地法案 — 分配 50 C",
     })
     store._refresh_senate_view()
+    # WP-F R2-01：预录非 viewer 玩家支持票（decider 对 land 随机 → 测试确定性）——
+    # 两提案确定性通过元老院表决；否决/resolve 链保持真实
+    for p in state.get_all_players():
+        if p.player_id != viewer_id:
+            for prop in state.get_senate_proposals():
+                state.record_senate_vote(p.player_id, prop["id"], True)
     fb = store.doSubmitSenateVotes()
     assert fb.get("success"), fb.get("message")
     submitted = store.senateSubmittedProposals or []

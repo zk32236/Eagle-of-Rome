@@ -361,6 +361,9 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
         active_wars = ws.get_active_wars() if ws else []
         fleet_count = len(ns.get_available_fleets()) if ns else 0
         available_legion_count = len(ms.get_available_legions()) if ms else 0
+        # WP-F R2-02（F-02B）：权威已动员军团数 = len(get_active_legions())（ACTIVE 全集，
+        # 含 TRUCE 附着 ACTIVE 与未指派 ACTIVE；语义区别于 available_legion_count 可征召池）
+        mobilized_legion_count = len(ms.get_active_legions()) if ms else 0
         treasury = getattr(state, '_treasury', 0)
 
         current_phase_id = _infer_current_phase_id(state)
@@ -463,6 +466,7 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
             "all_resolved": all_resolved,
             "fleet_count": fleet_count,
             "available_legion_count": available_legion_count,
+            "mobilized_legion_count": mobilized_legion_count,
             "treasury": treasury,
             "active_wars": war_cards,
             "truce_wars": truce_cards,

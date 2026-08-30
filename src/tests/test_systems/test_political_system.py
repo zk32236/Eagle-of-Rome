@@ -525,10 +525,13 @@ def test_governor_proposal_rejects_tribune_candidate(state):
 
 
 def test_record_veto_eligible_tribune_succeeds(state):
-    """AU-4 正向：faction 内 eligible Tribune → 可否决。"""
+    """AU-4 正向：faction 内 eligible Tribune → 可否决（WP-F R2-01：须投票完成且提案通过）。"""
     state.set_current_player("player2")
     politics = PoliticalSystem(state)
     proposal_id = state.add_senate_proposal({"type": "war"})
+    # WP-F R2-01（fail-closed）：否决仅对通过元老院表决的提案生效——补齐双方票（通过）后否决
+    state.record_senate_vote("player1", proposal_id, True)
+    state.record_senate_vote("player2", proposal_id, True)
     result = politics.record_veto("player2", [proposal_id])
     assert result["success"] is True
     assert proposal_id in state.get_senate_vetoes_copy()

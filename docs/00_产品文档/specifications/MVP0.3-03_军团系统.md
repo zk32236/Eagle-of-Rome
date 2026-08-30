@@ -93,6 +93,7 @@ def calculate_maintenance(self) -> Tuple[int, Dict[str, int]]:
 - 计算所有 `ACTIVE` 状态军团的维护费
 - 基础维护费从配置读取（`legion_maintenance_base`，默认 2）
 - 老兵军团额外增加（`veteran_maintenance_bonus`，默认 1）
+- **WP-F R2-02（2026-08-30）：** 维护费同集 = `MilitarySystem.get_active_legions()`（military_system.py:51）——STALEMATE→TRUCE 后附着军团的 status 仍为 ACTIVE（war_id 指向 TRUCE war，`enter_truce` 零 recall，war_system.py:103-133），故仍计入维护费；释放仅经 canonical 后续生命周期（`execute_passed_peace_treaty → recall_from_war`，political_system.py:566-577）
 
 ```python
 def apply_maintenance(self, verbose: bool = True) -> Tuple[bool, str]:
@@ -309,3 +310,4 @@ UNRAISED ──[征召]──→ ACTIVE ──[指派]──→ ACTIVE(w/ war_id
 |------|------|--------|---------|
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent J | 初版创建（代码审计完成，含恢复机制/战斗结果/停战草案） |
 | v1.1 | 2026-08-27 | DA Sub-Agent (WP-E-R5) | 维护费短款行为修订 |
+| v1.2 | 2026-08-30 | DA Sub-Agent (WP-F-R2) | 权威已动员计数（`mobilized_legion_count = len(get_active_legions())`）：TRUCE 附着 ACTIVE 军团计入「已动员军团」概览与维护费同集；STALEMATE 非释放点（释放仅经 canonical 后续生命周期）；GUI 概览改读权威 DTO/Store 字段（combat_api.get_combat_view + `combatMobilizedLegions` + CombatStage.qml），禁 QML 生命周期推断 |

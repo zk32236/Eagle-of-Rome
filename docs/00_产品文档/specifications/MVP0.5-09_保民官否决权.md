@@ -179,4 +179,8 @@
 
 **REVIEWED — NO CHANGE REQUIRED**：功能规格已含「否决结果由配置概率决定（AI 模式）或保民官玩家手动选择（人类模式）」——与 R2 路由边界语义一致（人类派系持 eligible Tribune → 否决权归人类，AI 决策器调用 = 0；无人类 Tribune → AI 路径按既有规则）。R2 实现细节（fail-closed guard / 零调用 / resolver 收敛 / store 路由权威化）属技术映射层（technical-mappings/MVP0.5-09 v1.2），规格层无内容变更。
 
+### R2-01 复核记录（2026-08-30，GUI-BETA-R1 WP-F-R2）
+
+**REVIEWED — CONFIRMED**：否决候选 = **Senate 通过提案 only**（passed-only 收敛，规格 §2.5/§3.3 既有语义现已全消费者落地）：①中间 `veto_candidate_ids` 权威集（= `_passed_proposals_for_veto` id 投影）供 DTO/Store/QML Stage 3 唯一消费；②`record_veto` fail-closed 四条件（not submitted / vote not complete / Senate failed / outside candidate set → 拒绝 + rejected_ids，全拒 success=False），failed 提案不可经 GUI 或 direct API 否决；③zero-passed → current_step=results 流程收敛，无需「否决空集」解锁。GAME_RULE_CHANGE = NO（阈值 >50% / AI 概率 / Tribune 权威均不变）。实现细节见 technical-mappings/MVP0.5-20 v1.8 §5.9。
+
 > **维护规则：** 本文件为活文档，每次修改规格说明正文或技术映射时，必须在版本日志中追加新条目。版本号递增规则：大功能修改升主版本（v1→v2），小修小改升次版本（v1.0→v1.1）。
