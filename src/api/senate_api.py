@@ -176,6 +176,42 @@ def _legion_options_for_war(state: GameState, war) -> Optional[Dict[str, Any]]:
     return {"min": lo, "max": pool, "default": default, "allowed": allowed}
 
 
+def reinforcement_range(state: GameState, war) -> Optional[Dict[str, Any]]:
+    """Reinforcement N 冻结值域（G 件 §4 / G1-23 / G1-24 / G1-17，A3）。
+
+    正常：1 ≤ N ≤ count(UNRAISED+DISBANDED)；零池例外：pool==0 → N=0 允许；
+    国库不参与上限。返回 {"min", "max", "default", "allowed", "zero_pool_exception"}；
+    供 GUI DTO / API 重校验 / GB·GC·GD 下游消费（G 件 §5「GA 统一暴露」）。
+    """
+    ms = state.get_military_system()
+    pool = len(ms.get_available_legions()) if ms else 0
+    if pool == 0:
+        return {
+            "min": 0, "max": 0, "default": 0,
+            "allowed": [0], "zero_pool_exception": True,
+        }
+    return {
+        "min": 1, "max": pool, "default": 1,
+        "allowed": list(range(1, pool + 1)), "zero_pool_exception": False,
+    }
+
+
+def _war_has_valid_commander(state: GameState, war) -> bool:
+    """薄委托：单一权威判定（PoliticalSystem.is_war_commander_valid，H 件 §3）。"""
+    return _political_system(state).is_war_commander_valid(war)
+
+
+def _commander_unavailable_reason(state: GameState, war) -> str:
+    """P2 接管 reason（DTO 展示，Q 件 J）。"""
+    old_cmd = state.get_member(war.commander_id) if war.commander_id else None
+    if old_cmd and old_cmd.is_dead:
+        return "指挥官已阵亡"
+    if old_cmd and old_cmd.is_absent:
+        return "指挥官离任"
+    return "指挥官缺失"
+
+
+
 def _build_proposal_options(state: GameState, info: Dict[str, Any]) -> List[Dict[str, Any]]:
     options: List[Dict[str, Any]] = []
     for war in info.get("war_threats", []):
@@ -291,24 +327,57 @@ def _current_tribune(state: GameState) -> Optional[Figure]:
 
 
 def _build_takeover_options(state: GameState) -> List[Dict[str, Any]]:
-    """计算可接管战争列表 [{war_id, name, reason}]（DEV-13 DTO）。"""
+    """可接管战争列表（A4，Q 件 J）：P1（TRUCE+pending treaty）∪ P2（ACTIVE+no valid commander）。
+
+    排除 ACTIVE+valid commander（禁任意接管，F 件 §5.1）；起义战争排除（总督接管）。
+    每项附 reason + reinforcement_range（DTO 只透传权威值，禁 QML 推断 R-01）。
+    """
     ws = state.get_war_system()
     if not ws:
         return []
     options = []
-    for war in ws.get_active_wars():
+    seen = set()
+    wars = list(ws.get_truce_wars_with_pending_treaty()) + list(ws.get_active_wars())
+    for war in wars:
+        if war.id in seen:
+            continue
+        seen.add(war.id)
         if war.rebellion_province_id is not None:
             continue
-        reason = ""
-        if war.commander_id is not None:
-            old_cmd = state.get_member(war.commander_id)
-            if old_cmd and not old_cmd.is_dead and not (old_cmd.is_absent and old_cmd.office in ("proconsul", "propraetor")):
-                continue  # 已有有效指挥官，不可接管
-            if old_cmd and old_cmd.is_dead:
-                reason = "指挥官已阵亡"
-            elif old_cmd and old_cmd.is_absent:
-                reason = "指挥官离任"
-        options.append({"war_id": war.id, "name": war.name, "reason": reason})
+        if war.status == WarStatus.TRUCE:
+            # P1：TRUCE + pending treaty（候选集已保证 pending）→ 可接管（替换现有指挥官）
+            reason = "停战接管"
+        else:
+            # P2：ACTIVE —— 仅无有效指挥官时可接管
+            if _war_has_valid_commander(state, war):
+                continue
+            reason = _commander_unavailable_reason(state, war)
+        options.append({
+            "war_id": war.id,
+            "name": war.name,
+            "reason": reason,
+            "reinforcement_range": reinforcement_range(state, war),
+        })
+    return options
+
+
+def _build_continue_options(state: GameState) -> List[Dict[str, Any]]:
+    """Continue Existing Command 候选（A5，G1-21 / Q 件 J）：TRUCE + pending + 现有 commander 有效。"""
+    ws = state.get_war_system()
+    if not ws:
+        return []
+    options = []
+    for war in ws.get_truce_wars_with_pending_treaty():
+        if war.rebellion_province_id is not None:
+            continue
+        if not _war_has_valid_commander(state, war):
+            continue
+        options.append({
+            "war_id": war.id,
+            "name": war.name,
+            "commander_id": war.commander_id,
+            "reinforcement_range": reinforcement_range(state, war),
+        })
     return options
 
 
@@ -563,7 +632,9 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         # D-3 收严：can_trigger_ai 严格 mode=="AI"（NONE 不再暴露 AI 入口，fail-closed D-R2-05）
         can_trigger_ai = actionable and current_step == "proposal" and proposal_control["mode"] == "AI"
         takeover_options = _build_takeover_options(state)
+        continue_options = _build_continue_options(state)
         can_takeover = actionable and bool(takeover_options) and viewer_has_consul
+        can_continue = actionable and bool(continue_options) and viewer_has_consul
 
         data = {
             "phase_id": "senate",
@@ -615,6 +686,8 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "takeover_wars": active_foreign_wars,
             "takeover_options": takeover_options,
             "can_takeover": can_takeover,
+            "continue_options": continue_options,
+            "can_continue": can_continue,
             "war_threats": war_threats,
             "pending_peace_treaties": pending_peace_treaties,
             "governor_vacancies": governor_vacancies,
@@ -644,12 +717,17 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         return api_response(False, f"获取元老院视图失败: {exc}", errors=[str(exc)])
 
 
-def takeover_war(state: GameState, player_id: str, war_id: str) -> dict:
-    """战争接管直接职权（DEV-13）：执政官直接接管指定活跃外战，无需表决。
+def takeover_war(state: GameState, player_id: str, war_id: str, reinforcement_n: Optional[int] = None) -> dict:
+    """战争接管直接职权（DEV-13 + ODR-G-01 统一 Takeover）：执政官直接接管，无需表决。
 
-    后端保证权限与表决链分离（FC-01/02/03/04/05/06/07/09/10）：
-    不创建 proposal、不进入 calculate_vote_result / record_veto / execute_passed_proposal。
-    权限校验（执政官）+ 可执行校验（活跃外战、无有效指挥官）+ 幂等拒绝。
+    可执行校验（A1，F 件 §2.1 双前置）：
+      P1 — TRUCE + pending treaty（T7）：terminate treaty → ACTIVE → 新 Consul
+      P2 — ACTIVE + no valid commander（T15）：无状态转换、无条约 mutation
+      异常态（ACTIVE+pending / TRUCE+无 pending / 其他）→ fail closed 拒绝；
+      ACTIVE + valid commander → 幂等拒绝（禁任意接管）。
+    reinforcement_n 经 reinforcement_range 重校验（G 件 §4，fail-closed）。
+    后端保证权限与表决链分离（FC-01/02/03/04/05/06/07/09/10）：不创建 proposal、
+    不进入 calculate_vote_result / record_veto / execute_passed_proposal。
     """
     if not state:
         return api_response(False, "无效的游戏状态")
@@ -718,13 +796,42 @@ def takeover_war(state: GameState, player_id: str, war_id: str) -> dict:
         )
         return api_response(False, "战争不存在")
 
-    if war.status != WarStatus.ACTIVE:
+    # A1（F 件 §2.1）：双前置 P1/P2 + 异常态 fail closed
+    treaty = war.peace_treaty
+    treaty_pending = bool(treaty and treaty.get("status") == "pending")
+    if war.status == WarStatus.TRUCE:
+        if not treaty_pending:
+            state.log_event(
+                "战争接管: 拒绝（TRUCE 但无待决草案）",
+                level=logging.DEBUG,
+                extra={"war_id": war_id, "player_id": player_id, "reason": "truce_without_pending"},
+            )
+            return api_response(False, "该停战战争无待决和约草案，无法接管")
+        # P1 合法入口（TRUCE + pending；可替换现有指挥官）
+    elif war.status == WarStatus.ACTIVE:
+        if treaty_pending:
+            state.log_event(
+                "战争接管: 拒绝（ACTIVE+pending 异常态）",
+                level=logging.DEBUG,
+                extra={"war_id": war_id, "player_id": player_id, "reason": "active_with_pending"},
+            )
+            return api_response(False, "异常状态：活跃战争存在待决草案，无法接管")
+        # 3. 幂等/重入拒绝：已有有效指挥官（禁任意接管，F 件 §5.1）
+        if _war_has_valid_commander(state, war):
+            state.log_event(
+                "战争接管: 幂等拒绝（已有有效指挥官）",
+                level=logging.DEBUG,
+                extra={"war_id": war_id, "player_id": player_id, "commander_id": war.commander_id, "reason": "already_taken_over"},
+            )
+            return api_response(False, "该战争已有有效指挥官，无法接管")
+        # P2 合法入口（commanderless ACTIVE）
+    else:
         state.log_event(
-            "战争接管: 拒绝（非活跃战争）",
+            "战争接管: 拒绝（状态不可接管）",
             level=logging.DEBUG,
-            extra={"war_id": war_id, "player_id": player_id, "reason": "war_not_active"},
+            extra={"war_id": war_id, "player_id": player_id, "reason": "war_not_takeoverable"},
         )
-        return api_response(False, "该战争不处于活跃状态")
+        return api_response(False, "该战争不处于可接管状态")
 
     if war.rebellion_province_id is not None:
         state.log_event(
@@ -734,37 +841,42 @@ def takeover_war(state: GameState, player_id: str, war_id: str) -> dict:
         )
         return api_response(False, "起义战争由总督接管，无法由执政官接管")
 
-    # 3. 幂等/重入拒绝：已有有效指挥官
-    if war.commander_id is not None:
-        old_cmd = state.get_member(war.commander_id)
-        if old_cmd and not old_cmd.is_dead and not (old_cmd.is_absent and old_cmd.office in ("proconsul", "propraetor")):
-            state.log_event(
-                "战争接管: 幂等拒绝（已有有效指挥官）",
-                level=logging.DEBUG,
-                extra={"war_id": war_id, "player_id": player_id, "commander_id": war.commander_id, "reason": "already_taken_over"},
-            )
-            return api_response(False, "该战争已有有效指挥官，无法接管")
-
-    # 4. 直接执行（复用 PoliticalSystem 指挥官分配 + 军团招募；politics 已在权限校验处构造）
-    previous_status = war.status.value if hasattr(war.status, "value") else str(war.status)
-    if not politics.execute_war_takeover_direct(war, consul_figure):
+    # 4. Reinforcement N 校验（G 件 §4，fail-closed）
+    rng = reinforcement_range(state, war)
+    if rng is None:
+        return api_response(False, "增援值域不可用")
+    if reinforcement_n is None:
+        reinforcement_n = rng["default"]
+    if not isinstance(reinforcement_n, int) or isinstance(reinforcement_n, bool):
+        return api_response(False, "增援数量必须为整数")
+    if reinforcement_n not in rng["allowed"]:
         state.log_event(
-            "战争接管: 拒绝（军团招募失败）",
+            "战争接管: 拒绝（Reinforcement N 超出值域）",
             level=logging.DEBUG,
-            extra={"war_id": war_id, "player_id": player_id, "reason": "legion_recruit_failed"},
+            extra={"war_id": war_id, "player_id": player_id, "reinforcement_n": reinforcement_n,
+                   "range": rng, "reason": "reinforcement_out_of_range"},
         )
-        return api_response(False, "接管失败：军团招募失败")
+        return api_response(False, f"增援数量超出允许范围（{rng['min']}~{rng['max']}）")
+
+    # 5. 直接执行（统一 Takeover mutation，F 件 §2.1 Shared Core）
+    previous_status = war.status.value if hasattr(war.status, "value") else str(war.status)
+    if not politics.execute_war_takeover_direct(war, consul_figure, reinforcement_n=reinforcement_n):
+        state.log_event(
+            "战争接管: 拒绝（接管执行失败）",
+            level=logging.DEBUG,
+            extra={"war_id": war_id, "player_id": player_id, "reason": "takeover_execution_failed"},
+        )
+        return api_response(False, "接管失败：军团招募失败或前置不满足")
     resulting_status = war.status.value if hasattr(war.status, "value") else str(war.status)
 
     state.log_event(
         "战争接管: 成功",
         level=logging.DEBUG,
-        extra={"war_id": war_id, "player_id": player_id, "commander_id": consul_figure.id, "legions": list(getattr(war, "legion_numbers", []) or [])},
+        extra={"war_id": war_id, "player_id": player_id, "commander_id": consul_figure.id,
+               "reinforcement_n": reinforcement_n, "legions": list(getattr(war, "legion_numbers", []) or [])},
     )
-    # AU-R1-05c（G3 C4）：provenance 字段扩展——与既有 6 字段并存（action/trigger_source/
-    # previous_status/resulting_status）；get_senate_view/get_senate_direct_actions 按 dict
-    # 透传不变 → 既有消费者零破坏（trigger_source: human_explicit | ai_auto 可区分显式 Direct
-    # Action vs 隐藏 resolve 副作用；takeover 不改 status，前后值均为 ACTIVE——D-3 最小解释）。
+    # AU-R1-05c（G3 C4）：provenance 字段扩展——与既有字段并存；trigger_source 区分
+    # human_explicit / ai_auto；P1 接管 previous_status=truce / resulting_status=active。
     state.record_senate_direct_action({
         "action_type": "takeover",
         "action": "takeover",
@@ -773,6 +885,7 @@ def takeover_war(state: GameState, player_id: str, war_id: str) -> dict:
         "commander_id": consul_figure.id,
         "commander_name": consul_figure.get_formal_name(),
         "legions": list(getattr(war, "legion_numbers", []) or []),
+        "reinforcement_n": reinforcement_n,
         "trigger_source": "human_explicit",
         "previous_status": previous_status,
         "resulting_status": resulting_status,
@@ -784,6 +897,92 @@ def takeover_war(state: GameState, player_id: str, war_id: str) -> dict:
             "war_id": war_id,
             "commander_id": consul_figure.id,
             "legions": list(getattr(war, "legion_numbers", []) or []),
+            "reinforcement_n": reinforcement_n,
+        },
+    )
+
+
+def continue_war(state: GameState, player_id: str, war_id: str, reinforcement_n: Optional[int] = None) -> dict:
+    """Continue Existing Command（A2，G1-21 / F 件 §2.2）：执政官继续现有指挥，不接管、不提交和约。
+
+    前置：TRUCE + pending treaty + 现有 commander 有效；N 经 reinforcement_range 重校验。
+    语义：清条约 → TRUCE→ACTIVE → 保留 commander → 保留幸存 → 征召 N → bind 现有 commander。
+    """
+    if not state:
+        return api_response(False, "无效的游戏状态")
+
+    # 1. 权限校验
+    if not state.is_current_player(player_id):
+        return api_response(False, "当前不是您的回合")
+    player = state.get_player(player_id)
+    if not player:
+        return api_response(False, "玩家不存在")
+    faction = state.get_faction(player.faction_id)
+    if not faction:
+        return api_response(False, "派系不存在")
+    politics = _political_system(state)
+    consul_figure = None
+    for member in faction.get_members(state):
+        if politics._is_eligible_consul(member):
+            consul_figure = member
+            break
+    if not consul_figure:
+        return api_response(False, "您的派系没有存活且在罗马的执政官，无法继续指挥")
+
+    # 2. 可执行校验
+    if not war_id:
+        return api_response(False, "缺少 war_id")
+    ws = state.get_war_system()
+    if not ws:
+        return api_response(False, "战争系统不可用")
+    war = ws.get_war_by_id(war_id)
+    if not war:
+        return api_response(False, "战争不存在")
+    treaty = war.peace_treaty
+    treaty_pending = bool(treaty and treaty.get("status") == "pending")
+    if war.status != WarStatus.TRUCE or not treaty_pending:
+        return api_response(False, "该战争不处于可继续指挥状态（需停战且有待决和约）")
+    if not _war_has_valid_commander(state, war):
+        return api_response(False, "现有指挥官无效，无法继续指挥（可考虑接管）")
+    if war.rebellion_province_id is not None:
+        return api_response(False, "起义战争由总督接管，无法继续指挥")
+
+    # 3. Reinforcement N 校验（G 件 §4，fail-closed）
+    rng = reinforcement_range(state, war)
+    if rng is None:
+        return api_response(False, "增援值域不可用")
+    if reinforcement_n is None:
+        reinforcement_n = rng["default"]
+    if not isinstance(reinforcement_n, int) or isinstance(reinforcement_n, bool):
+        return api_response(False, "增援数量必须为整数")
+    if reinforcement_n not in rng["allowed"]:
+        return api_response(False, f"增援数量超出允许范围（{rng['min']}~{rng['max']}）")
+
+    # 4. 执行（Continue 唯一 mutation）
+    previous_status = war.status.value if hasattr(war.status, "value") else str(war.status)
+    if not politics.execute_war_continue_direct(war, consul_figure, reinforcement_n=reinforcement_n):
+        return api_response(False, "继续指挥失败")
+    resulting_status = war.status.value if hasattr(war.status, "value") else str(war.status)
+    state.record_senate_direct_action({
+        "action_type": "continue",
+        "action": "continue",
+        "war_id": war_id,
+        "war_name": war.name,
+        "commander_id": war.commander_id,
+        "legions": list(getattr(war, "legion_numbers", []) or []),
+        "reinforcement_n": reinforcement_n,
+        "trigger_source": "human_explicit",
+        "previous_status": previous_status,
+        "resulting_status": resulting_status,
+    })
+    return api_response(
+        True,
+        "继续现有指挥成功",
+        data={
+            "war_id": war_id,
+            "commander_id": war.commander_id,
+            "legions": list(getattr(war, "legion_numbers", []) or []),
+            "reinforcement_n": reinforcement_n,
         },
     )
 
@@ -935,9 +1134,23 @@ def auto_submit_proposals(
                         errors.append(f"宣战失败({war.id}): {result['message']}")
 
     # ========== 4b. 停战草案（待决停战） ==========
+    # A7（F 件 §2.3 / R-16 互斥）：同轮不双路径——先做 AI 接管只读预决策（单次 decider
+    # 决策，零 mutation），AI 将接管的 TRUCE 战争跳过 peace 提案；尾部执行复用同一决策
+    # （防 decider 二次 random 漂移）。AI Continue 不在 GA 新增（4b peace + takeover
+    # 二选一，AI 策略由 decider 驱动，不发明新策略）。
+    politics = _political_system(state)
+    ai_takeover_plan = politics.plan_ai_takeovers()
+    ai_takeover_war_ids = {r["war_id"] for r in ai_takeover_plan}
     if ws:
         pending_peace = ws.get_truce_wars_with_pending_treaty()
         for war in pending_peace:
+            if war.id in ai_takeover_war_ids:
+                state.log_event(
+                    f"AI 停战提案跳过（同轮接管互斥）: war={war.id}",
+                    level=logging.DEBUG,
+                    extra={"war_id": war.id, "reason": "ai_takeover_mutual_exclusion"},
+                )
+                continue
             result = propose(
                 state, consul_player_id, "peace",
                 bypass_turn_check=True,
@@ -1084,10 +1297,10 @@ def auto_submit_proposals(
     # ========== 4f. AI 自动接管（C1 触发点，G3/D-1 采纳） ==========
     # AU-R1-05b：AI 接管走 Direct Action 语义（execute_ai_takeover_direct_action，与 human
     # takeover_war 同 mutation 路径 + provenance trigger_source="ai_auto"）。唯一 AI 接管调用点
-    # ——不得放回 resolve_senate（resolve 零 takeover）；GUI（session_store:1265）与 CLI
-    # （phase_senate:1025）双入口共享本函数，AI 接管经同入口继承（D-4，CLI 语义不回归）。
-    politics = _political_system(state)
-    ai_takeovers = politics.execute_ai_takeover_direct_action()
+    # ——不得放回 resolve_senate（resolve 零 takeover）；GUI（session_store）与 CLI
+    # （phase_senate）双入口共享本函数，AI 接管经同入口继承（D-4，CLI 语义不回归）。
+    # A7：复用 4b 前 plan_ai_takeovers 的单次决策（同轮互斥，防二次 random 漂移）。
+    ai_takeovers = politics.execute_ai_takeover_direct_action(predecided=ai_takeover_plan)
     if ai_takeovers:
         state.log_event(
             f"AI 自动接管 {len(ai_takeovers)} 个战争（Direct Action 语义）",

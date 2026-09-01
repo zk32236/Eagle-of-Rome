@@ -261,6 +261,8 @@ class TestCombatCommand(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertTrue("victory" in output.lower() or "胜利" in output or "大胜" in output)
+        # WP-G GB（G1-22，S5 收敛）：VICTORY → 战争结束（RESOLVED）
+        self.mock_war_system.resolve_war.assert_called_with(war.id, True)
 
     @patch('random.randint')
     def test_battle_outcomes_stalemate(self, mock_randint):
@@ -319,6 +321,8 @@ class TestCombatCommand(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertTrue("defeat" in output.lower() or "战败" in output or "😞" in output)
+        # WP-G GB（G1-05/06/07，S2 收敛）：DEFEAT 伤亡经 apply_land_casualties（单一原语）
+        self.mock_military_system.apply_land_casualties.assert_called_with(war.id, "defeat")
 
     @patch('random.randint')
     def test_battle_outcomes_disaster(self, mock_randint):

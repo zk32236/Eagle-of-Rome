@@ -68,6 +68,18 @@ class NavalSystem:
                 return True
         return False
 
+    def _has_active_fleet_contract_for_war(self, war_id: str) -> bool:
+        """仅检查同战 PENDING/BUDGETED/ACTIVE 舰队建造合同（防重复合同，G1-11）。
+
+        不因「同战存在存活舰队」阻断补充——同战 deficit 由 generate_replacement_contracts
+        按 G1-11 公式计算（D 件 §6，R-12）。
+        """
+        return any(
+            getattr(c, "_target_war_id", None) == war_id
+            and c.status in (ContractStatus.PENDING, ContractStatus.BUDGETED, ContractStatus.ACTIVE)
+            for c in self.state.get_all_contracts()
+        )
+
     def generate_construction_contracts(self, current_turn: int) -> List[Contract]:
         if not self._can_build_fleet():
             self.state.log_event(
@@ -388,6 +400,24 @@ class NavalSystem:
             )
             return False
 
+        # R-12（G1-12）：单战专属资产——已归属其他战争（_target_war_id != war_id）禁跨战复用
+        # （_target_war_id is None = legacy/未归属 → 放行，防旧存档/测试舰队不可指派，D-3）
+        if fleet._target_war_id not in (None, war_id):
+            self.state.log_event(
+                f"[DEBUG] assign_fleet_to_war 拒绝: 舰队 {fleet_id} 专属战争 {fleet._target_war_id}，禁跨战复用（R-12）",
+                level=logging.DEBUG,
+                extra={
+                    "function": "assign_fleet_to_war",
+                    "fleet_id": fleet_id,
+                    "war_id": war_id,
+                    "target_war_id": fleet._target_war_id,
+                    "phase": "exit",
+                    "success": False,
+                    "reason": "cross_war_reuse_forbidden"
+                }
+            )
+            return False
+
         war_system = self.state.get_war_system()
         war = war_system.get_war_by_id(war_id) if war_system else None
         if not war or not war.naval_required:
@@ -404,6 +434,11 @@ class NavalSystem:
                 }
             )
             return False
+
+        # G1-20（H 件 §4）：Fleet 绑定 = War Commander（无独立海军指挥官）；
+        # commander_id 缺省解析为 war.commander_id（None 时保持 None）
+        if commander_id is None and war.commander_id is not None:
+            commander_id = war.commander_id
 
         if fleet.assign_to_war(war_id, mission_type, commander_id):
             war.assign_fleet(fleet_id)
@@ -488,6 +523,19 @@ class NavalSystem:
         result = self._simplified_crt(dice, total, war)
         losses = self._apply_naval_losses(war, result, roman_fleets)
 
+        # G1-16 / K 件 §7：制海权唯一 True 写入点（GC）——TRIUMPH/VICTORY 获控
+        # （获控后同战未来战斗跳过海战，R-06）；False 清理 = clear_sea_control（GD 接线）
+        if result in ("TRIUMPH", "VICTORY") and not war.sea_control_acquired:
+            war._sea_control_acquired = True
+            self.state.log_event(
+                f"制海权获取: {war.name}（{result}）",
+                extra={
+                    "type": "sea_control_acquired",
+                    "war_id": war.id,
+                    "result": result,
+                },
+            )
+
         # 海战结果变体日志
         variant_map = {
             "TRIUMPH": "naval_battle_triumph",
@@ -527,39 +575,40 @@ class NavalSystem:
 
     def _apply_naval_losses(self, war, result: str, roman_fleets: List[Fleet]) -> int:
         """
-        应用海战损失，返回罗马损失舰队数。
-        简化处理：灾难时全部摧毁，大胜时无损，其他情况按比例。
+        应用海战损失，返回罗马损失舰队数（G1-10 冻结数学，D 件 §3）。
+
+        TRIUMPH / VICTORY / STALEMATE → 0 损失
+        DEFEAT    → random.sample(参战舰队, ceil(N/2)) 无放回 → DESTROYED（war.remove_fleet 同步）
+        DISASTER  → 全部参战舰队 DESTROYED
         """
         losses = 0
+        current_turn = self.state.turn.turn_number
         if result == "DISASTER":
             for fleet in roman_fleets:
-                fleet.mark_destroyed(self.state.turn.turn_number)
+                fleet.mark_destroyed(current_turn)
                 war.remove_fleet(fleet.number)
             losses = len(roman_fleets)
         elif result == "DEFEAT":
-            # 损失一半
-            half = len(roman_fleets) // 2
-            for i, fleet in enumerate(roman_fleets):
-                if i < half:
-                    fleet.mark_destroyed(self.state.turn.turn_number)
-                    war.remove_fleet(fleet.number)
-                    losses += 1
-        elif result == "STALEMATE":
-            # 损失少量（如1艘）
-            if roman_fleets:
-                fleet = roman_fleets[0]
-                fleet.mark_destroyed(self.state.turn.turn_number)
+            # G1-10：losses = ceil(N/2)（= N - N//2，G1-06 对齐）随机无放回（G1-05 精神）
+            loss_count = len(roman_fleets) - len(roman_fleets) // 2
+            casualties = random.sample(roman_fleets, loss_count)
+            for fleet in casualties:
+                fleet.mark_destroyed(current_turn)
                 war.remove_fleet(fleet.number)
-                losses = 1
-        # VICTORY 和 TRIUMPH 无损
+            losses = loss_count
+        # STALEMATE / VICTORY / TRIUMPH → 0 损失（删除「STALEMATE 损 1」旧分支，§11.10）
         return losses
 
     # ---------- 维护与解散 ----------
     def calculate_maintenance(self) -> int:
-        """计算所有活跃舰队的维护费总和"""
+        """计算所有活跃舰队的维护费总和（J 件 §5：排除 DISBANDED/BUILDING/DESTROYED）。
+
+        G1-14：战争结束召回后 AVAILABLE 幸存者仍计维护（下个 Revenue 最后一次）；
+        仅 DISBANDED 后不再产生维护。
+        """
         total = 0
         for fleet in self._fleets.values():
-            if fleet.status not in (FleetStatus.DESTROYED, FleetStatus.BUILDING):
+            if fleet.status not in (FleetStatus.DESTROYED, FleetStatus.BUILDING, FleetStatus.DISBANDED):
                 total += fleet.get_maintenance_cost(self.state)
         return total
 
@@ -571,7 +620,8 @@ class NavalSystem:
         disbanded = []
         for fleet in list(self._fleets.values()):
             if decider.should_disband_fleet(fleet, self.state):
-                fleet.mark_destroyed(current_turn)
+                # R-11（G1-13）：正常行政退役走 disband() → DISBANDED，禁 mark_destroyed
+                fleet.disband()
                 disbanded.append(fleet.number)
                 self.state.log_event(
                     f"舰队 {fleet.number} 已解散（根据决策器）",
@@ -581,6 +631,7 @@ class NavalSystem:
                         "fleet_number": fleet.number,
                         "reason": "decider",
                         "current_turn": current_turn,
+                        "fleet_status": "disbanded",
                     }
                 )
         return disbanded
@@ -590,25 +641,28 @@ class NavalSystem:
     def generate_replacement_contracts(self, current_turn: int) -> List[Contract]:
         if not self._can_build_fleet():
             return []
-        """为活跃的需要海战且罗马无可用舰队的战争生成补充舰队建造合同"""
+        """为活跃海战战争按同战 deficit 生成补充舰队建造合同（G1-11 / D 件 §6，R-12）。
+
+        Target   = war.enemy_naval_current
+        Existing = Σ 同战存活舰队实际战力（_target_war_id == war.id 且非 DESTROYED/BUILDING/DISBANDED）
+        Deficit  = Target - Existing；Deficit > 0 → 补 ceil(Deficit / base_strength)；否则无补充。
+        禁跨战舰队满足 deficit（R-12）；禁「任一全局可用舰队即阻断所有战争」（§11.11 旧偏差）。
+        """
         war_system = self.state.get_war_system()
         if not war_system:
             return []
         active_wars = war_system.get_active_wars()
         if not active_wars:
             return []
-        # 如果有任何可用舰队，则无需补充
-        if self.get_available_fleets():
-            return []
 
         contracts = []
         for war in active_wars:
             if not war.naval_required:
                 continue
-            # 检查是否有针对该战争的活跃合同（PENDING/BUDGETED/ACTIVE）
-            if self._has_existing_fleet_or_contract_for_war(war.id):
+            # 仅防重复合同（PENDING/BUDGETED/ACTIVE），不因存活舰队存在阻断补充
+            if self._has_active_fleet_contract_for_war(war.id):
                 continue
-            # 检查是否有针对该战争的舰队正在建造
+            # 检查是否有针对该战争的舰队正在建造（建造中补充已在进行，防重复建造）
             building_fleets = [f for f in self._fleets.values()
                                if f.is_building and f._target_war_id == war.id]
             if building_fleets:
@@ -627,10 +681,20 @@ class NavalSystem:
             base_strength = fleet_configs[default_type].get("strength_base", 3)
             build_cost_per_ship = fleet_configs[default_type].get("build_cost", 20)
 
-            # 计算所需舰队数量（向上取整）
-            needed_ships = (enemy_strength + base_strength - 1) // base_strength
-            if needed_ships < 1:
-                needed_ships = 1
+            # G1-11 同战 deficit（D 件 §6 冻结式）：
+            # Existing = 同战存活舰队实际战力（provenance = _target_war_id；BUILDING 不计战力）
+            existing = sum(
+                f.get_combat_strength(self.state)
+                for f in self._fleets.values()
+                if f._target_war_id == war.id
+                and f.status not in (FleetStatus.DESTROYED, FleetStatus.BUILDING, FleetStatus.DISBANDED)
+            )
+            deficit = enemy_strength - existing
+            if deficit <= 0:
+                continue
+
+            # 计算所需补充舰队数量（向上取整 ceil(deficit/base)，G1-11）
+            needed_ships = max(1, (deficit + base_strength - 1) // base_strength)
 
             total_budget = needed_ships * build_cost_per_ship
             composition = [{"type": default_type, "count": needed_ships}]
@@ -652,8 +716,10 @@ class NavalSystem:
             contracts.append(contract)
 
             self.state.log_event(
-                f"为激活战争生成补充舰队建造合同：{contract.name}，预算 {total_budget}，需建造 {needed_ships} 艘 {default_type}，工期 {contract._build_time} 年",
-                extra={"contract_id": contract.id, "war_id": war.id}
+                f"为激活战争生成补充舰队建造合同：{contract.name}，预算 {total_budget}，"
+                f"需建造 {needed_ships} 艘 {default_type}（deficit {deficit} = target {enemy_strength} - existing {existing}），工期 {contract._build_time} 年",
+                extra={"contract_id": contract.id, "war_id": war.id, "deficit": deficit,
+                       "target": enemy_strength, "existing": existing, "needed_ships": needed_ships}
             )
         return contracts
 
@@ -674,7 +740,8 @@ class NavalSystem:
                         break
                     to_disband.append(fleet)
                 for fleet in to_disband:
-                    fleet.mark_destroyed(self.state.turn.turn_number)
+                    # R-11（G1-13）：国库不足行政解散走 disband() → DISBANDED，禁 mark_destroyed
+                    fleet.disband()
                     self.state.log_event(f"因国库不足，舰队 {fleet.name} 解散")
                 # 重新计算维护费
                 total = self.calculate_maintenance()

@@ -159,6 +159,42 @@ class Legion:
         self._destroyed_turn = 0
         return True
 
+    # ========== 序列化原语（O 件 §4.4 / Q 件 DA-GB 7，WP-G GB）==========
+    # GD 存档接线消费（GameState 纳入 MilitarySystem 序列化）；状态存枚举 value。
+
+    def to_dict(self) -> Dict[str, Any]:
+        """序列化 Legion 实体（含 is_veteran / war_id / commander_id / destroyed_turn / legion_type）。"""
+        return {
+            "number": self.number,
+            "name": self.name,
+            "status": self.status.value,
+            "is_veteran": self.is_veteran,
+            "commander_id": self.commander_id,
+            "war_id": self.war_id,
+            "battles_fought": self.battles_fought,
+            "battles_won": self.battles_won,
+            "_destroyed_turn": self._destroyed_turn,
+            "_legion_type": self._legion_type,
+        }
+
+    @staticmethod
+    def from_dict(data: Dict[str, Any]) -> "Legion":
+        """从存档字典重建 Legion（退化路径：新字段一律缺省容错，禁旧存档加载崩溃，O 件 §3）。"""
+        legion = Legion(number=int(data.get("number", 0)))
+        legion.name = data.get("name", legion.name)
+        try:
+            legion.status = LegionStatus(data.get("status", LegionStatus.UNRAISED.value))
+        except ValueError:
+            legion.status = LegionStatus.UNRAISED
+        legion.is_veteran = bool(data.get("is_veteran", False))
+        legion.commander_id = data.get("commander_id")
+        legion.war_id = data.get("war_id")
+        legion.battles_fought = int(data.get("battles_fought", 0))
+        legion.battles_won = int(data.get("battles_won", 0))
+        legion._destroyed_turn = int(data.get("_destroyed_turn", 0))
+        legion._legion_type = data.get("_legion_type", "polybian")
+        return legion
+
     def to_display_dict(self, state=None):
         """返回用于显示的字典（可传入 state 用于计算维护费）"""
         # 使用状态值（字符串）映射 emoji

@@ -8,7 +8,8 @@ class FleetStatus(Enum):
     AVAILABLE = "available"      # 可用
     ON_MISSION = "on_mission"    # 执行任务中
     IN_COMBAT = "in_combat"      # 战斗中
-    DESTROYED = "destroyed"      # 被摧毁
+    DESTROYED = "destroyed"      # 被摧毁（仅战斗伤亡，G1-13）
+    DISBANDED = "disbanded"      # 行政退役（正常退役/国库解散，G1-13 / J 件 §1）
 
 
 class Fleet:
@@ -63,6 +64,15 @@ class Fleet:
     def commander_id(self) -> Optional[int]:
         return self._commander_id
 
+    @commander_id.setter
+    def commander_id(self, value: Optional[int]):
+        """Fleet 指挥官绑定 setter（G2-WP-G-H §5 / Q 件 E：GA rebind 原语消费；GC 派生 martial）。
+
+        仅维护 _commander_id 收敛 War Commander（G1-20/R-14）；不触碰 _assigned_war_id
+        （单战归属持久归 GC）。
+        """
+        self._commander_id = value
+
     @property
     def experience(self) -> int:
         return self._experience
@@ -100,10 +110,21 @@ class Fleet:
         self._strength_base = config.get("strength_base", 3)
 
     def get_combat_strength(self, state) -> int:
-        """计算舰队战力（基础 + 经验 + 指挥官加成）"""
+        """计算舰队战力（基础 + 经验 + 指挥官 martial）。
+
+        G1-20（H 件 §4）：martial 权威 = War Commander（war.commander_id）——
+        Fleet._commander_id 为绑定镜像/兼容；无指派（AVAILABLE staging）或
+        war.commander_id 为空时回退舰队私有绑定。
+        """
         strength = self._strength_base + self._experience
-        if self._commander_id:
-            commander = state.get_member(self._commander_id)
+        commander_id = self._commander_id
+        ws = getattr(state, "get_war_system", lambda: None)()
+        if ws and self._assigned_war_id:
+            war = ws.get_war_by_id(self._assigned_war_id)
+            if war is not None and war.commander_id is not None:
+                commander_id = war.commander_id  # 权威 = War Commander（G1-20）
+        if commander_id:
+            commander = state.get_member(commander_id)
             if commander:
                 strength += commander.martial  # 使用 martial 作为海战加成
         return strength
@@ -150,6 +171,17 @@ class Fleet:
         self._commander_id = None
         self._assigned_war_id = None
 
+    def disband(self):
+        """行政退役（G1-13）：正常退役专用，非战斗伤亡（R-11）。
+
+        与 legion.disband 语义对齐：不清 is_veteran/experience（行政退役非伤亡）；
+        保留 _target_war_id（单战归属 provenance 持久，G1-12）；DISBANDED 为终端态不可复用。
+        """
+        self._status = FleetStatus.DISBANDED
+        self._commander_id = None
+        self._assigned_war_id = None
+        self._assigned_mission_type = None
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "_number": self._number,
@@ -167,6 +199,7 @@ class Fleet:
             "_build_start_turn": self._build_start_turn,
             "_build_end_turn": self._build_end_turn,
             "_contract_id": self._contract_id,
+            "_target_war_id": self._target_war_id,
         }
 
     @staticmethod
@@ -184,4 +217,6 @@ class Fleet:
         fleet._build_start_turn = data.get("_build_start_turn")
         fleet._build_end_turn = data.get("_build_end_turn")
         fleet._contract_id = data.get("_contract_id")
+        # O 件 §3：单战归属 provenance 持久（G1-12）；旧存档缺键 → None
+        fleet._target_war_id = data.get("_target_war_id")
         return fleet

@@ -692,7 +692,7 @@ def test_governor_transition_file_logging():
 
 
 def test_truce_expiry_file_logging():
-    """C-07: 验证和约到期经 advance_year() 写入文件日志"""
+    """C-07（G3C 恢复）：和约到期经 advance_year() 写入文件日志，到期 → THREAT。"""
     from src.core.entities.entities import GameTurn
     from src.core.entities.war import War, WarStatus
     from src.core.systems.war_system import WarSystem
@@ -729,7 +729,7 @@ def test_truce_expiry_file_logging():
             )
             war.status = WarStatus.TRUCE
             war.set_peace_treaty({"status": "approved"})
-            war.set_truce_end_turn(8)  # turn 8 is before current turn 10 → expired
+            war.set_truce_end_turn(8)  # 8 < 10 → 已到期
 
             # 添加到停战列表
             ws._truce_wars.append(war)
@@ -737,18 +737,14 @@ def test_truce_expiry_file_logging():
             state.advance_year()
             state.close_logging()
 
-            # 验证战争已从停战移至活跃（Advisor P2-c 裁定：到期返 ACTIVE）
-            assert war not in ws._truce_wars, "战争应从停战列表移除"
-            assert war in ws._active_wars, "战争应移至活跃列表"
-            assert war.status == WarStatus.ACTIVE, f"战争状态应为 ACTIVE，实际: {war.status}"
+            # G3C 恢复语义：到期战争移出 TRUCE 入 THREAT（禁 direct ACTIVE）
+            assert war not in ws._truce_wars, "战争应从停战列表移除（到期）"
+            assert war in ws._threats, "战争应移至威胁列表（G3C：THREAT 目标）"
+            assert war.status == WarStatus.THREAT, f"战争状态应为 THREAT，实际: {war.status}"
+            assert war not in ws._active_wars, "到期禁直接 ACTIVE（G3C）"
 
             # 验证 event_log 包含和约到期消息
             log_messages = state.event_log
-            print(f"[C-07 TEST] event_log messages:")
-            for msg in log_messages:
-                if any(kw in msg for kw in ["和约到期", "到期"]):
-                    print(f"  {msg}")
-
             assert any("和约到期" in msg for msg in log_messages), (
                 f"应包含和约到期消息，实际: {log_messages}"
             )
@@ -758,7 +754,6 @@ def test_truce_expiry_file_logging():
             assert len(log_files) > 0, "No log file generated"
             with open(os.path.join(tmpdir, log_files[0]), 'r', encoding='utf-8') as f:
                 content = f.read()
-            print(f"[C-07 TEST] File log content:\n{content}")
             assert "和约到期" in content, (
                 f"文件日志应包含和约到期消息，实际: {content[:500]}"
             )

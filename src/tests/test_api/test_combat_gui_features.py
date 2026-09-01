@@ -57,9 +57,16 @@ class TestGUICombatFeatures(unittest.TestCase):
             disaster_numbers=[2, 3],
         )
         self.war1.commander_id = 1
-        self.war1.legions_assigned = 4
+        self.war1.legions_assigned = 4  # 兼容 debug 镜像（N 件）；GB S1 后战力/伤亡源 = live 实体
         self.war1.status = WarStatus.ACTIVE
         self.state._war_system._active_wars.append(self.war1)
+        # WP-G GB（S1/S2，R-17）：战斗参与者/战力/伤亡源 = live Legion 实体附着
+        ms = self.state._military_system
+        for num in (1, 2, 3, 4):
+            ok, _ = ms.recruit_legion(num)
+            assert ok, f"recruit legion {num} failed"
+        assigned, msg = ms.assign_to_war([1, 2, 3, 4], self.war1.id, 1)
+        assert assigned == 4, msg
 
     # ════════════════════════════════════════════════════════════════════
     # GUI 特征 1: _compute_combat_result 结果分类冻结
@@ -78,6 +85,11 @@ class TestGUICombatFeatures(unittest.TestCase):
         war.legions_assigned = 1
         war.status = WarStatus.ACTIVE
         self.state._war_system._active_wars.append(war)
+        # 附加 live 军团（GB S1：战力源 = live 实体）
+        ok, _ = self.state._military_system.recruit_legion(5)
+        assert ok
+        assigned, _ = self.state._military_system.assign_to_war([5], war.id, 1)
+        assert assigned == 1
         # dice=7, martial=6, leg=1*2=2, bias=0 → total=15, enemy=9 → score=6 → victory
         result = combat_api._compute_combat_result(war, self.state, 7, "attack")
         self.assertEqual(result["result"], "victory")
@@ -613,6 +625,18 @@ def _build_combat_full_state():
 
     for w in (w1, w2, w3):
         state._war_system._active_wars.append(w)
+
+    # WP-G GB（S1/S2，R-17）：live Legion 实体附着 = 战斗参与者/战力/伤亡源权威
+    ms = state._military_system
+    for num in (3, 4, 5, 1, 2, 6):
+        ok, _ = ms.recruit_legion(num)
+        assert ok, f"recruit legion {num} failed"
+    assigned, msg = ms.assign_to_war([3, 4, 5], "war_a", 1)
+    assert assigned == 3, msg
+    assigned, msg = ms.assign_to_war([1, 2], "war_b", 2)
+    assert assigned == 2, msg
+    assigned, msg = ms.assign_to_war([6], "war_c", None)
+    assert assigned == 1, msg
     return state
 
 

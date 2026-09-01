@@ -17,6 +17,7 @@ from src.core.entities.figure import Figure
 from src.core.entities.entities import Faction, GameTurn
 from src.core.entities.player import Player, PlayerType
 from src.core.entities.war import War, WarType, WarStatus
+from src.core.entities.legion import LegionStatus
 from src.core.systems.war_system import WarSystem
 from src.core.systems.military_system import MilitarySystem
 from src.api import combat_api
@@ -308,36 +309,38 @@ class TestBugfix01DrawTruce(unittest.TestCase):
         self.assertEqual(result["data"]["treaties"], [])
 
     # ════════════════════════════════════════════════════════════════════
-    # T4（INV-C2，Advisor P2-c 裁定 2026-08-17）：approved treaty 到期 → ACTIVE
-    # 断言：① status = ACTIVE ② commander_id 保留 ③ legion assignment 保留
-    #       ④ treaty data 清除（peace_treaty None）
+    # T4'（G3C / Owner Correction 2026-09-01）：approved = TEMPORARY TRUCE（非战争结束）
+    # 断言：① status == TRUCE ② 驻留 _truce_wars、不入弃牌堆 ③ treaty status = approved
+    #       ④ truce_end_turn 写入（到期恢复载体）⑤ 到期 → THREAT（禁 direct ACTIVE）
     # ════════════════════════════════════════════════════════════════════
-    def test_treaty_approved_expiry_returns_active(self):
+    def test_treaty_approved_keeps_truce(self):
+        from src.core.systems.political_system import PoliticalSystem
         ws = self.state._war_system
-        war = War(id="truce_exp", name="Expiry War", war_type=WarType.FOREIGN,
+        war = War(id="peace_approved", name="Approved Peace", war_type=WarType.FOREIGN,
                   strength=5, threat_level=1)
         war.status = WarStatus.TRUCE
-        war.set_peace_treaty({"status": "approved"})
-        war.set_truce_end_turn(0)  # 0 <= 1 → 已到期
+        war.set_peace_treaty({"status": "submitted", "indemnity": 50, "duration": 3, "generated_turn": 1})
         war.commander_id = 1
-        war.legions_assigned = 2
         war.add_legion_number(11)
-        war.add_legion_number(12)
         ws._truce_wars.append(war)
 
-        expired = self.state.process_truce_expiry()
-        self.assertEqual(expired, [war.name])
-        self.assertNotIn(war, ws._truce_wars)
-        # ④ treaty data 清除
-        self.assertIsNone(war.peace_treaty)
-        # ① 到期返 ACTIVE（非 THREAT）
-        self.assertIn(war, ws._active_wars)
-        self.assertEqual(war.status, WarStatus.ACTIVE)
-        # ② commander 保留 ③ legion assignment 保留
-        self.assertEqual(war.commander_id, 1)
-        self.assertEqual(war.legions_assigned, 2)
-        self.assertIn(11, war.legion_numbers)
-        self.assertIn(12, war.legion_numbers)
+        PoliticalSystem(self.state).execute_passed_peace_treaty(war)
+
+        # ① 战争保持 TRUCE（temporary truce，非结束）
+        self.assertEqual(war.status, WarStatus.TRUCE)
+        # ② 容器：驻留 truce、不入弃牌堆
+        self.assertIn(war, ws._truce_wars)
+        self.assertNotIn(war, ws._war_discard)
+        # ③ 条约 approved + 幸存军团召回 + 指挥官释放
+        self.assertEqual(war.peace_treaty["status"], "approved")
+        self.assertIsNone(war.commander_id)
+        self.assertEqual(war.legion_numbers, [])
+        self.assertEqual(ws._legions_to_disband, [11])  # enqueue-then-clear（ODR-CAND-01）
+        # ④ truce_end_turn 写入（turn=1 + duration=3 → 4）
+        self.assertEqual(war.truce_end_turn, 4)
+        # ⑤ 到期机制已恢复：到期 → THREAT（禁直接 ACTIVE）
+        self.assertTrue(hasattr(self.state, "process_truce_expiry"))
+        self.assertTrue(hasattr(ws, "_move_to_threat"))
 
     # ════════════════════════════════════════════════════════════════════
     # T5（INV-C2）：treaty 拒绝 → war 回 ACTIVE + 下 Combat actionable
@@ -371,14 +374,19 @@ class TestBugfix01DrawTruce(unittest.TestCase):
     @patch.object(combat_api.random, "randint")
     def test_defeat_keeps_war_active_continuity(self, mock_randint):
         ws = self.state._war_system
+        ms = self.state._military_system
         dwar = War(id="defeat_war_c", name="Defeat Continuity", war_type=WarType.FOREIGN,
                    strength=50, threat_level=3, disaster_numbers=[12])
         dwar.commander_id = 1
-        dwar.legions_assigned = 2
-        dwar.add_legion_number(11)
-        dwar.add_legion_number(12)
+        dwar.legions_assigned = 2  # 兼容 debug 镜像（N 件）；GB S1 后伤亡源 = live 实体
         dwar.status = WarStatus.ACTIVE
         ws._active_wars.append(dwar)
+        # WP-G GB（S2）：live 军团实体附着（伤亡源权威，R-17）
+        for num in (11, 12):
+            ok, _ = ms.recruit_legion(num)
+            assert ok
+        assigned, msg = ms.assign_to_war([11, 12], dwar.id, 1)
+        assert assigned == 2, msg
         mock_randint.return_value = 2  # → defeat
 
         result = combat_api.do_combat_action(self.state, "player_opt", dwar.id, "attack")
@@ -389,9 +397,15 @@ class TestBugfix01DrawTruce(unittest.TestCase):
         self.assertEqual(dwar.status, WarStatus.ACTIVE)
         self.assertNotIn(dwar, ws._war_discard)
         self.assertNotIn(dwar, ws._truce_wars)
-        # 损失应用：defeat 部分（[:losses]，legions_assigned=2 → losses=1 → 仅 11）
-        self.assertIn(11, ws._legions_to_disband)
-        self.assertNotIn(12, ws._legions_to_disband)
+        # G1-05/06/07（GB S2）：伤亡 = ceil(2/2)=1 随机 DESTROYED；幸存保持 ACTIVE+assigned
+        destroyed = [l for l in ms.get_all_legions() if l.status == LegionStatus.DESTROYED]
+        self.assertEqual(len(destroyed), 1)
+        survivors = [l for l in ms.get_legions_for_battle(dwar.id)
+                     if l.status == LegionStatus.ACTIVE]
+        self.assertEqual(len(survivors), 1)
+        self.assertEqual(survivors[0].war_id, dwar.id)
+        # GB S2：伤亡走 DESTROYED（DESTROYED→恢复间隔），不再入解散队列
+        self.assertEqual(ws._legions_to_disband, [])
         # commander consequence + duration
         self.assertIn(dwar.commander_status, ("fled", "captured", "wounded"))
         self.assertIsNone(dwar.commander_id)
@@ -405,15 +419,19 @@ class TestBugfix01DrawTruce(unittest.TestCase):
     @patch.object(combat_api.random, "randint")
     def test_disaster_keeps_war_active_consequences(self, mock_randint):
         ws = self.state._war_system
+        ms = self.state._military_system
         dwar = War(id="disaster_war_c", name="Disaster Continuity", war_type=WarType.FOREIGN,
                    strength=0, threat_level=3, disaster_numbers=[2, 3])
         dwar.commander_id = 1
-        dwar.legions_assigned = 3
-        dwar.add_legion_number(21)
-        dwar.add_legion_number(22)
-        dwar.add_legion_number(23)
+        dwar.legions_assigned = 3  # 兼容 debug 镜像（N 件）；GB S1 后伤亡源 = live 实体
         dwar.status = WarStatus.ACTIVE
         ws._active_wars.append(dwar)
+        # WP-G GB（S2）：live 军团实体附着（伤亡源权威，R-17）
+        for num in (21, 22, 23):
+            ok, _ = ms.recruit_legion(num)
+            assert ok
+        assigned, msg = ms.assign_to_war([21, 22, 23], dwar.id, 1)
+        assert assigned == 3, msg
         mock_randint.return_value = 2  # ∈ disaster_numbers → disaster
 
         result = combat_api.do_combat_action(self.state, "player_opt", dwar.id, "attack")
@@ -428,9 +446,13 @@ class TestBugfix01DrawTruce(unittest.TestCase):
         self.assertTrue(self.commander.is_dead)
         self.assertEqual(dwar.commander_status, "killed")
         self.assertIsNone(dwar.commander_id)
-        # legions 全灭（disaster 全量入 disband）+ 军团清空
-        for ln in (21, 22, 23):
-            self.assertIn(ln, ws._legions_to_disband)
+        # G1-07（GB S2）：全部参战 DESTROYED（清 war_id/commander_id/is_veteran），不入解散队列
+        for num in (21, 22, 23):
+            legion = ms.get_legion_by_number(num)
+            self.assertEqual(legion.status, LegionStatus.DESTROYED)
+            self.assertIsNone(legion.war_id)
+            self.assertIsNone(legion.commander_id)
+        self.assertEqual(ws._legions_to_disband, [])
         self.assertEqual(dwar.legions_assigned, 0)
         self.assertEqual(dwar.duration, 1)
         # 下 Combat：war 仍 ACTIVE（可再指派新 commander 再战）

@@ -74,6 +74,7 @@ def test_read_model_shape_after_advance_year():
     assert set(settlement.keys()) == {
         "settled_turn", "settled_year", "next_year",
         "treasury_before", "treasury_after",
+        # G3C 恢复：A7 和约到期类目回归 read-model
         "governor_returns", "contract_expiries", "truce_expiries", "decay",
     }
     # 结算时回合（滚年前）/ 结算年 / 次年
@@ -235,8 +236,9 @@ def test_read_model_decay_empty_no_living_members():
 # 5. A7 和约到期
 # ---------------------------------------------------------------------------
 
-def test_read_model_truce_expiries():
-    """A7 到期和约 → truce_expiries 战争名列表（真实事件）。"""
+def test_read_model_truce_expiries_to_threat():
+    """A7 和约到期机制恢复（G3C）：approved TRUCE 到期 → THREAT；
+    read-model 产出 truce_expiries 类目。"""
     state = _make_state()  # turn_number=5
     ws = WarSystem(state)
     state._war_system = ws
@@ -244,12 +246,20 @@ def test_read_model_truce_expiries():
     war.status = WarStatus.TRUCE
     war.set_peace_treaty({"status": "approved"})
     war.set_truce_end_turn(4)  # 4 <= 5 → 已到期
+    war.commander_id = 1
     ws._truce_wars.append(war)
 
     state.advance_year()
 
     settlement = state.get_resolution_settlement()
-    assert settlement["truce_expiries"] == ["Truce War"]
+    assert settlement.get("truce_expiries", []) == ["Truce War"]
+    # G3C 恢复语义：approved TRUCE 到期 → THREAT（禁 direct ACTIVE）
+    assert war not in ws._truce_wars
+    assert war in ws._threats
+    assert war.status == WarStatus.THREAT
+    assert war.threat_level == 1
+    assert war.commander_id is None
+    assert war not in ws._active_wars
 
 
 def test_eg7_05_threat_war_not_mislabeled_as_truce_expiry():
@@ -365,19 +375,19 @@ def test_read_model_full_four_step_events():
     # 合同到期（身份行）
     assert len(preview["contract_expiries"]) == 1
     assert preview["contract_expiries"][0]["contract_type"] == "PUBLIC_WORKS"
-    # 和约到期
+    # 和约到期（G3C 恢复：approved TRUCE 到期 → THREAT，类目产出事实行）
     assert preview["truce_expiries"] == [{"war_name": "Truce War"}]
     # 年度衰减（派系聚合，无 per-figure 行）
     assert len(preview["faction_influence"]) == 1
     assert preview["faction_influence"][0]["faction_name"] == "贵族派"
     assert preview["faction_influence"][0]["influence_delta"] < 0
 
-    # read-model（内部 parity 源）仍按既有形状产出
+    # read-model（内部 parity 源）按既有形状产出（truce 类目回归）
     state.advance_year()
     settlement = state.get_resolution_settlement()
     assert len(settlement["governor_returns"]) == 1
     assert len(settlement["contract_expiries"]) == 1
-    assert settlement["truce_expiries"] == ["Truce War"]
+    assert settlement.get("truce_expiries", []) == ["Truce War"]
     assert len(settlement["decay"]) == 3
 
 
@@ -411,7 +421,8 @@ def test_resolution_view_preview_categories_after_advance(adapter_session):
     assert isinstance(settlement["contract_expiries"], list)
     assert isinstance(settlement["decay"], list)
     assert isinstance(settlement["governor_returns"], list)
-    assert isinstance(settlement["truce_expiries"], list)
+    # G3C 恢复：truce_expiries 类目回归（无到期战争时恒空，.get 容错）
+    assert settlement.get("truce_expiries", []) == []
 
 
 def test_resolution_view_resolved_single_source(adapter_session):

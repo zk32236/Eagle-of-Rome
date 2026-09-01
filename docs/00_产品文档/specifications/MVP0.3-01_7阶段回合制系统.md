@@ -1,6 +1,7 @@
 # MVP0.3-01 — 7阶段回合制系统
 
 > **功能简述：** 完整七阶段回合制（Mortality→Revenue→Forum→Population→Senate→Combat→Resolution），含阶段状态机、回合推进和阶段执行标记
+> **版本：** v1.4
 
 ## 1. 功能目的
 
@@ -25,6 +26,33 @@ PHASE_SEQUENCE = [
     "resolution"    # 7/7 决议阶段 — 总督交接、年度清算
 ]
 ```
+
+#### 军事生命周期时序（current-force release → 退役；G1-14 / L 件 §3，WP-G G4-GD DI-2）
+
+两类 current-force release 在阶段间的精确时序：
+
+```text
+(A) TRIUMPH/VICTORY（GB resolve_war → RESOLVED，战争正式结束）
+(B) 批准和约（GA execute_passed_peace_treaty → APPROVED TRUCE 保持，非战争结束）
+  → 幸存军团/舰队 recall → AVAILABLE（不立即解散！G1-14 反例守护）
+下个 Revenue 阶段：AVAILABLE 幸存者付最后维护（舰队计费；军团按权威维护规则 = ACTIVE-only）
+下个 Population 阶段：经 canonical population_api.process_population_disbandments
+  → 军团 DISBANDED（Veteran 保留，G1-19）+ 舰队 DISBANDED（行政退役非 DESTROYED，G1-13）
+
+Sea Control 仅 formal War termination（TRIUMPH/VICTORY → RESOLVED）清理（clear_sea_control，K 件 §3）；
+approved TRUCE / 到期 / THREAT / ACTIVE 保持（不清）。
+```
+
+- **GUI/CLI 双入口共享**（§11.5）：`session_api.resolve_population_slice`（GUI）与
+  `phase_population._handle_step_0`（CLI）调用同一 canonical
+  `population_api.process_population_disbandments`（幂等 marker `population_disbandment`，S33）
+- **维护数学零变更**：军团权威维护集 = ACTIVE-only（MVP0.3-03 §2.6）；舰队维护排除
+  DESTROYED/BUILDING/DISBANDED（MVP0.5-04 §2.9）——GD 只守护时序，不定义公式
+- **年度推进注记（G3C，2026-09-01 Owner Correction / DC-TREATY-LIFECYCLE-CORRECTION-01）**：
+  `advance_year` 结算（A1~A7）含和约到期恢复——approved 停战（temporary truce）到达
+  `truce_end_turn` 时：到期 → THREAT（threat_level=1，commander 不恢复，Sea Control 保持）
+  → 正常威胁自动升级（≥3 爆发）→ ACTIVE（战争可再战）。TRIUMPH/VICTORY = RESOLVED
+  （战争正式结束）为独立生命周期，与和约批准（temporary truce）区分。
 
 ### 2.2 阶段执行标记
 
@@ -135,6 +163,11 @@ def _show_turn_summary(self):
 - **硬依赖：** 人口阶段必须在元老院阶段前执行（`phase_senate.py` 入口检查）
 - **软顺序：** 收入阶段 → 广场阶段（国库需先结算才能进行竞标）
 - **强制顺序：** 决议阶段是每年的最后一个阶段（next 命令检查 resolution 是否执行）
+- **和约到期恢复（G3C，2026-09-01 Owner Correction）：** 年度推进（advance_year）时检查
+  approved 停战到期——到达 truce_end_turn → THREAT（threat_level=1）→ 自动升级（≥3 爆发）→ ACTIVE
+- **Resolution 顺序不变式（G1-25 / L 件 §5，WP-G G4-GD DI-2）：** `execute_resolution`
+  先 `check_victory_conditions`（含全 25 军团 DESTROYED → game_over）后
+  `process_legion_recovery`——即使某军团本可恢复，若全灭仍判败北（顺序权威 = resolution_api）
 
 ### 3.2 阶段执行检查
 
@@ -248,6 +281,8 @@ if self.state.is_phase_executed("senate"):
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.4 | 2026-09-01 | DA Sub-Agent (WP-G G3C) | Treaty Lifecycle 修正（G3C，2026-09-01 Owner Correction / DC-TREATY-LIFECYCLE-CORRECTION-01）：年度推进注记更新——和约到期恢复（到期 → THREAT → 自动升级 → ACTIVE）；§3.1 补「和约到期恢复」依赖句；撤销 v1.3 DI-4 的「无和约到期恢复」表述 |
+| v1.3 | 2026-08-31 | DA Sub-Agent (WP-G GD) | DI-2：§2.1 后新增「军事生命周期时序」小节（G1-14 精确链：战争结束 → recall → 下个 Revenue 最后维护 → 下个 Population DISBANDED，GUI/CLI 共享 canonical；维护数学零变更）；§3.1 补 Resolution 顺序不变式（G1-25：先判胜负后恢复）；DI-4：年度推进注记（⚠️「无和约到期恢复」表述已被 v1.4 G3C 撤销） |
 | v1.2 | 2026-08-24 | DA-Exec (WP-E-G7R) | REVIEWED-NO-CHANGE（主体无 GUI 阶段推进描述）；v1.1 注中「两段式年度推进」已由 GUI 侧单命令修订（见 tech mapping §6.1，GUI-BETA-005 E-05）——本文档 CLI 状态机语义不受影响 |
 | v1.1 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §7 注：Resolution 阶段 read-model + 两段式年度推进（GUI）；市场生成段 veteran supply 注入（E-G7-09，同 tech 映射 §6） |
 | v1.0 | 2026-07-12 | Document Officer Worker L | 初版创建 |

@@ -1085,23 +1085,6 @@ class SenateCommand(Command):
         for war in wars:
             ws.restore_rejected_peace_treaty(war.id, preserve_commander=True)
 
-    def _execute_passed_peace_treaty(self, war):
-        """执行通过的停战草案（手动模式）"""
-        treaty = war.peace_treaty
-        if not treaty or treaty.get("status") != "submitted":
-            return
-        war.set_peace_treaty_status("approved")
-        war.set_indemnity_due(treaty["indemnity"])
-        ms = self.state.get_military_system()
-        if ms:
-            ms.recall_from_war(war.id)
-        ws = self.state.get_war_system()
-        if war.legion_numbers:
-            ws.add_legions_to_disband(war.legion_numbers)
-        end_turn = self.state.turn.turn_number + treaty["duration"]
-        war.set_truce_end_turn(end_turn)
-        war.status = WarStatus.TRUCE
-
     def _print_senate_results(self, proposals: list):
         """打印元老院公示环节的详细投票结果（符合 UI 设计）"""
         votes = self.state.get_senate_votes_copy()

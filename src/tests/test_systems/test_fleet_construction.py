@@ -66,3 +66,24 @@ def test_fleet_construction_lifecycle():
         assert completed == [1]
         assert fleet.status.value == "available"
         mock_assign.assert_called_once_with(1, war.id, "naval", commander_id=None)
+
+
+def test_fleet_target_war_id_serialization_roundtrip():
+    """WP-G GC（G1-12 / O 件 §3）：_target_war_id to_dict/from_dict round-trip 无损（缺省 None）"""
+    from src.core.entities.fleet import Fleet, FleetStatus
+
+    fleet = Fleet(number=1, name="Fleet 1", fleet_type="trireme")
+    fleet._target_war_id = "war1"
+    fleet._status = FleetStatus.ON_MISSION
+    reconstructed = Fleet.from_dict(fleet.to_dict())
+    assert reconstructed._target_war_id == "war1"
+    assert reconstructed.status == FleetStatus.ON_MISSION
+
+    fresh = Fleet(number=2, name="Fleet 2", fleet_type="trireme")
+    assert fresh._target_war_id is None
+    assert Fleet.from_dict(fresh.to_dict())._target_war_id is None
+
+    # 旧存档缺键 → None（退化路径，禁崩溃）
+    legacy = fresh.to_dict()
+    legacy.pop("_target_war_id", None)
+    assert Fleet.from_dict(legacy)._target_war_id is None

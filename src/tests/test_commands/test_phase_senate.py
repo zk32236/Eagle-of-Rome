@@ -761,7 +761,9 @@ class TestSenateEdgeCases(unittest.TestCase):
 
     # ==================== 停战草案通过 ====================
     def test_peace_treaty_passed(self):
-        """测试停战草案通过：赔款、停战回合、军团待解散标记"""
+        """测试停战草案通过（G3C：approved = TEMPORARY TRUCE，War 保持 TRUCE）"""
+        # A7 互斥：关闭 AI 接管概率，使同轮走 peace 提案路径（否则 decider 默认接管）
+        self.state.config.combat_rules.war_takeover_chance = 0.0
         war = self._create_truce_war_with_pending_treaty()
 
         # 模拟投票支持
@@ -781,8 +783,11 @@ class TestSenateEdgeCases(unittest.TestCase):
         self.assertEqual(war.peace_treaty["status"], "approved")
         # 检查赔款设置
         self.assertEqual(war.indemnity_due, 100)
-        # 检查停战结束回合（当前回合1 + 3 = 4）
-        self.assertEqual(war.truce_end_turn, 4)
+        # G3C（Owner Correction 2026-09-01）：approved = temporary truce → War 保持 TRUCE
+        self.assertEqual(war.status, WarStatus.TRUCE)
+        self.assertNotIn(war, ws._war_discard)
+        self.assertIn(war, ws._truce_wars)
+        self.assertIsNotNone(war.truce_end_turn)  # 到期恢复载体写入
         # 检查军团待解散标记（由于没有实际军团，列表为空）
         self.assertEqual(ws._legions_to_disband, [])
 

@@ -731,6 +731,9 @@ class GameState:
             "_contracts_dict": {cid: contract.to_dict() for cid, contract in self._contracts_dict.items()},
             # 海军系统
             "_naval_system": self._naval_system.to_dict() if self._naval_system else None,
+            # 战争系统 + 军事系统（O 件 §1 PARITY GAP 修复——WP-G G4-GD 首要动作）
+            "_war_system": self._war_system.to_dict() if self._war_system else None,
+            "_military_system": self._military_system.to_dict() if self._military_system else None,
             # 天命系统
             "_active_events": self._active_events.copy(),
             "_hero_spawned_this_turn": self._hero_spawned_this_turn,
@@ -822,6 +825,14 @@ class GameState:
         # 恢复海军系统
         if data.get("_naval_system") and self._naval_system:
             self._naval_system.load_from_dict(data["_naval_system"])
+
+        # 恢复战争系统 + 军事系统（O 件 §1 PARITY GAP 修复——WP-G G4-GD 首要动作；
+        # 仿 naval 模式 is not None 容错：旧存档缺键 → 保留 reset() 重建的 wars.json
+        # 空运行态 + 25 UNRAISED 军团（退化路径，禁崩溃，O 件 §3））
+        if data.get("_war_system") and self._war_system:
+            self._war_system.load_from_dict(data["_war_system"])
+        if data.get("_military_system") and self._military_system:
+            self._military_system.load_from_dict(data["_military_system"])
 
         # 更新全局公地总数
         self._update_global_public_land()
@@ -1378,7 +1389,7 @@ class GameState:
             "contracts_to_expire": self._plan_contract_expiration(),
             # A6：总督交接计划（province + 新旧总督 + 是否升任）
             "governor_transitions": self._plan_governor_transitions(),
-            # A7：待到期和约 war 对象列表
+            # A7：待到期和约 war 对象列表（G3C：truce 到期恢复机制恢复）
             "truce_expiries": self._plan_truce_expiry(),
         }
 
@@ -1407,7 +1418,7 @@ class GameState:
         contract_expiries = self._apply_contract_expiration(plan["contracts_to_expire"])
         # A6：总督交接
         governor_transitions = self._apply_governor_transitions(plan["governor_transitions"])
-        # A7：和约到期
+        # A7：和约到期（G3C：TRUCE → THREAT，exactly-once 由 plan/apply 分层保证）
         truce_expiries = self._apply_truce_expiry(plan["truce_expiries"])
         # ── WP-E R-1（F1）：read-model 写入（_turn.advance_year() 前；只承接已产出物 + 命名富化）──
         self._resolution_settlement = self._build_resolution_settlement(
@@ -1674,10 +1685,13 @@ class GameState:
             })
         return results
 
-    # ---------- A7 和约到期（plan/apply） ----------
+    # ---------- A7 和约到期（plan/apply，G3C 恢复） ----------
+    # G3C（Owner Correction 2026-09-01）：approved = TEMPORARY TRUCE（非战争结束），
+    # truce_end_turn 到期 → TRUCE→THREAT（禁直接 ACTIVE / preserve_commander）→
+    # 正常威胁自动升级（≥3 爆发）→ ACTIVE。框架复用 HEAD@04a6829，业务语义按 G3C 冻结基线。
 
     def _plan_truce_expiry(self) -> List[Any]:
-        """只读计算待到期和约 war 列表（零突变）。"""
+        """只读计算待到期和约 war 列表（零突变，S33 exactly-once 规划面）。"""
         war_system = self.get_war_system()
         if not war_system:
             return []
@@ -1689,27 +1703,31 @@ class GameState:
         ]
 
     def _apply_truce_expiry(self, wars: List[Any]) -> list:
-        """应用和约到期（战争容器回移 + status/commander/peace_treaty 突变，仅在 commit 段）。"""
+        """应用和约到期（仅在 commit 段）：到期战争 TRUCE→THREAT。
+
+        G3C 冻结：threat_level=1（对齐 deactivate_war_to_threat 权威默认）、
+        commander_id=None（不恢复旧 Commander/Legion/Fleet 绑定）、Sea Control 保持
+        （same-War persistent，禁清）、容器迁移在 WarSystem._move_to_threat 内完成
+        （禁在 GameState 复制容器操作）；条约清除（approved 停战期结束）。
+        重试/刷新零重复迁移：已移出 _truce_wars → 再 plan 不再命中。
+        """
         war_system = self.get_war_system()
         if not war_system:
             return []
         expired = []
         for war in wars:
-            # Advisor P2-c 裁定（2026-08-17）：到期返 ACTIVE（非 THREAT），
-            # preserve_commander=True 保留 commander/legion 连续性；
-            # 容器迁移在 WarSystem._move_to_active 内完成（禁在 GameState 复制容器操作）
             # noinspection PyProtectedMember
-            war_system._move_to_active(war, preserve_commander=True)
+            war_system._move_to_threat(war)  # 到期目标 = THREAT（禁 _move_to_active）
             war.clear_peace_treaty()
             expired.append(war.name)
             self.log_event(
-                f"和约到期: {war.name} (ID={war.id}) 恢复为活跃战争",
-                level=logging.DEBUG
+                f"和约到期: {war.name} (ID={war.id}) 转为威胁",
+                level=logging.DEBUG,
             )
         if expired:
             self.log_event(
                 f"{len(expired)} 场战争和约到期",
-                level=logging.DEBUG
+                level=logging.DEBUG,
             )
         return expired
 
@@ -1724,7 +1742,7 @@ class GameState:
         return self._apply_governor_transitions(self._plan_governor_transitions())
 
     def process_truce_expiry(self) -> list:
-        """P1: 处理和约到期 - 到期停战恢复为活跃战争（薄包装）。"""
+        """P1: 处理和约到期 - 到期停战降级为威胁战争（薄包装，G3C）。"""
         return self._apply_truce_expiry(self._plan_truce_expiry())
 
     def _cleanup_curia(self) -> None:

@@ -82,10 +82,11 @@ def test_combat_with_naval_battle_success(state_with_naval_combat_ready):
 
 
 def test_combat_with_naval_battle_defeat(state_with_naval_combat_ready):
-    """海军战斗失败 → execute 仍成功（跳过该战争）"""
+    """海军战斗失败（DEFEAT）→ 阻断陆战 → 战争继续 + 不阻塞 advance（G1-09/R-05）"""
     state = state_with_naval_combat_ready
     # Naval defeat
     state._naval_system.resolve_naval_battle.return_value = ("DEFEAT", {"roman_losses": 1})
+    war = state._war_system.get_war_by_id("war1")
 
     cmd = CombatCommand(state)
 
@@ -93,3 +94,35 @@ def test_combat_with_naval_battle_defeat(state_with_naval_combat_ready):
         result = cmd.execute([])
 
     assert result is True
+    # G1-15：军团保持 ACTIVE + assigned（零陆战伤亡）
+    ms = state._military_system
+    attached = ms.get_legions_for_battle(war.id)
+    assert len(attached) == 2
+    assert all(l.status.value == "active" for l in attached)
+    assert all(l.war_id == war.id for l in attached)
+    # 战争继续（未 resolve/discard），制海权未获控
+    assert war.status == WarStatus.ACTIVE
+    assert war.sea_control_acquired is False
+    assert war not in state._war_system._war_discard
+
+
+def test_combat_with_naval_battle_stalemate_blocks_land_battle(state_with_naval_combat_ready):
+    """海军 STALEMATE → 阻断陆战（R-05，G1-09：legacy 曾放行）"""
+    state = state_with_naval_combat_ready
+    state._naval_system.resolve_naval_battle.return_value = ("STALEMATE", {"roman_losses": 0})
+    war = state._war_system.get_war_by_id("war1")
+
+    cmd = CombatCommand(state)
+
+    with patch('sys.stdout'):
+        result = cmd.execute([])
+
+    assert result is True
+    # STALEMATE 阻断：战争继续 ACTIVE + 军团保持 + 0 舰队损失
+    assert war.status == WarStatus.ACTIVE
+    ms = state._military_system
+    attached = ms.get_legions_for_battle(war.id)
+    assert len(attached) == 2
+    assert all(l.status.value == "active" for l in attached)
+    assert war.sea_control_acquired is False
+    assert state.is_phase_executed("combat")

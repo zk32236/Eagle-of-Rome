@@ -487,6 +487,8 @@ def test_execute_ai_takeover_direct_action_excludes_live_tribune(state):
 
     decider = MagicMock(spec=AutoWarTakeoverDecider)
     decider.decide_takeover.return_value = True
+    # M5（Q 件 F）：N 显式化——decider 值域内决策（测试固定 1）
+    decider.decide_reinforcement.return_value = 1
 
     politics = PoliticalSystem(state)
     records = politics.execute_ai_takeover_direct_action(decider=decider)
@@ -497,12 +499,13 @@ def test_execute_ai_takeover_direct_action_excludes_live_tribune(state):
     assert state.get_member(3) not in [
         m for m in state.get_living_members() if m.office in ("consul", "praetor")
     ]
-    # AU-R1-05b：返回成功接管记录列表 + provenance（trigger_source=ai_auto）
+    # AU-R1-05b：返回成功接管记录列表 + provenance（trigger_source=ai_auto + N）
     assert len(records) == 1
     assert records[0]["war_id"] == war.id
     assert records[0]["trigger_source"] == "ai_auto"
     assert records[0]["action"] == "takeover"
     assert records[0]["commander_id"] == 1
+    assert records[0]["reinforcement_n"] == 1
 
 
 def test_governor_candidates_exclude_tribune(state):

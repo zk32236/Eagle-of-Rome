@@ -136,11 +136,13 @@ def test_war_indemnity():
     assert war.indemnity_due == -50
 
 def test_war_truce_end():
+    """truce_end_turn 到期判定（G3C 恢复：current_turn >= truce_end_turn → 到期）。"""
     war = War(id='test', name='Test')
     war.set_truce_end_turn(15)
     assert war.truce_end_turn == 15
     assert war.is_truce_expired(14) is False
     assert war.is_truce_expired(15) is True
+    assert war.is_truce_expired(16) is True
 
 def test_war_original_commander():
     war = War(id='test', name='Test')
@@ -149,32 +151,34 @@ def test_war_original_commander():
     assert war.commander_assigned_turn == 8
 
 def test_war_system_truce_lists():
+    """TRUCE 容器语义（G3C 恢复：_move_to_threat 为到期迁移原语，TRUCE→THREAT）。"""
     state = GameState.create_for_testing({})
     ws = WarSystem(state)
     war = War(id='w1', name='War1')
     war.status = WarStatus.ACTIVE
     ws._active_wars.append(war)
 
-    # 移到 TRUCE
+    # 移到 TRUCE（enter_truce 冻结转换，保留）
     assert ws._move_to_truce(war) is True
     assert war in ws._truce_wars
     assert war not in ws._active_wars
     assert war.status == WarStatus.TRUCE
 
-    # 移回 ACTIVE
-    assert ws._move_to_active(war) is True
+    # TRUCE→ACTIVE 冻结路径 = move_truce_war_to_active（内联容器迁移，保留）
+    assert ws.move_truce_war_to_active(war) is True
     assert war in ws._active_wars
     assert war not in ws._truce_wars
     assert war.status == WarStatus.ACTIVE
 
-    # 再移到 TRUCE
+    # 再移到 TRUCE → 到期迁移 _move_to_threat（G3C：THREAT 目标，禁 ACTIVE）
     ws._move_to_truce(war)
-    # 移到 THREAT
-    assert ws._move_to_threat(war, threat_level=2) is True
+    assert ws._move_to_threat(war, threat_level=1) is True
     assert war in ws._threats
     assert war not in ws._truce_wars
     assert war.status == WarStatus.THREAT
-    assert war.threat_level == 2
+    assert war.threat_level == 1
+    # 非 TRUCE 战争 → False（fail-closed）
+    assert ws._move_to_threat(war) is False
 
 def test_war_system_query_methods():
     state = GameState.create_for_testing({})

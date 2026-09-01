@@ -131,63 +131,15 @@ class WarSystem:
         war.status = WarStatus.TRUCE
         return True
 
-    def _move_to_active(self, war: War, preserve_commander: bool = False) -> bool:
-        """将停战战争移回 ACTIVE。
-
-        preserve_commander=False（默认）保持旧行为：清空 commander_id；
-        preserve_commander=True 时保留指挥官/军团连续性（truce 到期路径使用，
-        Advisor P2-c 裁定 2026-08-17）。
-        """
-        # 入口日志
-        self.state.log_event(
-            f"[DEBUG] _move_to_active 开始: war={war.id}",
-            level=logging.DEBUG,
-            extra={
-                "function": "_move_to_active",
-                "war_id": war.id,
-                "phase": "enter",
-                "active_before": [w.id for w in self._active_wars],
-                "truce_before": [w.id for w in self._truce_wars],
-            }
-        )
-        if war not in self._truce_wars:
-            self.state.log_event(
-                f"[DEBUG] _move_to_active 失败: war={war.id} 不在 truce_wars",
-                level=logging.DEBUG,
-                extra={
-                    "function": "_move_to_active",
-                    "war_id": war.id,
-                    "phase": "exit",
-                    "success": False,
-                    "reason": "not_in_truce"
-                }
-            )
-            return False
-        self._truce_wars.remove(war)
-        if war not in self._active_wars:
-            self._active_wars.append(war)
-        war.status = WarStatus.ACTIVE
-        if not preserve_commander:
-            war.commander_id = None
-        self.state.log_event(
-            f"[DEBUG] _move_to_active 成功: war={war.id}",
-            level=logging.DEBUG,
-            extra={
-                "function": "_move_to_active",
-                "war_id": war.id,
-                "phase": "exit",
-                "success": True,
-                "active_after": [w.id for w in self._active_wars],
-                "truce_after": [w.id for w in self._truce_wars],
-            }
-        )
-        if self.state.naval_system:
-            self.state.naval_system.assign_available_fleets_to_war(war.id)
-        return True
-
     def _move_to_threat(self, war: War, threat_level: int = 1) -> bool:
-        # ----- 新增入口日志 -----
+        """Truce 到期目标迁移原语（G3C 恢复，框架复用 HEAD@04a6829）。
 
+        TRUCE→THREAT：移除 _truce_wars → status=THREAT → threat_level=1（对齐
+        deactivate_war_to_threat 权威默认）→ commander_id=None（不恢复旧 Commander/
+        Legion/Fleet 绑定）→ **不重派 Legion/Fleet** → **Sea Control 保持**（不动
+        sea_control_acquired，same-War persistent）→ 入 _threats；后续 escalate_threats
+        （≥3 爆发）→ ACTIVE。禁作为 approved 战争结束路径（approved = temporary truce）。
+        """
         self.state.log_event(
             f"[DEBUG] _move_to_threat 开始: war={war.id}, threat_level={threat_level}",
             level=logging.DEBUG,
@@ -200,7 +152,6 @@ class WarSystem:
             }
         )
         if war not in self._truce_wars:
-            # ----- 新增失败日志 -----
             self.state.log_event(
                 f"[DEBUG] _move_to_threat 失败: war={war.id} 不在 truce_wars",
                 level=logging.DEBUG,
@@ -209,7 +160,7 @@ class WarSystem:
                     "war_id": war.id,
                     "phase": "exit",
                     "success": False,
-                    "reason": "not_in_truce"
+                    "reason": "not_in_truce",
                 }
             )
             return False
@@ -220,7 +171,8 @@ class WarSystem:
         war._triggered_this_turn = True
         war.threat_level = threat_level
         war.commander_id = None
-        # ----- 新增成功日志 -----
+        # Sea Control 保持：不动 war._sea_control_acquired（same-War persistent，
+        # 仅 formal War termination 经 move_truce_war_to_resolved / resolve_war 清理）
         self.state.log_event(
             f"[DEBUG] _move_to_threat 成功: war={war.id}, 新威胁等级={threat_level}",
             level=logging.DEBUG,
@@ -236,6 +188,7 @@ class WarSystem:
         return True
 
     # ===== 新增查询方法 =====
+
     def get_truce_wars(self) -> List[War]:
         """获取所有停战中的战争"""
         return self._truce_wars.copy()
@@ -276,6 +229,38 @@ class WarSystem:
                 "preserve_commander": preserve_commander,
             }
         )
+        return True
+
+    def move_truce_war_to_active(self, war: War) -> bool:
+        """单一容器迁移原语（T6/T7/T8：TRUCE→ACTIVE）。
+
+        仅容器 + status；**不清 commander、不重派舰队**（TRUCE 期间 Fleet 保持
+        ON_MISSION，H 件 §2）。供 restore_rejected（T6 语义）/ Takeover（T7）/
+        Continue（T8）共用；禁在 GameState/PoliticalSystem 复制容器操作（B 件 W1）。
+        """
+        if war not in self._truce_wars:
+            return False
+        self._truce_wars.remove(war)
+        if war not in self._active_wars:
+            self._active_wars.append(war)
+        war.status = WarStatus.ACTIVE
+        return True
+
+    def move_truce_war_to_resolved(self, war: War) -> bool:
+        """容器迁移原语（仅 formal War termination 场景）：TRUCE + approved → RESOLVED。
+
+        G3C 语义（2026-09-01 Owner Correction）：approved = TRUCE 保持（非 RESOLVED）；
+        本原语现无生产调用方，保留为容器迁移能力（仅 TRIUMPH/VICTORY formal termination
+        场景使用）。truce 到期机制 = REQUIRED（到期 → THREAT），非退役。
+        """
+        if war in self._truce_wars:
+            self._truce_wars.remove(war)
+        if war not in self._war_discard:
+            self._war_discard.append(war)
+        war.status = WarStatus.RESOLVED
+        # K 件 §3 / D-1（WP-G G4-GD）：战争正式结束 → 制海权清理（唯一写 False 原语；
+        # 弃牌堆战争若重洗回牌堆再战，无 stale True 残留，R-06 守护）
+        war.clear_sea_control()
         return True
 
     def activate_threat_as_war(self, war_id: str, commander_id: int, legions: int) -> bool:
@@ -521,6 +506,10 @@ class WarSystem:
         if victory:
             war.status = WarStatus.RESOLVED
 
+            # K 件 §3 / D-1（WP-G G4-GD）：战争正式结束（TRIUMPH/VICTORY）→ 制海权清理
+            # （唯一写 False 原语；弃牌堆战争若重洗回牌堆再战，无 stale True 残留，R-06 守护）
+            war.clear_sea_control()
+
             # ---- 战斗大胜日志 ----
             self.state.log_event(
                 f"战斗大胜: {war.name}",
@@ -680,6 +669,15 @@ class WarSystem:
                             extra={'type': 'commander_return', 'war_id': war.id, 'figure_id': commander.id}
                         )
                         print(f"      🔄 指挥官 {commander.name} 返回罗马")
+
+            # === G1-22（G2-C §1，WP-G GB）：全部幸存参战者晋升 Veteran（胜利路径）===
+            # TRIUMPH/VICTORY 同规则（T9/T10）；插入点先于下方 recall —— 晋升后随召回
+            # → AVAILABLE（Veteran 保留，G1-19/R-13）。resolve_war 同时服务 CLI legacy 与
+            # canonical（auto_resolve_combat）两入口，晋升单一 owner = 此处（仅 victory）。
+            veteran_ms = self.state.get_military_system()
+            if veteran_ms:
+                for legion in veteran_ms.get_legions_for_battle(war.id):
+                    legion.promote_to_veteran()
 
         else:  # 战败
             war.status = WarStatus.DEFEATED
@@ -1039,6 +1037,32 @@ class WarSystem:
         """从GameState恢复战争状态"""
         # 第5阶段完善
         pass
+
+    # ========== 序列化原语（O 件 §1/§4，WP-G G4-GD）==========
+    # GameState.to_dict/load_from_dict 存档接线消费；War.to_dict/from_dict 既有（GC 补
+    # _sea_control_acquired / Fleet._target_war_id 后自动随实体持久）；`_wars` 统一列表
+    # 仅初始化从未 populate（:27），为兼容空壳不恢复。
+
+    def to_dict(self) -> Dict[str, Any]:
+        """战争系统全量持久（容器级序列化，O 件 §2）。"""
+        return {
+            "_war_deck": [w.to_dict() for w in self._war_deck],
+            "_war_discard": [w.to_dict() for w in self._war_discard],
+            "_active_wars": [w.to_dict() for w in self._active_wars],
+            "_threats": [w.to_dict() for w in self._threats],
+            "_truce_wars": [w.to_dict() for w in self._truce_wars],
+            "_legions_to_disband": list(self._legions_to_disband),
+        }
+
+    def load_from_dict(self, data: Dict[str, Any]) -> None:
+        """恢复战争系统（幂等：清空容器后重建；缺键 → 空容器，旧存档退化不崩，O 件 §3）。"""
+        self._war_deck = [War.from_dict(d) for d in data.get("_war_deck", [])]
+        self._war_discard = [War.from_dict(d) for d in data.get("_war_discard", [])]
+        self._active_wars = [War.from_dict(d) for d in data.get("_active_wars", [])]
+        self._threats = [War.from_dict(d) for d in data.get("_threats", [])]
+        self._truce_wars = [War.from_dict(d) for d in data.get("_truce_wars", [])]
+        self._legions_to_disband = list(data.get("_legions_to_disband", []))
+        self._wars = []  # 兼容空壳（仅初始化从未 populate）
 
     def get_wars_needing_reassignment(self) -> List[War]:
         """获取需要重新指派的战争（指挥官伤亡或0军团）"""

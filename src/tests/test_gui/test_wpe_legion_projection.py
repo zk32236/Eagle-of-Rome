@@ -104,19 +104,26 @@ def test_truce_card_preserves_legion_projection():
     assert "truce_remaining_turns" in card
 
 
-def test_truce_moves_to_disband_queue_not_clear_fields():
-    """political_system.py:580 和约批准路径仅入解散队列，不清 war 字段（traceability 依据）。"""
+def test_truce_moves_to_disband_queue_then_clear():
+    """G3C 和约批准路径（ODR-CAND-01 方向①）：入解散队列后**立即 clear** war.legion_numbers。"""
     from src.core.systems.political_system import PoliticalSystem
 
     state, ws, war = _make_state_with_war(status=WarStatus.ACTIVE)
     _attach_legions(state, war, (1, 2))
 
-    ps = PoliticalSystem(state)
-    # 和约批准路径（对齐 political_system.py:555-591 语义）：add_legions_to_disband
-    ws.add_legions_to_disband(list(war.legion_numbers))
-    assert ws._legions_to_disband == [1, 2]
-    # war 字段未清空（WP-E 零改动；TRUCE 是否释放军团 = WP-G 生命周期语义）
-    assert war.legion_numbers == [1, 2]
+    # 进入 TRUCE + submitted 条约 → canonical 批准路径（对齐 execute_passed_peace_treaty）
+    ws._active_wars.remove(war)
+    war.status = WarStatus.TRUCE
+    war.set_peace_treaty({"status": "submitted", "indemnity": 10, "duration": 3, "generated_turn": 1})
+    ws._truce_wars.append(war)
+    state.turn = None
+    from src.core.entities.entities import GameTurn
+    state.turn = GameTurn(turn_number=1, year=-264)
+    PoliticalSystem(state).execute_passed_peace_treaty(war)
+
+    # enqueue-then-clear（ODR-CAND-01 方向①）：队列入队 + war.legion_numbers 立即清空
+    assert sorted(ws._legions_to_disband) == [1, 2]
+    assert war.legion_numbers == []
 
 
 # ---------------------------------------------------------------------------
@@ -179,18 +186,19 @@ def test_truce_expiry_reassign_shows_new_numbers():
     ms = _attach_legions(state, war, (1, 2))  # 指派旧号
     assert combat_api._war_card(war, state)["legion_numbers"] == [1, 2]  # 附着存在 → 如实显示
 
-    # 和约批准 → TRUCE + 召回（真实 recall 路径：实体 war_id=None）
+    # 和约批准 → TRUCE + 召回（真实 recall 路径：实体 war_id=None；此处模拟召回后形态）
     ws._active_wars.remove(war)
     war.status = WarStatus.TRUCE
     ws._truce_wars.append(war)
     recalled = ms.recall_from_war(war.id)
     assert recalled == 2
-    # WP-G 边界：war.legion_numbers 残留不清空（生命周期清空 = WP-G，不授权）
+    # 手动召回模拟（非 canonical 批准路径）：war.legion_numbers 保留，验证 DTO 守卫
     assert war.legion_numbers == [1, 2]
     # ODR-B 守卫：无附着实体 → 卡不显旧番号
     assert combat_api._war_card(war, state)["legion_numbers"] == []
 
-    # TRUCE 到期 → 战争再起（_apply_truce_expiry → _move_to_active 语义）
+    # TRUCE 战争再起（G3C：到期 → THREAT 后由 escalate/activate 回 ACTIVE；此处手动容器
+    # 迁移仅模拟 re-escalation 场景，验证 DTO 投影忠实——卡面数据源 = 实时实体）
     ws._truce_wars.remove(war)
     war.status = WarStatus.ACTIVE
     ws._active_wars.append(war)

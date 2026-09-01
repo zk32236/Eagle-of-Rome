@@ -585,6 +585,12 @@ def resolve_population_slice(state: GameState) -> dict:
             "total": len(entry.get("converted", [])),
         }
 
+        # G1-14 / §11.5（WP-G G4-GD G2）：战后军团/舰队解散生命周期（canonical，幂等
+        # marker "population_disbandment"；CLI phase_population._handle_step_0 同一
+        # canonical → GUI/CLI 同 mutation 集，S28/S29/S30）。业务事实供 DTO/证据，
+        # 不做展示吸收（R-20）。
+        disbandment = population_api.process_population_disbandments(state)
+
         # 结算选举（archive 已无条件先于 resolve）
         resolve_result = population_api.resolve_election(state)
         if not resolve_result:
@@ -600,6 +606,7 @@ def resolve_population_slice(state: GameState) -> dict:
             "faction_influence_after": influence_after,
             "raw_result": raw_result,
             "battlefield_commander_conversion": conversion_result,
+            "disbandment": disbandment,
         }
 
         # Two-step pattern: resolve records result, does NOT mark phase executed
@@ -757,8 +764,9 @@ def _build_resolution_preview(state: GameState) -> dict:
         for c in plan["contracts_to_expire"]
     ]
 
-    # 3. 和约到期（A7 规划）
-    truce_expiries = [{"war_name": w.name} for w in plan["truce_expiries"]]
+    # 3. 和约到期（A7 和约到期恢复（G3C）：plan 含 "truce_expiries" 键，到期 → THREAT；
+    #    类目供 DTO 稳定）
+    truce_expiries = [{"war_name": w.name} for w in plan.get("truce_expiries", [])]
 
     # 4. 派系聚合影响力（decay-only，ODR-C1；每派系恒一行）
     member_updates = plan["member_updates"]

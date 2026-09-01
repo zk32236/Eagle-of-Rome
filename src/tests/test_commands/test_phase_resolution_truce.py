@@ -1,7 +1,14 @@
 # src/tests/test_commands/test_phase_resolution_truce.py
+"""
+WP-G G3C（Owner Correction 2026-09-01）— truce 到期机制恢复测试。
 
+G3C 冻结语义：approved = TEMPORARY TRUCE（非战争结束），truce_end_turn 到期 →
+TRUCE→THREAT（threat_level=1，commander_id=None，不恢复旧绑定，Sea Control 保持）
+→ 正常威胁自动升级（≥3 爆发）→ ACTIVE。禁 expiry→ACTIVE directly / preserve_commander。
+框架复用 HEAD@04a6829（plan/apply 分层、is_truce_expired、_move_to_threat、shell）。
+"""
 import pytest
-from unittest.mock import MagicMock, patch
+
 from src.core.game_state import GameState
 from src.core.entities.war import War, WarStatus
 from src.core.systems.war_system import WarSystem
@@ -9,88 +16,107 @@ from src.ui.commands.phase_resolution import ResolutionCommand
 
 
 @pytest.fixture
-def mock_state():
-    state = MagicMock(spec=GameState)
-    state.turn.turn_number = 10
-    state.log_event = MagicMock()
-    return state
+def state():
+    return GameState.create_for_testing({})
 
 
-@pytest.fixture
-def mock_war_system():
-    ws = MagicMock(spec=WarSystem)
-    ws.get_truce_wars_with_approved_treaty = MagicMock()
-    ws._move_to_threat = MagicMock()
-    return ws
+def test_resolution_command_check_truce_expiry_shell_restored(state):
+    """_check_truce_expiry shell 恢复（G3C）：委托 GameState 到期处理，返回 list。"""
+    cmd = ResolutionCommand(state)
+    assert hasattr(cmd, "_check_truce_expiry")
+    assert isinstance(cmd._check_truce_expiry(), list)
 
 
-def create_mock_war(war_id, name, expired):
-    """创建模拟战争，根据expired决定is_truce_expired返回值"""
-    war = MagicMock(spec=War)
-    war.id = war_id
-    war.name = name
-    war.is_truce_expired = MagicMock(return_value=expired)
-    war.clear_peace_treaty = MagicMock()
-    return war
+def test_game_state_truce_expiry_mechanism_restored(state):
+    """GameState 到期机制入口恢复（G3C）：plan/apply/process 三入口在位，A7 接线含键。"""
+    assert hasattr(state, "_plan_truce_expiry")
+    assert hasattr(state, "_apply_truce_expiry")
+    assert hasattr(state, "process_truce_expiry")
+    assert "truce_expiries" in state._plan_settlement()
 
 
-def test_truce_expired_single_war(mock_state, mock_war_system):
-    """测试单个战争到期"""
-    war = create_mock_war('w1', 'Test War', expired=True)
-    mock_war_system.get_truce_wars_with_approved_treaty.return_value = [war]
-    mock_state.get_war_system.return_value = mock_war_system
-
-    cmd = ResolutionCommand(mock_state)
-    cmd._check_truce_expiry()
-
-    # CLI 壳方法已空 — 和约到期下沉到 GameState.process_truce_expiry()
-    mock_war_system._move_to_threat.assert_not_called()
-    war.clear_peace_treaty.assert_not_called()
-    mock_state.log_event.assert_not_called()
+def test_war_system_move_to_threat_restored(state):
+    """_move_to_threat 恢复（G3C 到期目标 = THREAT，禁 direct ACTIVE）。"""
+    ws = WarSystem(state)
+    assert hasattr(ws, "_move_to_threat")
+    # 冻结路径保留：enter_truce（STALEMATE→TRUCE）与 approved → TRUCE 原语
+    assert hasattr(ws, "enter_truce")
+    assert hasattr(ws, "move_truce_war_to_active")
+    assert hasattr(ws, "restore_rejected_peace_treaty")
+    assert hasattr(ws, "deactivate_war_to_threat")
+    # _move_to_active 不恢复（GD 冻结路径 move_truce_war_to_active 承担 TRUCE→ACTIVE）
+    assert not hasattr(ws, "_move_to_active")
 
 
-def test_truce_not_expired_single_war(mock_state, mock_war_system):
-    """测试单个战争未到期"""
-    war = create_mock_war('w1', 'Test War', expired=False)
-    mock_war_system.get_truce_wars_with_approved_treaty.return_value = [war]
-    mock_state.get_war_system.return_value = mock_war_system
-
-    cmd = ResolutionCommand(mock_state)
-    cmd._check_truce_expiry()
-
-    mock_war_system._move_to_threat.assert_not_called()
-    war.clear_peace_treaty.assert_not_called()
-    mock_state.log_event.assert_not_called()
+def test_war_is_truce_expired_restored():
+    """war.is_truce_expired 恢复（G3C：current_turn >= truce_end_turn → 到期）。"""
+    war = War(id="w1", name="Truce War", start_year=-270, threat_level=0, strength=5)
+    war.set_truce_end_turn(15)
+    assert war.truce_end_turn == 15
+    assert war.is_truce_expired(14) is False
+    assert war.is_truce_expired(15) is True
 
 
-def test_truce_mixed_expiry(mock_state, mock_war_system):
-    """测试多个战争，部分到期部分未到期"""
-    war1 = create_mock_war('w1', 'War1', expired=True)
-    war2 = create_mock_war('w2', 'War2', expired=False)
-    war3 = create_mock_war('w3', 'War3', expired=True)
-    mock_war_system.get_truce_wars_with_approved_treaty.return_value = [war1, war2, war3]
-    mock_state.get_war_system.return_value = mock_war_system
+def test_approved_truce_war_expires_to_threat_on_advance_year(state):
+    """approved + truce_end_turn 到期的 TRUCE 战争经年度推进 → THREAT（G3C 恢复语义）。"""
+    from src.core.entities.entities import GameTurn
+    state.turn = GameTurn(turn_number=10, year=-260)
+    ws = WarSystem(state)
+    state._war_system = ws
+    war = War(id="w1", name="Truce War", start_year=-270, threat_level=0, strength=5)
+    war.status = WarStatus.TRUCE
+    war.set_peace_treaty({"status": "approved"})
+    war.set_truce_end_turn(4)  # 已到期（4 <= 10）
+    war.commander_id = 1
+    ws._truce_wars.append(war)
 
-    cmd = ResolutionCommand(mock_state)
-    cmd._check_truce_expiry()
+    state.advance_year()
 
-    # CLI 壳方法已空
-    assert mock_war_system._move_to_threat.call_count == 0
-    war1.clear_peace_treaty.assert_not_called()
-    war3.clear_peace_treaty.assert_not_called()
-    war2.clear_peace_treaty.assert_not_called()
-
-    # CLI 壳方法不产生日志
-    assert mock_state.log_event.call_count == 0
+    assert war not in ws._truce_wars
+    assert war in ws._threats
+    assert war.status == WarStatus.THREAT
+    assert war.threat_level == 1
+    assert war.commander_id is None
+    assert war not in ws._active_wars
 
 
-def test_no_truce_wars(mock_state, mock_war_system):
-    """测试没有停战战争"""
-    mock_war_system.get_truce_wars_with_approved_treaty.return_value = []
-    mock_state.get_war_system.return_value = mock_war_system
+def test_approved_truce_war_not_expired_stays_truce(state):
+    """未到期 approved TRUCE 战争经年度推进保持 TRUCE（G3C：truce_end_turn 未达）。"""
+    from src.core.entities.entities import GameTurn
+    state.turn = GameTurn(turn_number=3, year=-260)
+    ws = WarSystem(state)
+    state._war_system = ws
+    war = War(id="w1", name="Truce War", start_year=-270, threat_level=0, strength=5)
+    war.status = WarStatus.TRUCE
+    war.set_peace_treaty({"status": "approved"})
+    war.set_truce_end_turn(8)  # 未到期（3 < 8）
+    ws._truce_wars.append(war)
 
-    cmd = ResolutionCommand(mock_state)
-    cmd._check_truce_expiry()
+    state.advance_year()
 
-    mock_war_system._move_to_threat.assert_not_called()
-    mock_state.log_event.assert_not_called()
+    assert war in ws._truce_wars
+    assert war.status == WarStatus.TRUCE
+    assert war not in ws._active_wars
+    assert war not in ws._threats
+
+
+def test_truce_expiry_exactly_once_no_requeue(state):
+    """S33 exactly-once：到期战争迁移一次后，重试零重复迁移 / 零重复 threat 插入。"""
+    from src.core.entities.entities import GameTurn
+    state.turn = GameTurn(turn_number=10, year=-260)
+    ws = WarSystem(state)
+    state._war_system = ws
+    war = War(id="w1", name="Truce War", start_year=-270, threat_level=0, strength=5)
+    war.status = WarStatus.TRUCE
+    war.set_peace_treaty({"status": "approved"})
+    war.set_truce_end_turn(4)
+    ws._truce_wars.append(war)
+
+    expired1 = state.process_truce_expiry()
+    expired2 = state.process_truce_expiry()
+
+    assert expired1 == ["Truce War"]
+    assert expired2 == []
+    assert ws._threats.count(war) == 1
+    assert war not in ws._truce_wars
+    assert war.status == WarStatus.THREAT

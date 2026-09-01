@@ -61,13 +61,14 @@ class TestCombatAPI(unittest.TestCase):
             disaster_numbers=[2, 3],
         )
         self.war1.commander_id = 1
-        self.war1.legions_assigned = 4  # 战斗公式消费者（_compute_combat_result，受保护面）
+        self.war1.legions_assigned = 4  # 兼容 debug 镜像字段（N 件；GB S1 后不再作战力/伤亡权威）
         self.war1.status = WarStatus.ACTIVE
         self.state._war_system._active_wars.append(self.war1)
         # DEVIATION-DA-02（PM 已 ENDORSED 2026-08-25）：_war_card 计数/番号源 = 实时军团实体
         # 附着（ODR-A/B），生产路径附着真实实体（recruit_legion + assign_to_war）——镜像语义
         # = len(get_legions_for_battle(war.id))；断言意图保留（禁空洞化）。
-        # legions_assigned 属性保留：_compute_combat_result 仍读它（R3 变更面外，禁动）。
+        # WP-G GB（S1/S2，R-17）：战力/伤亡源 = live 实体（get_legions_for_battle +
+        # apply_land_casualties）；legions_assigned 镜像仅兼容读，不再被战斗公式消费。
         ms = self.state._military_system
         for num in (1, 2, 3, 4):
             ok, _ = ms.recruit_legion(num)
@@ -85,7 +86,7 @@ class TestCombatAPI(unittest.TestCase):
             rewards={"treasury": 50},
             disaster_numbers=[2, 3],
         )
-        self.war2.legions_assigned = 2  # 战斗公式消费者（受保护面）
+        self.war2.legions_assigned = 2  # 兼容 debug 镜像字段（N 件；GB S1 后不再作战斗权威）
         self.war2.status = WarStatus.ACTIVE
         self.state._war_system._active_wars.append(self.war2)
         for num in (5, 6):

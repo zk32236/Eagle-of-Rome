@@ -58,12 +58,14 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
             commander_id = war.commander_id
 
     # POST-07P（ODR-A/B）：计数/番号源 = 实时军团实体附着（legion.war_id == war.id）。
-    # war.legions_assigned 在 GUI 生产路径恒 0（写入路径缺口 = WP-G handoff）；
-    # war.legion_numbers 召回后残留旧号（ODR-B ① 禁以其判定存在性）。
+    # 镜像字段（legions_assigned / legion_numbers）仅兼容 debug：GUI 生产路径恒 0/
+    # 召回后残留旧号，禁以其判定存在性或作战斗权威（R-17 / N 件）。
     ms = _military_system(state)
     attached = ms.get_legions_for_battle(war.id) if ms else []
     legion_count = len(attached)
-    legion_power = legion_count * 2
+    # R-17（G2-C §2，WP-G GB）：战力 = live 实体 Σ get_combat_strength()
+    # （含 veteran +1，MVP0.3-03 §3.4 既有规则；GUI canonical 路径此前漏应用 = 收敛，非新规则）
+    legion_power = sum(l.get_combat_strength() for l in attached)
     total_power = commander_martial + legion_power
     enemy_power = war.get_total_strength()
 
@@ -90,6 +92,9 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
             if war.truce_end_turn
             else None
         ),
+        # K 件 §5（WP-G GC）：海军门状态 DTO 透出（禁 QML 推断 R-01；CombatStage 展示 = WP-F）
+        "naval_required": war.naval_required,
+        "sea_control_acquired": war.sea_control_acquired,
     }
 
 
@@ -103,6 +108,7 @@ def _build_battle_result(
     loot: int,
     losses: int,
     triumph: bool,
+    casualty_numbers: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
     """Build a battle_result DTO."""
     label_map = {
@@ -130,12 +136,67 @@ def _build_battle_result(
         "enemy_defence": enemy_defence,
         "total_score": total_attack - enemy_defence,
         "losses": losses,
+        # WP-G GB（S2，G1-05/06/07）：伤亡编号列表（向后兼容增量；GUI 现有
+        # `losses` 字段语义不变 = 伤亡数，CombatStage.qml 零改）
+        "casualty_numbers": list(casualty_numbers) if casualty_numbers else [],
         "triumph": triumph,
         "loot": loot,
         "treasury_share": treasury_share,
         "commander_share": commander_share_value,
         "faction_share": faction_share,
         "soldier_share": soldier_share,
+    }
+
+
+def _build_naval_block_result(
+    war: War,
+    state: GameState,
+    naval_result: str,
+    roman_losses: int,
+) -> Dict[str, Any]:
+    """海战阻断 DTO（R-05，WP-G GC）：naval_required + 未获控且海战未获控 → 陆战不执行。
+
+    向后兼容：沿用既有 battle_result 字段名（losses = 伤亡数，此处 = 舰队伤亡数）+ 增量
+    naval / land_battle 字段；GUI 既有字段消费零改。
+    """
+    result_map = {
+        "TRIUMPH": "triumph",
+        "VICTORY": "victory",
+        "STALEMATE": "draw",
+        "DEFEAT": "defeat",
+        "DISASTER": "disaster",
+    }
+    gui_result = result_map.get(naval_result, "draw")
+    label_map = {
+        "triumph": "🏆 大胜！",
+        "victory": "⚔️ 胜利",
+        "draw": "⚓ 海战僵持（无法登陆）",
+        "defeat": "⚓ 海战战败（无法登陆）",
+        "disaster": "⚓ 海战灾难（无法登陆）",
+    }
+    return {
+        "war_id": war.id,
+        "war_name": war.name,
+        "result": gui_result,
+        "result_label": label_map.get(gui_result, gui_result),
+        "losses": roman_losses,
+        "triumph": False,
+        "dice": 0,
+        "total_attack": 0,
+        "enemy_defence": 0,
+        "total_score": 0,
+        "loot": 0,
+        "casualty_numbers": [],
+        "treasury_share": 0,
+        "commander_share": 0,
+        "faction_share": 0,
+        "soldier_share": 0,
+        "naval": {
+            "result": naval_result,
+            "roman_losses": roman_losses,
+            "sea_control_acquired": False,
+        },
+        "land_battle": "blocked",
     }
 
 
@@ -156,8 +217,11 @@ def _compute_combat_result(
         if commander:
             commander_martial = getattr(commander, 'martial', 0) or 0
 
-    # Legion power
-    legion_power = war.legions_assigned * 2
+    # Legion power — R-17（G2-C §2，WP-G GB）：live Legion 实体附着为唯一参与者/战力源；
+    # 镜像字段（legions_assigned / legion_numbers）仅兼容 debug，禁战斗权威（N 件）
+    ms = _military_system(state)
+    attached = ms.get_legions_for_battle(war.id) if ms else []
+    legion_power = sum(l.get_combat_strength() for l in attached)
 
     # Apply action modifiers
     action_bias = 0
@@ -190,12 +254,14 @@ def _compute_combat_result(
     else:
         result = "draw"
 
-    # Losses
+    # Losses — G1-05/06/07（G2-C §4 冻结数学）：伤亡源 = live 参战集；
+    # DEFEAT: ceil(N/2) 随机无放回；DISASTER: 全灭；其余 0
+    N = len(attached)
     losses = 0
     if result == "disaster":
-        losses = max(1, war.legions_assigned // 2)  # Disaster loses half the legions
+        losses = N
     elif result == "defeat":
-        losses = max(1, war.legions_assigned // 3)  # Defeat loses a third
+        losses = N - N // 2  # = ceil(N/2)（G1-06：1→1, 2→1, 3→2, 4→2, 5→3, 6→3）
 
     # Loot (only for non-disaster)
     loot = 0
@@ -571,7 +637,42 @@ def do_combat_action(
                 data=data,
             )
 
-        # Roll dice
+        # ── Naval gate（G1-09 / R-04 / R-05 / R-06，WP-G GC）──
+        # canonical 单一海军门槛：naval_required + 未获控 → 必须先海战（S7/S8 共享）；
+        # STALEMATE/DEFEAT/DISASTER → 陆战不执行（R-05）→ 军团保持 ACTIVE+assigned
+        # （G1-15，零陆战伤亡）→ 战争继续；本回合已处理 → resolved_wars → 不阻塞 advance。
+        # TRIUMPH/VICTORY → resolve_naval_battle 内 mutation 获控（K 件 §7）→ 同场继续陆战；
+        # 获控后同战未来战斗跳过海战（R-06）。
+        ns = getattr(state, "naval_system", None)
+        naval_gate_triggered = False
+        if war.naval_required and not war.sea_control_acquired and ns:
+            naval_gate_triggered = True
+            naval_result, naval_losses = ns.resolve_naval_battle(war)
+            roman_losses = 0
+            if isinstance(naval_losses, dict):
+                roman_losses = naval_losses.get("roman_losses", 0) or 0
+            if naval_result in ("STALEMATE", "DEFEAT", "DISASTER"):
+                war.duration += 1
+                block_dto = _build_naval_block_result(war, state, naval_result, roman_losses)
+                phase_data = state.get_phase_result("combat") or {}
+                if not isinstance(phase_data, dict):
+                    phase_data = {}
+                phase_data["pending_result"] = block_dto
+                resolved = list(phase_data.get("resolved_wars", []))
+                if war_id not in resolved:
+                    resolved.append(war_id)  # 关键：本回合已处理 → 不阻塞 advance
+                phase_data["resolved_wars"] = resolved
+                phase_data["selected_war_id"] = war_id
+                war_results = phase_data.get("war_results", {})
+                if not isinstance(war_results, dict):
+                    war_results = {}
+                war_results[war_id] = block_dto
+                phase_data["war_results"] = war_results
+                state.record_phase_result("combat", phase_data)
+                return api_response(True, f"海战{naval_result}，无法登陆，战争持续", data=block_dto)
+            # TRIUMPH/VICTORY → sea_control_acquired=True（resolve_naval_battle 已 mutation）→ 同场继续陆战
+
+        # Roll dice（置于海军门之后：门阻断时无需陆战骰子；TRIUMPH/VICTORY 继续路径在此掷）
         dice = random.randint(2, 12)
         result_data = _compute_combat_result(war, state, dice, action)
         result = result_data["result"]
@@ -589,15 +690,16 @@ def do_combat_action(
             elif result in ("defeat", "disaster"):
                 _apply_loss_consequence(war, result, state)
 
-        # Apply legion losses via military system
-        # INV-C3：defeat 部分损失（[:losses]）/ disaster 全量（军团覆灭）
+        # Apply land casualties（G1-05/06/07 / G2-C §4，WP-G GB）——唯一伤亡 mutation
+        # owner = MilitarySystem.apply_land_casualties（random.sample 无放回 ceil(N/2) →
+        # DESTROYED / DISASTER 全灭）；删除 add_legions_to_disband 前缀镜像路径
+        # （§11.2 根因：该路径使伤亡滞留 ACTIVE+assigned 且解散失败重排队）。
         ms = _military_system(state)
-        if ms and result_data["losses"] > 0:
-            # Mark legions as needing to be disbanded
-            if result == "disaster":
-                ws.add_legions_to_disband(list(war.legion_numbers))
-            else:
-                ws.add_legions_to_disband(war.legion_numbers[:result_data["losses"]])
+        casualty_numbers = []
+        if ms and result in ("defeat", "disaster"):
+            raw = ms.apply_land_casualties(war.id, result)
+            if isinstance(raw, (list, tuple)):
+                casualty_numbers = list(raw)
 
         # Build battle result
         battle_result = _build_battle_result(
@@ -609,7 +711,18 @@ def do_combat_action(
             loot=result_data["loot"],
             losses=result_data["losses"],
             triumph=result_data["triumph"],
+            casualty_numbers=casualty_numbers,
         )
+
+        # WP-G GC（S7）：本场曾触发海军门且获控（TRIUMPH/VICTORY）→ 陆战继续路径增量标注
+        # （naval/land_battle 只加不减，向后兼容，R-07）
+        if naval_gate_triggered:
+            battle_result["naval"] = {
+                "result": naval_result,
+                "roman_losses": roman_losses,
+                "sea_control_acquired": True,
+            }
+            battle_result["land_battle"] = "allowed"
 
         # Defence is DEPRECATED (FUNC-03 attack-only). Retained for API
         # compatibility (B-19); the GUI no longer exposes this action.
@@ -731,12 +844,12 @@ def _generate_peace_treaty(
     state: GameState,
 ) -> Optional[Dict]:
     """
-    根据战斗结果尝试生成停战条约。
+    根据战斗结果尝试生成停战条约（G1，G1-08：仅 STALEMATE（draw）生成 pending treaty）。
     适配自 CLI _maybe_generate_treaty 逻辑。
-    仅对非决定性结果（非 triumph/disaster）生成条约。
+    非 STALEMATE 结果 fail-closed 不生成（VICTORY/DEFEAT/DISASTER 无条约）。
     """
-    # 决定性结果不生成条约（与 CLI 一致）
-    if battle_result in ("triumph", "disaster"):
+    # G1-08（R-07）：仅 STALEMATE（GUI 路径结果为 "draw"）生成条约
+    if battle_result != "draw":
         return None
 
     from src.core.deciders.impl.auto_peace_treaty_decider import (

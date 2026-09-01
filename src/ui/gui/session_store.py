@@ -385,6 +385,16 @@ class GuiSessionStore(QObject):
     def senateTakeoverOptions(self) -> List[Dict[str, Any]]:
         return self._senate_view.get("takeover_options", [])
 
+    @Property(bool, notify=senateViewChanged)
+    def canContinueSenateWar(self) -> bool:
+        """G2：Continue Existing Command 可用位（Q 件 J，DTO 只透传权威值，禁 QML 推断 R-01）。"""
+        return self._senate_view.get("can_continue", False)
+
+    @Property(list, notify=senateViewChanged)
+    def senateContinueOptions(self) -> List[Dict[str, Any]]:
+        """G2：Continue 候选（含 reinforcement_range，Q 件 J）。"""
+        return self._senate_view.get("continue_options", [])
+
     @Property(dict, notify=senateViewChanged)
     def senateResult(self) -> Dict[str, Any]:
         """
@@ -1438,11 +1448,25 @@ class GuiSessionStore(QObject):
         self.senateViewChanged.emit()
         return feedback
 
-    @Slot(str, result=dict)
-    def doTakeoverWar(self, war_id: str) -> dict:
+    @Slot(str, int, result=dict)
+    def doTakeoverWar(self, war_id: str, reinforcement_n: int = 1) -> dict:
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
-        feedback = self._adapter.takeover_war(self._viewer_id, war_id)
+        feedback = self._adapter.takeover_war(self._viewer_id, war_id, reinforcement_n)
+        self._raise_feedback(feedback)
+        if feedback.get("success"):
+            self._refresh_snapshot()
+            self._refresh_senate_view()
+            self._refresh_combat_view()
+        self.senateViewChanged.emit()
+        return feedback
+
+    @Slot(str, int, result=dict)
+    def doContinueWar(self, war_id: str, reinforcement_n: int = 1) -> dict:
+        """G2：Continue Existing Command 输入转发（G1-21 / Q 件 J；store 零 lifecycle 推断）。"""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.continue_war(self._viewer_id, war_id, reinforcement_n)
         self._raise_feedback(feedback)
         if feedback.get("success"):
             self._refresh_snapshot()

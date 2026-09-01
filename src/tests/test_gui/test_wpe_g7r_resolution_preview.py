@@ -233,8 +233,9 @@ def test_preview_commit_parity():
     settlement_contracts = {(c["contract_id"], c["name"], c["contract_type"]) for c in settlement["contract_expiries"]}
     assert preview_contracts == settlement_contracts
 
-    # 3) 和约到期 parity
-    assert {t["war_name"] for t in preview["truce_expiries"]} == set(settlement["truce_expiries"])
+    # 3) 和约到期 parity（G3C 恢复：双源一致 = ["Truce War"]）
+    assert {t["war_name"] for t in preview["truce_expiries"]} == set(settlement.get("truce_expiries", []))
+    assert preview["truce_expiries"] == [{"war_name": "Truce War"}]
 
     # 4) 派系聚合 parity（NC-4 例5 / SH-P1-03：commit 侧 oracle = 权威捕获点
     #    settlement["decay"] 行 faction_id + influence_before/after/delta_decay 聚合，

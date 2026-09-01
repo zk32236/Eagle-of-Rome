@@ -48,7 +48,7 @@ class TestAutoResolveCombat(unittest.TestCase):
             disaster_numbers=[12],  # Only 12 is disaster
         )
         self.war1.commander_id = 1
-        self.war1.legions_assigned = 4
+        self.war1.legions_assigned = 4  # 兼容 debug 镜像字段（N 件；GB S1 后战力/伤亡源 = live 实体，R-17）
         self.war1.status = WarStatus.ACTIVE
         self.state._war_system._active_wars.append(self.war1)
 

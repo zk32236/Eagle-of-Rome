@@ -396,7 +396,8 @@ class TestAutoSubmitProposals(unittest.TestCase):
         self.assertLessEqual(stored[0]["legions"], len(self.state.get_military_system().get_available_legions()))
 
     def test_auto_submit_proposals_peace_treaty(self):
-        """待决停战：自动和平提案"""
+        """待决停战：A7 同轮互斥——AI 接管（decider 默认 chance=1.0）优先，peace 提案跳过；
+        TRUCE+pending 战争经统一 Takeover → ACTIVE + 新 Commander（S19 语义）。"""
         ws = self.state.get_war_system()
         war = War(id="peace_test", name="停战测试战争", war_type=WarType.FOREIGN, strength=5)
         war.status = WarStatus.TRUCE
@@ -408,8 +409,14 @@ class TestAutoSubmitProposals(unittest.TestCase):
         self.assertTrue(result["success"])
         proposals = result["data"].get("proposals", [])
         peace_proposals = [p for p in proposals if p["type"] == "peace"]
-        self.assertGreaterEqual(len(peace_proposals), 1)
-        self.assertEqual(peace_proposals[0]["war_id"], "peace_test")
+        # A7（F 件 §2.3）：同轮不双路径——AI 接管路径下不提交 peace 提案
+        self.assertEqual(len(peace_proposals), 0)
+        self.assertEqual(peace_proposals, [])
+        # S19：pending + Takeover → 清条约 + ACTIVE + 新 Commander
+        self.assertEqual(war.status, WarStatus.ACTIVE)
+        self.assertIn(war, ws.get_active_wars())
+        self.assertEqual(war.commander_id, self.consul.id)
+        self.assertIsNone(war.peace_treaty)
 
     def test_auto_submit_proposals_returns_valid_structure(self):
         """返回值结构符合 api_response 规范"""
@@ -470,7 +477,10 @@ class TestAutoSubmitProposals(unittest.TestCase):
         proposals = result["data"].get("proposals", [])
         types_found = set(p["type"] for p in proposals)
         self.assertIn("war", types_found)
-        self.assertIn("peace", types_found)
+        # A7 互斥：war2（TRUCE+pending，无 commander）被 AI 接管而非 peace 提案
+        self.assertNotIn("peace", types_found)
+        self.assertEqual(war2.status, WarStatus.ACTIVE)
+        self.assertEqual(war2.commander_id, self.consul.id)
         # 总督任命依赖候选人选举逻辑，可能因随机性跳过行省
         # budget 和 land 依赖合同/公地数据，不强制断言
 

@@ -7,7 +7,7 @@
 在罗马共和时期，军团是军事力量的核心。本系统实现了军团从创建到解散或毁灭的全流程管理：
 
 - 罗马最多拥有 25 个军团编号（Legio I 至 Legio XXV），初始全部为未征召（UNRAISED）状态
-- 玩家在国库充裕时征召军团，征召后消耗国库资金
+- 玩家征召军团，征召后消耗国库资金（**国库不设征召门槛，G1-17**：国库可为负，由赤字机制兑底）
 - 军团可指派给战争，在战斗阶段参与战斗
 - 军团有维护费系统，国库不足时**先解散非老兵、未指派军团节省开支，剩余差额照扣（国库允许为负，由赤字破产机制兜底）**
 - 军团可晋升为老兵，获得战力加成
@@ -37,17 +37,29 @@ def recruit_legion(self, legion_number: int) -> Tuple[bool, str]:
 1. 检查军团编号是否有效
 2. 检查军团状态是否允许征召（必须为 `UNRAISED` 或 `DISBANDED`）
 3. 从配置读取征召费用（`legion_recruit_cost`，默认 10）
-4. 检查国库是否充足
-5. 扣除国库资金，将军团状态设为 `ACTIVE`
+4. 扣除国库资金（**国库不设门槛，G1-17**：国库 < 费用不阻止征召，扣款照扣、国库可为负，赤字由 Resolution/game-over 兜底），将军团状态设为 `ACTIVE`
 
 **批量征召：**
 ```python
 def recruit_multiple(self, count: int) -> List[Tuple[int, bool, str]]:
 ```
 1. 获取所有可征召军团（UNRAISED + DISBANDED）
-2. 按序逐一征召，每次检查国库是否足够
-3. 国库不足时中断，返回已征召结果汇总
+2. 按序逐一征召（无逐军团国库检查，G1-17）
+3. 返回已征召结果汇总
 4. 控制台输出征召汇总信息
+
+> **Veteran 持久（G1-19 / R-13，WP-G GB）：** 征召（正常重募，UNRAISED/DISBANDED → ACTIVE）**不清理 `is_veteran`**——Veteran 唯一清除点 = `mark_destroyed`（战斗摧毁）。recall → AVAILABLE / 行政解散 → DISBANDED / 正常重募全程保留。
+
+**续战增援 N 契约引用（G1-23 / G1-24，WP-G GA）：**
+
+```
+可征召池 = get_available_legions()（UNRAISED ∪ DISBANDED）
+Reinforcement N（Takeover/Continue 的新增征召数）
+  正常：1 ≤ N ≤ count(UNRAISED+DISBANDED)
+  零池例外：count == 0 → N = 0 允许
+  国库：不参与上限（G1-17/R-10）
+详细契约见 MVP0.3-02 §3.3（GA 统一暴露 senate_api.reinforcement_range）
+```
 
 ### 2.3 解散操作
 
@@ -104,17 +116,19 @@ def apply_maintenance(self, verbose: bool = True) -> Tuple[bool, str]:
 ### 2.7 战斗结果应用
 
 ```python
-def apply_battle_results(self, war_id: str, victory: bool, disaster: bool = False):
+def apply_battle_results(self, war_id: str, victory: bool, disaster: bool = False) -> List[int]:
 ```
-由战斗阶段（`CombatCommand._apply_battle_result`）调用：
+由战斗阶段（`CombatCommand._apply_battle_result`）调用（legacy/测试面；生产 canonical 入口 = `combat_api.auto_resolve_combat`）：
 
 | 结果 | 军团影响 | 指挥官影响 |
 |------|---------|-----------|
-| **TRIUMPH（凯旋）** | 全部晋升老兵 + 召回 + 战争结束 | influence +10 |
-| **VICTORY（胜利）** | 全部晋升老兵 | influence +5 |
+| **TRIUMPH（凯旋）** | **全部幸存参战者晋级老兵 + 召回 → AVAILABLE + 战争结束（RESOLVED，G1-22）** | influence +10 |
+| **VICTORY（胜利）** | **全部幸存参战者晋级老兵 + 战争结束（RESOLVED）→ 召回 → AVAILABLE（G1-22）** | influence +5 |
 | **STALEMATE（僵持）** | 无变化，`war.duration += 1` | 无变化 |
-| **DEFEAT（失败）** | 前一半军团 DISBANDED + 召回 | 30%逃跑 / 20%被俘 / else 受伤 |
-| **DISASTER（灾难）** | 全部 `mark_destroyed()` | 阵亡（`state.mark_member_dead()`） |
+| **DEFEAT（失败）** | **随机无放回 ceil(N/2) 实际参战 → DESTROYED**（清 war_id/commander_id/is_veteran，G1-05/06/07）；幸存保持 ACTIVE+assigned | 30%逃跑 / 20%被俘 / else 受伤 |
+| **DISASTER（灾难）** | **全部实际参战 `mark_destroyed()`**（G1-07） | 阵亡（`state.mark_member_dead()`） |
+
+> **伤亡/晋升单一 owner（WP-G GB S2/S3）：** DEFEAT/DISASTER 伤亡一律经 `MilitarySystem.apply_land_casualties(war_id, result)`（random.sample 无放回 → mark_destroyed；禁前缀序/「一半 DISBANDED」路径）；VICTORY/TRIUMPH 晋升统一在 `WarSystem.resolve_war` victory 分支（先于召回，recall 保留 Veteran）。
 
 ### 2.8 军团恢复机制
 
@@ -126,34 +140,36 @@ def _process_legion_recovery(self, current_turn: int) -> List[int]:
 - 若 `current_turn - destroyed_turn >= interval`，恢复最老的一个
 - 恢复后状态变为 `DISBANDED`，`destroyed_turn` 重置为 0
 - `interval <= 0` 时禁用恢复功能
+- **恢复后 `is_veteran` 保持 False（摧毁已清，G1-19）**；恢复后可正常再募
+- **Resolution 顺序（G1-25，权威 = `resolution_api.execute_resolution`）：** `check_victory_conditions`（含 all-25-legions-DESTROYED 败北）**先于** `process_legion_recovery`——即使某军团本 Resolution 恢复间隔已满，全 25 灭仍判共和覆灭
 
 ## 3. 核心规则
 
 ### 3.1 军团实体状态机
 
 ```
-UNRAISED ──[征召]──→ ACTIVE ──[指派]──→ ACTIVE(w/ war_id)
-                          │                  │
-                          ├──[解散]──→ DISBANDED
-                          │                  │
-                          ├──[召回]──→ AVAILABLE
-                          │
-                     [战斗-DISASTER]──→ DESTROYED ──[恢复间隔期满]──→ DISBANDED
-                     [战斗-DEFEAT]  ──→ DISBANDED(部分)
-                     [战斗-TRIUMPH] ──→ AVAILABLE + 老兵晋升
+UNRAISED / DISBANDED ──[征召]──→ ACTIVE ──[指派]──→ ACTIVE(w/ war_id)
+                                        │                │
+                                        ├──[解散]──→ DISBANDED（Veteran 保留）
+                                        │                │
+                                        ├──[召回]──→ AVAILABLE（Veteran 保留）
+                                        │
+                   [战斗-DISASTER]──→ DESTROYED ──[恢复间隔期满]──→ DISBANDED → 可再募（Veteran False）
+                   [战斗-DEFEAT]   ──→ DESTROYED（随机 ceil(N/2)，G1-05/06/07）
+                   [战斗-TRIUMPH/VICTORY] ──→ AVAILABLE + 老兵晋升（幸存全晋升，G1-22）
 ```
 
 ### 3.2 LEGION 状态有效转换
 
 | 当前状态 | 可转换到 | 触发操作 |
 |---------|---------|---------|
-| UNRAISED | ACTIVE | `recruit()` |
-| DISBANDED | ACTIVE | `recruit()` |
+| UNRAISED | ACTIVE | `recruit()`（保留 is_veteran，G1-19） |
+| DISBANDED | ACTIVE | `recruit()`（保留 is_veteran，G1-19） |
 | ACTIVE | AVAILABLE | 无 war_id 且 `recall()` |
 | ACTIVE | ACTIVE(w/war_id) | `assign_to_war()` |
-| ACTIVE(w/war_id) | AVAILABLE | `recall()` 或战斗结束 |
-| ACTIVE/AVAILABLE | DISBANDED | `disband()` |
-| AVAILABLE/ACTIVE/RECALLING | DESTROYED | `mark_destroyed()`（战斗灾难） |
+| ACTIVE(w/war_id) | AVAILABLE | `recall()` 或战斗胜利（G1-22） |
+| ACTIVE/AVAILABLE | DISBANDED | `disband()`（行政解散，Veteran 保留） |
+| ACTIVE(w/war_id) | DESTROYED | `mark_destroyed()`（战斗 DEFEAT 随机 ceil(N/2) / DISASTER 全灭，G1-05/06/07） |
 | DESTROYED | DISBANDED | `recover()`（恢复间隔期满） |
 
 ### 3.3 军团禁用操作
@@ -168,7 +184,16 @@ UNRAISED ──[征召]──→ ACTIVE ──[指派]──→ ACTIVE(w/ war_id
 ```
 基础战力 = 2
 老兵加成 = +1（is_veteran = True）
-触发晋升条件：战斗结果 VICTORY 或 TRIUMPH
+触发晋升条件：TRIUMPH / VICTORY → 全部幸存参战军团晋升（G1-22）
+晋升后生命周期：War RESOLVED → recall → AVAILABLE → Revenue 维护 → Population DISBANDED → Veteran 保留
+```
+
+**Veteran 持久契约（G1-19 / R-13，WP-G GB）：**
+
+```
+保留点：recall → AVAILABLE；行政解散 → DISBANDED；正常重募（UNRAISED/DISBANDED → recruit）
+唯一清除点：mark_destroyed()（战斗摧毁 → DESTROYED）
+代码：recruit_legion 不再置 is_veteran=False（S4）；recall/disband 不清 is_veteran（已对齐）
 ```
 
 ### 3.5 军团类型机制
@@ -240,10 +265,11 @@ UNRAISED ──[征召]──→ ACTIVE ──[指派]──→ ACTIVE(w/ war_id
 - `MAX_LEGIONS = 25`：最多 25 个军团编号
 - 初始化时全部为 `UNRAISED` 状态
 - 所有军团编号 1–25，超出无效
+- `get_available_legions()` = UNRAISED ∪ DISBANDED = **Reinforcement N 可征召池**（G1-23/G1-24；N 上限引用见 MVP0.3-02 §3.3）
 
 ### 5.2 国库不足
 
-- 征召时国库 < `legion_recruit_cost`（默认 10）→ 征召失败
+- **征召不设国库门槛（G1-17/R-10）**：征召时国库 < 征召费不阻止征召——扣款照扣、国库可为负，赤字由 Resolution/game-over 兜底
 - 维护费时国库 < 总维护费 → 先解散非老兵、未指派军团节省开支（按实际维护费累计）
 - 解散后剩余差额照扣（国库允许为负），由赤字破产机制兜底；每回合维护费结算强制记录日志（`legion_maintenance`）
 
@@ -283,9 +309,9 @@ UNRAISED ──[征召]──→ ACTIVE ──[指派]──→ ACTIVE(w/ war_id
 | 11 | 早已解散的军团再次解散失败 | 二次解散返回 0 | `test_military_system_disband.py::test_disband_already_disbanded` |
 | 12 | 批量解散混合结果 | 部分成功 + 部分报错 | `test_military_system_disband.py::test_disband_existing_legions` |
 | 13 | 战斗大胜 → 全部晋升老兵 + 召回 + 战争结束 | TRIUMPH → promote + recall + resolve_war | `test_phase_combat.py::test_battle_outcomes_triumph` |
-| 14 | 战斗中胜 → 全部晋升老兵 + 生成停战草案 | VICTORY → promote + enter_truce | `test_phase_combat.py::test_battle_outcomes_victory` |
+| 14 | 战斗中胜 → 全部幸存参战者晋升老兵 + 战争结束 | VICTORY → promote（resolve_war victory 分支）→ RESOLVED（G1-22，不再 enter_truce） | `test_phase_combat.py::test_battle_outcomes_victory` |
 | 15 | 战斗僵持 → 持续 + 生成停战草案 | STALEMATE → duration+1 + enter_truce | `test_phase_combat.py::test_battle_outcomes_stalemate` |
-| 16 | 战斗失败 → 部分解散 + 指挥官伤亡 | DEFEAT → 一半 DISBANDED + 逃跑/被俘/受伤 | `test_phase_combat.py::test_battle_outcomes_defeat_fled` |
+| 16 | 战斗失败 → 随机 ceil(N/2) DESTROYED + 指挥官伤亡 | DEFEAT → random.sample ceil(N/2) DESTROYED（G1-05/06/07）+ 逃跑/被俘/受伤 | `test_phase_combat.py::test_battle_outcomes_defeat_fled` |
 | 17 | 战斗灾难 → 全部摧毁 + 指挥官阵亡 | DISASTER → mark_destroyed + mark_member_dead | `test_phase_combat.py::test_battle_outcomes_disaster` |
 | 18 | 无军团指派到战争 → 跳过战斗 | legions=[] → 无战斗 | `test_phase_combat.py::test_no_legions_assigned` |
 | 19 | 无活跃战争 → 跳过阶段 | active_wars=[] → phase complete | `test_phase_combat.py::test_no_active_wars` |
@@ -308,6 +334,9 @@ UNRAISED ──[征召]──→ ACTIVE ──[指派]──→ ACTIVE(w/ war_id
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.5 | 2026-08-31 | DA Sub-Agent (WP-G GD) | DI-3：§2.3 补「战后解散时序 + 共享入口」（G1-14：战争结束 → recall → 下个 Revenue → 下个 Population canonical 解散，GUI/CLI 共享，Veteran 保留，禁立即解散）；§2.5 补「AVAILABLE 为退役前中间态，非立即解散」；版本日志 |
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent J | 初版创建（代码审计完成，含恢复机制/战斗结果/停战草案） |
 | v1.1 | 2026-08-27 | DA Sub-Agent (WP-E-R5) | 维护费短款行为修订 |
 | v1.2 | 2026-08-30 | DA Sub-Agent (WP-F-R2) | 权威已动员计数（`mobilized_legion_count = len(get_active_legions())`）：TRUCE 附着 ACTIVE 军团计入「已动员军团」概览与维护费同集；STALEMATE 非释放点（释放仅经 canonical 后续生命周期）；GUI 概览改读权威 DTO/Store 字段（combat_api.get_combat_view + `combatMobilizedLegions` + CombatStage.qml），禁 QML 生命周期推断 |
+| v1.3 | 2026-08-31 | DA Sub-Agent (WP-G GA) | 冻结语义同步（G1-17/G1-23/G1-24）：征召移除国库门槛（扣款照扣、国库可负、赤字 Resolution 兑底）；`get_available_legions()` = UNRAISED∪DISBANDED 明确定义为 Reinforcement N 可征召池（续战增援契约引用 MVP0.3-02 §3.3） |
+| v1.4 | 2026-08-31 | DA Sub-Agent (WP-G GB) | 陆战权威收敛（G1-05/06/07/19/22/25）：DEFEAT=随机 ceil(N/2) DESTROYED（禁「前一半 DISBANDED」）；DISASTER=全部实际参战 DESTROYED；VICTORY/TRIUMPH=全部幸存参战者晋升 Veteran→RESOLVED→召回；Veteran 持久契约（recall/解散/重募保留，唯一清除点=mark_destroyed）；恢复生命周期显式化（Veteran False + Resolution 先判胜负后恢复）；伤亡单一 owner=apply_land_casualties |

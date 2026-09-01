@@ -1,6 +1,7 @@
 #src/core/deciders/impl/
 import random
 import logging
+from typing import Optional
 from src.core.deciders.war_takeover_decider import WarTakeoverDecider
 from src.core.entities.war import War
 from src.core.entities.figure import Figure
@@ -46,3 +47,15 @@ class AutoWarTakeoverDecider(WarTakeoverDecider):
                 }
             )
         return result
+
+    def decide_reinforcement(self, war: War, state: GameState, range_info: Optional[dict] = None) -> int:
+        """显式 Reinforcement N 决策（Q 件 F / G 件 §4，禁 random）：值域内默认 min。
+
+        pool>0 → 1（G1-23 正常下限）；pool==0 → 0（G1-24 零池例外）。
+        国库不参与上限（G1-17/R-10）。
+        """
+        if range_info is not None:
+            return int(range_info.get("default", 0))
+        ms = state.get_military_system() if state else None
+        pool = len(ms.get_available_legions()) if ms else 0
+        return 0 if pool == 0 else 1

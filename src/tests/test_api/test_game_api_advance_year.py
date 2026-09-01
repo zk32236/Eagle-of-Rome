@@ -266,7 +266,7 @@ def test_advance_year_retry_single_increment(monkeypatch):
     def boom():
         raise RuntimeError("transient failure")
 
-    monkeypatch.setattr(state, "_plan_truce_expiry", boom)
+    monkeypatch.setattr(state, "_plan_governor_transitions", boom)
     result1 = game_api.advance_year(state, "p1")
     assert result1["success"] is False
     assert state.turn.year == -260
@@ -357,31 +357,37 @@ def test_governor_transition_idempotent():
     assert old_gov.is_absent is False
 
 
-def test_truce_expiry_idempotent():
-    """A7 和约到期：连续两次调用第二次无副作用。"""
+def test_truce_expiry_to_threat_on_advance():
+    """A7 和约到期机制恢复（G3C）：approved + truce_end_turn 到期的 TRUCE 战争
+    经年度推进 → THREAT（禁直接 ACTIVE，commander_id=None）。"""
     from src.core.entities.war import War, WarStatus
     from src.core.systems.war_system import WarSystem
 
     state = _make_state()  # turn_number=5
+    state.mark_phase_executed("resolution")
     ws = WarSystem(state)
     state._war_system = ws
     war = War(id="w1", name="Truce War", start_year=-270, threat_level=0, strength=5)
     war.status = WarStatus.TRUCE
     war.set_peace_treaty({"status": "approved"})
     war.set_truce_end_turn(4)  # 4 <= 5 → 已到期
+    war.commander_id = 1
     ws._truce_wars.append(war)
 
-    expired1 = state.process_truce_expiry()
-    # Advisor P2-c 裁定（2026-08-17）：到期返 ACTIVE（非 THREAT）
-    assert war in ws._active_wars
-    assert war.status == WarStatus.ACTIVE
-    assert war not in ws._truce_wars
-    assert expired1
+    # G3C 恢复审计：到期机制符号在位
+    assert hasattr(state, "process_truce_expiry")
+    assert hasattr(war, "is_truce_expired")
+    assert hasattr(ws, "_move_to_threat")
 
-    expired2 = state.process_truce_expiry()
-    assert expired2 == []  # 不再重复到期
-    assert war in ws._active_wars
-    assert war.status == WarStatus.ACTIVE
+    # 年度推进：到期 → THREAT（非 ACTIVE）
+    result = game_api.advance_year(state, "p1")
+    assert result["success"] is True
+    assert war not in ws._truce_wars
+    assert war in ws._threats
+    assert war.status == WarStatus.THREAT
+    assert war.threat_level == 1
+    assert war.commander_id is None
+    assert state.get_resolution_settlement().get("truce_expiries", []) == ["Truce War"]
 
 
 # ---------------------------------------------------------------------------
@@ -478,35 +484,32 @@ def test_advance_year_T_A6_plan_governor_atomic(monkeypatch):
     assert province.governor_designate_id == 102
 
 
-def test_advance_year_T_A7_plan_truce_atomic(monkeypatch):
-    """T-A7: A5+A6 规划成功后 A7 规划器入口失败 → 合同 + 行省总督 + curia/pending/member 全恢复。"""
-    from src.core.entities.contract import ContractStatus
+def test_advance_year_A7_truce_expiry_to_threat():
+    """T-A7（G3C 恢复）：A7 规划器在位；年度推进对已到期 approved TRUCE 战争
+    → THREAT，read-model 产出 truce_expiries 类目。"""
     from src.core.entities.war import WarStatus
 
     state = _make_rich_state()
-    before = _canonical_snapshot(state)
+    state.mark_phase_executed("resolution")
 
-    def boom():
-        raise RuntimeError("A7 entry failure")
+    # A7 规划器恢复审计：advance_year 引用 _plan_truce_expiry
+    assert hasattr(state, "_plan_truce_expiry")
+    assert hasattr(state, "_apply_truce_expiry")
+    assert "truce_expiries" in state._plan_settlement()
 
-    monkeypatch.setattr(state, "_plan_truce_expiry", boom)
     result = game_api.advance_year(state, "p1")
-
-    assert result["success"] is False
-    assert "advance_failed" in result.get("errors", [])
-    assert _canonical_snapshot(state) == before
-    # 特别点名：合同仍 PENDING、行省总督未变、war 仍 TRUCE（commander/peace_treaty/容器未清）
-    assert state.contracts[0].status == ContractStatus.PENDING
-    province = state.get_all_provinces()[0]
-    assert province.governor_id == 101
-    assert province.governor_designate_id == 102
+    assert result["success"] is True
     ws = state.get_war_system()
     war = ws.get_all_wars()[0]
-    assert war.status == WarStatus.TRUCE
-    assert war.commander_id == 1
-    assert war._peace_treaty == {"status": "approved"}
-    assert war in ws._truce_wars
-    assert before["_war_projection"]["truce"] == ["w1"]
+    # 已到期 approved TRUCE 战争 → THREAT（非 ACTIVE、非 TRUCE）
+    assert war.status == WarStatus.THREAT
+    assert war in ws._threats
+    assert war not in ws._truce_wars
+    assert war.threat_level == 1
+    assert war.commander_id is None
+    # read-model 产出 truce_expiries 类目（G3C 恢复）
+    settlement = state.get_resolution_settlement()
+    assert settlement.get("truce_expiries", []) == ["Truce War"]
 
 
 def test_advance_year_T_RETRY_single_settlement(monkeypatch):
@@ -517,8 +520,8 @@ def test_advance_year_T_RETRY_single_settlement(monkeypatch):
     def boom():
         raise RuntimeError("transient failure")
 
-    # 第一步：A7 规划器入口失败 → canonical exact-equal
-    monkeypatch.setattr(state, "_plan_truce_expiry", boom)
+    # 第一步：A6 规划器入口失败（A7 到期规划为纯只读扫描，以 A6 作为原子性注入点）→ canonical exact-equal
+    monkeypatch.setattr(state, "_plan_governor_transitions", boom)
     result1 = game_api.advance_year(state, "p1")
     assert result1["success"] is False
     assert "advance_failed" in result1.get("errors", [])

@@ -107,14 +107,23 @@ class PopulationCommand(Command):
             print("=" * 58)
             print("   🏛️  Legions Return Rome from Battlefield")
             print("=" * 58)
-            self._process_legion_disbandment_and_triumphs()
-            if self.state.naval_system:
-                disbanded = self.state.naval_system.disband_unused_fleets(
-                    self.state.turn.turn_number,
-                    self.fleet_disband_decider
-                )
-                if disbanded:
-                    print(f"      ⚓ 舰队 {disbanded} 已解散（无需要海战的战争）")
+            # G1-14 / §11.5（WP-G G4-GD G2）：收敛为共享 canonical
+            # population_api.process_population_disbandments —— GUI
+            # （session_api.resolve_population_slice）与 CLI 同一生命周期
+            # （军团 process_triumph_and_disbandment + 舰队 disband_unused_fleets），
+            # 幂等 marker 防重入（S33）；打印读返回 dict（形态 WP-F，文案语义不变）
+            disbandment = population_api.process_population_disbandments(self.state)
+            for t in disbandment["triumphs"]:
+                print(f"      🏛️ {t['commander_name']} 的军团举行凯旋式！")
+            d = disbandment["legions"]
+            if d["resolved_wars"]["total"] > 0:
+                print(f"      解散 {d['resolved_wars']['total']} 个参与已结束战争的军团")
+            if d["deescalated"]["total"] > 0:
+                print(f"      解散 {d['deescalated']['total']} 个从降级战争返回的军团")
+            for err in (d["resolved_wars"]["errors"] + d["deescalated"]["errors"]):
+                print(f"      ⚠️ {err}")
+            if disbandment["fleets"]:
+                print(f"      ⚓ 舰队 {disbandment['fleets']} 已解散（无需要海战的战争）")
 
 
             # 清理广场中未被招募的人物 + 卸任现任官员 + 转换战场指挥官
@@ -533,15 +542,11 @@ class PopulationCommand(Command):
         self._pre_election_influences = {}
 
     def _process_legion_disbandment_and_triumphs(self):
-        """处理军团解散和凯旋式（委托 war_system）"""
-        ws = self.state.get_war_system()
-        ms = self.state.get_military_system()
-        if not ws or not ms:
-            return
-        result = ws.process_triumph_and_disbandment()
-        for t in result["triumphs"]:
+        """处理军团解散和凯旋式（委托 canonical population_api.process_population_disbandments）"""
+        disbandment = population_api.process_population_disbandments(self.state)
+        for t in disbandment["triumphs"]:
             print(f"      🏛️ {t['commander_name']} 的军团举行凯旋式！")
-        d = result["disbanded"]
+        d = disbandment["legions"]
         if d["resolved_wars"]["total"] > 0:
             print(f"      解散 {d['resolved_wars']['total']} 个参与已结束战争的军团")
         if d["deescalated"]["total"] > 0:

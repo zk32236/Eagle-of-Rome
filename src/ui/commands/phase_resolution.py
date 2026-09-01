@@ -56,11 +56,11 @@ class ResolutionCommand(Command):
 
     # ================================= MVP 0.7 ===========================================
 
-    # ======== MVP 0.7.1 停战议和 =======
+    # ======== MVP 0.7.1 停战议和 ========
 
     def _check_truce_expiry(self):
-        """Shell method — logic moved to GameState.advance_year()"""
-        return []
+        """Shell method — 委托 GameState.process_truce_expiry（G3C：到期 → THREAT）。"""
+        return self.state.process_truce_expiry()
 
     # ================================= MVP 0.1-0.5 =======================================
 

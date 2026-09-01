@@ -210,11 +210,13 @@ class TestWpFr2TruceLegionMobilized(unittest.TestCase):
         start = war_src.index("def enter_truce")
         end = war_src.index("def _move_to_truce", start)
         self.assertNotIn("recall", war_src[start:end])
-        # apply_battle_results 非决定性分支「保持现状」零 recall（military_system.py:343+）
+        # apply_battle_results 收敛（D-2，WP-G GB）：DEFEAT/DISASTER 委托 apply_land_casualties
+        # （S2 唯一伤亡 mutation owner——随机 ceil-half DESTROYED / 全灭；无前缀 DISBANDED/recall 循环）
         start = mil_src.index("def apply_battle_results")
         end = mil_src.index("# ========== 显示", start)
         non_decisive = mil_src[start:end]
-        self.assertIn("保持现状", non_decisive)
+        self.assertIn("apply_land_casualties", non_decisive)
+        self.assertNotIn("LegionStatus.DISBANDED", non_decisive)
         # 行为双证：STALEMATE→TRUCE 后军团仍 ACTIVE（见 T-R2-12）；war_system 的
         # recall_from_war 调用点（:487/:700）均位于 canonical 释放流程（treaty 批准/解散处理），
         # 不在 enter_truce —— 释放点唯一性由 T-R2-18 行为断言承载。

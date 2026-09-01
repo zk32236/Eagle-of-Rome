@@ -36,11 +36,30 @@ def _can_build_fleet(self) -> bool:
    - 创建 `ContractType.PUBLIC_WORKS` 类型的合同，标记 `_is_fleet_construction = True`
    - 存储舰队组成建议、敌方强度、总预算到合同对象
 
-### 2.3 补充合同生成
+### 2.3 补充合同生成（G1-11 同战 deficit，WP-G GC）
 
-1. 当活跃的海战战争缺少可用舰队时，系统调用 `generate_replacement_contracts(current_turn)`
-2. 与新建合同逻辑相同，但只检查活跃战争（非威胁战争）
-3. 避免针对同一战争生成重复合同
+1. 活跃海战战争（`naval_required = true` 且 `ACTIVE`）由 `generate_replacement_contracts(current_turn)` 按**同战 deficit** 生成补充合同：
+
+```
+Target   = war.enemy_naval_current            （当前敌方海军强度）
+Existing = Σ 同战存活舰队实际战力             （Fleet._target_war_id == war.id
+          且状态非 DESTROYED / BUILDING / DISBANDED；含 AVAILABLE staging 与 ON_MISSION）
+Deficit  = Target - Existing
+Deficit > 0 → 补充合同数 = ceil(Deficit / 默认舰型 base_strength)
+Deficit ≤ 0 → 无补充合同
+```
+
+2. 关键语义（G1-11 / R-12）：
+   - **禁跨战舰队满足 deficit**——War A 专属舰队不计入 War B 的 Existing
+   - **禁全局阻断**——任一全局 AVAILABLE 舰队不再阻断所有战争的补充（旧偏差 §11.11 已修复）
+   - **防重复合同**：仅检查同战 PENDING/BUDGETED/ACTIVE 合同与建造中舰队（`_has_active_fleet_contract_for_war`）
+   - **示例**：存活 1 艘战力 4、target 10、base 3 → deficit 6 → 补 ceil(6/3)=2 艘
+
+示例实现：
+
+```python
+needed_ships = max(1, (deficit + base_strength - 1) // base_strength)
+```
 
 ### 2.4 元老院审批与竞标
 
@@ -74,34 +93,47 @@ def _can_build_fleet(self) -> bool:
 2. 指派成功：舰队状态变为 `ON_MISSION`
 3. 指派失败或战争已结束：舰队保持 `AVAILABLE` 状态
 
-### 2.8 海战
+### 2.8 海战（G1-10 冻结伤亡数学，WP-G GC）
 
 1. `NavalSystem.resolve_naval_battle(war)` 执行海战判定：
-   - 排除建造中的舰队后计算罗马海军战力
+   - 排除建造中的舰队后计算罗马海军战力（基础 + 经验 + **War Commander martial**，G1-20）
    - 与敌方海军战力对比，投骰子（2d6）
    - 根据CRT结果判定：TRIUMPH / VICTORY / STALEMATE / DEFEAT / DISASTER
-   - 应用舰队损失：
-     - DISASTER：全部摧毁
-     - DEFEAT：损失一半
-     - STALEMATE：损失1艘
-     - VICTORY/TRIUMPH：无损
+2. **舰队伤亡（冻结矩阵，G1-10 / D 件 §3）：**
 
-### 2.9 维护费
+| 结果 | 舰队损失 | 伤亡方式 |
+|------|---------|---------|
+| TRIUMPH | 0 | — |
+| VICTORY | 0 | — |
+| STALEMATE | 0 | —（旧「损 1 艘」规则已废弃） |
+| DEFEAT | ceil(N/2) | `random.sample(参战舰队, ceil(N/2))` 无放回 → DESTROYED |
+| DISASTER | N（全部） | 全部参战舰队 → DESTROYED |
 
-1. `NavalSystem.calculate_maintenance()` 计算所有非 BUILDING/DESTROYED 状态舰队的维护费
+   `ceil(N/2)` 全表（N=参战舰队数）：N=1→1、N=2→1、N=3→2、N=4→2、N=5→3、N=6→3。
+   伤亡舰队同步 `war.remove_fleet()`（退出 `assigned_fleet_ids`）。
+
+### 2.9 维护费（G1-14，WP-G GC）
+
+1. `NavalSystem.calculate_maintenance()` 计算所有非 BUILDING/DESTROYED/**DISBANDED** 状态舰队的维护费
+   - **战争结束后召回 → AVAILABLE 幸存者仍计维护**（下个 Revenue 最后一次维护，G1-14）
+   - 仅 DISBANDED 后不再产生维护
 2. `NavalSystem.apply_maintenance()` 在收入阶段扣除维护费：
    - 国库充足时直接扣除
-   - 国库不足时尝试解散部分可用舰队以节约开支
+   - 国库不足时尝试解散部分可用舰队以节约开支（行政退役 → DISBANDED，R-11）
 3. 维护费从 `state.config.economic_rules.fleet_types[type].maintenance_cost` 读取
 
-### 2.10 舰队解散
+### 2.10 舰队解散（DISBANDED vs DESTROYED，G1-13 / R-11，WP-G GC）
 
 1. `AutoFleetDisbandDecider.should_disband_fleet()` 决策逻辑：
-   - 建造中/已摧毁的舰队不解散
+   - 建造中/已摧毁/已退役的舰队不解散
    - 没有需要海战的战争 → 解散
    - 有需要海战的活跃/威胁战争 → 不解散
    - 停战已批准的战争 → 不解散（但如果还有活跃海战需要→不解散）
-2. `NavalSystem.disband_unused_fleets()` 执行解散
+2. `NavalSystem.disband_unused_fleets()` 执行**行政退役**：调用 `Fleet.disband()` → `DISBANDED`
+   （非战斗伤亡；**禁走 mark_destroyed → DESTROYED**，R-11）
+3. `apply_maintenance()` 国库不足解散分支同样走 `disband()` → `DISBANDED`
+
+> **状态语义分离（G1-13）：** `DESTROYED` = 仅战斗伤亡（海战 DEFEAT/DISASTER）；`DISBANDED` = 正常行政退役（决策器/国库解散/战争结束 Population 退役）。两者均不可复用。
 
 ## 3. 核心规则
 
@@ -115,28 +147,37 @@ def _can_build_fleet(self) -> bool:
   → Fleet(AVAILABLE) + Contract(COMPLETED)
 ```
 
-### 3.2 舰队实体状态机
+### 3.2 舰队实体状态机（G1-12/G1-13，WP-G GC）
 
 ```
-BUILDING ──[工期到期]──→ AVAILABLE ──[指派战争]──→ ON_MISSION
-                                                      │
-                                                  ┌───┴───┐
-                                                  │ 海战   │
-                                                  │ 解散   │
-                                                  └───┬───┘
-                                                      ↓
-                                                  DESTROYED
+BUILDING ──[工期到期]──→ AVAILABLE ──[指派战争（同战专属）]──→ ON_MISSION
+                                                              │
+                                                          ┌───┴───┐
+                                                          │ 海战   │
+                                                          │ 伤亡   │
+                                                          └───┬───┘
+                                                              ↓
+                                                          DESTROYED（仅战斗伤亡）
+
+ON_MISSION / AVAILABLE ──[战争结束召回]──→ AVAILABLE
+AVAILABLE ──[下个 Revenue 最后维护]──→ AVAILABLE
+AVAILABLE ──[下个 Population / 决策器 / 国库不足]──→ DISBANDED（行政退役）
 ```
+
+- `DESTROYED` 与 `DISBANDED` 均为终端态，不可复用（G1-13）
+- **禁跨战复用（R-12 / G1-12）**：`Fleet._target_war_id` 为单战专属归属；指派守卫拒绝跨战（`_target_war_id` 为空 = legacy 放行）
 
 ### 3.3 合同与舰队的关联
 
 | 合同字段 | 用途 | 舰队字段 | 用途 |
 |---------|------|---------|------|
 | `_is_fleet_construction` | 标记舰队建造合同 | `_contract_id` | 关联的建造合同ID |
-| `_recommended_fleet_composition` | 推荐舰队组成 | `_target_war_id` | 目标战争ID |
+| `_recommended_fleet_composition` | 推荐舰队组成 | `_target_war_id` | 目标战争ID（单战归属 provenance，**持久化**，G1-12） |
 | `_enemy_strength` | 敌方海军强度 | `_strength_base` | 基础战力 |
 | `_total_budget` | 总预算 | `_fleet_type` | 舰队类型 |
 | `_build_time` | 建造周期 | `_build_start/end_turn` | 建造起止回合 |
+
+> **`_target_war_id` 持久化契约（G1-12 / O 件 §3，WP-G GC）：** 必须纳入 `Fleet.to_dict/from_dict`（缺省 None）；旧存档缺键 → None 不崩。同战归属/补充 deficit 判定依赖该字段的 save/load 安全。
 
 ### 3.4 合同类型复用
 
@@ -145,10 +186,14 @@ BUILDING ──[工期到期]──→ AVAILABLE ──[指派战争]──→ O
 - 中标后的处理逻辑（`on_contract_awarded`）与公共工程不同
 - 铸造合同不执行公共工程的质保期逻辑（`warranty_remaining` 设为 0）
 
-### 3.5 舰队战力计算
+### 3.5 舰队战力计算（G1-20，WP-G GC）
 
 ```
-combat_strength = _strength_base + experience + (commander.martial if commander exists)
+combat_strength = _strength_base + experience + commander.martial
+
+指挥官 martial 权威 = War Commander（war.commander_id）——Fleet 指派绑定 = War Commander
+（无独立海军指挥官）；Fleet._commander_id 为绑定镜像/兼容；无指派（AVAILABLE staging）
+或 war.commander_id 为空时回退舰队私有绑定。
 
 注：实际强度 = int(round(base_strength * cost_ratio))
      cost_ratio = actual_cost / original_budget
@@ -206,19 +251,22 @@ combat_strength = _strength_base + experience + (commander.martial if commander 
 
 ### 5.2 合同重复保护
 
-- `_has_existing_fleet_or_contract_for_war()` 检查防止同一战争生成多个合同
+- `_has_existing_fleet_or_contract_for_war()` 检查防止同一战争生成多个**初始建造**合同
 - 检查范围包括：PENDING/BUDGETED/ACTIVE 状态的合同、非 DESTROYED 状态的舰队
-- 补充合同生成也受该检查保护
+- **补充合同**（G1-11）：改用 `_has_active_fleet_contract_for_war()`——仅防同战重复合同（PENDING/BUDGETED/ACTIVE），**不因同战存活舰队存在而阻断补充**（旧「任一全局可用舰队即阻断」已废弃）
 
-### 5.3 舰队生命周期边界
+### 5.3 舰队生命周期边界（G1-12/G1-13/G1-14，WP-G GC）
 
 | 操作 | 前置条件 | 目标状态 |
 |------|---------|---------|
 | `start_building()` | 新建 | BUILDING |
 | `complete_building()` | BUILDING 且工期到期 | AVAILABLE |
-| `assign_to_war()` | AVAILABLE | ON_MISSION |
+| `assign_to_war()` | AVAILABLE 且同战专属（R-12） | ON_MISSION |
 | `recall()` | ON_MISSION | AVAILABLE |
-| `mark_destroyed()` | 任何非 DESTROYED | DESTROYED |
+| `mark_destroyed()` | 战斗伤亡（海战 DEFEAT/DISASTER） | DESTROYED |
+| `disband()` | 行政退役（决策器/国库不足/Population） | DISBANDED |
+
+> **G1-14 战争结束时序：** TRIUMPH/VICTORY/批准和约 → 幸存舰队召回 → AVAILABLE → **下个 Revenue 付最后维护**（AVAILABLE 仍计维护）→ 下个 Population → DISBANDED。立即解散会逃避最后维护（禁止）。
 
 ### 5.4 无效操作
 
@@ -271,3 +319,4 @@ combat_strength = _strength_base + experience + (commander.martial if commander 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent G | 初版创建 |
+| v1.1 | 2026-08-31 | DA Sub-Agent (WP-G GC) | 冻结语义同步（G1-10/11/12/13/14/20）：§2.3 补充合同改同战 deficit 公式（禁全局阻断/全量重建）；§2.8 海战伤亡改冻结矩阵（STALEMATE 0 损、DEFEAT ceil(N/2) 随机无放回）；§2.9 维护排除 DISBANDED + AVAILABLE 幸存者仍计维护；§2.10/§3.2/§5.3 新增 DISBANDED 行政退役态（禁 mark_destroyed 退役，R-11）；§3.3 补 `_target_war_id` 持久化契约；§3.5 战力 martial 权威 = War Commander（G1-20） |

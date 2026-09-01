@@ -36,8 +36,8 @@ def war():
     return war
 
 
-def test_victory_generates_treaty(mock_state, mock_war_system, war):
-    """测试 VICTORY 结果生成草案"""
+def test_victory_generates_no_treaty(mock_state, mock_war_system, war):
+    """测试 VICTORY 不生成草案（G1-08：仅 STALEMATE 生成 pending treaty；VICTORY=战争结束归 GB）"""
     mock_decider = MagicMock(spec=PeaceTreatyDecider)
     expected_treaty = {
         'indemnity': 60,
@@ -53,21 +53,10 @@ def test_victory_generates_treaty(mock_state, mock_war_system, war):
     # 直接调用草案生成方法
     cmd._maybe_generate_treaty(mock_war_system, war, result, terms)
 
-    # 验证 enter_truce 被正确调用
-    mock_war_system.enter_truce.assert_called_once_with(war, expected_treaty)
-
-    # 验证日志记录
-    mock_state.log_event.assert_called_once_with(
-        f"战争 {war.name} 生成停战草案，赔款 {expected_treaty['indemnity']}，有效期 {expected_treaty['duration']} 回合",
-        extra={
-            'type': 'peace_treaty_generated',
-            'war_id': war.id,
-            'result': result,
-            'indemnity': expected_treaty['indemnity'],
-            'duration': expected_treaty['duration'],
-            'generated_turn': expected_treaty['generated_turn']
-        }
-    )
+    # 验证 enter_truce 未被调用（fail-closed treaty 门）
+    mock_war_system.enter_truce.assert_not_called()
+    mock_decider.decide_treaty.assert_not_called()
+    mock_state.log_event.assert_not_called()
 
 
 def test_triumph_no_treaty(mock_state, mock_war_system, war):
@@ -104,19 +93,19 @@ def test_stalemate_generates_treaty(mock_state, mock_war_system, war):
 
 
 def test_enter_truce_failure_logs_warning(mock_state, mock_war_system, war):
-    """测试 enter_truce 失败时记录警告"""
+    """测试 enter_truce 失败时记录警告（STALEMATE 路径，G1-08 唯一生成入口）"""
     mock_war_system.enter_truce.return_value = False
 
     mock_decider = MagicMock(spec=PeaceTreatyDecider)
     expected_treaty = {
-        'indemnity': 60,
-        'duration': 5,
+        'indemnity': 0,
+        'duration': 3,
         'generated_turn': 10
     }
     mock_decider.decide_treaty.return_value = expected_treaty
 
     cmd = CombatCommand(mock_state, peace_treaty_decider=mock_decider)
-    result = 'VICTORY'
+    result = 'STALEMATE'
     terms = TerminologyService.get()
 
     cmd._maybe_generate_treaty(mock_war_system, war, result, terms)

@@ -171,7 +171,7 @@ class TestCLICombatFeatures(unittest.TestCase):
         self.assertEqual(self.commander.influence, initial + 10)
 
     def test_cli_apply_victory_promotes_legions(self):
-        """VICTORY → 军团晋升但不撤军（保持 ACTIVE）"""
+        """VICTORY → 全部幸存参战者晋升老兵 + 召回（AVAILABLE，Veteran 保留；G1-22，S5 收敛）"""
         legions = self.state._military_system.get_legions_for_battle("test_war_1")
         self.cmd._apply_battle_result(
             self.state._war_system, self.war1, self.commander,
@@ -179,6 +179,16 @@ class TestCLICombatFeatures(unittest.TestCase):
         )
         for legion in legions:
             self.assertTrue(legion.is_veteran)
+            self.assertEqual(legion.status, LegionStatus.AVAILABLE)  # recall → AVAILABLE
+
+    def test_cli_apply_victory_resolves_war(self):
+        """VICTORY → 战争结束（RESOLVED；S5 收敛 G1-22，不再「不结束战争」）"""
+        legions = self.state._military_system.get_legions_for_battle("test_war_1")
+        self.cmd._apply_battle_result(
+            self.state._war_system, self.war1, self.commander,
+            "VICTORY", MagicMock(), self.state._military_system, legions, 8
+        )
+        self.assertEqual(self.war1.status, WarStatus.RESOLVED)
 
     def test_cli_apply_victory_increases_commander_influence(self):
         """VICTORY → 指挥官影响力 +5"""
@@ -191,16 +201,22 @@ class TestCLICombatFeatures(unittest.TestCase):
         self.assertEqual(self.commander.influence, initial + 5)
 
     def test_cli_apply_defeat_causes_legion_losses(self):
-        """DEFEAT → 军团被解散（0 < losses <= half）"""
+        """DEFEAT → ceil(N/2)=2 随机 DESTROYED；幸存保持 ACTIVE+assigned（G1-05/06/07，S5 收敛）"""
         legions = self.state._military_system.get_legions_for_battle("test_war_1")
-        initial_statuses = [l.status for l in legions]
         self.cmd._apply_battle_result(
             self.state._war_system, self.war1, self.commander,
             "DEFEAT", MagicMock(), self.state._military_system, legions, 8
         )
-        # 至少有军团状态改变（某些被解散）
-        changed = [l for l in legions if l.status != initial_statuses[legions.index(l)]]
-        self.assertGreater(len(changed), 0)
+        destroyed = [l for l in legions if l.status == LegionStatus.DESTROYED]
+        survivors = [l for l in legions if l.status == LegionStatus.ACTIVE]
+        self.assertEqual(len(destroyed), 2)  # ceil(4/2)
+        self.assertEqual(len(survivors), 2)
+        for legion in destroyed:
+            self.assertIsNone(legion.war_id)
+            self.assertIsNone(legion.commander_id)
+            self.assertFalse(legion.is_veteran)
+        for legion in survivors:
+            self.assertEqual(legion.war_id, "test_war_1")
 
     def test_cli_apply_defeat_may_casualty_commander(self):
         """DEFEAT → 指挥官可能伤亡（commander_id 被清除）"""
@@ -253,12 +269,12 @@ class TestCLICombatFeatures(unittest.TestCase):
             "indemnity": 50, "duration": 3, "generated_turn": 1
         }
 
-    def test_cli_treaty_generated_on_victory(self):
-        """VICTORY → 尝试生成停战条约"""
+    def test_cli_treaty_not_generated_on_victory(self):
+        """VICTORY → 不生成停战条约（G1-08：仅 STALEMATE 生成；VICTORY=战争结束归 GB）"""
         self._setup_treaty_mock()
         ws = self.state._war_system
         self.cmd._maybe_generate_treaty(ws, self.war1, "VICTORY", MagicMock())
-        self.cmd.peace_treaty_decider.decide_treaty.assert_called_once()
+        self.cmd.peace_treaty_decider.decide_treaty.assert_not_called()
 
     def test_cli_treaty_generated_on_stalemate(self):
         """STALEMATE → 尝试生成停战条约"""
@@ -267,12 +283,12 @@ class TestCLICombatFeatures(unittest.TestCase):
         self.cmd._maybe_generate_treaty(ws, self.war1, "STALEMATE", MagicMock())
         self.cmd.peace_treaty_decider.decide_treaty.assert_called_once()
 
-    def test_cli_treaty_generated_on_defeat(self):
-        """DEFEAT → 尝试生成停战条约"""
+    def test_cli_treaty_not_generated_on_defeat(self):
+        """DEFEAT → 不生成停战条约（G1-08：战败/灾难不求和，战争继续）"""
         self._setup_treaty_mock()
         ws = self.state._war_system
         self.cmd._maybe_generate_treaty(ws, self.war1, "DEFEAT", MagicMock())
-        self.cmd.peace_treaty_decider.decide_treaty.assert_called_once()
+        self.cmd.peace_treaty_decider.decide_treaty.assert_not_called()
 
     # ════════════════════════════════════════════════════════════════════
     # CLI 特征 5: execute 整体行为

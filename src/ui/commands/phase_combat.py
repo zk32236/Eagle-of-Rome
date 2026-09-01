@@ -11,7 +11,6 @@ from typing import List, Optional, TYPE_CHECKING
 from src.ui.commands.sys_base import Command
 from src.core.localization import TerminologyService
 from src.core.entities.war import WarStatus
-from src.core.entities.legion import LegionStatus
 from src.ui.utils import get_progress_bar
 from src.core.deciders.peace_treaty_decider import PeaceTreatyDecider
 from src.core.deciders.impl.auto_peace_treaty_decider import AutoPeaceTreatyDecider
@@ -204,7 +203,9 @@ class CombatCommand(Command):
                     "losses": losses
                 }
             )
-            if naval_result in ("DISASTER", "DEFEAT"):
+            # R-05（G1-09，WP-G GC）：STALEMATE 亦阻断陆战（legacy 对齐 canonical 门）；
+            # resolve_naval_battle 已含 sea_control mutation（TRIUMPH/VICTORY → 获控，与 canonical 同源）
+            if naval_result in ("STALEMATE", "DEFEAT", "DISASTER"):
                 print(f"      海战失败，无法登陆，战争持续")
                 war.duration += 1
                 return
@@ -261,8 +262,11 @@ class CombatCommand(Command):
     # ================================= MVP 0.1-0.5 =======================================
 
     def _maybe_generate_treaty(self, war_system, war: "War", result: str, terms):
-        """根据战斗结果尝试生成停战草案"""
-        if result in ('TRIUMPH', 'DISASTER'):
+        """根据战斗结果尝试生成停战草案（C1，G1-08：仅 STALEMATE 生成 pending treaty）。
+
+        TRIUMPH/VICTORY → 战争结束（RESOLVED，GB）；DEFEAT/DISASTER → ACTIVE 继续（无条约）。
+        """
+        if result != 'STALEMATE':
             return
 
         treaty = self.peace_treaty_decider.decide_treaty(war, result, self.state)
@@ -342,8 +346,11 @@ class CombatCommand(Command):
             print(f"      ✓ Victory! {war.name} concluded, but enemy not destroyed.")
             commander.influence += 5
 
-            for legion in legions:
-                legion.promote_to_veteran()
+            # S5（G1-22 / §11.4，WP-G GB）：VICTORY = 战争结束——晋升统一在
+            # resolve_war victory 分支（先于召回）→ RESOLVED → recall→AVAILABLE（Veteran 保留）；
+            # 不生成条约（GA G1-08 门收敛后天然不触发）。晋升不再在本分支重复执行（防
+            # battles_won 双计，单一晋升 owner = resolve_war）。
+            war_system.resolve_war(war.id, victory=True)
 
         elif result == "STALEMATE":
             print(f"\n      {emoji} RESULT: STALEMATE (0 losses)")
@@ -351,16 +358,14 @@ class CombatCommand(Command):
             war.duration += 1
 
         elif result == "DEFEAT":
-            losses = max(1, legion_count // 2)  # 损失一半
+            # S5（G1-05/06/07，WP-G GB）：委托 S2 原语——random.sample 无放回 ceil(N/2)
+            # → DESTROYED（清 war_id/commander_id/is_veteran）；幸存保持 ACTIVE+assigned。
+            # 移除旧「前一半 DISBANDED + recall」前缀序路径（§11.2/§21 偏差实证），
+            # 单一陆战结果权威 = combat_api + apply_land_casualties。
+            losses = len(legions) - len(legions) // 2  # = ceil(N/2)（G1-06）
             print(f"\n      {emoji} RESULT: DEFEAT, {losses} Legion(s) destroyed")
             print(f"      💔 Defeat! Forces scattered.")
-            for i, legion in enumerate(legions):
-                if i < losses:
-                    legion.status = LegionStatus.DISBANDED
-                    legion.recall()
-                else:
-                    # 幸存者留在战场
-                    pass
+            ms.apply_land_casualties(war.id, "DEFEAT")
 
             # 将领伤亡处理
             roll = random.random()

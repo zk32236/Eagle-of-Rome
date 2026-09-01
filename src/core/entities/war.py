@@ -117,7 +117,12 @@ class War:
         self._assigned_fleet_ids: List[int] = []  # 我方指派舰队编号
         self._unanswered_turns: int = 0  # 连续未应战回合数
         self._indemnity_schedule: List[Tuple[int, int]] = []  # 战争赔款分期
-        self._sea_control_ratio: float = 1.0  # 当前制海权比例
+        # 历史残留字段（N 件 §2）：默认 1.0 会造成「未获控却看似获控」误读——
+        # 禁以 _sea_control_ratio 判定获控状态（K 件 §1）；权威字段 = _sea_control_acquired。
+        self._sea_control_ratio: float = 1.0  # 当前制海权比例（dormant，仅存档兼容）
+        # 权威制海权（G1-16 / K 件）：唯一获控判定源，唯一 mutation owner = GC
+        # （resolve_naval_battle TRIUMPH/VICTORY 写 True；clear_sea_control 随战争正式结束写 False，接线 = GD）
+        self._sea_control_acquired: bool = False
         self._battles_fought = battles_fought
         self._battles_won = battles_won
         self._triggered_this_turn = False  # 标记本回合是否刚被激活为威胁
@@ -149,6 +154,10 @@ class War:
     def indemnity_schedule(self) -> List[Tuple[int, int]]: return self._indemnity_schedule.copy()
     @property
     def sea_control_ratio(self) -> float: return self._sea_control_ratio
+    @property
+    def sea_control_acquired(self) -> bool:
+        """权威制海权状态（G1-16 / K 件）——唯一判定源，替代 _sea_control_ratio。"""
+        return self._sea_control_acquired
     @property
     def rebellion_province_id(self) -> Optional[int]: return self._rebellion_province_id
 
@@ -409,7 +418,7 @@ class War:
         # self._commander_assigned_turn = current_turn
 
     def is_truce_expired(self, current_turn: int) -> bool:
-        """判断停战是否到期（当前回合 >= 停战结束回合）"""
+        """判断停战是否到期（G3C 恢复：当前回合 >= truce_end_turn 即到期）。"""
         return self._truce_end_turn is not None and current_turn >= self._truce_end_turn
 
     # ---------- MVP 0.7-4 新增方法开始----------
@@ -421,6 +430,14 @@ class War:
     def remove_fleet(self, fleet_id: int) -> None:
         if fleet_id in self._assigned_fleet_ids:
             self._assigned_fleet_ids.remove(fleet_id)
+
+    def clear_sea_control(self) -> None:
+        """清理制海权（K 件 §3 / D-1）：战争正式结束时由 GD 接线调用，置回未获控。
+
+        唯一写 False 的原语（True 唯一写入点 = GC resolve_naval_battle TRIUMPH/VICTORY 分支）。
+        战争 RESOLVED 后 flag 天然 inert；GD 集成前无人调用。
+        """
+        self._sea_control_acquired = False
 
     def apply_naval_losses(self, result: str, fleet_ids: List[int], enemy_naval_loss: int) -> None:
         """应用海战损失（当前版本占位）"""
@@ -505,6 +522,7 @@ class War:
             "_unanswered_turns": self._unanswered_turns,
             "_indemnity_schedule": self._indemnity_schedule.copy(),
             "_sea_control_ratio": self._sea_control_ratio,
+            "_sea_control_acquired": self._sea_control_acquired,
             "_rebellion_province_id": self._rebellion_province_id,
             "_battles_fought": self._battles_fought,
             "_battles_won": self._battles_won,
@@ -576,6 +594,9 @@ class War:
         war._unanswered_turns = data.get("_unanswered_turns", 0)
         war._indemnity_schedule = data.get("_indemnity_schedule", [])
         war._sea_control_ratio = data.get("_sea_control_ratio", 1.0)
+        # O 件 §3 退化路径：旧存档缺键 / None → False（is not None 容错；禁以 _sea_control_ratio 映射）
+        acquired = data.get("_sea_control_acquired")
+        war._sea_control_acquired = acquired is True
         war._rebellion_province_id = data.get("_rebellion_province_id")
 
         war._battles_fought = data.get("_battles_fought", 0)

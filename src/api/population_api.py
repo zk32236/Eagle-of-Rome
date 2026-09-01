@@ -1215,3 +1215,46 @@ def begin_population_phase(state: GameState) -> dict:
     }
     state.record_phase_result("population_entry", result)
     return result
+
+
+def process_population_disbandments(state: GameState) -> dict:
+    """人口阶段解散生命周期共享用例（§11.5 GUI/CLI 对等，WP-G G4-GD G2）。
+
+    单一 canonical：军团（war_system.process_triumph_and_disbandment，Veteran 保留，
+    G1-19） + 舰队（naval_system.disband_unused_fleets → GC disband()，行政退役非
+    DESTROYED，G1-13）。
+
+    幂等：phase-result marker "population_disbandment" 守卫（S33，禁双调用/重入重复
+    mutation）；底层原语亦天然幂等（resolved wars 的 legion_numbers 已清空 / DISBANDED
+    不再命中 decider）。年度推进 _commit_settlement 清空 _phase_results → 每年重新 armed。
+    GUI（session_api.resolve_population_slice）与 CLI（phase_population._handle_step_0）
+    共享同一入口 → 双入口同 mutation 集（S28/S29/S30）。
+    """
+    stored = state.get_phase_result("population_disbandment")
+    if isinstance(stored, dict) and {"triumphs", "legions", "fleets"} <= set(stored):
+        return stored
+
+    ws = state.get_war_system()
+    ns = getattr(state, "naval_system", None)
+    result = {
+        "triumphs": [],
+        "legions": {
+            "resolved_wars": {"total": 0, "errors": []},
+            "deescalated": {"total": 0, "errors": []},
+        },
+        "fleets": [],
+        "re_entry": False,
+    }
+    if ws and state.get_military_system():
+        # ⚠️ S33 exactly-once：单次调用取返回（triumphs + disbanded 同源），禁双调用；
+        # 军事系统缺席守卫 = process_triumph_and_disbandment 内部 `if not ms` 同语义
+        # （旧 CLI _process_legion_disbandment_and_triumphs 同款早退，禁 MagicMock 炸点）
+        disband_result = ws.process_triumph_and_disbandment()
+        result["triumphs"] = disband_result.get("triumphs", [])
+        result["legions"] = disband_result.get("disbanded", result["legions"])
+    if ns:
+        from src.core.deciders.impl.auto_fleet_disband_decider import AutoFleetDisbandDecider
+        current_turn = state.turn.turn_number if state.turn else 0
+        result["fleets"] = ns.disband_unused_fleets(current_turn, AutoFleetDisbandDecider())
+    state.record_phase_result("population_disbandment", result)
+    return result

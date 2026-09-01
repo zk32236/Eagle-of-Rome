@@ -619,12 +619,13 @@ Rectangle {
                         wrapMode: Text.Wrap
                     }
 
-                    // DEV-13: 战争接管（直接职权，无需表决）
-                    // WP-F G7-02：无目标 → 折叠/隐藏（WP-G 权威状态驱动，零业务移除）
+                    // DEV-13: 战争接管（直接职权，无需表决）+ G1-21: Continue Existing Command
+                    // WP-G GA（R-01/R-20）：仅输入转发——N 选择范围来自 DTO reinforcement_range，
+                    // 禁 QML 生命周期推断；展示样式不做 polish（归 WP-F）。
                     Rectangle {
                         visible: sessionStore.senateCurrentStep === "proposal" && (sessionStore.senateTakeoverOptions || []).length > 0
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 92
+                        Layout.preferredHeight: 112
                         radius: 4
                         color: "#FDF3E0"
                         border.color: "#E6A542"
@@ -640,7 +641,7 @@ Rectangle {
                                 font.bold: true
                             }
                             Text {
-                                text: "执政官可直接接管进行中的外战，不进入元老院表决。"
+                                text: "执政官可直接接管进行中的外战（含停战待决），不进入元老院表决。"
                                 color: "#766652"
                                 font.pixelSize: 10
                                 Layout.fillWidth: true
@@ -650,7 +651,7 @@ Rectangle {
                                 model: sessionStore.senateTakeoverOptions || []
                                 delegate: Rectangle {
                                     Layout.fillWidth: true
-                                    height: 28
+                                    height: 34
                                     radius: 3
                                     color: "#FFF7E9"
                                     border.color: "#D9AF63"
@@ -665,6 +666,16 @@ Rectangle {
                                             font.pixelSize: 11
                                             Layout.fillWidth: true
                                             elide: Text.ElideRight
+                                        }
+                                        // GA：N 选择（值域来自 DTO reinforcement_range，G 件 §4）
+                                        SpinBox {
+                                            id: takeoverN
+                                            from: (modelData.reinforcement_range && modelData.reinforcement_range.min) || 0
+                                            to: (modelData.reinforcement_range && modelData.reinforcement_range.max) || 0
+                                            value: (modelData.reinforcement_range && modelData.reinforcement_range.default) || 0
+                                            editable: false
+                                            visible: (modelData.reinforcement_range && modelData.reinforcement_range.max || 0) > 0
+                                            Layout.preferredWidth: 64
                                         }
                                         Rectangle {
                                             Layout.preferredWidth: 52
@@ -683,7 +694,86 @@ Rectangle {
                                             MouseArea {
                                                 anchors.fill: parent
                                                 enabled: parent.enabled
-                                                onClicked: sessionStore.doTakeoverWar(modelData.war_id)
+                                                onClicked: sessionStore.doTakeoverWar(modelData.war_id, takeoverN.value)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        visible: sessionStore.senateCurrentStep === "proposal" && (sessionStore.senateContinueOptions || []).length > 0
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 112
+                        radius: 4
+                        color: "#E8F1E4"
+                        border.color: "#7FA05A"
+                        border.width: 1
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            spacing: 4
+                            Text {
+                                text: "⏩ 继续现有指挥"
+                                color: "#2E4B1D"
+                                font.pixelSize: 12
+                                font.bold: true
+                            }
+                            Text {
+                                text: "保留现有指挥官继续战争（清和约草案），仅决定增援军团数。"
+                                color: "#5B6B4E"
+                                font.pixelSize: 10
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                            }
+                            Repeater {
+                                model: sessionStore.senateContinueOptions || []
+                                delegate: Rectangle {
+                                    Layout.fillWidth: true
+                                    height: 34
+                                    radius: 3
+                                    color: "#F2F7EE"
+                                    border.color: "#9DB87E"
+                                    border.width: 1
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.margins: 4
+                                        spacing: 6
+                                        Text {
+                                            text: modelData.name || modelData.war_id
+                                            color: "#2C1E12"
+                                            font.pixelSize: 11
+                                            Layout.fillWidth: true
+                                            elide: Text.ElideRight
+                                        }
+                                        SpinBox {
+                                            id: continueN
+                                            from: (modelData.reinforcement_range && modelData.reinforcement_range.min) || 0
+                                            to: (modelData.reinforcement_range && modelData.reinforcement_range.max) || 0
+                                            value: (modelData.reinforcement_range && modelData.reinforcement_range.default) || 0
+                                            editable: false
+                                            visible: (modelData.reinforcement_range && modelData.reinforcement_range.max || 0) > 0
+                                            Layout.preferredWidth: 64
+                                        }
+                                        Rectangle {
+                                            Layout.preferredWidth: 56
+                                            Layout.preferredHeight: 20
+                                            radius: 3
+                                            enabled: sessionStore.canContinueSenateWar
+                                            opacity: enabled ? 1.0 : 0.45
+                                            color: enabled ? "#7FA05A" : "#A8BC92"
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: "继续"
+                                                color: "#FFFFFF"
+                                                font.pixelSize: 11
+                                                font.bold: true
+                                            }
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                enabled: parent.enabled
+                                                onClicked: sessionStore.doContinueWar(modelData.war_id, continueN.value)
                                             }
                                         }
                                     }

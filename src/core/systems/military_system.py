@@ -1,6 +1,7 @@
 # src/core/systems/military_system.py
 
-from typing import List, Optional, Dict, Tuple, TYPE_CHECKING
+import random
+from typing import List, Optional, Dict, Tuple, Any, TYPE_CHECKING
 from src.core.entities.legion import Legion, LegionStatus
 from src.core.localization import TerminologyService
 
@@ -139,12 +140,10 @@ class MilitarySystem:
 
         recruit_cost = self.state.get_economic_rule("legion_recruit_cost", 10)
 
-        if self.state.treasury < recruit_cost:
-            return False, f"⚠️ 国库资金不足，需要 {recruit_cost} {terms.currency}"
-
-        # 执行征召
+        # 执行征召（G1-17/R-10：国库不设军事承诺上限——移除国库拒绝；扣款照扣，国库可负，
+        # 赤字由 Resolution/game-over 兑底）
         legion.status = LegionStatus.ACTIVE
-        legion.is_veteran = False
+        # G1-19（WP-G GB）：正常重募保留 is_veteran——Veteran 唯一清除点 = mark_destroyed（R-13）
         self.state.treasury -= recruit_cost
 
         success_msg = f"✅ 征召 {legion.name}，花费 {recruit_cost} {terms.currency}，国库剩余 {self.state.treasury} {terms.currency}"
@@ -162,13 +161,7 @@ class MilitarySystem:
         results = []
 
         for legion in available[:count]:
-            # 检查国库是否足够支付当前军团的费用
-            if self.state.treasury < recruit_cost:
-                msg = f"国库资金不足，无法继续征召（还需 {recruit_cost} {terms.currency}）"
-                results.append((legion.number, False, msg))
-                break
-
-            # 执行征召（recruit_legion 会扣款并修改状态）
+            # 执行征召（recruit_legion 会扣款并修改状态；G1-17：国库无逐军团门槛，禁 affordability 上限）
             success, msg = self.recruit_legion(legion.number)
             results.append((legion.number, success, msg))
             if success:
@@ -181,7 +174,7 @@ class MilitarySystem:
                 f"      ✅ 征召 {recruited_count} 个军团，总花费 {total_cost} {terms.currency}，国库剩余 {self.state.treasury} {terms.currency}")
         if len(results) > recruited_count:
             failed_count = len(results) - recruited_count
-            print(f"      ⚠️ 有 {failed_count} 个军团征召失败（国库不足或其他原因）")
+            print(f"      ⚠️ 有 {failed_count} 个军团征召失败（状态不可用或其他原因）")
 
         return results
 
@@ -337,28 +330,59 @@ class MilitarySystem:
     # ========== 战斗相关 ==========
 
     def get_legions_for_battle(self, war_id: str) -> List[Legion]:
-        """获取指派到某战争的所有军团"""
+        """获取指派到某战争的所有军团（live 实体附着 = 战斗参与者唯一权威，R-17）"""
         return [l for l in self._legions if l.war_id == war_id]
 
-    def apply_battle_results(self, war_id: str, victory: bool, disaster: bool = False):
-        """应用战斗结果到军团"""
-        legions = self.get_legions_for_battle(war_id)
+    def apply_land_casualties(self, war_id: str, result: str) -> List[int]:
+        """陆战伤亡唯一 mutation owner（G1-05/06/07 / G2-C §4，WP-G GB）。
 
+        - DEFEAT:   从 live 参战集 random.sample 无放回 ceil(N/2) → mark_destroyed(turn)
+        - DISASTER: 全部 live 参战 → mark_destroyed(turn)
+        幸存者零 mutation（保持 ACTIVE + war_id + commander_id）。
+        返回被摧毁军团编号列表。
+        """
+        participants = self.get_legions_for_battle(war_id)
+        N = len(participants)
+        result_upper = (result or "").upper()
+        if result_upper == "DISASTER":
+            loss_count = N
+        elif result_upper == "DEFEAT":
+            loss_count = N - N // 2  # = ceil(N/2)（G1-06）
+        else:
+            loss_count = 0
+        if loss_count <= 0 or N == 0:
+            return []
+        # G1-05：随机无放回（禁 participants[:losses] 前缀序/列表序）
+        casualties = random.sample(participants, loss_count)
+        current_turn = self.state.turn.turn_number if self.state.turn else 0
+        numbers = []
+        for legion in casualties:
+            legion.mark_destroyed(current_turn)  # DESTROYED + 清 war_id/commander_id/is_veteran（G1-07）
+            numbers.append(legion.number)
+        return numbers
+
+    def apply_battle_results(self, war_id: str, victory: bool, disaster: bool = False) -> List[int]:
+        """应用战斗结果到军团（legacy/测试面；生产 canonical 入口 = combat_api.auto_resolve_combat）。
+
+        D-2（WP-G GB）：DEFEAT/DISASTER 委托 apply_land_casualties（S2 唯一伤亡 mutation
+        owner——随机 ceil(N/2) DESTROYED / 全灭，G1-05/06/07）；VICTORY/TRIUMPH 保留
+        既有 legacy 晋升+召回语义（canonical 晋升统一在 war_system.resolve_war victory 分支）。
+        """
+        legions = self.get_legions_for_battle(war_id)
         for legion in legions:
             legion.battles_fought += 1
 
-            if disaster:
-                # 灾难：军团覆灭 -> 标记为 DESTROYED
-                legion.mark_destroyed(self.state.turn.turn_number)
-                print(f"      💀 {legion.name} destroyed in disaster!")
-            elif victory:
-                # 胜利：晋升为老兵
-                legion.promote_to_veteran()
-                legion.recall()
-                print(f"      🏆 {legion.name} returns in triumph!")
-            else:
-                # 失败或僵持：保持现状
-                print(f"      ⏳ {legion.name} remains in field")
+        if disaster:
+            return self.apply_land_casualties(war_id, "DISASTER")
+        if not victory:
+            return self.apply_land_casualties(war_id, "DEFEAT")
+
+        for legion in legions:
+            # 胜利：晋升为老兵
+            legion.promote_to_veteran()
+            legion.recall()
+            print(f"      🏆 {legion.name} returns in triumph!")
+        return []
 
     # ========== 显示 ==========
 
@@ -428,3 +452,25 @@ class MilitarySystem:
                 errors.append(f"{legion.name} 解散失败")
 
         return disbanded, errors
+
+    # ========== 序列化原语（O 件 §1/§2，WP-G G4-GD）==========
+    # GameState.to_dict/load_from_dict 存档接线消费；Legion.to_dict/from_dict = GB S6
+    # （is_veteran/war_id/commander_id/_destroyed_turn/_legion_type 全字段 + 退化路径）。
+
+    def to_dict(self) -> Dict[str, Any]:
+        """军事系统全量持久（25 军团全状态，O 件 §2）。"""
+        return {
+            "_legions": [l.to_dict() for l in self._legions],
+        }
+
+    def load_from_dict(self, data: Dict[str, Any]) -> None:
+        """恢复军事系统（缺键 → 重建 25 UNRAISED 军团，旧存档退化不崩，O 件 §3）。
+
+        `_last_maintenance_disbanded` 为运行期计数（apply_maintenance 入口清零），不持久。
+        """
+        raw = data.get("_legions")
+        if not raw:
+            self._legions = [Legion(number=i) for i in range(1, self.MAX_LEGIONS + 1)]
+        else:
+            self._legions = [Legion.from_dict(d) for d in raw]
+        self._last_maintenance_disbanded = 0
