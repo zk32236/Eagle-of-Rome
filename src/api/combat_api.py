@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from src.api import api_response
 from src.core.game_state import GameState
 from src.core.entities.war import War, WarStatus
+from src.core.entities.fleet import FleetStatus
 
 
 logger = logging.getLogger("EOR-CombatAPI")
@@ -23,6 +24,27 @@ _COMBAT_RESULT_CANONICAL = {
     "defeat": "DEFEAT",
     "disaster": "DISASTER",
 }
+
+# R1-G-01（WP-G-R1 v1.6 §2.1，S1）：land forced-result 词表归一（fail-closed）。
+# `testing.force_battle_result` 是既有调试配置，本次由 `_compute_combat_result`（canonical
+# 唯一结果选择点）消费；"stalemate" 与 GUI "draw" 同义（对齐 CLI STALEMATE）。
+# 未命中/非法/空/缺省 → None → 正常 2d6 CRT 分类（红线 R1-09：无生产默认 STALEMATE）。
+_FORCED_RESULT_MAP = {
+    "stalemate": "draw",
+    "draw": "draw",
+    "triumph": "triumph",
+    "victory": "victory",
+    "defeat": "defeat",
+    "disaster": "disaster",
+}
+
+
+def _normalize_forced_result(value: Any) -> Optional[str]:
+    """R1-G-01：land forced-result 归一化（大小写/空格容忍；非 str / 非法值 → None）。"""
+    if not isinstance(value, str):
+        return None
+    return _FORCED_RESULT_MAP.get(value.strip().lower())
+
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -69,6 +91,21 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
     total_power = commander_martial + legion_power
     enemy_power = war.get_total_strength()
 
+    # R1-G-08（WP-G-R1 v1.6 §2.8，P2-02/G5）：per-war `assigned_fleet_count`/`naval_ready`
+    # （read-model 唯一 schema）。归属作用域 = war._assigned_fleet_ids（指派本战的编号）；
+    # 计入状态集 = **显式 status == ON_MISSION**（live Fleet 实体为准）——不再用「排除
+    # BUILDING/DESTROYED/DISBANDED」补集谓词（旧式补集理论上允许残留 AVAILABLE/
+    # IN_COMBAT 误计）。镜像字段 war.fleets_assigned 恒 0/不可靠，禁生产权威（POST-07P
+    # 同款 live-实体原则）。
+    assigned_fleet_count = 0
+    ns = getattr(state, "naval_system", None)
+    if ns is not None:
+        for fid in (getattr(war, "_assigned_fleet_ids", None) or []):
+            fleet = ns.get_fleet(fid)
+            if fleet is not None and fleet.status == FleetStatus.ON_MISSION:
+                assigned_fleet_count += 1
+    naval_ready = assigned_fleet_count >= 1
+
     return {
         "war_id": war.id,
         "name": war.name,
@@ -85,6 +122,10 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
         "threat_level": war.threat_level,
         "status": war.status.value if hasattr(war.status, 'value') else str(war.status),
         "has_commander": commander_id >= 0,
+        # R1-G-08（WP-G-R1 v1.6 §2.8）：per-war 舰队就绪权威字段（war card / combat view
+        # war 条目同源透传；GUI 改读本字段，不再读 stale 镜像）
+        "assigned_fleet_count": assigned_fleet_count,
+        "naval_ready": naval_ready,
         # WP-E F7（E-G7-11）：TRUCE 剩余回合权威计算（禁 QML 猜测 R-05）
         "truce_end_turn": war.truce_end_turn,
         "truce_remaining_turns": (
@@ -241,7 +282,16 @@ def _compute_combat_result(
     victory_threshold = state.config.get("combat_rules.victory_threshold", 6)
     defeat_threshold = state.config.get("combat_rules.defeat_threshold", -3)
 
-    if war.is_disaster_roll(dice):
+    # R1-G-01（WP-G-R1 v1.6 §2.1，S1）：单一 canonical override 消费点——强制结果在 CRT
+    # 分类之前短路（stalemate/draw/triumph/victory/defeat/disaster 五词）；空/缺省/非法 →
+    # None → 正常 2d6 CRT 分类。losses / loot / triumph 计算与 post-result mutation
+    # （do_combat_action 四分支）原样复用，forced 结果走同一条 canonical 生命周期。
+    forced = _normalize_forced_result(
+        state.config.get("testing.force_battle_result", "")
+    )
+    if forced is not None:
+        result = forced
+    elif war.is_disaster_roll(dice):
         result = "disaster"
     elif score >= triumph_threshold:
         result = "triumph"
@@ -425,7 +475,17 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
         ns = state.naval_system
 
         active_wars = ws.get_active_wars() if ws else []
-        fleet_count = len(ns.get_available_fleets()) if ns else 0
+        # R1-G-08（WP-G-R1 v1.6 §2.8）：全局 `built_fleet_count` = 完成舰队（AVAILABLE +
+        # ON_MISSION，明确排除 BUILDING/DESTROYED/DISBANDED）——替代旧
+        # `fleet_count = len(get_available_fleets())`（完工→指派 ON_MISSION 后旧值归零，
+        # 造成「舰队从未完工」误读）；`fleet_count` 保留为兼容 alias（本 R1，P2-N01）。
+        if ns:
+            built_fleet_count = len([
+                f for f in ns.get_all_fleets()
+                if f.status in (FleetStatus.AVAILABLE, FleetStatus.ON_MISSION)
+            ])
+        else:
+            built_fleet_count = 0
         available_legion_count = len(ms.get_available_legions()) if ms else 0
         # WP-F R2-02（F-02B）：权威已动员军团数 = len(get_active_legions())（ACTIVE 全集，
         # 含 TRUCE 附着 ACTIVE 与未指派 ACTIVE；语义区别于 available_legion_count 可征召池）
@@ -530,7 +590,10 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
             "selected_war_id": selected_war_id,
             "can_advance": all_resolved,
             "all_resolved": all_resolved,
-            "fleet_count": fleet_count,
+            # R1-G-08（WP-G-R1 v1.6 §2.8）：权威全局 key `built_fleet_count`；`fleet_count`
+            # 保留为兼容 alias（GUI 已改读新字段）
+            "built_fleet_count": built_fleet_count,
+            "fleet_count": built_fleet_count,
             "available_legion_count": available_legion_count,
             "mobilized_legion_count": mobilized_legion_count,
             "treasury": treasury,

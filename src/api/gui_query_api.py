@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from src.api import api_response
 from src.core.game_state import GameState
+from src.core.entities.fleet import FleetStatus
 
 
 _QUERY_TITLE_KEYS = {
@@ -249,6 +250,20 @@ def _war_summary(state: GameState, war, status: str) -> Dict[str, Any]:
     # POST-07P（ODR-A）：计数源 = 实时军团实体附着（与 _war_card 同源）
     ms = state.get_military_system()
     legions_assigned = len(ms.get_legions_for_battle(war.id)) if ms else 0
+    # R1-G-08（WP-G-R1 v1.6 §2.8，P2-02/G5）：per-war `assigned_fleet_count` 改读 live
+    # 权威——`war._assigned_fleet_ids`（指派本战编号）中**显式 status == ON_MISSION**
+    # 的 live Fleet 实体（不再用「排除 destroyed/building/disbanded」补集谓词，旧式补集
+    # 理论上允许残留 available 误计）；镜像字段 `war.fleets_assigned`（恒 0，
+    # assign_fleet_to_war 从不递增）弃用为 read 源（正式移除列 backlog）；
+    # `fleets_assigned` 保留为兼容 alias。
+    assigned_fleet_count = 0
+    ns = getattr(state, "naval_system", None)
+    if ns is not None:
+        for fid in (getattr(war, "_assigned_fleet_ids", None) or []):
+            fleet = ns.get_fleet(fid)
+            if fleet is not None and fleet.status == FleetStatus.ON_MISSION:
+                assigned_fleet_count += 1
+    naval_ready = assigned_fleet_count >= 1
     return {
         "id": war.id,
         "name": war.name,
@@ -258,7 +273,9 @@ def _war_summary(state: GameState, war, status: str) -> Dict[str, Any]:
         "commander_id": getattr(war, "commander_id", None),
         "commander_name": commander_name,
         "legions_assigned": legions_assigned,
-        "fleets_assigned": getattr(war, "fleets_assigned", 0),
+        "assigned_fleet_count": assigned_fleet_count,
+        "fleets_assigned": assigned_fleet_count,
+        "naval_ready": naval_ready,
     }
 
 

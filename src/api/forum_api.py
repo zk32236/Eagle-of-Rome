@@ -449,7 +449,10 @@ def vote_triumph(state: GameState, player_id: str, war_id: str, vote: bool) -> d
     war = war_system.get_war_by_id(war_id)
     if not war:
         return api_response(False, i18n.get("war_not_found", id=war_id))
-    if war.status != WarStatus.RESOLVED or war.soldier_share <= 0 or war.triumph_commander_id is None:
+    # R1-G-07（WP-G-R1 v1.6 §2.7）：vote 入口拒绝——单一 _triumph_eligibility 谓词同源
+    # （三层同源第 2 层：RESOLVED + soldier_share>0 + triumph_commander 存在 + 存活未死亡）；
+    # dead/missing commander 在入口即拒绝，投票不再被记录。
+    if not _triumph_eligibility(state, war)["eligible"]:
         return api_response(False, i18n.get("error_not_triumph_war"))
 
     player = state.get_player(player_id)
@@ -739,15 +742,17 @@ def resolve_forum(state: GameState) -> dict:
 
     if war_system:
         for war in war_system.get_resolved_wars():
-            if war.soldier_share <= 0 or war.status != WarStatus.RESOLVED or war.triumph_commander_id is None:
+            # R1-G-07（WP-G-R1 v1.6 §2.7）：settlement 层改读单一 _triumph_eligibility 同源
+            # （三层一致，取代内联 dead 检查）——commander dead/missing → 凯旋失效归零；
+            # 其余不 eligible（非 RESOLVED/无 share/无 commander 记录）沿用既有跳过语义。
+            eligibility = _triumph_eligibility(state, war)
+            if not eligibility["eligible"]:
+                if eligibility["reason"] in ("commander_dead", "commander_missing"):
+                    war.set_soldier_share(0)
+                    results.append(f"⚠️ 战争 {war.name} 指挥官已死，凯旋失效")
                 continue
 
             commander = state.get_member(war.triumph_commander_id)
-            if not commander or commander.is_dead:
-                war.set_soldier_share(0)
-                results.append(f"⚠️ 战争 {war.name} 指挥官已死，凯旋失效")
-                continue
-
             votes = votes_by_war.get(war.id, [])
             if not votes:
                 war.set_soldier_share(0)
@@ -970,13 +975,39 @@ def _war_threat_rows(state: GameState) -> List[Dict[str, Any]]:
     ]
 
 
+def _triumph_eligibility(state: GameState, war) -> Dict[str, Any]:
+    """R1-G-07（WP-G-R1 v1.6 §2.7）：Triumph eligibility 单一权威谓词（只读，模块级）。
+
+    MVP0.5-05 §2.1/§3.1「指挥官存活且未死亡」——本 resolver 是三层同源的唯一判定实现
+    （Forum rows `_triumph_war_rows` / vote 入口 `vote_triumph` / settlement
+    `resolve_forum` 均消费）；为纯实现落点，验收 seam = 公开三层
+    `get_forum_view`/`vote_triumph`/`resolve_forum`（v1.6 §7.10.2-B）。
+    VICTORY 与 TRIUMPH 均 eligible（result 维度不改——resolve_war 胜利分支对二者均写
+    triumph_commander_id + soldier_share）。
+    """
+    if war.status != WarStatus.RESOLVED:
+        return {"eligible": False, "reason": "not_resolved"}
+    if war.soldier_share <= 0:
+        return {"eligible": False, "reason": "no_soldier_share"}
+    if war.triumph_commander_id is None:
+        return {"eligible": False, "reason": "no_triumph_commander"}
+    commander = state.get_member(war.triumph_commander_id)
+    if not commander:
+        return {"eligible": False, "reason": "commander_missing"}
+    if commander.is_dead:
+        return {"eligible": False, "reason": "commander_dead"}
+    return {"eligible": True, "reason": None}
+
+
 def _triumph_war_rows(state: GameState) -> List[Dict[str, Any]]:
     war_system = state.get_war_system()
     if not war_system:
         return []
     rows: List[Dict[str, Any]] = []
     for war in war_system.get_resolved_wars():
-        if war.status != WarStatus.RESOLVED or war.soldier_share <= 0 or war.triumph_commander_id is None:
+        # R1-G-07（WP-G-R1 v1.6 §2.7）：Forum rows 过滤——单一 _triumph_eligibility 同源
+        # （三层同源第 1 层）；dead/missing commander 不再展示凯旋行。
+        if not _triumph_eligibility(state, war)["eligible"]:
             continue
         commander = state.get_member(war.triumph_commander_id)
         rows.append({

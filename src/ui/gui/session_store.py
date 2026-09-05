@@ -619,7 +619,11 @@ class GuiSessionStore(QObject):
 
     @Property(int, notify=combatViewChanged)
     def combatFleetCount(self) -> int:
-        return self._combat_view.get("fleet_count", 0)
+        # R1-G-08（WP-G-R1 v1.6 §2.8）：重绑定为权威全局 `built_fleet_count`（AVAILABLE +
+        # ON_MISSION，排除 BUILDING）；旧 `fleet_count` key 仅作回退（旧存档/旧证据回放）
+        return self._combat_view.get(
+            "built_fleet_count", self._combat_view.get("fleet_count", 0)
+        )
 
     @Property(int, notify=combatViewChanged)
     def combatAvailableLegions(self) -> int:

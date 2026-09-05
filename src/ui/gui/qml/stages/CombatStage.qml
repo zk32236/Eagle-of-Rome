@@ -76,6 +76,7 @@ Rectangle {
         // ── H1: 共和国军力总览 — compact single-line summary (P6-R8-02) ──
         Rectangle {
             id: militaryOverviewBar
+            objectName: "militaryOverviewBar"
             visible: root.combatStep !== "result"
             Layout.fillWidth: true
             Layout.preferredHeight: 56
@@ -347,6 +348,12 @@ Rectangle {
         property string presentationState: "EMPTY"   // INV-C6: L2 presentation 真值（ACTIVE_ACTIONABLE/TRUCE_LOCKED/CURRENT_TURN_RESULT/EMPTY）
         signal selected(string warId)
         signal attackRequested(string warId)
+        objectName: "warCard"
+
+        // R1-G-08（WP-G-R1 v1.6 §2.8）：GUI consumer 只读透传——与 DTO war card 字段
+        // （assigned_fleet_count/naval_ready）精确相等（离屏 QObject/property DATA 断言点）
+        readonly property int assigned_fleet_count: (warData && warData.assigned_fleet_count) ? warData.assigned_fleet_count : 0
+        readonly property bool naval_ready: (warData && warData.naval_ready) === true
 
         // INV-C6：卡面状态由 presentation_state 派生（替代 delegate 层 root.isWarResolved 直查）
         readonly property bool isResolved: !isEmptySlot && presentationState === "CURRENT_TURN_RESULT"
@@ -577,6 +584,25 @@ Rectangle {
                 text: "🏛️ 军团: " + (warData && warData.legion_numbers ? "[" + warData.legion_numbers.join(", ") + "]" : "")
                 color: "#766652"
                 font.pixelSize: theme.smallSize
+                Layout.leftMargin: 8
+                Layout.rightMargin: 8
+                Layout.topMargin: 2
+            }
+
+            // R1-G-08（WP-G-R1 v1.6 §2.8）：舰队就绪指示——读 per-war DTO 权威字段
+            // warData.assigned_fleet_count / warData.naval_ready（源 = get_combat_view war
+            // card，sessionStore.combatAllWarCards 透传）；禁本地推断/镜像字段。
+            Text {
+                id: warCardFleetReadiness
+                objectName: "warCardFleetReadiness"
+                visible: !isEmptySlot && !isResolved
+                    && (warData && warData.naval_required)
+                text: (warData && warData.naval_ready)
+                    ? "⚓ 舰队就绪: " + ((warData && warData.assigned_fleet_count) || 0) + " 艘"
+                    : "⚓ 舰队未就绪"
+                color: (warData && warData.naval_ready) ? "#2E9D4D" : "#8A6F52"
+                font.pixelSize: theme.smallSize
+                font.bold: (warData && warData.naval_ready)
                 Layout.leftMargin: 8
                 Layout.rightMargin: 8
                 Layout.topMargin: 2

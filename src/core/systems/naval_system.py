@@ -1,11 +1,48 @@
 # src/core/systems/naval_system.py
 import random
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from src.core.entities.fleet import Fleet, FleetStatus
 from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.core.entities.war import WarStatus
 
+
+# R1-G-01（WP-G-R1 v1.6 §2.1.6，S1）：naval-only forced-result 词表归一（fail-closed）。
+# `testing.force_naval_result` 与 land `testing.force_battle_result` 分离——单一 override
+# 无法确定性表达「naval DEFEAT 阻断陆战」与「naval VICTORY → 继续陆战」两条正交路径。
+# 未命中/非法/空/缺省 → None → 正常 random.randint + _simplified_crt。
+_FORCED_NAVAL_RESULT_MAP = {
+    "stalemate": "STALEMATE",
+    "draw": "STALEMATE",
+    "victory": "VICTORY",
+    "triumph": "TRIUMPH",
+    "defeat": "DEFEAT",
+    "disaster": "DISASTER",
+}
+
+
+def _normalize_forced_naval_result(value: Any) -> Optional[str]:
+    """R1-G-01：naval forced-result 归一化（大小写/空格容忍；非 str / 非法值 → None）。"""
+    if not isinstance(value, str):
+        return None
+    return _FORCED_NAVAL_RESULT_MAP.get(value.strip().lower())
+
+
+def _fleet_contract_nominal_strength(contract: Contract, fleet_configs: dict) -> int:
+    """R1-G-04（WP-G-R1 v1.6 §2.4）：PENDING/BUDGETED 舰队建造合同的未物化约定容量。
+
+    按合同组成（recommended_fleet_composition：needed_ships × base_strength）推导——
+    尚无 Fleet 实体前其容量以合同组成计 committed_pending；无组成 → 0（无计划容量）。
+    """
+    total = 0
+    for item in contract.recommended_fleet_composition or []:
+        ftype = item.get("type", "")
+        count = int(item.get("count", 0) or 0)
+        if count <= 0:
+            continue
+        cfg = fleet_configs.get(ftype, {})
+        total += count * int(cfg.get("strength_base", 3))
+    return total
 
 
 class NavalSystem:
@@ -68,18 +105,6 @@ class NavalSystem:
                 return True
         return False
 
-    def _has_active_fleet_contract_for_war(self, war_id: str) -> bool:
-        """仅检查同战 PENDING/BUDGETED/ACTIVE 舰队建造合同（防重复合同，G1-11）。
-
-        不因「同战存在存活舰队」阻断补充——同战 deficit 由 generate_replacement_contracts
-        按 G1-11 公式计算（D 件 §6，R-12）。
-        """
-        return any(
-            getattr(c, "_target_war_id", None) == war_id
-            and c.status in (ContractStatus.PENDING, ContractStatus.BUDGETED, ContractStatus.ACTIVE)
-            for c in self.state.get_all_contracts()
-        )
-
     def generate_construction_contracts(self, current_turn: int) -> List[Contract]:
         if not self._can_build_fleet():
             self.state.log_event(
@@ -130,6 +155,11 @@ class NavalSystem:
                 base_cost=total_budget,  # 注意这里 base_cost 设为总预算
                 current_turn=current_turn
             )
+            # R1-G-04（WP-G-R1 v1.6 §7.12.2）：冻结原始预算不变量——离开 generator 时
+            # _original_budget == base_cost == total_budget == total_budget > 0
+            # （MVP0.5-04 §2.5/§3.5 cost_ratio = actual_cost/original_budget 的分母；
+            # 修复前漏设 → 0 → ratio=1.0 fallback，折价 bid 无法调低舰队实际强度）
+            contract._original_budget = total_budget
             contract._is_fleet_construction = True
             contract._target_war_id = war.id
             contract._fleet_type = default_type  # 保留原有字段，但可忽略
@@ -518,9 +548,18 @@ class NavalSystem:
 
         roman_strength = sum(f.get_combat_strength(self.state) for f in roman_fleets)
         enemy_strength = war.enemy_naval_current
-        dice = random.randint(2, 12)
-        total = dice + roman_strength - enemy_strength
-        result = self._simplified_crt(dice, total, war)
+        # R1-G-01（WP-G-R1 v1.6 §2.1.6，S1）：naval-only override 消费点——强制结果跳过
+        # random.randint + _simplified_crt；空/非法/缺省 → 正常随机。损耗 mutation
+        # （_apply_naval_losses）与「无可用舰队自动 DEFEAT」分支原样保留（override 仅在
+        # roman_fleets 非空且骰子路径处生效——「无舰队必败」既有规则不被覆盖，R-04 无第二 resolver）。
+        override_raw = self.state.config.get("testing.force_naval_result", "")
+        forced = _normalize_forced_naval_result(override_raw)
+        if forced is not None:
+            result = forced
+        else:
+            dice = random.randint(2, 12)
+            total = dice + roman_strength - enemy_strength
+            result = self._simplified_crt(dice, total, war)
         losses = self._apply_naval_losses(war, result, roman_fleets)
 
         # G1-16 / K 件 §7：制海权唯一 True 写入点（GC）——TRIUMPH/VICTORY 获控
@@ -639,15 +678,17 @@ class NavalSystem:
     # ---------- 舰队恢复 ----------
 
     def generate_replacement_contracts(self, current_turn: int) -> List[Contract]:
+        """为活跃海战战争按同战权威 deficit 生成补充舰队建造合同（G1-11 + R1-G-04 / D 件 §6，R-12）。
+
+        Required = war.enemy_naval_current；Usable = Σ 同战完成舰队实际战力（_target_war_id ==
+        war.id 且非 DESTROYED/BUILDING/DISBANDED）；Committed = committed_building（同战 BUILDING
+        live fleets，ACTIVE 合同已物化容量权威）+ committed_pending（同战 PENDING/BUDGETED 合同
+        按组成计未物化容量）；Deficit = Required - Usable - Committed；> 0 → 补 ceil(Deficit /
+        base_strength)；否则无补充。禁跨战舰队满足 deficit（R-12）；禁 blanket skip（P1-02：
+        旧二值守卫删除——ACTIVE 合同容量归 BUILDING 侧只计一次，折价 true deficit 可达）。
+        """
         if not self._can_build_fleet():
             return []
-        """为活跃海战战争按同战 deficit 生成补充舰队建造合同（G1-11 / D 件 §6，R-12）。
-
-        Target   = war.enemy_naval_current
-        Existing = Σ 同战存活舰队实际战力（_target_war_id == war.id 且非 DESTROYED/BUILDING/DISBANDED）
-        Deficit  = Target - Existing；Deficit > 0 → 补 ceil(Deficit / base_strength)；否则无补充。
-        禁跨战舰队满足 deficit（R-12）；禁「任一全局可用舰队即阻断所有战争」（§11.11 旧偏差）。
-        """
         war_system = self.state.get_war_system()
         if not war_system:
             return []
@@ -659,21 +700,22 @@ class NavalSystem:
         for war in active_wars:
             if not war.naval_required:
                 continue
-            # 仅防重复合同（PENDING/BUDGETED/ACTIVE），不因存活舰队存在阻断补充
-            if self._has_active_fleet_contract_for_war(war.id):
-                continue
-            # 检查是否有针对该战争的舰队正在建造（建造中补充已在进行，防重复建造）
-            building_fleets = [f for f in self._fleets.values()
-                               if f.is_building and f._target_war_id == war.id]
-            if building_fleets:
-                continue
 
             # 获取敌方海军强度
             enemy_strength = war.enemy_naval_current
             if enemy_strength <= 0:
                 continue
 
-            # 从配置获取默认舰队类型和战力
+            # R1-G-04（WP-G-R1 v1.6 §2.4，P1-02 冻结 committed 去重模型）：防重复不再用
+            # 二值守卫 blanket skip（旧 `_has_active_fleet_contract_for_war` skip 与
+            # 「building_fleets → continue」均删除）——按权威 deficit 四要素精确计算：
+            #   usable             = Σ 同战完成舰队（非 DESTROYED/BUILDING/DISBANDED）实际战力
+            #   committed_building = Σ 同战 BUILDING live fleets 实际战力（ACTIVE 合同已物化
+            #                        容量权威——含竞标折价后的真实强度；ACTIVE 不再按合同另计）
+            #   committed_pending  = Σ 同战 PENDING/BUDGETED 舰队建造合同约定容量（未物化，
+            #                        按合同组成 needed_ships × base_strength 计）
+            #   deficit            = required - usable - committed_building - committed_pending
+            # 同一容量只计一次（ACTIVE 合同容量归 BUILDING 侧，不叠加）；deficit <= 0 → 无新合同。
             default_type = self.state.config.get("economic_rules.default_fleet_type", "trireme")
             fleet_configs = self.state.config.get("economic_rules.fleet_types", {})
             if default_type not in fleet_configs:
@@ -681,15 +723,25 @@ class NavalSystem:
             base_strength = fleet_configs[default_type].get("strength_base", 3)
             build_cost_per_ship = fleet_configs[default_type].get("build_cost", 20)
 
-            # G1-11 同战 deficit（D 件 §6 冻结式）：
-            # Existing = 同战存活舰队实际战力（provenance = _target_war_id；BUILDING 不计战力）
-            existing = sum(
+            usable = sum(
                 f.get_combat_strength(self.state)
                 for f in self._fleets.values()
                 if f._target_war_id == war.id
                 and f.status not in (FleetStatus.DESTROYED, FleetStatus.BUILDING, FleetStatus.DISBANDED)
             )
-            deficit = enemy_strength - existing
+            committed_building = sum(
+                f.get_combat_strength(self.state)
+                for f in self._fleets.values()
+                if f._target_war_id == war.id and f.is_building
+            )
+            committed_pending = sum(
+                _fleet_contract_nominal_strength(c, fleet_configs)
+                for c in self.state.get_all_contracts()
+                if getattr(c, "_target_war_id", None) == war.id
+                and getattr(c, "_is_fleet_construction", False)
+                and c.status in (ContractStatus.PENDING, ContractStatus.BUDGETED)
+            )
+            deficit = enemy_strength - usable - committed_building - committed_pending
             if deficit <= 0:
                 continue
 
@@ -706,6 +758,8 @@ class NavalSystem:
                 base_cost=total_budget,
                 current_turn=current_turn
             )
+            # R1-G-04（WP-G-R1 v1.6 §7.12.2）：冻结原始预算不变量（同 generate_construction_contracts）
+            contract._original_budget = total_budget
             contract._is_fleet_construction = True
             contract._target_war_id = war.id
             contract._fleet_type = default_type
@@ -717,9 +771,11 @@ class NavalSystem:
 
             self.state.log_event(
                 f"为激活战争生成补充舰队建造合同：{contract.name}，预算 {total_budget}，"
-                f"需建造 {needed_ships} 艘 {default_type}（deficit {deficit} = target {enemy_strength} - existing {existing}），工期 {contract._build_time} 年",
+                f"需建造 {needed_ships} 艘 {default_type}（deficit {deficit} = target {enemy_strength} "
+                f"- usable {usable} - building {committed_building} - pending {committed_pending}），工期 {contract._build_time} 年",
                 extra={"contract_id": contract.id, "war_id": war.id, "deficit": deficit,
-                       "target": enemy_strength, "existing": existing, "needed_ships": needed_ships}
+                       "target": enemy_strength, "existing": usable, "building": committed_building,
+                       "pending": committed_pending, "needed_ships": needed_ships}
             )
         return contracts
 

@@ -338,7 +338,13 @@ class WarSystem:
             # Legion disbandment
             if war.legion_numbers:
                 legion_numbers = list(war.legion_numbers)
-                disbanded, errors = ms.disband_legions_for_war(legion_numbers)
+                # R1-G-03（WP-G-R1 v1.6 §2.3，S2）：resolved_wars 面显式传 war_id +
+                # lifecycle_source="resolved_war"（disband trace frozen schema 上下文）。
+                disbanded, errors = ms.disband_legions_for_war(
+                    legion_numbers,
+                    war_id=war.id,
+                    lifecycle_source="resolved_war",
+                )
                 if disbanded > 0:
                     resolved_total += disbanded
                 for err in errors:

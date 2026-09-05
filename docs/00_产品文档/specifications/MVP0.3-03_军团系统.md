@@ -102,10 +102,11 @@ def recall_from_war(self, war_id: str) -> int:
 ```python
 def calculate_maintenance(self) -> Tuple[int, Dict[str, int]]:
 ```
-- 计算所有 `ACTIVE` 状态军团的维护费
+- 计算维护费（遍历 `_legions` 全集，按状态计费）
 - 基础维护费从配置读取（`legion_maintenance_base`，默认 2）
 - 老兵军团额外增加（`veteran_maintenance_bonus`，默认 1）
-- **WP-F R2-02（2026-08-30）：** 维护费同集 = `MilitarySystem.get_active_legions()`（military_system.py:51）——STALEMATE→TRUCE 后附着军团的 status 仍为 ACTIVE（war_id 指向 TRUCE war，`enter_truce` 零 recall，war_system.py:103-133），故仍计入维护费；释放仅经 canonical 后续生命周期（`execute_passed_peace_treaty → recall_from_war`，political_system.py:566-577）
+- **维护费同集（WP-G-R1 R1-G-02 修复，2026-09-05，取代下述 WP-F R2-02「ACTIVE-only」stale 表述）：** 维护集 = `ACTIVE` + released survivors（`AVAILABLE` via `recall()`，pending Population 行政退役）+ `RECALLING`（vestigial 枚举，全仓零写点）；排除 `UNRAISED`（征召池）/ `DISBANDED`（防重复维护，R1-08）/ `DESTROYED`。provenance 限定（P2-01）：生产唯一 `AVAILABLE` 生产者 = `Legion.recall()`（仅由 `recall_from_war` 触发，即 `resolve_war` 胜利与和约批准释放面）⟹ AVAILABLE 军团 = 已动员、等待行政退役的 released survivor（非「征召后待指派」后备军）；`get_available_legions()`（UNRAISED∪DISBANDED 征召池）语义不变。对齐舰队侧 G1-14（MVP0.5-04 §2.9）既有语义，非新规则
+- **WP-F R2-02（2026-08-30，ACTIVE 段保持有效）：** STALEMATE→TRUCE 后附着军团的 status 仍为 ACTIVE（war_id 指向 TRUCE war，`enter_truce` 零 recall，war_system.py:103-133），故仍计入维护费；释放仅经 canonical 后续生命周期（`execute_passed_peace_treaty → recall_from_war`，political_system.py:566-577）
 
 ```python
 def apply_maintenance(self, verbose: bool = True) -> Tuple[bool, str]:
@@ -334,6 +335,7 @@ UNRAISED / DISBANDED ──[征召]──→ ACTIVE ──[指派]──→ ACTI
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.6 | 2026-09-05 | DA Sub-Agent (WP-G-R1 B1) | R1-G-02 文档同步（§2.6）：维护集由「get_active_legions()（ACTIVE-only）」改为「ACTIVE + released survivors（AVAILABLE via recall，pending Population retirement）+ RECALLING（vestigial 零写点）；排除 UNRAISED/DISBANDED/DESTROYED」——精确表达 released-survivor provenance（P2-01），不泛化为「所有 AVAILABLE+RECALLING 一概收费」；WP-F R2-02 ACTIVE 段标注保持有效 |
 | v1.5 | 2026-08-31 | DA Sub-Agent (WP-G GD) | DI-3：§2.3 补「战后解散时序 + 共享入口」（G1-14：战争结束 → recall → 下个 Revenue → 下个 Population canonical 解散，GUI/CLI 共享，Veteran 保留，禁立即解散）；§2.5 补「AVAILABLE 为退役前中间态，非立即解散」；版本日志 |
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent J | 初版创建（代码审计完成，含恢复机制/战斗结果/停战草案） |
 | v1.1 | 2026-08-27 | DA Sub-Agent (WP-E-R5) | 维护费短款行为修订 |

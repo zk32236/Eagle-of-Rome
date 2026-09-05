@@ -246,12 +246,25 @@ class MilitarySystem:
     # ========== 维护费 ==========
 
     def calculate_maintenance(self) -> Tuple[int, Dict[str, int]]:
-        """计算总维护费"""
+        """计算总维护费（R1-G-02：维护集 = ACTIVE + AVAILABLE + RECALLING）。
+
+        provenance 限定（WP-G-R1 v1.6 §2.2，P2-01）：AVAILABLE = released survivor
+        （生产唯一 AVAILABLE 生产者 = Legion.recall()，仅由 recall_from_war 触发）；
+        RECALLING 为 vestigial 枚举（全仓零写点）；排除 UNRAISED / DISBANDED /
+        DESTROYED（DISBANDED 排除防重复维护，R1-08）。对齐舰队侧 G1-14 语义，
+        非新规则（GAME_RULE_CHANGE=NO）。
+        """
         terms = TerminologyService.get()
         total = 0
         breakdown = {}
 
-        for legion in self.get_active_legions():
+        for legion in self._legions:
+            if legion.status in (
+                LegionStatus.UNRAISED,
+                LegionStatus.DISBANDED,
+                LegionStatus.DESTROYED,
+            ):
+                continue
             cost = legion.get_maintenance_cost(self.state)
             total += cost
             breakdown[legion.name] = cost
@@ -421,14 +434,28 @@ class MilitarySystem:
             print(f"      {status_emoji} {info['name']}{vet}[Cost:{cost}] {war}{destroyed_info}")
 
     # ========== 新增：解散军团（用于战争结束） ==========
-    def disband_legions_for_war(self, legion_numbers: List[int]) -> Tuple[int, List[str]]:
+    def disband_legions_for_war(
+        self,
+        legion_numbers: List[int],
+        war_id: Optional[str] = None,
+        lifecycle_source: str = "deescalated",
+    ) -> Tuple[int, List[str]]:
         """
         解散指定编号列表的军团。
         返回 (成功解散数量, 错误信息列表)
+
+        R1-G-03（WP-G-R1 v1.6 §2.3，S2）：解散 trace 纯证据补强（零语义）——
+        每个成功 disband 恰产生一条 `legion_disbanded` log_event（frozen schema：
+        legion_number / war_id / lifecycle_source / turn）。war_id nullable 规则：
+        resolved_wars 面（process_triumph_and_disbandment）显式传 war_id +
+        lifecycle_source="resolved_war"；deescalated 面（_legions_to_disband 队列，
+        无 war 上下文）保持默认 war_id=None + "deescalated"。不改 disband 判定逻辑
+        （exactly-once 幂等不动，R1-08）。
         """
         terms = TerminologyService.get()
         disbanded = 0
         errors = []
+        current_turn = self.state.turn.turn_number if self.state.turn else 0
 
         for num in legion_numbers:
             legion = self.get_legion_by_number(num)
@@ -448,6 +475,16 @@ class MilitarySystem:
 
             if legion.disband():
                 disbanded += 1
+                self.state.log_event(
+                    f"军团解散: {legion.name}",
+                    extra={
+                        "type": "legion_disbanded",
+                        "legion_number": legion.number,
+                        "war_id": war_id,
+                        "lifecycle_source": lifecycle_source,
+                        "turn": current_turn,
+                    },
+                )
             else:
                 errors.append(f"{legion.name} 解散失败")
 

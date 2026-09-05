@@ -236,6 +236,11 @@ def test_tgc18_no_global_available_fleet_block_residual():
     naval = _read_source("src/core/systems/naval_system.py")
     repl_fn = naval.split("def generate_replacement_contracts")[1].split("\n    # ---------- 序列化")[0]
     assert "if self.get_available_fleets():" not in repl_fn
-    # 冻结公式：deficit = target - existing → ceil(deficit/base)（D 件 §6）
-    assert "deficit = enemy_strength - existing" in repl_fn
+    # 冻结公式（v1.6 §2.4 R1-G-04）：权威 deficit = required - usable - committed
+    # （committed = committed_building + committed_pending，四要素去重模型）。B2 将
+    # 旧「deficit = enemy_strength - existing」单要素重写为四要素；本断言对齐新冻结
+    # 语义（非规则变更，GAME_RULE_CHANGE=NO），旧 blanket-guard 行为断言随 R1-G-04 移除。
+    assert "deficit = enemy_strength - usable - committed_building - committed_pending" in repl_fn
+    assert "committed_building = sum(" in repl_fn
+    assert "committed_pending = sum(" in repl_fn
     assert "needed_ships = max(1, (deficit + base_strength - 1) // base_strength)" in repl_fn

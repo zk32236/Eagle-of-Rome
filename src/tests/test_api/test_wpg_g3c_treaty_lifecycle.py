@@ -45,6 +45,10 @@ class TestWpgG3cTreatyLifecycle(unittest.TestCase):
                 },
                 "default_fleet_type": "trireme",
                 "legion_recruit_cost": 10,
+                # WP-G-R1 T-R1-12（2026-09-05）：显式军团维护基数（防生产 config 漂移；
+                # 值 = Legion.get_maintenance_cost 既有默认 2 / vet+1）
+                "legion_maintenance_base": 2,
+                "veteran_maintenance_bonus": 1,
             },
         })
         self.state.turn = GameTurn(turn_number=1, year=-264)
@@ -154,19 +158,36 @@ class TestWpgG3cTreatyLifecycle(unittest.TestCase):
     # T4 — Revenue final maintenance
     # ════════════════════════════════════════════════════════════════════
     def test_t4_revenue_final_maintenance(self):
-        """T4：Revenue 前释放单元按权威规则付最后维护（AVAILABLE 幸存者计费）。"""
+        """T4：Revenue 前释放单元按权威规则付最后维护（AVAILABLE 幸存者计费）。
+
+        WP-G-R1 R1-G-02 / T-R1-12 定向更新（v1.6 §7.10.3-D / §7.12.3）：军团维护集 =
+        ACTIVE + released survivors（AVAILABLE via recall，pending Population retirement）
+        + RECALLING；排除 UNRAISED/DISBANDED/DESTROYED。旧断言
+        `ms.calculate_maintenance()[0] == 0`（ACTIVE-only 同集）已被 Owner 新证据推翻——
+        released AVAILABLE Legion 产生最后维护（2 军团 × base 2 = 4）。
+        """
         from src.core.service.economic_service import EconomicService
         war = self._make_submitted_truce_war()
         self._approve_treaty(war)
         ns = self.state._naval_system
         ms = self.state._military_system
 
-        # AVAILABLE 幸存者仍计维护（G1-14：下个 Revenue 最后一次）
+        # AVAILABLE 幸存者仍计维护（G1-14：下个 Revenue 最后一次；R1-G-02 军团侧同集）
         self.assertEqual(ns.calculate_maintenance(), 4)  # 1 艘 trireme
+        # 2 个 released AVAILABLE 军团（非 veteran）→ 2 × legion_maintenance_base(2) = 4
+        legion_total, _ = ms.calculate_maintenance()
+        self.assertEqual(legion_total, 4)
         rev = EconomicService(self.state).settle_revenue_phase()
         self.assertEqual(rev["data"]["maintenance"]["naval"]["total"], 4)
-        # 军团权威维护集 = ACTIVE-only → 0（MVP0.3-03 §2.6）
+        self.assertEqual(rev["data"]["maintenance"]["military"]["total"], 4)
+        # Population 行政解散（deescalated 面，exactly-once）后停计（DISBANDED 排除，R1-08）
+        disband = population_api.process_population_disbandments(self.state)
+        self.assertEqual(disband["legions"]["deescalated"]["total"], 2)
         self.assertEqual(ms.calculate_maintenance()[0], 0)
+        # 再下一 Revenue：0 重复维护（Legion + Fleet 均已 DISBANDED 排除）
+        rev2 = EconomicService(self.state).settle_revenue_phase()
+        self.assertEqual(rev2["data"]["maintenance"]["military"]["total"], 0)
+        self.assertEqual(rev2["data"]["maintenance"]["naval"]["total"], 0)
 
     # ════════════════════════════════════════════════════════════════════
     # T5 — Population exactly-once

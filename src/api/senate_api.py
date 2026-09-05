@@ -201,14 +201,81 @@ def _war_has_valid_commander(state: GameState, war) -> bool:
     return _political_system(state).is_war_commander_valid(war)
 
 
-def _commander_unavailable_reason(state: GameState, war) -> str:
-    """P2 接管 reason（DTO 展示，Q 件 J）。"""
+# R1-G-05（WP-G-R1 v1.6 §2.5.1，P2-01/G5）：takeover_required.rows[].reason 冻结
+# machine-token 值域（commander_dead / commander_absent / commander_missing）。DTO/API
+# 层透传 token；中文展示文案由展示层映射（_commander_unavailable_reason = legacy
+# takeover_options UI 文本，Q 件 J，语义不变）。单一谓词（dead → absent → missing）为
+# token 与展示文案两消费点同源权威。
+_COMMANDER_UNAVAILABLE_DISPLAY = {
+    "commander_dead": "指挥官已阵亡",
+    "commander_absent": "指挥官离任",
+    "commander_missing": "指挥官缺失",
+}
+
+
+def _commander_unavailable_token(state: GameState, war) -> str:
+    """commanderless 原因 machine token（冻结值域：commander_dead/commander_absent/
+    commander_missing；v1.6 §2.5.1）。P2 接管原因单一谓词权威（dead → absent →
+    missing），`takeover_required.rows[].reason` 直接透传本 token。"""
     old_cmd = state.get_member(war.commander_id) if war.commander_id else None
     if old_cmd and old_cmd.is_dead:
-        return "指挥官已阵亡"
+        return "commander_dead"
     if old_cmd and old_cmd.is_absent:
-        return "指挥官离任"
-    return "指挥官缺失"
+        return "commander_absent"
+    return "commander_missing"
+
+
+def _commander_unavailable_reason(state: GameState, war) -> str:
+    """legacy P2 接管 reason 展示文案（takeover_options UI，Q 件 J）——由 machine token
+    映射（与 takeover_required.rows[].reason 同源单一谓词），不改既有展示契约。"""
+    return _COMMANDER_UNAVAILABLE_DISPLAY[_commander_unavailable_token(state, war)]
+
+
+def _resolve_takeover_required(state: GameState) -> Dict[str, Any]:
+    """权威只读 takeover_required 态（R1-G-05，WP-G-R1 v1.6 §2.5，S4）。
+
+    冻结为 per-war required rows（P2-03）：每场 commanderless ACTIVE 战争（ACTIVE +
+    无有效指挥官 + 非起义）产出一行；required=True 仅当存在至少一行且当前行动玩家派系
+    有 eligible consul（无 eligible consul 的行 eligible_consul=False，不引入无解软锁——
+    "强制"语义针对有能力接管的当前派系执政官）。target 复用 `_is_eligible_consul`
+    （PoliticalSystem，:906）唯一权威，与 takeover_war 选 consul_figure 同源，不另起
+    资格逻辑（R1-04：仍唯一 mutation owner = execute_war_takeover_direct）。
+
+    P1（TRUCE+pending 接管）不计入（可选替换指挥官，非强制）；ACTIVE+valid commander
+    不产生 row（禁任意接管，F 件 §5.1）；起义战争排除（总督接管）。rows 按 war_id
+    字典序确定性排序。只补 Core truth，不涉 Senate/Shell 强制导航 gating（R1-10）。
+    """
+    ws = state.get_war_system()
+    player = state.get_current_player()
+    faction = state.get_faction(player.faction_id) if player else None
+    consul_figure = None
+    if faction:
+        politics = _political_system(state)
+        for member in faction.get_members(state):
+            if politics._is_eligible_consul(member):
+                consul_figure = member
+                break
+    rows = []
+    if ws:
+        for war in ws.get_active_wars():
+            if war.rebellion_province_id is not None:
+                continue
+            if _war_has_valid_commander(state, war):
+                continue
+            rows.append({
+                "war_id": war.id,
+                "war_name": war.name,
+                "eligible_consul": consul_figure is not None,
+                "target_commander_id": consul_figure.id if consul_figure else None,
+                # P2-01（G5）：rows[].reason = 冻结 machine token（v1.6 §2.5.1 值域
+                # commander_dead/commander_absent/commander_missing）；展示文案另层映射
+                "reason": _commander_unavailable_token(state, war),
+            })
+    rows.sort(key=lambda row: row["war_id"])
+    return {
+        "required": bool(rows) and consul_figure is not None,
+        "rows": rows,
+    }
 
 
 
@@ -686,6 +753,10 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "takeover_wars": active_foreign_wars,
             "takeover_options": takeover_options,
             "can_takeover": can_takeover,
+            # R1-G-05（WP-G-R1 v1.6 §2.5，S4）：并列权威态 takeover_required（per-war
+            # required rows）——commanderless ACTIVE 强制接管 Core truth；can_takeover /
+            # takeover_options 保持既有可选动作语义不变。
+            "takeover_required": _resolve_takeover_required(state),
             "continue_options": continue_options,
             "can_continue": can_continue,
             "war_threats": war_threats,

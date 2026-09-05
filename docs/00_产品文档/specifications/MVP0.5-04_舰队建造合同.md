@@ -36,30 +36,48 @@ def _can_build_fleet(self) -> bool:
    - 创建 `ContractType.PUBLIC_WORKS` 类型的合同，标记 `_is_fleet_construction = True`
    - 存储舰队组成建议、敌方强度、总预算到合同对象
 
-### 2.3 补充合同生成（G1-11 同战 deficit，WP-G GC）
+### 2.3 补充合同生成（G1-11 同战 deficit + R1-G-04 committed 去重，WP-G GC / WP-G-R1）
 
-1. 活跃海战战争（`naval_required = true` 且 `ACTIVE`）由 `generate_replacement_contracts(current_turn)` 按**同战 deficit** 生成补充合同：
+1. 活跃海战战争（`naval_required = true` 且 `ACTIVE`）由 `generate_replacement_contracts(current_turn)` 按**同战权威 deficit** 生成补充合同（R1-G-04 冻结模型，取代旧二值守卫 blanket skip）：
 
 ```
-Target   = war.enemy_naval_current            （当前敌方海军强度）
-Existing = Σ 同战存活舰队实际战力             （Fleet._target_war_id == war.id
-          且状态非 DESTROYED / BUILDING / DISBANDED；含 AVAILABLE staging 与 ON_MISSION）
-Deficit  = Target - Existing
+required          = war.enemy_naval_current                          （当前敌方海军强度）
+usable            = Σ 同战完成舰队实际战力                           （_target_war_id == war.id 且
+                                                                      状态非 DESTROYED/BUILDING/DISBANDED；
+                                                                      含 AVAILABLE staging 与 ON_MISSION）
+committed_building= Σ 同战 BUILDING live fleets 实际战力            （ACTIVE 合同已物化容量权威——含竞标折价
+                                                                      后真实强度；ACTIVE 合同不再按合同另计）
+committed_pending = Σ 同战 PENDING/BUDGETED 舰队建造合同约定容量     （未物化容量，按合同组成
+                                                                      needed_ships × base_strength 计）
+committed         = committed_building + committed_pending          （同一容量只计一次）
+deficit           = required - usable - committed
 Deficit > 0 → 补充合同数 = ceil(Deficit / 默认舰型 base_strength)
 Deficit ≤ 0 → 无补充合同
 ```
 
-2. 关键语义（G1-11 / R-12）：
-   - **禁跨战舰队满足 deficit**——War A 专属舰队不计入 War B 的 Existing
+2. 关键语义（G1-11 / R-12 / P1-02）：
+   - **禁跨战舰队满足 deficit**——War A 专属舰队不计入 War B 的 usable/committed
    - **禁全局阻断**——任一全局 AVAILABLE 舰队不再阻断所有战争的补充（旧偏差 §11.11 已修复）
-   - **防重复合同**：仅检查同战 PENDING/BUDGETED/ACTIVE 合同与建造中舰队（`_has_active_fleet_contract_for_war`）
+   - **ACTIVE 不以合同计 committed**：已中标合同容量 = 其 BUILDING 舰队容量，二者取一
+     （取 BUILDING live fleets），不叠加；旧 `_has_active_fleet_contract_for_war`
+     （PENDING/BUDGETED/ACTIVE blanket skip）与「building_fleets → continue」二值守卫已删除
    - **示例**：存活 1 艘战力 4、target 10、base 3 → deficit 6 → 补 ceil(6/3)=2 艘
+   - **竞标折价 true deficit**：折价中标致 BUILDING 实际强度 < target 时，deficit > 0 →
+     生成精确差额（旧 ACTIVE blanket skip 会使该场景不可达，已修复）
 
 示例实现：
 
 ```python
 needed_ships = max(1, (deficit + base_strength - 1) // base_strength)
 ```
+
+3. **原始预算不变量（R1-G-04 / v1.6 §7.12.2 最小实现契约）：** 两个 fleet generator
+   （`generate_construction_contracts` 与 `generate_replacement_contracts`）创建合同后立即写
+   `contract._original_budget = total_budget`——新生成 fleet 合同离开 generator 时满足
+   `_original_budget == base_cost == total_budget == total_budget > 0`（§2.5/§3.5
+   `cost_ratio = actual_cost / original_budget` 的分母；修复前漏设 → 0 → ratio=1.0 fallback，
+   折价 bid 无法调低舰队实际强度 = MVP0.5-04 既有规则（§2.5/§3.5/§6#12）的实现缺陷）。
+   `on_contract_awarded` 的 `<=0 → ratio=1.0` 兼容分支保留，仅服务旧存档/旧数据。
 
 ### 2.4 元老院审批与竞标
 
@@ -252,8 +270,22 @@ combat_strength = _strength_base + experience + commander.martial
 ### 5.2 合同重复保护
 
 - `_has_existing_fleet_or_contract_for_war()` 检查防止同一战争生成多个**初始建造**合同
+  （仅 `generate_construction_contracts` 路径）
 - 检查范围包括：PENDING/BUDGETED/ACTIVE 状态的合同、非 DESTROYED 状态的舰队
-- **补充合同**（G1-11）：改用 `_has_active_fleet_contract_for_war()`——仅防同战重复合同（PENDING/BUDGETED/ACTIVE），**不因同战存活舰队存在而阻断补充**（旧「任一全局可用舰队即阻断」已废弃）
+- **补充合同**（G1-11 + R1-G-04）：不再使用二值守卫 blanket skip——同战权威 deficit
+  公式四要素（required/usable/committed_building/committed_pending）计算；PENDING/BUDGETED
+  合同容量按合同组成计 `committed_pending`，ACTIVE 合同容量以 BUILDING live fleets 计
+  `committed_building`（同一容量只计一次），`deficit <= 0 → 无新合同`
+
+### 5.2.1 战斗读模型（R1-G-08 冻结唯一 schema，WP-G-R1）
+
+| 字段 | 作用域 | 计入状态集 | 权威源 | 定义 |
+|---|---|---|---|---|
+| `assigned_fleet_count` | **per-war**（war card / combat view war 条目） | 完成且已指派该战的舰队（`ON_MISSION`；明确排除 BUILDING/DESTROYED/DISBANDED） | `len(war._assigned_fleet_ids)` 过滤已 DESTROYED/BUILDING/DISBANDED 编号（以 `naval_system.get_fleet` live 实体为准） | 该战争当前可参战舰队数 |
+| `naval_ready` | **per-war**（war card） | `assigned_fleet_count >= 1` | 同 `assigned_fleet_count` | 该战争海军 ready 布尔（GUI「舰队已就绪」） |
+| `built_fleet_count` | **全局**（combat_view 顶层，共和国军力总览） | 完成状态（`AVAILABLE` + `ON_MISSION`；明确排除 BUILDING/DESTROYED/DISBANDED） | `len([f for f in naval_system.get_all_fleets() if f.status in (AVAILABLE, ON_MISSION)])` | 全局「已建成舰队」数（替代旧 `fleet_count = len(get_available_fleets())`——完工→指派 ON_MISSION 后旧值归零的误读） |
+
+- **兼容 alias（本 R1 保留，P2-N01）**：`fleet_count = built_fleet_count`（全局，`combat_api.get_combat_view` 顶层）；`fleets_assigned = assigned_fleet_count`（per-war，`gui_query_api._war_summary`）。GUI（`CombatStage.qml`/`session_store.py`）**改读新字段**；`war.fleets_assigned` 镜像字段不再作为任何生产读源（正式移除列 backlog）。
 
 ### 5.3 舰队生命周期边界（G1-12/G1-13/G1-14，WP-G GC）
 
@@ -318,5 +350,6 @@ combat_strength = _strength_base + experience + commander.martial
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.2 | 2026-09-05 | DA Sub-Agent (WP-G-R1 B2) | R1-G-04/R1-G-08 冻结语义同步：§2.3 补充合同改四要素权威 deficit（required-usable-committed_building-committed_pending，P1-02 committed 去重模型，删二值守卫 blanket skip）+ 两个 fleet generator 创建时 `_original_budget=total_budget` 原始预算不变量（§7.12.2，MVP0.5-04 既有折价规则实现缺陷修复，GAME_RULE_CHANGE=NO）；§5.2 合同重复保护改权威公式；§5.2.1 新增战斗读模型冻结 schema（per-war `assigned_fleet_count`/`naval_ready` + 全局 `built_fleet_count`，兼容 alias `fleet_count`/`fleets_assigned` 本 R1 保留，GUI 改读新字段） |
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent G | 初版创建 |
 | v1.1 | 2026-08-31 | DA Sub-Agent (WP-G GC) | 冻结语义同步（G1-10/11/12/13/14/20）：§2.3 补充合同改同战 deficit 公式（禁全局阻断/全量重建）；§2.8 海战伤亡改冻结矩阵（STALEMATE 0 损、DEFEAT ceil(N/2) 随机无放回）；§2.9 维护排除 DISBANDED + AVAILABLE 幸存者仍计维护；§2.10/§3.2/§5.3 新增 DISBANDED 行政退役态（禁 mark_destroyed 退役，R-11）；§3.3 补 `_target_war_id` 持久化契约；§3.5 战力 martial 权威 = War Commander（G1-20） |
