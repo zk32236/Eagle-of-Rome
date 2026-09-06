@@ -363,15 +363,22 @@ class TestFR1TakeoverDirectAction(unittest.TestCase):
         self.war = _add_active_war(self.state)
 
     def test_resolve_does_not_takeover(self):
-        """§11 negative + AC-R1-05：普通 resolve 不执行接管（commander 不变 + direct_actions 空）。"""
+        """§11 negative + AC-R1-05：普通 resolve 不执行接管（commander 不变 + direct_actions 空）。
+
+        R3-G-01 supersession（Plan §4.2 L2，2026-09-05）：commanderless+eligible-consul 态下
+        resolve 现为结构化 takeover_required 拒绝（合法红灯——旧「resolve 零接管」捷径依赖该
+        非法态）；本测试转 valid-commander fixture（war 有指挥官 → required=False），保留原
+        negative 语义：合法 resolve 仍零接管、零 direct_actions。
+        """
+        self.war.commander_id = 2  # valid commander（senator 2，alive；非 commanderless）
         resolved = senate_api.resolve_senate(self.state)
         self.assertTrue(resolved["success"])
-        self.assertIsNone(self.war.commander_id, "resolve 不得隐藏接管")
+        self.assertEqual(self.war.commander_id, 2, "resolve 不得隐藏/篡改既有指挥官")
         self.assertEqual(self.state.get_senate_direct_actions(), [])
 
         # 重复 resolve 也不能静默接管
         senate_api.resolve_senate(self.state)
-        self.assertIsNone(self.war.commander_id)
+        self.assertEqual(self.war.commander_id, 2)
         self.assertEqual(self.state.get_senate_direct_actions(), [])
 
     def test_ai_auto_takeover_via_auto_submit_proposals(self):

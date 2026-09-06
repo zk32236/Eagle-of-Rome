@@ -167,7 +167,12 @@ class TestForumFleet:
         test_state._naval_system.generate_construction_contracts.assert_called_once()
 
     def test_fleet_contract_bid_recorded(self, test_state, mock_deciders):
-        """舰队合同竞标记录包含人物ID，且中标后调用海军系统"""
+        """舰队合同竞标记录包含人物ID，且中标后调用海军系统。
+
+        R3-G-03 §3.6 supersession（2026-09-05）：award 前 live owner 复检——bidder 须为
+        alive 同派系 EQUES（旧 fixture 用 NOBILE figure 2 是 place_bid 不可达非法入队）；
+        改用 EQUES figure 4（f1）保持原意图。
+        """
         fleet_contract = Contract(
             id=100,
             contract_type=ContractType.PUBLIC_WORKS,
@@ -178,7 +183,7 @@ class TestForumFleet:
         fleet_contract._is_fleet_construction = True
         test_state._contracts_dict[100] = fleet_contract
 
-        test_state.add_forum_action("contract_bids", (100, 2, "f1", 70, 0.2, 1, 0))
+        test_state.add_forum_action("contract_bids", (100, 4, "f1", 70, 0.2, 1, 0))
 
         # 替换为 MagicMock
         test_state._naval_system.on_contract_awarded = MagicMock()
@@ -194,11 +199,14 @@ class TestForumFleet:
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
         contract = test_state.get_contract(100)
-        assert contract.awarded_to == 2
-        test_state._naval_system.on_contract_awarded.assert_called_once_with(contract, 2)
+        assert contract.awarded_to == 4
+        test_state._naval_system.on_contract_awarded.assert_called_once_with(contract, 4)
 
     def test_fleet_contract_awarded_triggers_construction(self, test_state, mock_deciders):
-        """舰队合同中标后调用海军系统开始建造"""
+        """舰队合同中标后调用海军系统开始建造。
+
+        R3-G-03 §3.6 supersession（2026-09-05）：bidder 改为 EQUES figure 4（同 test_bid_recorded）。
+        """
         # 创建舰队建造合同
         fleet_contract = Contract(
             id=101,
@@ -211,7 +219,7 @@ class TestForumFleet:
         test_state._contracts_dict[101] = fleet_contract
 
         # 添加出价
-        test_state.add_forum_action("contract_bids", (101, 2, "f1", 70, 0.2, 1, 0))
+        test_state.add_forum_action("contract_bids", (101, 4, "f1", 70, 0.2, 1, 0))
 
         # mock 海军系统的 on_contract_awarded 方法
         test_state._naval_system.on_contract_awarded = MagicMock()
@@ -228,4 +236,4 @@ class TestForumFleet:
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
         contract = test_state.get_contract(101)
-        test_state._naval_system.on_contract_awarded.assert_called_once_with(contract, 2)
+        test_state._naval_system.on_contract_awarded.assert_called_once_with(contract, 4)

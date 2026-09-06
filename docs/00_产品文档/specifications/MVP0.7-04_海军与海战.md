@@ -19,12 +19,20 @@
 ### 2.2 海战判定（冻结矩阵，G1-09/10/16，WP-G GC）
 
 ```
-舰队战力（单舰） = _strength_base + _experience + commander.martial
+舰队战力（单舰派生成分） = quality-adjusted 贡献 + experience + commander.martial
+罗马海军战力（海战聚合权威，R3-G-04） = Σ package（_construction_package_id）聚合：
+  nominal 快照 n_i → quality q=D/A（精确整数比，D=实际成本/A=基线，D=0→q=0 不 fallback）
+  → raw=Σ(n_i×q) → upper cap=min(raw, 2×nominal_package) → package 级 round 一次 → 跨 package 求和
+  → + Σ experience + Σ War Commander martial（每 Fleet 加一次）
 指挥官 martial 权威 = War Commander（war.commander_id，G1-20）
 total = 2d6 + 罗马海军战力 - war.enemy_naval_current
 ```
 
 CRT 结果：TRIUMPH/VICTORY/STALEMATE/DEFEAT/DISASTER（阈值/骰子区间与陆战 CRT 一致，零改）
+
+> **R3-G-04（2026-09-05）：** 舰队补充（replacement）权威见 MVP0.5-04 §2.3——**nominal 非 effective**：
+> 只认同战 nominal 容量（quality/experience/martial 不决定 hull 数）；海战罗马方战力消费 package
+> 聚合（§2.2 上式），CRT/Sea Control/伤亡矩阵零改。
 
 **五结果矩阵（D 件 §1）：**
 
@@ -67,5 +75,6 @@ TRIUMPH/VICTORY 分支；False 清理 = clear_sea_control，随战争正式结�
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.2 | 2026-09-05 | DA Sub-Agent (WP-G-R3 B3) | R3-G-04 同步：§2.2 单舰战力表述改 quality-adjusted/package aggregate（nominal 快照 + q=D/A + raw→cap→round 一次；per-fleet 无 floor；D=0 不 fallback）+ 补「replacement 见 MVP0.5-04，nominal 非 effective」注；CRT/Sea Control/伤亡矩阵零改（GAME_RULE_CHANGE=NO） |
 | v1.0 | 2026-07-12 | Document Officer Worker K | 初版创建 |
 | v1.1 | 2026-08-31 | DA Sub-Agent (WP-G GC) | 冻结语义落地（G1-09/10/16/20）：§2.2 补五结果矩阵（STALEMATE 0 损、DEFEAT ceil(N/2) 随机无放回）；海军门槛状态机（naval_required 门 / STALEMATE-DEFEAT-DISASTER 阻断陆战 / TRIUMPH-VICTORY 获控）；Sea Control 持久契约（sea_control_acquired 权威字段替代 _sea_control_ratio）；舰队战力 martial 权威 = War Commander |

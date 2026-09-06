@@ -363,5 +363,49 @@ class TestTr102EmptyPreservesRandom(unittest.TestCase):
         self.assertEqual(war.status, WarStatus.ACTIVE)
 
 
+class TestR3V01LivePathExtension(unittest.TestCase):
+    """R3 S5 in-place 扩展（DA-Plan §1 S5「R1 s1 原地补 R3 live-path 证据类」；FROZEN 设计
+    v1.2 §5.1 Group1/2）：live Store.doSelectWar/doCombatAction → Adapter → public
+    do_combat_action → canonical resolver consume override → 正常 post-result mutation。
+    DATA 层；RENDER_AUTOMATED 截图归 SO Work Order WP-G-R3-NATIVE-QT-LIVE-CAPTURE。
+    """
+
+    def test_store_live_stalemate_truce_and_victory_resolved(self):
+        """live Store seam：stalemate → TRUCE+pending treaty；victory → RESOLVED。"""
+        from src.ui.gui.session_store import GuiSessionStore
+        for forced, expected in (("stalemate", WarStatus.TRUCE), ("victory", WarStatus.RESOLVED)):
+            state, _faction, _commander = _base_state()
+            state.config.testing.force_battle_result = forced  # task-local 内存 override
+            war = _make_land_war(state, n_legions=2)
+            store = GuiSessionStore(state)
+            store.initialize("player_opt")
+            self.assertTrue(store.doSelectWar(war.id)["success"], f"select {forced}")
+            fb = store.doCombatAction(war.id, "attack")
+            self.assertTrue(fb["success"], f"{forced}: {fb.get('message')}")
+            self.assertEqual(fb["data"]["result"],
+                             "draw" if forced == "stalemate" else forced, forced)
+            self.assertEqual(war.status, expected, forced)
+            if forced == "stalemate":
+                self.assertIn(war, state._war_system._truce_wars)
+            else:
+                self.assertIn(war, state._war_system._war_discard)
+
+    def test_store_live_triumph_resolved_bonus(self):
+        """live Store seam：triumph → RESOLVED + loot bonus（V-03 producer 前置）。"""
+        from src.ui.gui.session_store import GuiSessionStore
+        state, _faction, _commander = _base_state()
+        state.config.testing.force_battle_result = "triumph"
+        war = _make_land_war(state, n_legions=2)
+        store = GuiSessionStore(state)
+        store.initialize("player_opt")
+        self.assertTrue(store.doSelectWar(war.id)["success"])
+        fb = store.doCombatAction(war.id, "attack")
+        self.assertTrue(fb["success"])
+        self.assertEqual(fb["data"]["result"], "triumph")
+        self.assertTrue(fb["data"]["triumph"])
+        self.assertEqual(war.status, WarStatus.RESOLVED)
+        self.assertEqual(fb["data"]["loot"], int(100 * 1.5))
+
+
 if __name__ == "__main__":
     unittest.main()

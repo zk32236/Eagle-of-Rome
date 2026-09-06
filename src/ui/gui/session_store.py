@@ -378,6 +378,16 @@ class GuiSessionStore(QObject):
         return self._senate_view.get("can_advance", False)
 
     @Property(bool, notify=senateViewChanged)
+    def senateSettlementPending(self) -> bool:
+        """R3-G-01 §1.5：settlement-pending 可见恢复态（DTO 透传，Store 零推断）。"""
+        return self._senate_view.get("senate_settlement_pending", False)
+
+    @Property(bool, notify=senateViewChanged)
+    def canResolveSenateSettlement(self) -> bool:
+        """R3-G-01 §1.5：唯一恢复动作可见位（= settlement-pending；结算-only）。"""
+        return self._senate_view.get("can_resolve_settlement", False)
+
+    @Property(bool, notify=senateViewChanged)
     def canTakeoverSenateWar(self) -> bool:
         return self._senate_view.get("can_takeover", False)
 
@@ -977,6 +987,23 @@ class GuiSessionStore(QObject):
         self._refresh_forum_view()
         return feedback
 
+    @Slot(int, int, int, int, result=dict)
+    def doPlaceFleetBid(self, figure_id: int, contract_id: int, amount: int,
+                        construction_cost: int) -> dict:
+        """R3-G-03（§3.5，FROZEN）：Fleet 竞标四整数 Slot——bid amount（C）与 intended
+        construction cost（D）双独立输入原样透传 adapter（保留 doPlaceBid 3 整数 Slot 供
+        tax/普通工程，避免 QML overload 歧义）。提交成功 refresh 后 pending 回显 API 的
+        D/profit（非本地假计算）。"""
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        feedback = self._adapter.place_bid(
+            self._viewer_id, figure_id, contract_id, amount,
+            construction_cost=construction_cost,
+        )
+        self._raise_feedback(feedback)
+        self._refresh_forum_view()
+        return feedback
+
     @Slot(int, int, result=dict)
     def doBuyLand(self, figure_id: int, amount: int) -> dict:
         if not self._viewer_id:
@@ -1462,6 +1489,41 @@ class GuiSessionStore(QObject):
             self._refresh_snapshot()
             self._refresh_senate_view()
             self._refresh_combat_view()
+        self.senateViewChanged.emit()
+        return feedback
+
+    @Slot(result=dict)
+    def doResolveSenateSettlement(self) -> dict:
+        """R3-G-01 §1.5：settlement-pending 唯一恢复入口（结算-only，零 takeover mutation 重放）。
+
+        Takeover canonical mutation 已成功（provenance/direct action/decision_complete 已持久）
+        但随后空结算失败/未收敛（senate_settlement_pending=True、can_advance=False）时，经本
+        Slot 只重试结算：adapter.resolve_senate → senate_api.resolve_senate 既有结算-only 路径。
+        War side effects（Commander binding/recruitment/treasury/Fleet-Legion bindings）已在首次
+        takeover_war 恰一次落盘，恢复时只读权威 direct action 与 decision flag，绝不重放。
+        DTO 前置：can_resolve_settlement==True（settlement-pending 定义下无 submitted proposals
+        且 required=False）；不满足 → 结构化拒绝，不做 business mutation。
+        """
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        if not self._senate_view.get("can_resolve_settlement", False):
+            feedback = self._feedback(
+                False,
+                "当前没有待结算的元老院空结算（settlement-pending）",
+                "error",
+                data={
+                    "can_resolve_settlement": False,
+                    "senate_settlement_pending": self._senate_view.get("senate_settlement_pending", False),
+                },
+            )
+            self._raise_feedback(feedback)
+            self.senateViewChanged.emit()
+            return feedback
+        feedback = self._adapter.resolve_senate()
+        self._raise_feedback(feedback)
+        if feedback.get("success"):
+            self._refresh_snapshot()
+            self._refresh_senate_view()
         self.senateViewChanged.emit()
         return feedback
 

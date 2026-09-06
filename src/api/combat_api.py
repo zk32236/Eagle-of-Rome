@@ -96,14 +96,22 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
     # 计入状态集 = **显式 status == ON_MISSION**（live Fleet 实体为准）——不再用「排除
     # BUILDING/DESTROYED/DISBANDED」补集谓词（旧式补集理论上允许残留 AVAILABLE/
     # IN_COMBAT 误计）。镜像字段 war.fleets_assigned 恒 0/不可靠，禁生产权威（POST-07P
-    # 同款 live-实体原则）。
+    # 同款 live-实体原则）。R3-G-04（§4.5）：strength 分层读模型同源（单一实现
+    # NavalSystem.get_war_fleet_strength_read_model）。
     assigned_fleet_count = 0
+    fleet_read_model: Dict[str, Any] = {
+        "assigned_fleet_ids": [],
+        "fleet_nominal_strength": 0,
+        "fleet_quality_adjusted_base": 0,
+        "fleet_experience_bonus": 0,
+        "fleet_commander_bonus": 0,
+        "fleet_effective_combat_strength": 0,
+        "fleet_strength_packages": [],
+    }
     ns = getattr(state, "naval_system", None)
     if ns is not None:
-        for fid in (getattr(war, "_assigned_fleet_ids", None) or []):
-            fleet = ns.get_fleet(fid)
-            if fleet is not None and fleet.status == FleetStatus.ON_MISSION:
-                assigned_fleet_count += 1
+        fleet_read_model = ns.get_war_fleet_strength_read_model(war)
+    assigned_fleet_count = len(fleet_read_model["assigned_fleet_ids"])
     naval_ready = assigned_fleet_count >= 1
 
     return {
@@ -126,6 +134,14 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
         # war 条目同源透传；GUI 改读本字段，不再读 stale 镜像）
         "assigned_fleet_count": assigned_fleet_count,
         "naval_ready": naval_ready,
+        # R3-G-04（§4.5）：strength 分层读模型字段（有效强度只对该战已完成已指派舰队聚合）
+        "assigned_fleet_ids": fleet_read_model["assigned_fleet_ids"],
+        "fleet_nominal_strength": fleet_read_model["fleet_nominal_strength"],
+        "fleet_quality_adjusted_base": fleet_read_model["fleet_quality_adjusted_base"],
+        "fleet_experience_bonus": fleet_read_model["fleet_experience_bonus"],
+        "fleet_commander_bonus": fleet_read_model["fleet_commander_bonus"],
+        "fleet_effective_combat_strength": fleet_read_model["fleet_effective_combat_strength"],
+        "fleet_strength_packages": fleet_read_model["fleet_strength_packages"],
         # WP-E F7（E-G7-11）：TRUCE 剩余回合权威计算（禁 QML 猜测 R-05）
         "truce_end_turn": war.truce_end_turn,
         "truce_remaining_turns": (

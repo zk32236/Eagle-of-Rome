@@ -114,6 +114,9 @@ class TestSenateZeroProposal(unittest.TestCase):
         """Path B：全部 passed=False → zero-passed 收敛（results，跳过否决空集）→ resolve → enacted ∅；rejected 留 history。
 
         WP-F R2-01（Task Package §7.4）：零通过提案不进入 tribune_veto——禁止「否决空集」幽灵工作。
+        R3-G-01 §1.5 supersession（Plan §4.2 L4，2026-09-05）：预结算 results 投影（无真实
+        senate phase_result）不再可 advance——settlement-pending 契约：can_advance=False +
+        can_resolve_settlement=True；resolve 后真实 phase_result 落盘 → can_advance=True。
         """
         self.state.senate_proposal_decision_complete = True
         pid = self.state.add_senate_proposal({"type": "war", "war_id": "w1", "legions": 4, "consul_id": 1})
@@ -124,13 +127,21 @@ class TestSenateZeroProposal(unittest.TestCase):
         # WP-F R2-01：zero-passed → current_step="results"（跳过 tribune_veto，流程直接收敛）
         self.assertEqual(view["data"]["current_step"], "results")
         self.assertEqual(view["data"]["veto_candidate_ids"], [])
-        self.assertIs(view["data"]["can_advance"], True)
+        # R3 §1.5：预结算 results 无真实 phase_result → settlement_pending（不可 advance，恢复动作可见）
+        self.assertIs(view["data"]["senate_settlement_pending"], True)
+        self.assertIs(view["data"]["can_resolve_settlement"], True)
+        self.assertIs(view["data"]["can_advance"], False)
 
         resolved = senate_api.resolve_senate(self.state)
         self.assertTrue(resolved["success"])
         self.assertEqual(resolved["data"]["passed_proposals"], [])
         self.assertEqual(resolved["data"]["rejected_proposals"], [pid])
         self.assertEqual(resolved["data"]["public_announcement"]["enacted_proposals"], [])
+
+        # 真实 phase_result 落盘后恢复 advance（settlement-pending 解除）
+        view1 = senate_api.get_senate_view(self.state, "player1")
+        self.assertIs(view1["data"]["senate_settlement_pending"], False)
+        self.assertIs(view1["data"]["can_advance"], True)
 
         # rejected 保留在 history（view submitted_proposals 标记 result=rejected）
         view2 = senate_api.get_senate_view(self.state, "player1")

@@ -120,6 +120,12 @@ class TestWP05Takeover(unittest.TestCase):
         self.assertEqual(war3.commander_id, 2)
 
     def test_wp05_takeover_execute(self):
+        """AC-04/05 + WP-D AU-5：canonical 接管执行 → DTO/权威副本留痕。
+
+        R3-G-01 §1.5 supersession（Plan §4.2 L7，2026-09-05）：takeover 成功后驱动 empty-settle
+        收敛 → pending direct_actions 移入 senate phase_result；断言源改读 view DTO 权威副本
+        （与 SenateStage 展示同源），保留原字段级/provenance 断言。
+        """
         # 设置 senate 为当前阶段，使 DTO actionable（AC-04 穿透）
         for phase in ["mortality", "revenue", "forum", "population"]:
             self.state.mark_phase_executed(phase)
@@ -140,12 +146,17 @@ class TestWP05Takeover(unittest.TestCase):
         result = senate_api.takeover_war(self.state, "player1", war.id)
         self.assertTrue(result["success"])
         self.assertEqual(result["data"]["war_id"], war.id)
+        self.assertIs(result["data"]["takeover_applied"], True)
+        self.assertIs(result["data"]["senate_converged"], True)  # 无提案 → 空结算收敛
         self.assertEqual(war.commander_id, self.consul.id)
         self.assertTrue(war.legion_numbers)
         self.assertTrue(self.consul.is_absent)
 
-        # WP-D AU-5：成功接管 → direct_actions 记录（含 war_name/commander_name/legions）
-        actions = self.state.get_senate_direct_actions()
+        # WP-D AU-5（R3 断言源更新，Plan §4.2 L7）：成功接管 → 权威 direct_actions 副本恰 1 份
+        # （senate phase_result.public_announcement——收敛把 pending 移入该权威副本；view DTO
+        # 顶层 direct_actions 仍为实时 pending 载体，随收敛清空）
+        senate_result = self.state.get_phase_result("senate")
+        actions = senate_result["data"]["public_announcement"]["direct_actions"]
         self.assertEqual(len(actions), 1)
         self.assertEqual(actions[0]["action_type"], "takeover")
         self.assertEqual(actions[0]["war_id"], war.id)
@@ -153,19 +164,19 @@ class TestWP05Takeover(unittest.TestCase):
         self.assertEqual(actions[0]["commander_id"], self.consul.id)
         self.assertEqual(actions[0]["commander_name"], self.consul.get_formal_name())
         self.assertEqual(actions[0]["legions"], list(war.legion_numbers))
-        # AU-R1-05c（G3 C4）：provenance 4 字段与既有字段并存（dict 透传零破坏）
+        # AU-R1-05c（G3 C4）：provenance 4 字段经 phase_result 透传零破坏
         self.assertEqual(actions[0]["action"], "takeover")
         self.assertEqual(actions[0]["trigger_source"], "human_explicit")
         self.assertEqual(actions[0]["previous_status"], "active")
         self.assertEqual(actions[0]["resulting_status"], "active")
 
-        # AC-05: 刷新后 takeover_options 移除该 war
+        # AC-05: 刷新后 takeover_options 移除该 war；公示面（public_announcement）仍 1 份
         view_after = senate_api.get_senate_view(self.state, "player1")
         self.assertTrue(view_after["success"])
         opt_after = view_after["data"]["takeover_options"]
         self.assertFalse(any(o["war_id"] == war.id for o in opt_after))
-        # WP-D AU-5：view DTO 透传 direct_actions
-        self.assertEqual(len(view_after["data"]["direct_actions"]), 1)
+        # 实时 pending 列表已随收敛清空（权威副本在 phase_result）
+        self.assertEqual(self.state.get_senate_direct_actions(), [])
 
     def test_wp05_takeover_direct_not_proposal(self):
         war = self._add_active_war()

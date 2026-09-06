@@ -101,11 +101,13 @@ def _add_figure(state, figure_id, faction_id, *, popularity, charisma, age=40,
 
 
 def _build_fleet_chain_state(enemy_naval=20):
-    """SC-04/09/10 entry state（§7.7.2 fixture 冻结）：
+    """SC-04/09/10 entry state（§7.7.2 fixture 冻结；R3-G-01 supersession 2026-09-05）：
 
-    ACTIVE naval_required commanderless war（tech 解锁）+ 目标派系（living influence
-    合计 200）/rival 派系（合计 100）+ eques bidder + 可当选 Consul（praetor 履历）。
-    mortality/revenue 已 executed → Y1 自 Forum 阶段开始。
+    ACTIVE naval_required war 已有**有效前线 Commander**（id=40，非 Consul——R3-G-01 后
+    commanderless+eligible-consul 会合法阻断 Senate resolve/advance；本转换消除旧「commanderless
+    捷径」——设计 §6/Plan §4.2 L1）+ 目标派系（living influence 合计 200）/rival 派系（100）
+    + eques bidder + 可当选 Consul（praetor 履历）。mortality/revenue 已 executed → Y1 自
+    Forum 阶段开始。
     """
     state = GameState.create_for_testing({k: dict(v) for k, v in _CONFIG.items()})
     state.turn = GameTurn(turn_number=50, year=-240)
@@ -130,13 +132,17 @@ def _build_fleet_chain_state(enemy_naval=20):
     # eques bidder（influence 0 → 不影响选举权重 fixture）
     eques = _add_figure(state, 30, F_TARGET, popularity=0, charisma=0,
                         praetor_history=False, tier=ClassTier.EQUES, wealth=5000)
+    # 有效前线 Commander（id=40，与拟当选预算 Consul（target 10）分开——设计 §8.2 FC 第 1 步）；
+    # popularity/charisma=0（influence 0 → 不影响选举权重 200>100 fixture）
+    _add_figure(state, 40, F_TARGET, popularity=0, charisma=0, martial=4)
 
     war = War(
         id="naval_war", name="Naval War", strength=8, threat_level=3,
         naval_required=True, enemy_naval_current=enemy_naval, enemy_naval_max=enemy_naval,
         disaster_numbers=[2, 3, 4], standoff_numbers=[99],
     )
-    war.status = WarStatus.ACTIVE  # commanderless（commander_id=None → 非 actionable）
+    war.status = WarStatus.ACTIVE
+    war.commander_id = 40  # valid commander（R3-G-01：非 commanderless → takeover_required=False）
     state._war_system._active_wars.append(war)
 
     # Y1 自 Forum 阶段开始（mortality/revenue 已执行）
@@ -197,7 +203,15 @@ def _senate_resolve_advance(state, proposals=True):
 
 
 def _combat_resolution_advance_year(state):
-    """F8/F9 / A6 后半：combat advance（war commanderless 非 actionable）→ resolution → advance_year。"""
+    """F8/F9 / A6 后半：Combat → resolution → advance_year。
+
+    R3-G-01 supersession（2026-09-05，设计 §8.2 Chain FC step 5/7）：fixture war 有 valid
+    commander → actionable → 不能以 commanderless nonactionable 跳过；真实 do_combat_action
+    attack → canonical naval 门（无成舰/未获控 → auto-DEFEAT 阻断陆战，war 保持 ACTIVE）→
+    advance → resolution → advance_year。
+    """
+    act = combat_api.do_combat_action(state, P1, state.get_war_system().get_active_wars()[0].id, "attack")
+    assert act["success"], f"do_combat_action failed: {act.get('message')}"
     ac = combat_api.advance_combat(state, P1)
     assert ac["success"], f"advance_combat failed: {ac.get('message')}"
     res = resolution_api.execute_resolution(state)
@@ -283,6 +297,8 @@ def year1_budget_contract(state, ctx, bid_amount=280, profit_rate=0.30):
     assert contract.status == ContractStatus.PENDING
 
     # ── F6 Senate resolve（唯一一次；deterministic approve 补票）──
+    # R3-G-01（Plan §4.2 L1 supersession 注记）：war 有 valid commander（fixture 转换）→
+    # takeover_required=False → resolve/advance 合法（旧 commanderless 捷径已被结构化拒绝）
     resolved = senate_api.resolve_senate(state, vote_decider=DeterministicApproveDecider())
     assert resolved["success"], resolved.get("message")
     vr = [r for r in resolved["data"].get("vote_results", []) if r["proposal_id"] == proposal_id]
@@ -291,6 +307,10 @@ def year1_budget_contract(state, ctx, bid_amount=280, profit_rate=0.30):
     assert row["support_influence"] == row["total_influence"] > 0, row
     assert row["oppose_influence"] == 0 and row["passed"] is True and row["vetoed"] is False, row
     assert contract.status == ContractStatus.BUDGETED
+
+    # R3-G-03（S3 转换，FROZEN §3.1）：Senate PASS 写 B（approved_budget），即使未改金额
+    assert contract.approved_budget == contract.base_cost == 280
+    assert contract._original_budget == 280  # A 冻结（不被 Senate 改写）
 
     # ── F7 Senate advance → F8 combat advance（commanderless 非 actionable）→ F9 resolution + year ──
     adv_s = senate_api.advance_senate_phase(state, P1)
@@ -324,16 +344,22 @@ def _award_block(state, ctx, contract, amount, profit_rate):
 # ---------------------------------------------------------------------------
 
 def test_tr106_sc09_committed_building_covers_no_duplicate_contract():
-    """SC-09：真实 award 物化 7 艘 BUILDING（每舰强度 3，ratio≈0.989→round=3）后，
-    二次 generator deficit=-1 → 0 合同；ACTIVE 合同容量不重复计。"""
+    """SC-09：真实 award 物化 7 艘 BUILDING（每舰 nominal 镜像 3）后，二次 generator
+    nominal deficit=-1 → 0 合同；ACTIVE 合同容量不重复计。
+
+    R3-G-04 supersession（Plan §4.2，2026-09-05）：per-fleet `_strength_base` 已改为 nominal
+    兼容镜像（n=3）——旧「每舰 round(3×277/280)=3」烘焙语义被 package 级 aggregator 取代
+    （effective 18/7 每舰 raw，package round=18；质量细节断言在 test_wpgr3_s4_*）。本测试保留
+    SC-09 原意图：BUILDING nominal 覆盖 target → 0 补充。
+    """
     state, ctx = _build_fleet_chain_state()
     war = ctx["war"]
     contract = year1_budget_contract(state, ctx, bid_amount=280, profit_rate=0.01)
 
     _award_block(state, ctx, contract, amount=280, profit_rate=0.01)
-    # bid(280, 0.01) → actual_cost = int(280*0.99) = 277 → ratio 277/280
+    # bid(280, 0.01) → D = int(280*0.99) = 277（legacy rate 路径入队持久；award 不重算）
     assert contract._actual_cost == 277, contract._actual_cost
-    assert contract._original_budget == 280  # §7.12.2：generator 冻结原始预算（折价 ratio 分母）
+    assert contract._original_budget == 280  # §7.12.2：generator 冻结原始预算（q 分母 A）
     # A1 forum init 期间 generator 已跑（BUDGETED 合同 21 容量计 committed_pending → 无重复）
     assert len(_fleet_contract_for(state, war)) == 1
 
@@ -341,17 +367,21 @@ def test_tr106_sc09_committed_building_covers_no_duplicate_contract():
     building = _building_fleets(state, war)
     assert len(building) == 7, len(building)
     assert all(f.status == FleetStatus.BUILDING for f in building)
+    # R3：_strength_base = nominal 兼容镜像（3）；exact q = 277/280 持久（package 级聚合）
     strengths = {f._strength_base for f in building}
-    assert strengths == {3}, f"SC-09 每舰 round(3×277/280)=3，got {strengths}"
+    assert strengths == {3}, f"nominal 镜像 3，got {strengths}"
+    assert all(f._nominal_strength_base == 3 for f in building)
+    assert all(f._construction_quality_numerator == 277 for f in building)
+    assert all(f._construction_quality_denominator == 280 for f in building)
 
     # 成熟前立即重调 generator（maturation producer 尚未运行）
     contracts = state.naval_system.generate_replacement_contracts(state.turn.turn_number)
-    assert contracts == [], f"committed 21 覆盖 target 20 → 应 0 合同，got {len(contracts)}"
-    # 四要素算术：deficit = 20 - usable(0) - building(21) - pending(0) = -1
-    usable = sum(f.get_combat_strength(state) for f in state.naval_system.get_all_fleets()
+    assert contracts == [], f"committed nominal 21 覆盖 target 20 → 应 0 合同，got {len(contracts)}"
+    # 四要素算术（R3 §4.3 nominal）：deficit = 20 - usable(0) - building_nominal(21) - pending(0) = -1
+    usable = sum(state.naval_system.fleet_nominal(f) for f in state.naval_system.get_all_fleets()
                  if f._target_war_id == war.id and f.status not in
                  (FleetStatus.DESTROYED, FleetStatus.BUILDING, FleetStatus.DISBANDED))
-    committed_building = sum(f.get_combat_strength(state) for f in building)
+    committed_building = sum(state.naval_system.fleet_nominal(f) for f in building)
     assert usable == 0 and committed_building == 21
     assert 20 - usable - committed_building == -1
     # ACTIVE 合同仍存在（容量归 BUILDING 侧，未按合同另计 → 无重复合同）
@@ -359,39 +389,40 @@ def test_tr106_sc09_committed_building_covers_no_duplicate_contract():
 
 
 # ---------------------------------------------------------------------------
-# T-R1-07 / SC-10：ACTIVE+BUILDING spec-backed 折价 true deficit → 精确差额
+# T-R1-07 / SC-10（R3 superseded）：折价不再授权补 hull——nominal 覆盖 → 0 合同
 # ---------------------------------------------------------------------------
 
 def test_tr107_sc10_discounted_true_deficit_exact_replenishment():
-    """SC-10：bid(280,0.30) → ratio=0.70 → 每舰 2 → committed 14 → deficit 6 →
-    ceil(6/3)=2 → 仅 1 份 composition.count=2 的 PENDING 合同（旧 blanket skip 不可达）。"""
+    """SC-10（R3-G-04/§6 + Owner 2026-09-05 选项 B supersession）：bid(280,0.30) → q=196/280
+    =0.70——**quality 降不授权补 hull**（nominal replacement：BUILDING nominal 21 覆盖 target
+    20 → deficit -1 → 0 合同）；旧「每舰 2 → committed 14 → deficit 6 → 补 2」是 R1-G-04 以
+    effective 为 replacement 源的旧 authority，由 R3 §4.3 取代。真实 hull casualty / enemy
+    提高引发的 deficit 断言见 test_wpgr3_s4_nominal_effective.py T12/T15。
+    """
     state, ctx = _build_fleet_chain_state()
     war = ctx["war"]
     contract = year1_budget_contract(state, ctx, bid_amount=280, profit_rate=0.30)
-    assert contract._original_budget == 280  # §7.12.2：generator 冻结原始预算（SC-10 前置断言）
+    assert contract._original_budget == 280  # §7.12.2：generator 冻结原始预算（q 分母 A）
 
     _award_block(state, ctx, contract, amount=280, profit_rate=0.30)
-    assert contract._actual_cost == 196, contract._actual_cost  # int(280×0.70)
+    assert contract._actual_cost == 196, contract._actual_cost  # D = int(280×0.70)
 
     building = _building_fleets(state, war)
     assert len(building) == 7, len(building)
+    # R3：nominal 镜像 3（非旧烘焙 2——q 精确持久，effective 由 package aggregator 计算）
     strengths = {f._strength_base for f in building}
-    assert strengths == {2}, f"每舰 round(3×0.70)=2，got {strengths}"
-    committed_building = sum(f.get_combat_strength(state) for f in building)
-    assert committed_building == 14
+    assert strengths == {3}, f"nominal 镜像 3，got {strengths}"
+    assert all(f._construction_quality_numerator == 196 for f in building)
+    assert all(f._construction_quality_denominator == 280 for f in building)
+    committed_building = sum(state.naval_system.fleet_nominal(f) for f in building)
+    assert committed_building == 21
 
-    # 旧 ACTIVE blanket skip 已移除：折价致 BUILDING 实际强度 < target → true deficit 可达
+    # R3 §4.3：deficit = 20 - 0 - 21 - 0 = -1 → 0 合同（quality 降不授权补充；R3-06）
     contracts = state.naval_system.generate_replacement_contracts(state.turn.turn_number)
-    assert len(contracts) == 1, f"deficit 6 应精确补 1 份合同，got {len(contracts)}"
-    new_contract = contracts[0]
-    comp = new_contract.recommended_fleet_composition
-    assert comp == [{"type": "trireme", "count": 2}], comp
-    assert new_contract.status == ContractStatus.PENDING
-    # 四要素算术一致：deficit = 20 - 0 - 14 - 0 = 6；needed = ceil(6/3) = 2
-    assert 20 - 0 - committed_building - 0 == 6
-    assert new_contract._original_budget == new_contract.base_cost == new_contract.total_budget == 80
-    # 同战 fleet 合同总数 = ACTIVE(1) + 新 PENDING(1)
-    assert len(_fleet_contract_for(state, war)) == 2
+    assert contracts == [], f"nominal 21 覆盖 target 20 → 0 合同，got {len(contracts)}"
+    assert 20 - 0 - committed_building - 0 == -1
+    # 同战 fleet 合同总数不变（ACTIVE 1 份，无新增 PENDING）
+    assert len(_fleet_contract_for(state, war)) == 1
 
 
 # ---------------------------------------------------------------------------

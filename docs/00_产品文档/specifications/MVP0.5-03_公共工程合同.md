@@ -65,6 +65,14 @@ _standard_warranty: int = 0        # 标准质保年限
    - 设置 `remaining_years = duration_years`
    - 设置 `_is_under_execution = True`
 
+> **Fleet 建造合同限定注（R3-G-03，2026-09-05 Owner 裁决；详细权威见 MVP0.5-04 §2.4/§3.3 + R3 FROZEN
+> 设计 §3）：** 仅舰队合同（`_is_fleet_construction`）采用 A/B/C/D 四权威——A 基线 = `_original_budget`
+> （生成冻结，Senate 预算 PASS 不可改写）、B 批准预算 = `_approved_budget`（PASS 写入，即使未改金额）、
+> C 中标价 = `_contract_price`、D 实际成本 = `_actual_cost`（bid 显式 construction_cost；None≠0）；
+> **bid ceiling = B**；`base_cost` 在 award 前投影 A/B、award 后 = C——**兼容投影，非历史 B 权威**；
+> gross profit = C−D ≥ 0（显式成本路径 D>C 拒绝，不发明补贴）；新 Fleet pending bid 为 8 元组（原 7 项
+> 尾部追加 construction_cost）。普通公共工程/税规则不重写。
+
 ### 2.5 施工结算
 
 每年在收入阶段（Revenue Phase）由 `EconomicService._settle_public_works_contract()` 处理结算。最终调用 `Contract.mark_complete(current_turn)` 标记完工：
@@ -202,6 +210,8 @@ if contract.contract_type == ContractType.PUBLIC_WORKS:
 
 - 工期 `duration_years` 不能为0（默认2年）
 - 预期利润不能为负数
+- **Fleet 限定（R3 2026-09-05）：** 显式成本路径（construction_cost）受 D≤C 约束（gross=C−D≥0）；
+  D=0 合法（q=0，见 MVP0.5-04 §3.5），非缺省回退；旧 rate 路径开区间校验保持
 
 ## 6. 验收标准
 
@@ -230,5 +240,6 @@ if contract.contract_type == ContractType.PUBLIC_WORKS:
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.2 | 2026-09-05 | DA Sub-Agent (WP-G-R3 B3) | Fleet 建造合同限定注（R3-G-03，GAME_RULE_CHANGE=NO）：§2.4 增 A/B/C/D 四权威 + bid ceiling=B + base_cost 兼容投影说明（award 前 A/B、后 = C，非历史 B 权威）+ 8 元组 pending；§5.4 补 Fleet 显式成本 D≤C/gross≥0 边界；普通工程/税规则不重写 |
 | v1.0 | 2026-07-12 | Document Officer Worker L | 初版创建 |
 | v1.1 | 2026-07-12 | DA Sub-Agent (GLM Audit Fix) | 修复：更新 §2.5 施工结算描述，实际业务逻辑调用 `mark_complete()` 而非 `execute_works_payment()` 直接设置 COMPLETED；补充结算流程及 `mark_complete()` 方法签名 |

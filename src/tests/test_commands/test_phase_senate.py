@@ -1158,7 +1158,14 @@ class TestManualTakeover(unittest.TestCase):
 
     @patch('builtins.input')
     def test_manual_war_declaration_with_naval_has_fleet(self, mock_input):
-        """测试需要海战且有舰队时，宣战成功"""
+        """测试需要海战且有舰队时，宣战成功。
+
+        R3-G-01 supersession（Plan §4.2 L3，2026-09-05）：setUp 的预存 foreign_war 为
+        commanderless ACTIVE + 本类 eligible consul → Senate 结算被结构化 takeover_required
+        拒绝（合法红灯）。本测试给预存 foreign_war 设 valid commander（senator 2）消除
+        阻断，保留原意图：宣战 CLI 流程正常完成、naval war 移入 ACTIVE。
+        """
+        self.war.commander_id = 2  # valid commander（预存 foreign_war；消除 takeover_required）
         war = War(
             id="naval_war",
             name="海战战争",

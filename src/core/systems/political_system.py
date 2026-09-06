@@ -566,7 +566,27 @@ class PoliticalSystem:
                 contract = self.state.get_contract(proposal["contract_id"])
                 if contract:
                     modified_budget = proposal.get("modified_budget")
-                    if modified_budget and modified_budget != contract.base_cost:
+                    # R3-G-03（设计 §3.1，FROZEN）：Fleet budget PASS 分支——冻结 A（
+                    # `_original_budget` 绝不被覆盖为上一次 B）、写 B（`_approved_budget`，即使
+                    # 金额未修改也写入）、保持 legacy base_cost=B 投影。普通工程旧逻辑保留。
+                    if getattr(contract, "_is_fleet_construction", False):
+                        if modified_budget is None:
+                            modified_budget = contract.base_cost
+                        # A 冻结：重复修改不得把 _original_budget 覆盖成上一次 B（旧代码缺陷）
+                        # （generator 已冻结 _original_budget；此处仅防御性断言语义，不覆盖）
+                        contract._approved_budget = int(modified_budget)
+                        contract.base_cost = int(modified_budget)
+                        self.state.log_event(
+                            f"预算提案通过（Fleet）: 合同 {contract.name} 批准预算 B="
+                            f"{contract._approved_budget}，基线 A={contract._original_budget}",
+                            level=logging.INFO,
+                            extra={
+                                "contract_id": contract.id,
+                                "baseline_a": contract._original_budget,
+                                "approved_b": contract._approved_budget,
+                            },
+                        )
+                    elif modified_budget and modified_budget != contract.base_cost:
                         contract._original_budget = contract.base_cost
                         contract.base_cost = modified_budget
                         self.state.log_event(

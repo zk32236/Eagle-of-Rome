@@ -226,7 +226,12 @@ class TestWpFr2SenateFailClosed(unittest.TestCase):
         self.assertEqual(set(state.get_senate_vetoes_copy()), before, "拒绝分支零否决状态变更")
 
     def test_r2_07_zero_passed_converges_to_results(self):
-        """T-R2-07：zero passed → current_step="results"、无否决候选、流程收敛。"""
+        """T-R2-07：zero passed → current_step="results"、无否决候选、流程收敛。
+
+        R3-G-01 §1.5 supersession（Plan §4.2 L5，2026-09-05）：预结算 results 投影（无真实
+        senate phase_result）不再可 advance——settlement-pending 契约（can_advance=False +
+        can_resolve_settlement=True）；resolve 后真实 phase_result 落盘 → can_advance=True。
+        """
         state = _build_state()
         pid1 = _propose_land(state, "player1", 50)
         pid2 = _propose_land(state, "player1", 30)
@@ -237,16 +242,22 @@ class TestWpFr2SenateFailClosed(unittest.TestCase):
         data = view["data"]
         self.assertEqual(data["current_step"], "results", "zero-passed 跳过 tribune_veto 直接收敛")
         self.assertEqual(data["veto_candidate_ids"], [])
-        self.assertIs(data["can_advance"], True)
+        # R3 §1.5：settlement-pending（真实 phase_result 未落盘前不可 advance）
+        self.assertIs(data["senate_settlement_pending"], True)
+        self.assertIs(data["can_resolve_settlement"], True)
+        self.assertIs(data["can_advance"], False)
         self.assertIs(data["can_veto"], False)
         self.assertIs(data["can_auto_veto"], False)
         rows = {r["proposal_id"]: r for r in data["vote_results"]}
         self.assertFalse(rows[pid1]["passed"])
         self.assertFalse(rows[pid2]["passed"])
-        # 结算仍可走 resolve_senate（自然全拒零副作用）
+        # 结算仍可走 resolve_senate（自然全拒零副作用）；落盘后 can_advance 恢复
         resolved = senate_api.resolve_senate(state)
         self.assertTrue(resolved["success"], resolved.get("message"))
         self.assertEqual(resolved["data"]["passed_proposals"], [])
+        view2 = senate_api.get_senate_view(state, "player1")
+        self.assertIs(view2["data"]["senate_settlement_pending"], False)
+        self.assertIs(view2["data"]["can_advance"], True)
 
     def test_r2_08_passed_still_vetoable_by_eligible_tribune(self):
         """T-R2-08：passed 提案仍可被 eligible Tribune 否决（权威不变）。"""

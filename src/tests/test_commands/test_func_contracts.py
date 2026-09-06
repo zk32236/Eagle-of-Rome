@@ -415,10 +415,14 @@ class TestContractFixes:
         fleets = naval.get_all_fleets()
         assert len(fleets) == 1
         fleet = fleets[0]
-        # 实际成本比例 = actual_cost / original_budget = 72.25 / 100 = 0.7225
-        expected_strength = int(round(3 * (actual_cost / contract._original_budget)))
-        expected_strength = max(1, min(expected_strength, 6))  # base_strength=3, 上限6
-        assert fleet._strength_base == expected_strength
+        # R3-G-04 supersession（2026-09-05，§4.1/§4.2）：_strength_base = nominal 兼容镜像（3）——
+        # 旧「每舰 round(3×(actual_cost/A)) 烘焙 effective」被 package 级 aggregator 取代；
+        # exact q = D/A（72/100）持久（D = int(85×0.85)=72 入队持久）
+        actual_cost = int(amount * (1 - profit_rate))
+        assert fleet._strength_base == 3  # nominal 镜像
+        assert fleet._nominal_strength_base == 3
+        assert fleet._construction_quality_numerator == actual_cost
+        assert fleet._construction_quality_denominator == contract._original_budget
 
     def test_public_work_budget_bonus(self, basic_state):
         """测试公共工程预算加成：元老院提案时随机加成，通过后合同 base_cost 更新"""
@@ -544,16 +548,18 @@ class TestContractFixes:
         forum_result = forum_api.resolve_forum(state)
         assert forum_result["success"]
 
-        # 验证生成2艘舰队，且每艘强度相同（整体成本比例）
+        # 验证生成2艘舰队，且每艘 nominal 相同（exact q=D/A 持久，无 per-fleet round/clamp）
         naval = state.naval_system
         fleets = naval.get_all_fleets()
         assert len(fleets) == 2
         actual_cost = int(amount * (1 - profit_rate))  # 170 * 0.85 = 144
-        cost_ratio = actual_cost / contract._original_budget  # 144/200=0.72
-        expected_strength = int(round(3 * cost_ratio))  # 2.16 -> 2
-        expected_strength = max(1, min(expected_strength, 6))
+        # R3-G-04 supersession（2026-09-05，§4.1/§4.2）：_strength_base = nominal 镜像 3；
+        # 旧烘焙 round(3×0.72)=2 被 package 级 aggregator 取代（effective 2 经 aggregator 计算）
         for fleet in fleets:
-            assert fleet._strength_base == expected_strength
+            assert fleet._strength_base == 3
+            assert fleet._nominal_strength_base == 3
+            assert fleet._construction_quality_numerator == actual_cost
+            assert fleet._construction_quality_denominator == contract._original_budget
 
     def test_budget_bonus_random_range(self, basic_state):
         """测试预算加成随机范围配置生效"""

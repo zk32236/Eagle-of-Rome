@@ -220,13 +220,22 @@ Rectangle {
                         }
                     }
 
-                    // 舰队维护费
+                    // 舰队维护费（R3-G-02 §2.3：显示实扣 charged——短款后不得虚报原应付 total）
                     RowLayout {
                         Layout.fillWidth: true
-                        visible: _resultData.maintenance && _resultData.maintenance.naval && _resultData.maintenance.naval.total
+                        visible: _resultData.maintenance && _resultData.maintenance.naval &&
+                                 ((_resultData.maintenance.naval.charged || 0) > 0 ||
+                                  (_resultData.maintenance.naval.unpaid || 0) > 0 ||
+                                  (_resultData.maintenance.naval.disbanded || 0) > 0)
                         Text { text: "  舰队维护费"; color: "#2E251B"; font.pixelSize: 12; Layout.fillWidth: true }
                         Text {
-                            text: "-" + (_resultData.maintenance && _resultData.maintenance.naval ? _resultData.maintenance.naval.total : 0) + " Talents"
+                            text: {
+                                var naval = _resultData.maintenance ? _resultData.maintenance.naval : null
+                                var parts = "-" + ((naval && naval.charged) || 0) + " Talents"
+                                if (naval && naval.disbanded > 0) parts += "（退役 " + naval.disbanded + " 舰）"
+                                if (naval && naval.unpaid > 0) parts += "（未付差额 " + naval.unpaid + "）"
+                                return parts
+                            }
                             color: "#C45151"; font.pixelSize: 12; font.bold: true
                         }
                     }

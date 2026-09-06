@@ -17,6 +17,8 @@
 combat_api.do_combat_action → resolve_war 写 soldier_share>0 + triumph_commander_id，
 SC-01 前置 seam）；三层一致断言（DATA，无视觉分支）。
 """
+import unittest
+
 from src.core.game_state import GameState
 from src.core.entities.entities import Faction, GameTurn
 from src.core.entities.figure import Figure
@@ -237,6 +239,61 @@ def test_state_transition_vote_then_death_settlement_rejects():
     assert "凯旋失效" in results_text
     assert war.soldier_share == 0
     assert war.triumph_approved is False
+
+
+class TestR3V03RefreshReentryExtension(unittest.TestCase):
+    """R3 S5 in-place 扩展（DA-Plan §1 S5「R1 s5 原地扩展 live dead/missing 刷新」；FROZEN
+    设计 v1.2 §5.3）：dead/missing 的 refresh / new-Store re-entry 层——同一 live
+    eligibility、无重复票副作用、已消费 share 不再出现、无二次奖励。DATA 层；
+    RENDER_AUTOMATED（live GUI 截图）归 SO Work Order WP-G-R3-NATIVE-QT-LIVE-CAPTURE。
+    """
+
+    def test_new_store_reentry_after_approved_settlement_no_residual(self):
+        """批准结算后：share 恰一次消费；fresh/new GuiSessionStore 同值零残留；二次 resolve
+        无二次奖励；stale 投票拒绝。"""
+        from src.ui.gui.session_store import GuiSessionStore
+        state, war, _commander = _resolved_war_state(force="victory")
+        store = GuiSessionStore(state)
+        store.initialize("player_opt")
+        assert [r["war_id"] for r in store.forumTriumphWars] == [str(war.id)]
+        assert store.doVoteTriumph(war.id, True)["success"]
+        settled = store.doResolveForum()
+        assert settled["success"]
+        assert "凯旋仪式获得批准" in " ".join(settled["data"]["results"])
+        assert war.triumph_approved is True
+        assert war.soldier_share == 0
+
+        # refresh / new Store 同值：rows 消失、无残留 vote、无二次奖励
+        store2 = GuiSessionStore(state)
+        store2.initialize("player_opt")
+        assert store2.forumTriumphWars == []
+        assert forum_api.get_forum_view(state, "player_opt")["data"]["triumph_wars"] == []
+        again = forum_api.resolve_forum(state)
+        assert again["success"]
+        assert not any("凯旋仪式获得批准" in r for r in again["data"]["results"])
+        assert war.soldier_share == 0
+        stale = forum_api.vote_triumph(state, "player_opt", war.id, True)
+        assert stale["success"] is False          # 已消费 share → 拒绝（无重复副作用）
+
+    def test_dead_commander_store_refresh_removes_rows(self):
+        """dead after display：Store 展示面行存在 → 死亡 → refresh 后行移除（后端重验非
+        缓存）；新 Store 同值；settlement 失效无 reward。"""
+        from src.ui.gui.session_store import GuiSessionStore
+        state, war, commander = _resolved_war_state(force="triumph")
+        store = GuiSessionStore(state)
+        store.initialize("player_opt")
+        assert len(store.forumTriumphWars) == 1
+        _kill_commander(state, commander)
+        rejected = store.doVoteTriumph(war.id, True)   # 任一 forum 动作触发 refresh
+        assert rejected["success"] is False
+        assert store.forumTriumphWars == []
+        store2 = GuiSessionStore(state)
+        store2.initialize("player_opt")
+        assert store2.forumTriumphWars == []
+        settled = forum_api.resolve_forum(state)
+        assert "凯旋失效" in " ".join(settled["data"]["results"])
+        assert war.soldier_share == 0
+        assert war.triumph_approved is False
 
 
 if __name__ == "__main__":

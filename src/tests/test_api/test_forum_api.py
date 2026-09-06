@@ -567,6 +567,13 @@ class TestResolveForum:
         assert "税率" in result["message"]
 
     def test_works_contract(self, test_state):
+        """R3-G-03 §3.6 supersession（2026-09-05）：award 前 live owner 复检——出价人必须为
+        alive 同派系 EQUES（旧 fixture 的 plebeian bidder 是 place_bid 不可达的非法入队；新
+        语义先过滤失效候选→最低价→平手）。本测试将 bidder 3 就地转为 EQUES 保持原意图
+        （works 低价中标 + 派系归属断言）。"""
+        from src.core.entities.figure import ClassTier as _ClassTier
+        fig3 = test_state.get_member(3)
+        fig3.class_tier = _ClassTier.EQUES  # 原 plebeian → 合法 eques bidder（test-local）
         test_state._forum_pending["contract_bids"] = [
             (1, 2, "f1", 90, 0.1, 3, 9),
             (1, 3, "f2", 80, 0.2, 4, 8)
@@ -757,15 +764,26 @@ class TestResolveForum:
         # 不检查具体消息，因为可能返回键名
 
     def test_resolve_forum_mixed_operations(self, test_state):
-        """测试 resolve_forum 同时处理招募、竞标、土地认购（混合操作）"""
+        """测试 resolve_forum 同时处理招募、竞标、土地认购（混合操作）。
+
+        R3-G-03 §3.6 supersession（2026-09-05）：award live owner/Eques/同派系复检——旧 fixture
+        （NOBILE bidder / 跨派系 bid）是 place_bid 不可达的非法入队；新语义失效候选过滤。本
+        测试改用合法 eques bidder（f1 fig4 + f2 新 eques 33）保持原混合操作意图。"""
         test_state.clear_forum_pending()
 
         # 1. 添加招募出价
         test_state.add_forum_action("recruitment_bids", ("f1", 100, 50))
         test_state.add_forum_action("recruitment_bids", ("f2", 100, 60))
-        # 2. 添加合同竞标（包税）
-        test_state.add_forum_action("contract_bids", (1, 1, "f1", 120, 0.1, 0, 0))
-        test_state.add_forum_action("contract_bids", (1, 2, "f2", 130, 0.15, 0, 0))
+        # 2. 添加合同竞标（工程 id=1：合法 eques bidder——fig4 f1 + f2 新 eques 33）
+        from src.core.entities.figure import Figure as _Figure, ClassTier as _ClassTier
+        fig33 = _Figure.create_eques(33, "f2", 30)
+        fig33.is_faction_leader = False
+        fig33.wealth = 500
+        fig33.update_influence()
+        test_state.add_member(fig33)
+        test_state.get_faction("f2").member_ids.append(33)
+        test_state.add_forum_action("contract_bids", (1, 4, "f1", 90, 0.1, 3, 9))
+        test_state.add_forum_action("contract_bids", (1, 33, "f2", 80, 0.2, 4, 8))
         # 3. 添加公地认购
         test_state.set_pending_land_sale_quota(10)
         test_state.add_forum_action("land_purchases", (1, 5))

@@ -182,8 +182,10 @@ class GuiApiAdapter:
         contract_id: int,
         amount: int,
         profit_rate: Optional[float] = None,
+        construction_cost: Optional[int] = None,
     ) -> Dict[str, Any]:
         from src.api import forum_api
+        # R3-G-03（§3.5）：可选 construction_cost keyword 原样透传（Fleet C+D 双输入）
         return self.call(
             forum_api.place_bid,
             self._state,
@@ -192,6 +194,7 @@ class GuiApiAdapter:
             contract_id,
             amount,
             profit_rate,
+            construction_cost=construction_cost,
         )
 
     def buy_land(self, player_id: str, figure_id: int, amount: int) -> Dict[str, Any]:

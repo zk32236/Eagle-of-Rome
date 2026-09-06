@@ -29,6 +29,26 @@ Rectangle {
     property string bidDialogFigureName: ""
     property string bidDialogContractName: ""
     property string bidDialogAmount: ""
+    // R3-G-03（§3.5）：Fleet 双输入（C+D）dialog 状态载体——独立 intended construction cost
+    // 输入；A/B 权威展示；D 为独立用户决策，不按 C 自动隐藏锁死（D>C 由 API 复检 + 本层提示）
+    property bool bidDialogIsFleet: false
+    property int bidDialogBaselineA: 0
+    property int bidDialogApprovedB: 0
+    property string bidDialogConstructionCost: ""
+
+    function bidDerivedGross() {
+        var c = parseInt(root.bidDialogAmount, 10)
+        var d = parseInt(root.bidDialogConstructionCost, 10)
+        if (isNaN(c) || isNaN(d)) return null
+        return c - d
+    }
+
+    function bidDerivedRate() {
+        var c = parseInt(root.bidDialogAmount, 10)
+        var d = parseInt(root.bidDialogConstructionCost, 10)
+        if (isNaN(c) || c <= 0 || isNaN(d)) return null
+        return (c - d) / c
+    }
 
     // WP-E F5：viewer 对指定 figure 是否已有 pending 认购请求（可追踪，017-04）
     function viewerHasLandPending(figureId) {
@@ -154,20 +174,30 @@ Rectangle {
         root.callAndReport(sessionStore.doBuyLand(root.landDialogFigureId, amount))
     }
 
-    // WP-E R4（D-07）：竞标 Dialog 开/关 + 权威提交（复用 doPlaceBid 权威链）
-    function openBidDialog(contractId, contractName, baseCost) {
+    // WP-E R4（D-07）：竞标 Dialog 开/关 + 权威提交（复用 doPlaceBid/doPlaceFleetBid 权威链）
+    function openBidDialog(contractId, contractName, baseCost, isFleet, baselineA, approvedB) {
         var opts = root.equesBidOptions()
         root.bidDialogContractId = contractId
         root.bidDialogContractName = contractName
         root.bidDialogFigureId = opts.length > 0 ? opts[0].id : 0
         root.bidDialogFigureName = opts.length > 0 ? opts[0].label : ""
+        // R3-G-03（§3.5）：Fleet 出价默认 C=approved budget（bid ceiling）；建造成本 D 为独立
+        // 输入（不静默用默认 rate 代替成本输入——GUI 不得隐藏 D 决策）
+        root.bidDialogIsFleet = !!isFleet
+        root.bidDialogBaselineA = baselineA || 0
+        root.bidDialogApprovedB = approvedB || 0
         root.bidDialogAmount = String(baseCost)
+        root.bidDialogConstructionCost = ""
         if (bidActorCombo) {
             bidActorCombo.currentIndex = 0
         }
         bidDialog.open()
-        bidAmountField.forceActiveFocus()
-        bidAmountField.selectAll()
+        if (isFleet && costAmountField) {
+            costAmountField.forceActiveFocus()
+        } else if (bidAmountField) {
+            bidAmountField.forceActiveFocus()
+            bidAmountField.selectAll()
+        }
     }
 
     function confirmBidDialog() {
@@ -178,6 +208,22 @@ Rectangle {
         var amount = parseInt(root.bidDialogAmount, 10)
         if (isNaN(amount) || amount <= 0) {
             showFeedback("error", "请输入有效的出价金额。")
+            return
+        }
+        if (root.bidDialogIsFleet) {
+            var cost = parseInt(root.bidDialogConstructionCost, 10)
+            if (isNaN(cost) || cost < 0) {
+                showFeedback("error", "请输入有效的建造成本（非负整数）。")
+                return
+            }
+            if (cost > amount) {
+                // 提示用户调整，不静默改变其 D 决策（§3.5）
+                showFeedback("error", "建造成本不得高于出价金额（无授权亏本竞标）。")
+                return
+            }
+            bidDialog.close()
+            root.callAndReport(sessionStore.doPlaceFleetBid(
+                        root.bidDialogFigureId, root.bidDialogContractId, amount, cost))
             return
         }
         bidDialog.close()
@@ -731,6 +777,11 @@ Rectangle {
                                     value: {
                                         var bid = root.viewerBidForContract(modelData.id)
                                         if (bid) {
+                                            // R3-G-03（§3.5）：pending 回显 API 的 D/profit（非本地假算）
+                                            if (bid.construction_cost !== undefined && bid.construction_cost !== null) {
+                                                return "已出价 " + bid.amount + " T（成本 " + bid.construction_cost
+                                                    + "，毛利 " + bid.gross_profit + "，待结算）"
+                                            }
                                             return "已出价 " + bid.amount + " T（待结算）"
                                         }
                                         if (modelData.can_bid && root.equesBidOptions().length > 0) {
@@ -745,7 +796,9 @@ Rectangle {
                                     enabledAction: root.marketUnlocked && modelData.can_bid && sessionStore.canExecuteForum
                                         && root.equesBidOptions().length > 0
                                         && !root.viewerBidForContract(modelData.id)
-                                    onTriggered: root.openBidDialog(modelData.id, modelData.name, modelData.base_cost)
+                                    onTriggered: root.openBidDialog(modelData.id, modelData.name,
+                                        modelData.base_cost, modelData.is_fleet_construction,
+                                        modelData.baseline_construction_cost, modelData.approved_budget)
                                 }
                             }
 
@@ -1181,6 +1234,45 @@ Rectangle {
                 }
             }
 
+            // R3-G-03（§3.5）：Fleet 四权威展示（A baseline / B approved / C amount / D cost + 派生）
+            ColumnLayout {
+                visible: root.bidDialogIsFleet
+                Layout.fillWidth: true
+                spacing: 4
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: "基线 A"; color: "#766652"; font.pixelSize: 11; Layout.fillWidth: true }
+                    Text { text: root.bidDialogBaselineA; color: "#2E251B"; font.pixelSize: 11; font.bold: true }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: "批准预算 B（上限）"; color: "#766652"; font.pixelSize: 11; Layout.fillWidth: true }
+                    Text { text: root.bidDialogApprovedB; color: "#2E251B"; font.pixelSize: 11; font.bold: true }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: "毛利润 C−D"; color: "#766652"; font.pixelSize: 11; Layout.fillWidth: true }
+                    Text {
+                        text: root.bidDerivedGross() === null ? "—" : root.bidDerivedGross()
+                        color: root.bidDerivedGross() !== null && root.bidDerivedGross() < 0 ? "#9A2D0A" : "#2E251B"
+                        font.pixelSize: 11
+                        font.bold: true
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: "利润率 (C−D)/C"; color: "#766652"; font.pixelSize: 11; Layout.fillWidth: true }
+                    Text {
+                        text: root.bidDerivedRate() === null ? "—" : (root.bidDerivedRate() * 100).toFixed(1) + "%"
+                        color: "#2E251B"
+                        font.pixelSize: 11
+                        font.bold: true
+                    }
+                }
+                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#D9C29B" }
+            }
+
             Text { text: "输入出价金额:"; color: "#766652"; font.pixelSize: 12 }
 
             TextField {
@@ -1196,6 +1288,29 @@ Rectangle {
                 Keys.onEnterPressed: root.confirmBidDialog()
             }
 
+            // R3-G-03（§3.5）：Fleet intended construction cost（D authority）独立输入——
+            // 不按 C 自动隐藏锁死 D；C 修改后若 D>C 提示调整（API 仍复检，双保险）
+            ColumnLayout {
+                visible: root.bidDialogIsFleet
+                Layout.fillWidth: true
+                spacing: 6
+
+                Text { text: "建造成本（D）:"; color: "#766652"; font.pixelSize: 12 }
+
+                TextField {
+                    id: costAmountField
+                    objectName: "costAmountField"
+                    Layout.fillWidth: true
+                    text: root.bidDialogConstructionCost
+                    selectByMouse: true
+                    inputMethodHints: Qt.ImhDigitsOnly
+                    validator: IntValidator { bottom: 0; top: 99999 }
+                    onTextChanged: root.bidDialogConstructionCost = text
+                    Keys.onReturnPressed: root.confirmBidDialog()
+                    Keys.onEnterPressed: root.confirmBidDialog()
+                }
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 Layout.topMargin: 4
@@ -1206,6 +1321,7 @@ Rectangle {
                     text: "确认"
                     highlighted: true
                     enabled: root.bidDialogAmount.length > 0
+                        && (!root.bidDialogIsFleet || root.bidDialogConstructionCost.length > 0)
                     onClicked: root.confirmBidDialog()
                 }
 

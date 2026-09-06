@@ -87,13 +87,33 @@ class TestGaIdempotency(unittest.TestCase):
         self.assertEqual(war.status, WarStatus.ACTIVE)
 
     def test_human_api_reentry(self):
-        """A1 幂等：human takeover_war 第二次 → 拒绝；direct_actions 仅 1 条。"""
+        """A1 幂等：human takeover_war 第二次 → 拒绝；权威 direct_actions 副本仅 1 份。
+
+        R3-G-01 §1.2/#7 + §1.5 supersession（Plan §4.2 L6，2026-09-05）：takeover 成功后驱动
+        empty-settle 收敛 → pending direct_actions 清空并移入 senate phase_result
+        （public_announcement.direct_actions 权威副本恰 1 份）；断言源由 pending 改为权威副本，
+        保留原 negative 语义（重复 takeover 拒绝零新增）。
+        """
         war = self._make_truce_war(war_id="w_api")
         first = senate_api.takeover_war(self.state, "player1", war.id, reinforcement_n=1)
         self.assertTrue(first["success"])
+        self.assertIs(first["data"]["takeover_applied"], True)
+        self.assertIs(first["data"]["senate_converged"], True)  # 无提案 → 空结算收敛
+        # 权威副本：phase_result.public_announcement.direct_actions 恰 1 份
+        result = self.state.get_phase_result("senate")
+        copy = result["data"]["public_announcement"]["direct_actions"]
+        self.assertEqual(len(copy), 1)
+        self.assertEqual(copy[0]["action_type"], "takeover")
+        self.assertEqual(copy[0]["war_id"], war.id)
+        # pending 载体已随收敛清空（不双份）
+        self.assertEqual(self.state.get_senate_direct_actions(), [])
+
         second = senate_api.takeover_war(self.state, "player1", war.id, reinforcement_n=1)
         self.assertFalse(second["success"])
-        self.assertEqual(len(self.state.get_senate_direct_actions()), 1)
+        # 重复拒绝零新增（权威副本仍 1 份）
+        result2 = self.state.get_phase_result("senate")
+        self.assertEqual(len(result2["data"]["public_announcement"]["direct_actions"]), 1)
+        self.assertEqual(len(self.state.get_senate_direct_actions()), 0)
 
     def test_ai_reentry_skips_already_commanded(self):
         """AI 路径：已接管战争（ACTIVE+valid commander）不再被重复接管。"""

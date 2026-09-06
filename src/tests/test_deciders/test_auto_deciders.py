@@ -187,11 +187,17 @@ class TestAutoBidDecider:
         assert r == 0.15
 
     def test_decide_fleet_bid(self, test_state):
-        """舰队建造合同出价"""
+        """舰队建造合同出价。
+
+        R3-G-03 §3.4 supersession（2026-09-05）：bid ceiling = Senate B（approved_budget）——
+        stale total_budget（A）不再作 ceiling；两次独立 draw（bid_discount 定 C、profit_rate 第
+        二次 uniform）；patch 同值 0.12 → C=int(80×0.88)=70 且 rate=0.12（原 3 元接口保持）。
+        """
         contract = MagicMock(spec=Contract)
         contract.id = 3
         contract.base_cost = 80
         contract.total_budget = 80
+        contract.approved_budget = 80  # R3：Senate B（approved）为 bid ceiling
         knights = [MagicMock(spec=Figure)]
         knights[0].id = 100
         knights[0].name = "Knight100"         # 添加 name

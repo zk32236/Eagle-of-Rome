@@ -591,6 +591,54 @@ Rectangle {
             }
         }
 
+        // R3-G-01（SA-Design-WP-G-R3 v1.2 §1.5，FROZEN）：settlement-pending 恢复动作（条件、只反馈）。
+        // takeover canonical mutation 已成功但空结算失败/未收敛 → DTO senate_settlement_pending/
+        // can_resolve_settlement 为 true 时暴露唯一结算入口（结算-only，零 takeover 重放）。
+        // 不加本地完成 authority——业务收敛在 senate_api/Store（R3-02）。
+        Rectangle {
+            visible: sessionStore.senateSettlementPending && sessionStore.canResolveSenateSettlement
+            Layout.fillWidth: true
+            Layout.preferredHeight: 52
+            Layout.minimumHeight: 46
+            Layout.maximumHeight: 60
+            radius: 6
+            color: "#FDF3E0"
+            border.color: "#E6A542"
+            border.width: 1
+            RowLayout {
+                anchors.fill: parent
+                anchors.margins: 8
+                spacing: 8
+                Text {
+                    text: "\u2696\ufe0f \u5143\u8001\u9662\u7ed3\u7b97\u672a\u5b8c\u6210\uff1a\u6218\u4e89\u63a5\u7ba1\u5df2\u751f\u6548\uff0c\u6b63\u5728\u7b49\u5f85\u5b8c\u6210\u7a7a\u7ed3\u7b97\u3002"
+                    color: "#9A2D0A"
+                    font.pixelSize: 11
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                }
+                Rectangle {
+                    Layout.preferredWidth: 92
+                    Layout.preferredHeight: 26
+                    radius: 4
+                    enabled: sessionStore.canResolveSenateSettlement
+                    opacity: enabled ? 1.0 : 0.45
+                    color: "#D9AA52"
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u5b8c\u6210\u7ed3\u7b97"
+                        color: "#2C1E12"
+                        font.pixelSize: 11
+                        font.bold: true
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: parent.enabled
+                        onClicked: sessionStore.doResolveSenateSettlement()
+                    }
+                }
+            }
+        }
+
         RowLayout {
             Layout.fillWidth: true
             Layout.preferredHeight: sessionStore.senateCurrentStep === "results" ? 200 : 460

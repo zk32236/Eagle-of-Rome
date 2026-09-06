@@ -702,6 +702,12 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         continue_options = _build_continue_options(state)
         can_takeover = actionable and bool(takeover_options) and viewer_has_consul
         can_continue = actionable and bool(continue_options) and viewer_has_consul
+        # R3-G-01（设计 §1.5，FROZEN）：单一权威判定复用（DTO 并列态 takeover_required 同源），
+        # can_advance 必须以真实 phase_result 为权威——禁拿 current_step=="results" 冒充阶段完成
+        # （decision_complete+无提案可投影 results 而无真实 result，见 §1.1/§1.5）。
+        takeover_required = _resolve_takeover_required(state)
+        has_real_senate_result = bool(senate_result)
+        senate_settlement_pending = (current_step == "results") and not has_real_senate_result
 
         data = {
             "phase_id": "senate",
@@ -725,7 +731,13 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "can_auto_veto": actionable and current_step == "tribune_veto" and veto_control["mode"] == "AI",
             "viewer_has_tribune": viewer_has_tribune,
             "can_resolve": actionable and current_step == "tribune_veto",
-            "can_advance": current_step == "results",
+            # R3-G-01 §1.5 冻结公式：can_advance = (current_step=="results") and
+            # has_real_senate_result and not takeover_required.required
+            "can_advance": (current_step == "results") and has_real_senate_result
+                           and not takeover_required.get("required", False),
+            # R3-G-01 §1.5：settlement-pending 可见恢复态（DTO 字段 + 恢复动作位）
+            "senate_settlement_pending": senate_settlement_pending,
+            "can_resolve_settlement": senate_settlement_pending,
             # AU-R2-2b provenance（AC-R2-11 observability，D-2：authority_reason 为 JSON dict）
             "proposal_control_mode": proposal_control["mode"],
             "veto_control_mode": veto_control["mode"],
@@ -756,7 +768,7 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             # R1-G-05（WP-G-R1 v1.6 §2.5，S4）：并列权威态 takeover_required（per-war
             # required rows）——commanderless ACTIVE 强制接管 Core truth；can_takeover /
             # takeover_options 保持既有可选动作语义不变。
-            "takeover_required": _resolve_takeover_required(state),
+            "takeover_required": takeover_required,
             "continue_options": continue_options,
             "can_continue": can_continue,
             "war_threats": war_threats,
@@ -961,6 +973,12 @@ def takeover_war(state: GameState, player_id: str, war_id: str, reinforcement_n:
         "previous_status": previous_status,
         "resulting_status": resulting_status,
     })
+    # R3-G-01（设计 §1.2 #2/#3，FROZEN）：仅 canonical mutation 成功且 provenance 已记录后，
+    # 将当前会期决策标记完成（直接动作 = 合法当次决策完成）；随后经 _converge_after_takeover
+    # 驱动 Senate 真实收敛（无提案/无 required → 恰一次空结算落真实 phase_result），
+    # 不拿 DTO current_step 冒充阶段完成。
+    state.senate_proposal_decision_complete = True
+    convergence = _converge_after_takeover(state)
     return api_response(
         True,
         "接管战争成功",
@@ -969,8 +987,65 @@ def takeover_war(state: GameState, player_id: str, war_id: str, reinforcement_n:
             "commander_id": consul_figure.id,
             "legions": list(getattr(war, "legion_numbers", []) or []),
             "reinforcement_n": reinforcement_n,
+            # R3-G-01 §1.2 #7：结果区分 takeover_applied 与后续收敛态——空结算失败时
+            # 不得反馈成 Takeover 未执行而诱导重复 mutation（恢复链见 §1.5）。
+            "takeover_applied": True,
+            "senate_converged": convergence["senate_converged"],
+            "senate_settlement_pending": convergence["senate_settlement_pending"],
         },
     )
+
+
+def _converge_after_takeover(state: GameState) -> Dict[str, Any]:
+    """R3-G-01 Senate 收敛 helper（设计 §1.2 #3-5 + §1.5，FROZEN）。
+
+    仅由 takeover_war 成功路径调用（不成为 War mutation owner——唯一 mutation owner 仍是
+    PoliticalSystem.execute_war_takeover_direct，R3-03）。按序判定：
+      1. live takeover_required.required==True → 不执行 Senate final settlement、不允许
+         advance（reason=takeover_required；下一次合法 Takeover 仍可执行）；
+      2. 仍有 submitted proposals → 只让既有 vote/veto 流继续，不自动通过/清空、不调用
+         空结算（reason=proposals_pending）；
+      3. 已存在成功 senate phase_result → 幂等 no-op（reason=already_resolved）；
+      4. 否则调用既有 resolve_senate(state) 恰一次空结算（canonical；reason=settled）；
+         空结算失败 → 返回失败且不写任何 phase_result（reason=settlement_failed，
+         settlement-pending 保持，见 §1.5）。
+    """
+    takeover_required = _resolve_takeover_required(state)
+    if takeover_required.get("required"):
+        return {
+            "senate_converged": False, "senate_settlement_pending": True,
+            "takeover_required": takeover_required, "reason": "takeover_required",
+            "settlement": None,
+        }
+    if state.get_senate_proposals():
+        return {
+            "senate_converged": False, "senate_settlement_pending": False,
+            "takeover_required": takeover_required, "reason": "proposals_pending",
+            "settlement": None,
+        }
+    if state.get_phase_result("senate"):
+        return {
+            "senate_converged": True, "senate_settlement_pending": False,
+            "takeover_required": takeover_required, "reason": "already_resolved",
+            "settlement": None,
+        }
+    settlement = resolve_senate(state)
+    if not settlement.get("success"):
+        state.log_event(
+            "战争接管后空结算失败: settlement-pending（不写 phase_result，恢复入口可重试结算）",
+            level=logging.WARNING,
+            extra={"reason": "settlement_failed", "message": settlement.get("message", "")},
+        )
+        return {
+            "senate_converged": False, "senate_settlement_pending": True,
+            "takeover_required": takeover_required, "reason": "settlement_failed",
+            "settlement": settlement,
+        }
+    return {
+        "senate_converged": True, "senate_settlement_pending": False,
+        "takeover_required": takeover_required, "reason": "settled",
+        "settlement": settlement,
+    }
 
 
 def continue_war(state: GameState, player_id: str, war_id: str, reinforcement_n: Optional[int] = None) -> dict:
@@ -1407,6 +1482,15 @@ def advance_senate_phase(state: GameState, player_id: str) -> dict:
     # Guard: prevents double-advance if phase already marked executed
     if state.is_phase_executed("senate"):
         return api_response(False, "Senate phase already executed")
+    # R3-G-01（设计 §1.2 #5 / §1.5，FROZEN）：mark executed 前复检 live takeover_required
+    # （旧 result/cache、votes 已完、空批 decision 均不得在 required 未清时开启 advance）。
+    takeover_required = _resolve_takeover_required(state)
+    if takeover_required.get("required"):
+        return api_response(
+            False,
+            "存在未完成的强制战争接管（执政官须先完成接管），暂不能推进阶段",
+            data={"takeover_required": takeover_required, "advance_guard": "takeover_required"},
+        )
     if not state.get_phase_result("senate"):
         return api_response(False, "Senate result is not ready")
     state.mark_phase_executed("senate")
@@ -1454,9 +1538,34 @@ def resolve_senate(
     AU-R1-05a（C1，D-1 采纳）：takeover_decider 参数已移除——resolve_senate 零 takeover
     mutation（不再隐藏 process_war_takeover）；AI 自动接管唯一触发点 = auto_submit_proposals
     尾部（execute_ai_takeover_direct_action，Direct Action 语义）。
+
+    R3-G-01（设计 §1.2 #5 / §1.5，FROZEN）：WP-G mandatory Takeover 专用门——任何结算
+    mutation 前复检 live takeover_required；required=True → 结构化 takeover_required 拒绝
+    （不结算、不写 phase_result、不安排总督/舰队副作用）。已存在成功 phase_result → 幂等
+    no-op success（不重复结算/不二次安排副作用）。失败路径从不持久化 phase_result 冒充成功。
     """
     if not state:
         return api_response(False, "无效的游戏状态")
+    takeover_required = _resolve_takeover_required(state)
+    if takeover_required.get("required"):
+        state.log_event(
+            "元老院结算拒绝: 存在未完成的强制战争接管（不结算不写 phase_result）",
+            level=logging.WARNING,
+            extra={"reason": "takeover_required", "rows": takeover_required.get("rows", [])},
+        )
+        return api_response(
+            False,
+            "存在未完成的强制战争接管（执政官须先完成接管），暂不能结算元老院",
+            data={"takeover_required": takeover_required, "settlement_guard": "takeover_required"},
+        )
+    existing_result = state.get_phase_result("senate")
+    if existing_result:
+        # §1.5 幂等 no-op：已存在成功 phase_result → 不重复结算、不二次安排副作用
+        return api_response(
+            True,
+            "元老院结果已记录（幂等 no-op）",
+            data=existing_result.get("data", {}) if isinstance(existing_result, dict) else {},
+        )
     result = _political_system(state).resolve_senate(vote_decider)
 
     # Add DBUG logging for land proposal resolution results

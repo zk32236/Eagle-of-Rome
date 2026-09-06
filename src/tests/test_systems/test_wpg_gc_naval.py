@@ -302,22 +302,30 @@ def test_tgc07_sea_control_skips_future_naval_battle(naval_state):
 # T-GC-08 — 同战 deficit：存活 1 艘战力 4、target 10、base 3 → 补 ceil(6/3)=2（S10 / G1-11）
 # ════════════════════════════════════════════════════════════════════════
 def test_tgc08_replacement_by_same_war_deficit():
-    """补充合同 = ceil(deficit/base)；AVAILABLE 存活舰队不再全局阻断（§11.11 修复）"""
+    """补充合同 = ceil(deficit/nominal)；AVAILABLE 存活舰队不再全局阻断（§11.11 修复）。
+
+    R3-G-04 §4.3 supersession（2026-09-05）：replacement 以 **nominal** 计 usable（禁
+    get_combat_strength/martial/experience——R3-07：experience 是 combat modifier 不是容量）；
+    本 fixture 存活 1 艘 trireme（nominal 3，experience 1 不计）→ deficit 10-3=7 →
+    ceil(7/3)=3 艘（旧 effective=4 → 2 艘的 authority 被 R3 §4.3 取代）。
+    """
     state, war, _ = _build_state(enemy_naval=10, n_fleets=0)
     ns = state.naval_system
-    # 存活 1 艘：战力 4（base 3 + 经验 1），专属 war（_target_war_id），AVAILABLE staging
+    # 存活 1 艘：nominal 3（base 3 + 经验 1——经验仅 modifier，不计 nominal 容量），
+    # 专属 war（_target_war_id），AVAILABLE staging
     fleet = Fleet(number=1, fleet_type="trireme")
     fleet._strength_base = 3
+    fleet._nominal_strength_base = 3
     fleet._experience = 1
     fleet._target_war_id = war.id
     fleet._status = FleetStatus.AVAILABLE
     ns._fleets[1] = fleet
 
     contracts = ns.generate_replacement_contracts(current_turn=10)
-    # 旧偏差：get_available_fleets() 非空 → 返回 []；冻结语义：deficit 10-4=6 → ceil(6/3)=2
+    # 旧偏差：get_available_fleets() 非空 → 返回 []；冻结语义（R3 nominal）：deficit 10-3=7 → ceil(7/3)=3
     assert len(contracts) == 1
     comp = contracts[0].recommended_fleet_composition
-    assert comp == [{"type": "trireme", "count": 2}]
+    assert comp == [{"type": "trireme", "count": 3}]
 
 
 # ════════════════════════════════════════════════════════════════════════

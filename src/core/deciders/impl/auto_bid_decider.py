@@ -118,19 +118,29 @@ class AutoBidDecider(BidDecider):
             )
             return None
         knight = random.choice(knights)
-        total_budget = getattr(contract, 'total_budget', contract.base_cost)
-        r = random.uniform(0.05, 0.20)
-        amount = int(total_budget * (1 - r))
+        # R3-G-03（§3.4，FROZEN）：bid ceiling = Senate B（approved_budget；legacy BUDGETED
+        # fallback = base_cost，§3.2）；stale total_budget（A）不被读作 ceiling（R3-09）。
+        approved_budget = contract.approved_budget
+        if approved_budget is None:
+            approved_budget = getattr(contract, "base_cost", 0) or 0
+        # 两次独立 draw（R3-10）：bid_discount 定 C；profit_rate 第二次独立 uniform——不复用
+        # bid_discount（旧单一 r 双驱动缺陷）。边际范围/整数截断/Eques 选择保持（R3-11 零重平衡）。
+        bid_discount = random.uniform(0.05, 0.20)
+        amount = int(approved_budget * (1 - bid_discount))
+        profit_rate = random.uniform(0.05, 0.20)
         extra.update({
             "knight_id": knight.id,
             "knight_name": knight.name,
             "amount": amount,
-            "rate": r,
+            "rate": profit_rate,
+            "discount": bid_discount,
+            "approved_budget": approved_budget,
             "result": "bid"
         })
         state.log_event(
-            f"[DEBUG] {self.__class__.__name__}.decide_fleet_bid: 舰队合同 {contract.id} 骑士 {knight.name} 出价 {amount} 折扣 {r:.0%}",
+            f"[DEBUG] {self.__class__.__name__}.decide_fleet_bid: 舰队合同 {contract.id} 骑士 {knight.name} "
+            f"出价 {amount} 折扣 {bid_discount:.0%} 利润率 {profit_rate:.0%}（B={approved_budget}）",
             level=logging.DEBUG,
             extra=extra
         )
-        return knight, amount, r
+        return knight, amount, profit_rate

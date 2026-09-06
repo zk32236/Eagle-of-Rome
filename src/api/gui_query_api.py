@@ -257,12 +257,20 @@ def _war_summary(state: GameState, war, status: str) -> Dict[str, Any]:
     # assign_fleet_to_war 从不递增）弃用为 read 源（正式移除列 backlog）；
     # `fleets_assigned` 保留为兼容 alias。
     assigned_fleet_count = 0
+    fleet_read_model: Dict[str, Any] = {
+        "assigned_fleet_ids": [],
+        "fleet_nominal_strength": 0,
+        "fleet_quality_adjusted_base": 0,
+        "fleet_experience_bonus": 0,
+        "fleet_commander_bonus": 0,
+        "fleet_effective_combat_strength": 0,
+        "fleet_strength_packages": [],
+    }
     ns = getattr(state, "naval_system", None)
     if ns is not None:
-        for fid in (getattr(war, "_assigned_fleet_ids", None) or []):
-            fleet = ns.get_fleet(fid)
-            if fleet is not None and fleet.status == FleetStatus.ON_MISSION:
-                assigned_fleet_count += 1
+        # R3-G-04（§4.5）：与 combat_api._war_card 同源单一实现
+        fleet_read_model = ns.get_war_fleet_strength_read_model(war)
+    assigned_fleet_count = len(fleet_read_model["assigned_fleet_ids"])
     naval_ready = assigned_fleet_count >= 1
     return {
         "id": war.id,
@@ -276,6 +284,14 @@ def _war_summary(state: GameState, war, status: str) -> Dict[str, Any]:
         "assigned_fleet_count": assigned_fleet_count,
         "fleets_assigned": assigned_fleet_count,
         "naval_ready": naval_ready,
+        # R3-G-04（§4.5）：strength 分层读模型字段（同源）
+        "assigned_fleet_ids": fleet_read_model["assigned_fleet_ids"],
+        "fleet_nominal_strength": fleet_read_model["fleet_nominal_strength"],
+        "fleet_quality_adjusted_base": fleet_read_model["fleet_quality_adjusted_base"],
+        "fleet_experience_bonus": fleet_read_model["fleet_experience_bonus"],
+        "fleet_commander_bonus": fleet_read_model["fleet_commander_bonus"],
+        "fleet_effective_combat_strength": fleet_read_model["fleet_effective_combat_strength"],
+        "fleet_strength_packages": fleet_read_model["fleet_strength_packages"],
     }
 
 

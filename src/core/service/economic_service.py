@@ -303,12 +303,48 @@ class EconomicService:
                 "success": success, "message": msg}
 
     def apply_naval_maintenance(self) -> Dict[str, Any]:
+        """舰队维护费结算 DTO（R3-G-02 设计 §2.3，FROZEN）。
+
+        与 military DTO 对齐（charged = service 局部调用前 treasury − 调用后 treasury，
+        唯一实扣真值）；全部字段：available/total/charged/shortfall/initial_shortfall/
+        unpaid/disbanded/disbanded_fleet_ids/fleet_costs/required_after_disband/
+        treasury_before/treasury_after/success/message（naval system absent 亦返回完整
+        零值 shape）。naval_maintenance 事件与每舰退役事件由 NavalSystem.apply_maintenance
+        产生（type=naval_maintenance / naval_fleet_disbanded，reason=treasury_shortfall）。
+        """
+        empty_shape = {
+            "available": False, "total": 0, "charged": 0, "shortfall": 0,
+            "initial_shortfall": 0, "unpaid": 0, "disbanded": 0,
+            "disbanded_fleet_ids": [], "fleet_costs": [], "required_after_disband": 0,
+            "treasury_before": 0, "treasury_after": 0,
+            "success": True, "message": "",
+        }
         naval_system = getattr(self.state, "naval_system", None)
         if not naval_system:
-            return {"available": False, "total": 0, "success": True, "message": "警告：naval_system 为 None，跳过舰队维护费"}
-        total = naval_system.calculate_maintenance() if hasattr(naval_system, "calculate_maintenance") else 0
+            empty_shape["message"] = "警告：naval_system 为 None，跳过舰队维护费"
+            return empty_shape
+        before = self.state.treasury
         success, msg = naval_system.apply_maintenance()
-        return {"available": True, "total": total, "success": success, "message": msg}
+        after = self.state.treasury
+        charged = before - after
+        summary = getattr(naval_system, "_last_naval_maintenance", {}) or {}
+        return {
+            "available": True,
+            "total": summary.get("total", 0),
+            "charged": charged,
+            # 与 military DTO 同义（设计 §2.3 冻结措辞）
+            "shortfall": max(0, charged - before),
+            "initial_shortfall": summary.get("initial_shortfall", max(0, summary.get("total", 0) - max(before, 0))),
+            "unpaid": summary.get("unpaid", 0),
+            "disbanded": summary.get("disbanded", getattr(naval_system, "_last_maintenance_disbanded", 0)),
+            "disbanded_fleet_ids": summary.get("disbanded_fleet_ids", []),
+            "fleet_costs": summary.get("fleet_costs", []),
+            "required_after_disband": summary.get("required_after_disband", 0),
+            "treasury_before": before,
+            "treasury_after": after,
+            "success": success,
+            "message": msg,
+        }
 
     def apply_faction_income(
             self,
@@ -419,7 +455,19 @@ class EconomicService:
             return {}
 
         payment = contract.base_cost - contract.total_spent if contract.remaining_years == 1 else contract.annual_income
-        cost = contract.annual_cost
+        if contract.is_fleet_construction:
+            # R3-G-03（§3.6，FROZEN）：Fleet 末期成本尾差归并——总成本 D 守恒：
+            # 前 N-1 期付 annual_cost = D//N，末期（remaining_years==1）成本 =
+            # D - (N-1)*annual_cost（payment 继续既有 C-total_spent 末期算法，总款 C 守恒）。
+            # N==1 时尾差 = D（annual_cost=D//1 同值）。legacy D 缺省（None）→ 保持 annual_cost。
+            d_total = contract._actual_cost
+            n_total = contract.construction_years or contract.duration_years
+            if contract.remaining_years == 1 and d_total is not None and n_total and n_total >= 1:
+                cost = d_total - (n_total - 1) * contract.annual_cost
+            else:
+                cost = contract.annual_cost
+        else:
+            cost = contract.annual_cost
         profit_float = float(payment - cost)
         tax_float = profit_float * tax_rate if profit_float > 0 else 0.0
         tax_int = int(round(tax_float))

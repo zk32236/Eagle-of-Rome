@@ -17,6 +17,18 @@ class AutoFleetDisbandDecider(FleetDisbandDecider):
         if not war_system:
             return False
 
+        # R3-G-02（设计 §2.4 锚点，FROZEN）：多战退役窄修——对有 `_target_war_id` 且该
+        # target 已 RESOLVED 的 released AVAILABLE survivor，在 Population 决策先返回退役；
+        # 否则 A 舰会被仍 ACTIVE 的 B 战保留（既有全局「任何战争需海军即阻止退休」），
+        # 既违反 next Population 退休又不允许跨战复用（R-12 单战专属），舰队将永久滞留
+        # AVAILABLE 持续计费。不扩大到 missing target / 所有 TRUCE 的新处置。
+        # （getattr 防御：autospec mock / legacy 舰队无 _target_war_id → None → 既有决策）
+        target_war_id = getattr(fleet, "_target_war_id", None)
+        if fleet.status == FleetStatus.AVAILABLE and target_war_id is not None:
+            target_war = war_system.get_war_by_id(target_war_id)
+            if target_war is not None and getattr(target_war, "status", None) == WarStatus.RESOLVED:
+                return True
+
         # 定义判断战争是否需要海战的内部函数
         def war_needs_naval(war):
             if not war.naval_required:

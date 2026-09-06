@@ -232,15 +232,22 @@ def test_tgc18_no_mark_destroyed_for_admin_retirement_residual():
 
 
 def test_tgc18_no_global_available_fleet_block_residual():
-    """补充合同无「任一全局可用舰队即阻断所有战争」残留（§11.11/G1-11）"""
+    """补充合同无「任一全局可用舰队即阻断所有战争」残留（§11.11/G1-11）。
+
+    R3-G-04 §4.3 supersession（2026-09-05）：nominal 四要素权威（usable/committed_building/
+    committed_pending 全 nominal；fleet_nominal 快照优先）；禁 get_combat_strength 作
+    replacement 源（R3-06/R3-07）。source-shape 断言随 R3 实现更新（sum 推导 → 逐舰 nominal
+    循环 + fleet_nominal()），核心不变：无 blanket guard、deficit 四要素、ceil 公式。
+    """
     naval = _read_source("src/core/systems/naval_system.py")
     repl_fn = naval.split("def generate_replacement_contracts")[1].split("\n    # ---------- 序列化")[0]
     assert "if self.get_available_fleets():" not in repl_fn
-    # 冻结公式（v1.6 §2.4 R1-G-04）：权威 deficit = required - usable - committed
-    # （committed = committed_building + committed_pending，四要素去重模型）。B2 将
-    # 旧「deficit = enemy_strength - existing」单要素重写为四要素；本断言对齐新冻结
-    # 语义（非规则变更，GAME_RULE_CHANGE=NO），旧 blanket-guard 行为断言随 R1-G-04 移除。
+    # 冻结公式（R3 §4.3 nominal）：权威 deficit = required - usable - building - pending
     assert "deficit = enemy_strength - usable - committed_building - committed_pending" in repl_fn
-    assert "committed_building = sum(" in repl_fn
-    assert "committed_pending = sum(" in repl_fn
+    assert "usable += n" in repl_fn
+    assert "committed_building += n" in repl_fn
+    assert "committed_pending += self._fleet_contract_nominal_strength" in repl_fn or \
+        "committed_pending += _fleet_contract_nominal_strength" in repl_fn
     assert "needed_ships = max(1, (deficit + base_strength - 1) // base_strength)" in repl_fn
+    # R3：禁 effective 作 replacement 源（replacement 内无任何 get_combat_strength 调用）
+    assert ".get_combat_strength(" not in repl_fn

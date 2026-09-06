@@ -45,9 +45,25 @@ CLI phase_forum._generate_contracts()
 - **派生：** `senate_api._budget_range_for_contract(state, contract)` 产出 per-contract `{min, max, step, default}`；SenateStage FC-03 Slider from/to/stepSize/value 读 `budget_range`（config 缺 key → 禁用+「值域待定义」，不伪造 20-200）。
 - **谓词：** `political_system._populate_proposal` budget 分支权威拒绝（非 int / <min / >max / step 不齐）；affordability 不拦截（提交期无国库限制，决算期破产链不变）。
 
+### 3.4 Fleet 建造合同四权威流（R3-G-03，2026-09-05）
+```
+political_system.execute_passed_proposal('budget')（Fleet 分支）：冻结 A=_original_budget、写 B=_approved_budget
+  （即使未改金额）；base_cost 保持 B 投影；普通工程旧逻辑不变
+→ forum_api.place_bid（Fleet：C=amount + 显式 construction_cost=D，8 元组 pending；admission 守卫
+  C≤B / D≤C / D 非 bool 非负整数 / 新请求防重 / 显式 D 与显式 rate 冲突拒）
+→ forum_api.resolve_forum（award 复检：按 pending faction_id 分组，不重放 current-player guard；
+  失效候选过滤→最低价→平手；全失效 fail-closed 无 winner）
+→ NavalSystem.on_contract_awarded：以最终 build_time 为唯一 N 同步 _construction_years/duration/
+  remaining_years 与 annual C//N、D//N
+→ EconomicService._settle_public_works_contract：Fleet 末期成本 D−(N−1)×annual_cost；payment 走既有
+  C−total_spent 末期算法；C−D 毛利经既有 tax；普通工程/税零改
+→ Contract.to_dict/from_dict：A/B/C/D + _target_war_id/_fleet_type/_build_time
+```
+
 ## 4. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.4 | 2026-09-05 | R3-G-03 同步：Fleet 四权威流（Senate B ceiling / A 不可重写 / 8-tuple 兼容 / 独立 AI rate / C-D 结算工期尾差，DA-R3-B3） |
 | v1.3 | 2026-08-23 | GUI-BETA-R1 WP-E（Slice 11 PU-04）：`place_bid` 防重（E-G7-07）——同 (contract_id, figure_id) 已出价 → 显式拒绝「该人物已对本合同出价」（pending 恰一条，恰一次契约；双路反馈已存在） |
 | v1.2 | 2026-08-22 | GUI-BETA-R1 WP-C-R1: 预算权威值域（senate_budget config + _budget_range_for_contract + _populate_proposal 谓词 + FC-03 Slider 改接） |
 | v1.1 | 2026-07-25 | 新增工程合同生成调用链 + forum_api 引用 |

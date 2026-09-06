@@ -608,6 +608,29 @@ Rectangle {
                 Layout.topMargin: 2
             }
 
+            // R3-G-04（§4.5）：独立 naval 强度文字（nominal/effective base/有效战力）——
+            // 读 warData 分层字段（fleet_nominal_strength/fleet_quality_adjusted_base/
+            // fleet_effective_combat_strength），不复用陆战「总战力」（total_power）；
+            // V04 joined 可见断言点（同 run DTO → Store → 可见值）。
+            Text {
+                id: warCardFleetStrength
+                objectName: "warCardFleetStrength"
+                visible: !isEmptySlot && !isResolved
+                    && (warData && warData.naval_required)
+                    && (warData && warData.assigned_fleet_count > 0)
+                text: {
+                    var nom = (warData && warData.fleet_nominal_strength) || 0
+                    var base = (warData && warData.fleet_quality_adjusted_base) || 0
+                    var eff = (warData && warData.fleet_effective_combat_strength) || 0
+                    return "🌊 nominal " + nom + " / 质量基础 " + base + " / 有效战力 " + eff
+                }
+                color: "#2E251B"
+                font.pixelSize: theme.smallSize
+                Layout.leftMargin: 8
+                Layout.rightMargin: 8
+                Layout.topMargin: 2
+            }
+
             // ── AC-4.3: Resolved state — per-war result summary (result left in card) ──
             ColumnLayout {
                 visible: !isEmptySlot && isResolved

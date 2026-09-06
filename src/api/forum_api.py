@@ -61,19 +61,11 @@ def get_forum_view(state: GameState, viewer_player_id: str) -> dict:
                 if state.get_member(fig_id) is not None
                 and state.get_member(fig_id).faction_id == viewer.faction_id
             ],
-            # WP-E F6（D-07）：viewer 作用域 contract-bid 载体（7 元组第 3 位 = 派系；
+            # WP-E F6（D-07）：viewer 作用域 contract-bid 载体（7/8 元组第 3 位 = 派系；
             # 仅暴露本派系 pending；不暴露他派系/不算 winner——place_bid 权威面零改）
-            "viewer_contract_bids": [
-                {
-                    "contract_id": bid[0],
-                    "figure_id": bid[1],
-                    "amount": bid[3],
-                    "profit_rate": bid[4] if len(bid) > 4 else None,
-                    "status": "pending",
-                }
-                for bid in pending.get("contract_bids", [])
-                if len(bid) > 2 and bid[2] == viewer.faction_id
-            ],
+            # R3-G-03（§3.3）：Fleet 8 元组行增 construction_cost/gross_profit（只暴露本派系
+            # pending）；非 Fleet 旧 7 元组行保持原 schema（零改，无 D 概念）
+            "viewer_contract_bids": _viewer_contract_bid_rows(pending.get("contract_bids", []), viewer.faction_id),
             "land_allocation": result_data.get("land_allocation", [])
             if isinstance(result_data, dict)
             else [],
@@ -301,11 +293,21 @@ def recruit_figure(state: GameState, player_id: str, figure_id: int, amount: int
 
 
 def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int,
-              amount: int, profit_rate: float = None) -> dict:
+              amount: int, profit_rate: float = None, *,
+              construction_cost: Optional[int] = None) -> dict:
     """
     竞标出价：记录出价，等待公示结算。
     校验：合同状态 BUDGETED，金额>0，利润率在(0,1)，骑士身份正确。
     金额范围：包税合同金额 ≥ base_cost，工程合同金额 ≤ base_cost。
+
+    R3-G-03（设计 §3.3，FROZEN）：Fleet PUBLIC_WORKS 双输入——C = amount（Winning
+    price）+ D = construction_cost（Actual cost authority）；8 元组 pending（原 7 项尾部
+    追加 construction_cost，前 7 索引不变）。Fleet admission validation（§3.3 表）：
+    C 非 bool 正整数且 C≤B（bid ceiling = Senate approved_budget）；D 非 bool 非负整数且
+    D≤C；显式 D 与显式 rate 冲突拒（int(C×(1-rate))≠D）；新请求 (contract_id, figure_id)
+    防重。Legacy/AI explicit rate 路径（construction_cost=None）允许：两维为 C + 明确独立
+    rate，只在入队时按 int(C×(1-rate)) 确定 D；一旦入队 D 即持久，award 不再算一遍。
+    非 Fleet（tax/普通工程）行为与 7 元组存储完全不变。
     """
     ok, resp = _check_player_permission(state, player_id)
     if not ok:
@@ -317,14 +319,20 @@ def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int
         return api_response(False, i18n.get("contract_not_found", id=contract_id))
     if contract.status != ContractStatus.BUDGETED:
         return api_response(False, i18n.get("error_contract_not_auctionable"))
-    if amount <= 0:
+    # C 为非 bool 正整数（§3.3 admission；拒 NaN/Inf/string/float fractional）
+    if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
         return api_response(False, i18n.get("error_invalid_amount"))
 
-    # 利润率处理
-    if profit_rate is None:
-        profit_rate = state.get_economic_rule("default_bid_profit_rate", 0.2)
-    if profit_rate <= 0 or profit_rate >= 1:
-        return api_response(False, i18n.get("error_invalid_profit_rate"))
+    # 利润率处理：默认 rate 仅在 legacy/AI explicit-rate 路径应用（Fleet 显式 D 路径
+    # rate 缺省 = 纯 D authority，派生展示 rate——不静默用默认 rate 反算/冲突）
+    is_fleet = bool(getattr(contract, "_is_fleet_construction", False))
+    if not is_fleet or construction_cost is None:
+        if profit_rate is None:
+            profit_rate = state.get_economic_rule("default_bid_profit_rate", 0.2)
+        if not (isinstance(profit_rate, (int, float)) and not isinstance(profit_rate, bool)):
+            return api_response(False, i18n.get("error_invalid_profit_rate"))
+        if profit_rate <= 0 or profit_rate >= 1:
+            return api_response(False, i18n.get("error_invalid_profit_rate"))
 
     # 骑士校验
     player = state.get_player(player_id)
@@ -340,54 +348,95 @@ def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int
     if figure.class_tier != ClassTier.EQUES:
         return api_response(False, i18n.get("error_not_knight"))
 
-    # 金额范围校验（不再强制等式）
+    # 金额范围校验
     if contract.contract_type == ContractType.TAX_FARMING:
         if amount < contract.base_cost:
             return api_response(False, i18n.get("error_bid_too_low", min=contract.base_cost))
     elif contract.contract_type == ContractType.PUBLIC_WORKS:
-        if amount > contract.base_cost:
-            return api_response(False, i18n.get("error_bid_too_high", max=contract.base_cost))
+        if is_fleet:
+            # R3-09（设计 §3.3）：bid ceiling = Senate B（approved_budget；legacy BUDGETED
+            # fallback = base_cost）；stale total_budget（A）不被读作 ceiling
+            ceiling = contract.bid_ceiling()
+            if ceiling is None or amount > ceiling:
+                return api_response(False, i18n.get("error_bid_too_high", max=ceiling if ceiling is not None else 0))
+        else:
+            if amount > contract.base_cost:
+                return api_response(False, i18n.get("error_bid_too_high", max=contract.base_cost))
     else:
         return api_response(False, "未知的合同类型")
 
-    # 计算工期和质保期
+    # D authority（Fleet only）校验与持久化
+    fleet_construction_cost: Optional[int] = None
+    if is_fleet:
+        if construction_cost is not None:
+            if not isinstance(construction_cost, int) or isinstance(construction_cost, bool) \
+                    or construction_cost < 0:
+                return api_response(False, "无效的建造成本（须为非负整数）")
+            if construction_cost > amount:
+                # Loss-making source check（MVP0.5-03 §5.4 / §3.3 冻结）：无授权亏本竞标
+                return api_response(False, "建造成本不得高于出价金额（无授权亏本竞标）")
+            if profit_rate is not None and int(amount * (1 - profit_rate)) != construction_cost:
+                # 显式 D 与显式 rate 不一致 → 拒绝，不能静默任选一项
+                return api_response(False, "显式建造成本与利润率不一致")
+            fleet_construction_cost = construction_cost
+        else:
+            # Legacy/AI explicit rate 路径：入队时确定 D 并持久（award 不再算一遍）
+            fleet_construction_cost = int(amount * (1 - profit_rate))
+
+    # 计算工期和质保期（非 Fleet 公共工程路径不变）
     actual_construction = 0
     actual_warranty = 0
 
     if contract.contract_type == ContractType.TAX_FARMING:
-        # 包税合同：无工期/质保期
         pass
-    elif contract.contract_type == ContractType.PUBLIC_WORKS:
-        is_fleet = getattr(contract, '_is_fleet_construction', False)
-        if is_fleet:
-            actual_construction = 1
-            actual_warranty = 0
-        else:
-            original_budget = getattr(contract, '_original_budget', contract.base_cost)
-            # 实际成本 = 金额 * (1 - 利润率)
-            actual_cost = int(amount * (1 - profit_rate))
-            if actual_cost <= 0:
-                actual_cost = 1  # 避免除零
-            cost_ratio = actual_cost / original_budget if original_budget > 0 else 1.0
+    elif contract.contract_type == ContractType.PUBLIC_WORKS and not is_fleet:
+        original_budget = getattr(contract, "_original_budget", contract.base_cost)
+        # 实际成本 = 金额 * (1 - 利润率)
+        actual_cost = int(amount * (1 - profit_rate))
+        if actual_cost <= 0:
+            actual_cost = 1  # 避免除零
+        cost_ratio = actual_cost / original_budget if original_budget > 0 else 1.0
 
-            theoretical_construction = state.get_economic_rule("project_theoretical_construction", 3)
-            theoretical_warranty = state.get_economic_rule("project_theoretical_warranty", 10)
+        theoretical_construction = state.get_economic_rule("project_theoretical_construction", 3)
+        theoretical_warranty = state.get_economic_rule("project_theoretical_warranty", 10)
 
-            # 施工周期 = 理论周期 * (原始预算 / 实际成本)
-            actual_construction = int(theoretical_construction * original_budget / actual_cost)
-            actual_construction = max(1, actual_construction)
+        actual_construction = int(theoretical_construction * original_budget / actual_cost)
+        actual_construction = max(1, actual_construction)
 
-            # 质保期 = 理论质保期 * 成本比例
-            actual_warranty = int(theoretical_warranty * cost_ratio)
-            actual_warranty = max(0, actual_warranty)
+        actual_warranty = int(theoretical_warranty * cost_ratio)
+        actual_warranty = max(0, actual_warranty)
 
-    # WP-E F7（E-G7-07）：恰一次防重——同 (contract_id, figure_id) 已出价 → 显式拒绝
+    # WP-E F7（E-G7-07）：恰一次防重——同 (contract_id, figure_id) 已出价 → 显式拒绝（新请求）
     pending = state.get_forum_pending()
     for bid in pending.get("contract_bids", []):
         if len(bid) >= 2 and bid[0] == contract_id and bid[1] == figure_id:
             return api_response(False, "该人物已对本合同出价")
 
-    # 存储出价（7元组）
+    if is_fleet:
+        # 8 元组（原 7 项尾部追加 construction_cost；Fleet 工期/质保保持既有 1/0，award 以
+        # build_time 为唯一 N 同步——§3.6）。rate 存储语义：显式 rate 路径原样；显式 D 路径
+        # 为派生展示 rate（(C-D)/C，D=C 时 0.0——零毛利合法）。
+        if construction_cost is not None:
+            derived_d = construction_cost
+            if profit_rate is None:
+                rate_stored = float(amount - derived_d) / amount if amount > 0 else 0.0
+            else:
+                rate_stored = profit_rate
+        else:
+            rate_stored = profit_rate
+            derived_d = int(amount * (1 - rate_stored))
+        state.add_forum_action(
+            "contract_bids",
+            (contract_id, figure_id, faction.id, amount, rate_stored, 1, 0, derived_d)
+        )
+        gross = amount - derived_d
+        message = i18n.get("info_bid_recorded", contract_name=contract.name, amount=amount)
+        return api_response(True, message, data={
+            "contract_id": contract_id, "amount": amount, "profit_rate": rate_stored,
+            "construction_cost": derived_d, "gross_profit": gross,
+        })
+
+    # 存储出价（7 元组，非 Fleet 原样不变）
     state.add_forum_action(
         "contract_bids",
         (contract_id, figure_id, faction.id, amount, profit_rate, actual_construction, actual_warranty)
@@ -538,6 +587,7 @@ def resolve_forum(state: GameState) -> dict:
     if pending["contract_bids"]:
         bids_by_contract = {}
         for bid in pending["contract_bids"]:
+            construction_cost = None
             if len(bid) == 4:
                 contract_id, figure_id, faction_id, amount = bid
                 profit_rate = None
@@ -549,10 +599,16 @@ def resolve_forum(state: GameState) -> dict:
                 warranty_years = 0
             elif len(bid) == 7:
                 contract_id, figure_id, faction_id, amount, profit_rate, construction_years, warranty_years = bid
+            elif len(bid) == 8:
+                # R3-G-03（§3.3）：Fleet 8 元组——原 7 项尾部追加 construction_cost（D 权威，
+                # 入队时已持久；award 只固化一次、不重算）
+                (contract_id, figure_id, faction_id, amount, profit_rate,
+                 construction_years, warranty_years, construction_cost) = bid
             else:
                 continue
             bids_by_contract.setdefault(contract_id, []).append(
-                (figure_id, faction_id, amount, profit_rate, construction_years, warranty_years)
+                (figure_id, faction_id, amount, profit_rate,
+                 construction_years, warranty_years, construction_cost)
             )
 
         for contract_id, bids in bids_by_contract.items():
@@ -560,13 +616,20 @@ def resolve_forum(state: GameState) -> dict:
             if not contract:
                 results.append(f"⚠️ 合同 {contract_id} 不存在")
                 continue
+            # §3.6 award 幂等事实：live 合同必须仍 BUDGETED（未先被 award）；否则 no-op/reject，
+            # 不造第二批 Fleet、不重复付款
+            if contract.status != ContractStatus.BUDGETED:
+                results.append(
+                    f"⚠️ 合同 {contract.name} 已非待竞标态（{contract.status.value}），重复结算 no-op"
+                )
+                continue
 
             if contract.contract_type == ContractType.TAX_FARMING:
                 # 包税：价高者得
                 max_amount = max(b[2] for b in bids)
                 top_bidders = [b for b in bids if b[2] == max_amount]
                 winner = random.choice(top_bidders)
-                winner_figure, winner_faction, amount, profit_rate, _, _ = winner
+                winner_figure, winner_faction, amount, profit_rate, _, _, _ = winner
 
                 if profit_rate is None:
                     profit_rate = state.get_economic_rule("default_bid_profit_rate", 0.2)
@@ -598,50 +661,100 @@ def resolve_forum(state: GameState) -> dict:
                 )
 
             else:
-                # 工程：价低者得
-                min_amount = min(b[2] for b in bids)
-                top_bidders = [b for b in bids if b[2] == min_amount]
+                # 工程：价低者得 —— §3.6 award validation（无 player_id 多派系 batch）：
+                # ① 失效候选先过滤（figure 死亡/非 EQUES/离派系；合同 BUDGETED 已查）→
+                # ② 对剩余有效候选按最低价 → ③ 平手随机。不重放 current-player guard——
+                # 多派系在各自行动时合法入队，公示结算只有一个 current player，逐项重放
+                # 入队 guard 会拒非当前派系合法 bid（§3.6 反例）。全失效 → 无 winner、合同
+                # 保持 BUDGETED、零第二批 Fleet/付款（fail-closed，非新规则）。
+                is_fleet_contract = bool(getattr(contract, "_is_fleet_construction", False))
+                valid_bids = []
+                for (figure_id, faction_id, amount, profit_rate,
+                     construction_years, warranty_years, construction_cost) in bids:
+                    figure = state.get_member(figure_id)
+                    if not figure or figure.is_dead:
+                        results.append(f"⚠️ 合同 {contract.name} 出价人 {figure_id} 已死亡/不存在，候选过滤")
+                        continue
+                    if figure.class_tier != ClassTier.EQUES or figure.faction_id != faction_id:
+                        results.append(f"⚠️ 合同 {contract.name} 出价人 {figure_id} 非骑士/离派系，候选过滤")
+                        continue
+                    valid_bids.append({
+                        "figure_id": figure_id, "faction_id": faction_id, "amount": amount,
+                        "profit_rate": profit_rate, "construction_years": construction_years,
+                        "warranty_years": warranty_years, "construction_cost": construction_cost,
+                    })
+                if not valid_bids:
+                    results.append(
+                        f"⚠️ 合同 {contract.name} 无有效出价（全部候选失效），保持待竞标（fail-closed）"
+                    )
+                    continue
+
+                min_amount = min(b["amount"] for b in valid_bids)
+                top_bidders = [b for b in valid_bids if b["amount"] == min_amount]
                 winner = random.choice(top_bidders)
-                winner_figure, winner_faction, amount, profit_rate, construction_years, warranty_years = winner
+                winner_figure = winner["figure_id"]
+                winner_faction = winner["faction_id"]
+                amount = winner["amount"]
+                profit_rate = winner["profit_rate"]
+                construction_years = winner["construction_years"]
+                warranty_years = winner["warranty_years"]
 
                 contract.mark_winner(winner_figure, state.turn.turn_number, 0)
                 contract.awarded_faction = winner_faction
 
-                r = profit_rate
-                original_budget = getattr(contract, '_original_budget', contract.base_cost)
-                actual_cost = int(amount * (1 - r))
-                cost_ratio = actual_cost / original_budget if original_budget > 0 else 1.0
-
-                state.log_event(
-                    f"工程合同中标: {contract.name}, 中标金额={amount}, 利润率={r:.4f}, 实际成本={actual_cost}, 原始预算={original_budget}, 成本比例={cost_ratio:.4f}",
-                    level=logging.INFO,
-                    extra={
-                        "contract_id": contract.id,
-                        "actual_cost": actual_cost,
-                        "original_budget": original_budget,
-                        "cost_ratio": cost_ratio
-                    }
-                )
-
-                # 工期使用出价时计算的，质保期重新计算确保一致
-                warranty_years = int(state.get_economic_rule("project_theoretical_warranty", 10) * cost_ratio)
-                warranty_years = max(0, warranty_years)
-
-                annual_income = amount // construction_years if construction_years else amount
-                annual_cost = actual_cost // construction_years if construction_years else actual_cost
-
-                contract._annual_income = annual_income
-                contract._annual_cost = annual_cost
-                contract.remaining_years = construction_years
-                contract._construction_years = construction_years
-                contract._warranty_years = warranty_years
-                contract._warranty_remaining = warranty_years
-                contract.base_cost = amount
-
-                if getattr(contract, '_is_fleet_construction', False):
+                if is_fleet_contract:
+                    # Fleet award（§3.3/§3.6）：C = amount 固化、D = 入队持久 construction_cost
+                    # （award 不重算）；旧 4/5/7 tuple legacy 转换明确记录 provenance
+                    actual_cost = winner["construction_cost"]
+                    if actual_cost is None:
+                        rate_for_d = profit_rate if profit_rate is not None else state.get_economic_rule(
+                            "default_bid_profit_rate", 0.2)
+                        actual_cost = int(amount * (1 - rate_for_d))
+                        state.log_event(
+                            f"旧 tuple（<8 长度）Fleet bid legacy D 转换: contract={contract.id} "
+                            f"D=int({amount}×(1-{rate_for_d}))={actual_cost}",
+                            level=logging.INFO,
+                            extra={"contract_id": contract.id, "legacy_provenance": "old_tuple_cost_conversion"},
+                        )
+                    contract._contract_price = amount
                     contract._actual_cost = actual_cost
-                    contract._original_budget = original_budget
+                    contract.base_cost = amount
+                    # Fleet 无质保契约（§3.6：warranty_remaining=0 保持；不把公共工程质保重算值泄入）
+                    contract._warranty_years = 0
+                    contract._warranty_remaining = 0
                     state.naval_system.on_contract_awarded(contract, winner_figure)
+                else:
+                    # 普通工程旧逻辑（保持不变）：工期/质保按既有公式重算
+                    r = profit_rate if profit_rate is not None else state.get_economic_rule(
+                        "default_bid_profit_rate", 0.2)
+                    original_budget = getattr(contract, "_original_budget", contract.base_cost)
+                    actual_cost = int(amount * (1 - r))
+                    cost_ratio = actual_cost / original_budget if original_budget > 0 else 1.0
+
+                    state.log_event(
+                        f"工程合同中标: {contract.name}, 中标金额={amount}, 利润率={r:.4f}, 实际成本={actual_cost}, 原始预算={original_budget}, 成本比例={cost_ratio:.4f}",
+                        level=logging.INFO,
+                        extra={
+                            "contract_id": contract.id,
+                            "actual_cost": actual_cost,
+                            "original_budget": original_budget,
+                            "cost_ratio": cost_ratio
+                        }
+                    )
+
+                    warranty_years = int(state.get_economic_rule("project_theoretical_warranty", 10) * cost_ratio)
+                    warranty_years = max(0, warranty_years)
+
+                    annual_income = amount // construction_years if construction_years else amount
+                    annual_cost = actual_cost // construction_years if construction_years else actual_cost
+
+                    contract._annual_income = annual_income
+                    contract._annual_cost = annual_cost
+                    contract.remaining_years = construction_years
+                    contract._construction_years = construction_years
+                    contract._warranty_years = warranty_years
+                    contract._warranty_remaining = warranty_years
+                    contract.base_cost = amount
 
                 figure = state.get_member(winner_figure)
                 winner_faction_name = state.get_faction(winner_faction).name if winner_faction else "未知"
@@ -929,13 +1042,37 @@ def _available_figure_rows(state: GameState) -> List[Dict[str, Any]]:
     return [_available_figure_row(figure) for figure in state.curia.get_all_available()]
 
 
+def _viewer_contract_bid_rows(pending_bids: List[Any], faction_id: Optional[str]) -> List[Dict[str, Any]]:
+    """WP-E F6 + R3-G-03：viewer 作用域 contract-bid 行（仅本派系）。
+
+    8 元组（Fleet，R3）增 construction_cost/gross_profit；旧 7/5/4 元组行保持原 schema。
+    """
+    rows: List[Dict[str, Any]] = []
+    for bid in pending_bids:
+        if len(bid) <= 2 or bid[2] != faction_id:
+            continue
+        row: Dict[str, Any] = {
+            "contract_id": bid[0],
+            "figure_id": bid[1],
+            "amount": bid[3],
+            "profit_rate": bid[4] if len(bid) > 4 else None,
+            "status": "pending",
+        }
+        if len(bid) > 7:
+            row["construction_cost"] = bid[7]
+            row["gross_profit"] = bid[3] - bid[7] if bid[7] is not None else None
+        rows.append(row)
+    return rows
+
+
 def _pending_contract_rows(state: GameState) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for contract in state.get_all_contracts():
         if contract.status not in {ContractStatus.PENDING, ContractStatus.BUDGETED}:
             continue
         is_budgeted = contract.status == ContractStatus.BUDGETED
-        rows.append({
+        is_fleet = bool(getattr(contract, "_is_fleet_construction", False))
+        row = {
             "id": contract.id,
             "name": contract.name,
             "type": contract.contract_type.value if hasattr(contract.contract_type, "value") else str(contract.contract_type),
@@ -946,7 +1083,14 @@ def _pending_contract_rows(state: GameState) -> List[Dict[str, Any]]:
             "status": contract.status.value if hasattr(contract.status, "value") else str(contract.status),
             "status_label": "待广场竞标" if is_budgeted else "待元老院预算表决",
             "can_bid": is_budgeted,
-        })
+            # R3-G-03（§3.3）：Fleet 权威展示（A baseline / B approved / bid ceiling）——
+            # BUDGETED 的 ceiling=B；未批准不能 bid
+            "is_fleet_construction": is_fleet,
+            "baseline_construction_cost": getattr(contract, "_original_budget", 0) if is_fleet else None,
+            "approved_budget": contract.approved_budget if is_fleet else None,
+            "bid_ceiling": contract.bid_ceiling() if is_fleet and is_budgeted else None,
+        }
+        rows.append(row)
     return rows
 
 

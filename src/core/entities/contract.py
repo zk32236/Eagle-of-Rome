@@ -48,6 +48,26 @@ class Contract:
     _total_budget: int = 0  # 总预算（所有舰队建造成本之和）
     _paid: bool = False  # 舰队建造合同是否已完成国库付款
 
+    # === R3-G-03（设计 §3.1/§3.2，FROZEN）：Fleet A/B/C/D 四权威持久字段 ===
+    # A Baseline = `_original_budget`（generator 冻结，不可被 Senate 改写）；`_total_budget`
+    # 保持 A 历史别名，**非 bid ceiling**。
+    # B Approved = `_approved_budget: Optional[int]`——Senate budget PASS 写入（即使未修改金额
+    # 也写入）；legacy（旧存档缺键）为 None + `_authority_source=legacy_unknown`，不伪造。
+    # C Winning price = `_contract_price`——Forum award 正式授予时固化。
+    # D Actual cost = `_actual_cost`（正式字段化，Optional[int]）——winner 授予时复制入队时
+    #   持久化的 bid 权威 D；None≠0（禁把 missing/零成本当 full quality）。
+    _approved_budget: Optional[int] = None
+    _actual_cost: Optional[int] = None
+    # authority 诚实标注：None（新数据 exact）/ "legacy_unknown"（旧存档 B 不可重建）
+    _authority_source: Optional[str] = None
+    # 舰队合同生成时冻结的目标战争/舰型/工期（§3.1：serializer 必须同步；旧存档缺键 → None）
+    _target_war_id: Optional[str] = None
+    _fleet_type: Optional[str] = None
+    _build_time: Optional[int] = None
+    # §4.3：PENDING/BUDGETED 未物化容量 nominal 快照（fleet_type → 单舰 nominal base）——
+    # 配置当前值与历史已确定 hull nominal 不能混用（P2-G3R3-02 取证约束）
+    _fleet_nominal_snapshot: Dict[str, int] = field(default_factory=dict)
+
     # 基本信息
     name: str = ""
     description: str = ""
@@ -147,6 +167,35 @@ class Contract:
     @property
     def is_fleet_construction_paid(self) -> bool:
         return self._paid
+
+    # === R3-G-03（§3.1）四权威只读访问器 ===
+    @property
+    def approved_budget(self) -> Optional[int]:
+        """B Approved budget（Senate budget PASS 权威落点；None = 未批准/legacy unknown）。"""
+        return self._approved_budget
+
+    @property
+    def actual_cost(self) -> Optional[int]:
+        """D Actual construction cost（入队时持久化的 bid 权威 D；None = legacy unknown，≠0）。"""
+        return self._actual_cost
+
+    @property
+    def authority_source(self) -> Optional[str]:
+        return self._authority_source
+
+    def bid_ceiling(self) -> Optional[int]:
+        """bid ceiling = Senate B（BUDGETED 后）；legacy BUDGETED fallback = base_cost
+        （§3.2：旧 BUDGETED 的 B 从其当前 base_cost 取得）。未批准（None）→ None（不能 bid）。"""
+        if self._approved_budget is not None:
+            return self._approved_budget
+        return self.base_cost
+
+    def _legacy_budget_recovered(self) -> bool:
+        """旧存档 PENDING/BUDGETED：A 可用 `_original_budget>0`，其次已保存 `_total_budget>0`
+        （§3.2 迁移规则——from_dict fallback 消费）。"""
+        if self._original_budget > 0:
+            return True
+        return self._total_budget > 0
 
     @classmethod
     def create_tax_farming(cls, id: int, province: str, base_cost: int, expected_profit: int) -> "Contract":
@@ -389,6 +438,14 @@ class Contract:
             "_total_budget": self._total_budget,
             "_paid": self._paid,
             "_annual_profit": self._annual_profit,  # 兼容
+            # R3-G-03（§3.1/§3.2）：A/B/C/D + target/build/composition 快照序列化同步
+            "_approved_budget": self._approved_budget,
+            "_actual_cost": self._actual_cost,
+            "_authority_source": self._authority_source,
+            "_target_war_id": self._target_war_id,
+            "_fleet_type": self._fleet_type,
+            "_build_time": self._build_time,
+            "_fleet_nominal_snapshot": dict(self._fleet_nominal_snapshot),
         }
 
     @staticmethod
@@ -435,4 +492,24 @@ class Contract:
             _paid=data.get("_paid", False),
             _annual_profit=data.get("_annual_profit", 0),
         )
+        # R3-G-03（§3.2）迁移与旧数据诚实性：新键存在 → 直读；旧存档缺键 → 诚实标注，不伪造。
+        if "_approved_budget" in data:
+            contract._approved_budget = data.get("_approved_budget")
+        elif contract._is_fleet_construction and contract.status in (
+            ContractStatus.ACTIVE, ContractStatus.COMPLETED,
+        ):
+            # 过去 ACTIVE/COMPLETED 的 Senate B 已被 base_cost 覆盖 → 无法可靠重建
+            contract._approved_budget = None
+            contract._authority_source = "legacy_unknown"
+        contract._actual_cost = data.get("_actual_cost")
+        if contract._actual_cost is None and "_actual_cost" not in data and contract._is_fleet_construction:
+            contract._authority_source = contract._authority_source or "legacy_unknown"
+        contract._authority_source = data.get("_authority_source", contract._authority_source)
+        # A 兼容 fallback（§3.2）：旧 PENDING/BUDGETED `_original_budget==0` → 已保存 `_total_budget>0`
+        if contract._original_budget <= 0 and contract._total_budget > 0:
+            contract._original_budget = contract._total_budget
+        contract._target_war_id = data.get("_target_war_id")
+        contract._fleet_type = data.get("_fleet_type")
+        contract._build_time = data.get("_build_time")
+        contract._fleet_nominal_snapshot = dict(data.get("_fleet_nominal_snapshot", {}) or {})
         return contract
