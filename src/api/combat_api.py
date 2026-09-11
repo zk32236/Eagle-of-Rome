@@ -66,6 +66,69 @@ def _infer_current_phase_id(state: GameState) -> str:
     return "resolution"
 
 
+# WP-G-R4 (SA v1.7 §3.1/§3.3)：Naval readiness gate helper（单一事实源 =
+# NavalSystem.get_ready_fleets_for_war）。返回 (code, reason)——code None = gate 不要求或已就绪。
+def _naval_attack_readiness(state: GameState, war: War):
+    if not (war.naval_required and not war.sea_control_acquired):
+        return None, None
+    ns = getattr(state, "naval_system", None)
+    if ns is None:
+        return "NAVAL_SYSTEM_UNAVAILABLE", "NavalSystem unavailable (fail-closed)"
+    ready = ns.get_ready_fleets_for_war(war)
+    if not ready:
+        return "NAVAL_NOT_READY", "NO_READY_ASSIGNED_FLEET"
+    return None, None
+
+
+def _naval_not_ready_dto(war: War, reason: str) -> Dict[str, Any]:
+    """NOT_READY 非战 envelope（SA v1.7 §5.1 未执行语义：不写 battle 数值/损失）。"""
+    return {
+        "schema_version": 2,
+        "war_id": war.id,
+        "war_name": war.name,
+        "action": "attack",
+        "action_status": "readiness_rejected",
+        "result_stage": "readiness",
+        "result": "NAVAL_NOT_READY",
+        "result_label": "海军未就绪",
+        "naval": {
+            "required": True,
+            "gate_required": True,
+            "executed": False,
+            "status": "NOT_READY",
+            "reason": reason or "NO_READY_ASSIGNED_FLEET",
+            "sea_control_acquired": False,
+        },
+        "land": {
+            "executed": False,
+            "status": "NOT_EXECUTED",
+            "reason": "NAVAL_NOT_READY",
+        },
+        "war_outcome": {
+            "status_after": war.status.value if hasattr(war.status, "value") else str(war.status),
+            "terminal_success": False,
+            "sea_control_after": bool(war.sea_control_acquired),
+            "combat_duration_delta": 0,
+        },
+    }
+
+
+_ATTACK_DISABLED_TEXT = {
+    "NAVAL_NOT_READY": "未就绪：本战无已指派可用舰队",
+    "NAVAL_SYSTEM_UNAVAILABLE": "海军系统不可用（技术失败，阻断攻击）",
+}
+
+
+def _attack_capability_fields(war: War, state: GameState) -> Dict[str, Any]:
+    code, reason = _naval_attack_readiness(state, war)
+    available = code is None
+    return {
+        "attack_available": available,
+        "attack_disabled_code": code,
+        "attack_disabled_reason": "" if available else (_ATTACK_DISABLED_TEXT.get(code, reason or code)),
+    }
+
+
 def _war_card(war: War, state: GameState) -> Dict[str, Any]:
     """Build a single war_card dict for the CombatView DTO."""
     commander_name = ""
@@ -152,6 +215,8 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
         # K 件 §5（WP-G GC）：海军门状态 DTO 透出（禁 QML 推断 R-01；CombatStage 展示 = WP-F）
         "naval_required": war.naval_required,
         "sea_control_acquired": war.sea_control_acquired,
+        # WP-G-R4 (SA v1.7 §3.3)：attack capability（同一 gate helper；NOT_READY = 可显式 advance）
+        **_attack_capability_fields(war, state),
     }
 
 
@@ -209,52 +274,197 @@ def _build_naval_block_result(
     war: War,
     state: GameState,
     naval_result: str,
-    roman_losses: int,
+    details: Dict[str, Any],
+    participating: Optional[List[int]] = None,
+    casualty_ids: Optional[List[int]] = None,
+    sea_before: bool = False,
+    duration_delta: int = 1,
 ) -> Dict[str, Any]:
-    """海战阻断 DTO（R-05，WP-G GC）：naval_required + 未获控且海战未获控 → 陆战不执行。
+    """海战阻断 v2 envelope（WP-G-R4 S3，SA v1.7 §5.1/§5.3 例 4：真实 Naval block 仅
+    Naval 结果，Land 明确未执行，无假 0-vs-0——R4-05 omitted keys 非 null 非 0）。
 
-    向后兼容：沿用既有 battle_result 字段名（losses = 伤亡数，此处 = 舰队伤亡数）+ 增量
-    naval / land_battle 字段；GUI 既有字段消费零改。
+    supersede WP-G GC `_build_naval_block_result`（顶层 land 零值面：dice:0/total_attack:0/
+    losses:roman 等）——SA v1.7 §1 G03/§5.1 兼容窗口：land=false 删除全部顶层 Land 统计；
+    顶层 result 只能显式 naval summary（naval_stalemate/naval_defeat/naval_disaster），
+    禁把 Naval 损失放顶层 losses。land_battle 仅保留 deprecated presentation alias。
     """
     result_map = {
-        "TRIUMPH": "triumph",
-        "VICTORY": "victory",
-        "STALEMATE": "draw",
-        "DEFEAT": "defeat",
-        "DISASTER": "disaster",
+        "TRIUMPH": ("naval_triumph", "🏆 海战大胜"),
+        "VICTORY": ("naval_victory", "⚔️ 海战胜利"),
+        "STALEMATE": ("naval_stalemate", "⚓ 海战僵持（无法登陆）"),
+        "DEFEAT": ("naval_defeat", "⚓ 海战战败（无法登陆）"),
+        "DISASTER": ("naval_disaster", "⚓ 海战灾难（无法登陆）"),
     }
-    gui_result = result_map.get(naval_result, "draw")
-    label_map = {
-        "triumph": "🏆 大胜！",
-        "victory": "⚔️ 胜利",
-        "draw": "⚓ 海战僵持（无法登陆）",
-        "defeat": "⚓ 海战战败（无法登陆）",
-        "disaster": "⚓ 海战灾难（无法登陆）",
+    summary, label = result_map.get(naval_result, (f"naval_{naval_result.lower()}", naval_result))
+    naval_label_map = {
+        "TRIUMPH": "海战大胜", "VICTORY": "海战胜利", "STALEMATE": "海战僵持",
+        "DEFEAT": "海战战败", "DISASTER": "海战灾难",
     }
+    if not isinstance(details, dict):
+        details = {}
+    roman_losses = details.get("roman_losses", 0) or 0
+    part = list(participating) if participating else list(
+        details.get("participating_fleet_ids", []) or [])
+    if not part:
+        part = list(getattr(war, "_assigned_fleet_ids", None) or [])
+    cas = list(casualty_ids) if casualty_ids else list(
+        details.get("casualty_fleet_ids", []) or [])
+    if not cas and naval_result in ("DEFEAT", "DISASTER"):
+        # 真实损失差集回退：未提供时按参战集 − 当前仍指派集（阻断路径无 recall，差集即阵亡）
+        remaining = set(getattr(war, "_assigned_fleet_ids", None) or [])
+        cas = [fid for fid in part if fid not in remaining]
+    cas = sorted(set(cas))
     return {
+        "schema_version": 2,
         "war_id": war.id,
         "war_name": war.name,
-        "result": gui_result,
-        "result_label": label_map.get(gui_result, gui_result),
-        "losses": roman_losses,
-        "triumph": False,
-        "dice": 0,
-        "total_attack": 0,
-        "enemy_defence": 0,
-        "total_score": 0,
-        "loot": 0,
-        "casualty_numbers": [],
-        "treasury_share": 0,
-        "commander_share": 0,
-        "faction_share": 0,
-        "soldier_share": 0,
+        "action": "attack",
+        "turn": state.turn.turn_number if state.turn else 0,
+        "phase": "combat",
+        "action_status": "naval_blocked",
+        "result_stage": "naval",
+        "result": summary,
+        "result_label": label,
         "naval": {
+            "required": bool(war.naval_required),
+            "gate_required": True,
+            "executed": True,
+            "status": "RESOLVED",
             "result": naval_result,
+            "result_label": naval_label_map.get(naval_result, naval_result),
             "roman_losses": roman_losses,
-            "sea_control_acquired": False,
+            "enemy_losses": details.get("enemy_loss", 0) or 0,
+            "participating_fleet_ids": sorted(part),
+            "casualty_fleet_ids": cas,
+            "sea_control_before": bool(sea_before),
+            "sea_control_acquired": bool(details.get("sea_control_acquired", False)),
+        },
+        "land": {
+            "executed": False,
+            "status": "NOT_EXECUTED",
+            "reason": "NAVAL_GATE_BLOCKED",
+        },
+        "war_outcome": {
+            "status_after": war.status.value if hasattr(war.status, "value") else str(war.status),
+            "terminal_success": False,
+            "sea_control_after": bool(war.sea_control_acquired),
+            "combat_duration_delta": int(duration_delta),
         },
         "land_battle": "blocked",
     }
+
+
+def _v2_naval_not_executed_stage(war: War, reason: str) -> Dict[str, Any]:
+    """Naval 未执行 stage（§5.1：不写 battle 结果/损失——omitted keys，非 null 非 0 占位）。
+    reason ∈ NOT_REQUIRED / SEA_CONTROL_ALREADY_ACQUIRED。"""
+    return {
+        "required": bool(war.naval_required),
+        "gate_required": False,
+        "executed": False,
+        "status": "NOT_EXECUTED",
+        "reason": reason,
+        "sea_control_before": bool(war.sea_control_acquired),
+        "sea_control_acquired": bool(war.sea_control_acquired),
+    }
+
+
+def _v2_land_executed_stage(flat: Dict[str, Any]) -> Dict[str, Any]:
+    """Land 已执行 stage（从旧顶层 flat DTO 派生——值逐项相同，兼容窗口 §5.1）。"""
+    stage = {
+        "executed": True,
+        "status": "RESOLVED",
+    }
+    for key in ("result", "result_label", "dice", "total_attack", "enemy_defence",
+                "total_score", "losses", "casualty_numbers", "triumph", "loot",
+                "treasury_share", "faction_share", "commander_share", "soldier_share"):
+        if key in flat:
+            stage[key] = flat[key]
+    return stage
+
+
+def _v2_finalize_land_envelope(
+    war: War,
+    state: GameState,
+    flat: Dict[str, Any],
+    naval_stage: Dict[str, Any],
+    duration_delta: int,
+    land_battle_alias: str,
+) -> Dict[str, Any]:
+    """land.executed=true 单一 finalized envelope（§5.1/§5.2）：naval/land 并列 + 旧顶层
+    land 纯 alias（值逐项相同）+ 顶层 summary + war_outcome。"""
+    land_stage = _v2_land_executed_stage(flat)
+    terminal_success = land_stage.get("result") in ("victory", "triumph")
+    envelope = {
+        "schema_version": 2,
+        "war_id": war.id,
+        "war_name": war.name,
+        "action": "attack",
+        "turn": state.turn.turn_number if state.turn else 0,
+        "phase": "combat",
+        "action_status": "land_resolved",
+        "result_stage": "land",
+        "result": land_stage.get("result"),
+        "result_label": land_stage.get("result_label"),
+        "naval": naval_stage,
+        "land": land_stage,
+        "war_outcome": {
+            "status_after": war.status.value if hasattr(war.status, "value") else str(war.status),
+            "terminal_success": terminal_success,
+            "sea_control_after": bool(war.sea_control_acquired),
+            "combat_duration_delta": int(duration_delta),
+        },
+        "land_battle": land_battle_alias,
+    }
+    # 兼容窗口：顶层旧 land 字段纯 alias（值逐项相同）——供旧测试/消费者
+    for key in ("dice", "total_attack", "enemy_defence", "total_score", "losses",
+                "casualty_numbers", "triumph", "loot", "treasury_share", "faction_share",
+                "commander_share", "soldier_share"):
+        if key in flat:
+            envelope[key] = flat[key]
+    return envelope
+
+
+def _emit_combat_action_resolved(state: GameState, war: War, envelope: Dict[str, Any]) -> None:
+    """纯观察 summary event（§5.4：动作总结，非第三场 battle；不额外奖励/计数；NOT_READY 不发）。"""
+    naval = envelope.get("naval", {}) or {}
+    land = envelope.get("land", {}) or {}
+    outcome = envelope.get("war_outcome", {}) or {}
+    state.log_event(
+        f"战斗结算: {war.name}",
+        level=logging.INFO,
+        extra={
+            "type": "combat_action_resolved",
+            "turn": envelope.get("turn", 0),
+            "phase": envelope.get("phase", "combat"),
+            "war_id": war.id,
+            "action_status": envelope.get("action_status"),
+            "naval_executed": naval.get("executed"),
+            "naval_result": naval.get("result") or naval.get("status"),
+            "land_executed": land.get("executed"),
+            "land_result": land.get("result") or land.get("reason"),
+            "terminal_success": outcome.get("terminal_success"),
+            "schema_version": envelope.get("schema_version"),
+        },
+    )
+
+
+def _persist_combat_envelope(state: GameState, war: War, envelope: Dict[str, Any]) -> None:
+    """§5.4：同一完整 envelope 持久进 pending_result + war_results[war_id]；battled id 恰一次。"""
+    phase_data = state.get_phase_result("combat") or {}
+    if not isinstance(phase_data, dict):
+        phase_data = {}
+    phase_data["pending_result"] = envelope
+    resolved = list(phase_data.get("resolved_wars", []))
+    if war.id not in resolved:
+        resolved.append(war.id)
+    phase_data["resolved_wars"] = resolved
+    phase_data["selected_war_id"] = war.id
+    war_results = phase_data.get("war_results", {})
+    if not isinstance(war_results, dict):
+        war_results = {}
+    war_results[war.id] = envelope
+    phase_data["war_results"] = war_results
+    state.record_phase_result("combat", phase_data)
 
 
 def _compute_combat_result(
@@ -403,12 +613,14 @@ def _apply_loss_consequence(war: War, result: str, state: GameState) -> None:
     war.duration += 1
 
 
-def _actionable_wars(ws, phase_data) -> List[War]:
+def _actionable_wars(ws, phase_data, state=None) -> List[War]:
     """本回合仍可战斗的 ACTIVE 战争：有指挥官且未在本回合战斗（resolved_wars）。
 
     INV-C3/Δ6 单点真值（U2/U6 共用）：LOSS 后 war 仍 ACTIVE，但 commander 已
     离场/阵亡 → 视同无需再战（与 `_skip_all_unassigned` 语义一致）；TRUCE war
     不在 get_active_wars()，天然不计入。
+    WP-G-R4 (SA v1.7 §3.4)：海军门正常 NOT_READY（或技术 UNAVAILABLE）战争不计入
+    「可执行战斗」——同 gate helper，不新增跳过布尔 ledger；显式 advance 不受阻。
     """
     if not ws:
         return []
@@ -417,16 +629,21 @@ def _actionable_wars(ws, phase_data) -> List[War]:
         if isinstance(phase_data, dict)
         else set()
     )
-    return [
-        w
-        for w in ws.get_active_wars()
-        if w.commander_id is not None and w.id not in battled_ids
-    ]
+    result = []
+    for w in ws.get_active_wars():
+        if w.commander_id is None or w.id in battled_ids:
+            continue
+        if state is not None:
+            code, _reason = _naval_attack_readiness(state, w)
+            if code is not None:
+                continue  # NOT_READY / UNAVAILABLE：不阻塞 advance，但也非可执行战斗
+        result.append(w)
+    return result
 
 
-def _all_battled(ws, phase_data) -> bool:
-    """advance 谓词：全部可战斗战争（有指挥官且未战）已结算。"""
-    return len(_actionable_wars(ws, phase_data)) == 0
+def _all_battled(ws, phase_data, state=None) -> bool:
+    """advance 谓词：全部可战斗战争（有指挥官且未战且 readiness 通过）已结算。"""
+    return len(_actionable_wars(ws, phase_data, state=state)) == 0
 
 
 def _build_war_slots(
@@ -529,13 +746,13 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
         # pending_result 优先：先展示结果视图再转 advance。
         if pending_result:
             current_step = "result"
-        elif _all_battled(ws, phase_data):
+        elif _all_battled(ws, phase_data, state=state):
             current_step = "advance"
         elif selected_war_id:
             current_step = "action"
         else:
             current_step = "select"
-        all_resolved = _all_battled(ws, phase_data)
+        all_resolved = _all_battled(ws, phase_data, state=state)
 
         actionable = (
             current_phase_id == "combat"
@@ -560,11 +777,15 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
             war_cards.append(card)
 
         # INV-C6：TRUCE war 卡面可见（TRUCE_LOCKED，计入容量、不可战斗）
+        # WP-G-R4 (SA v1.7 §5.3 例 2/§5.4)：TRUCE 分支同回合附 war_results[id] result——
+        # Naval TRIUMPH + Land draw 确认后仍保留双结果卡（TRUCE_LOCKED 不阻止看历史）
         truce_cards = []
         for w in (ws.get_truce_wars() if ws else []):
             card = _war_card(w, state)
             card["slot_index"] = w.combat_slot_index
             card["presentation_state"] = "TRUCE_LOCKED"
+            if isinstance(war_results, dict) and w.id in war_results:
+                card["result"] = war_results[w.id]
             truce_cards.append(card)
 
         # Build resolved war cards from war_system discard pile, filtered by phase_data
@@ -716,54 +937,119 @@ def do_combat_action(
                 data=data,
             )
 
-        # ── Naval gate（G1-09 / R-04 / R-05 / R-06，WP-G GC）──
-        # canonical 单一海军门槛：naval_required + 未获控 → 必须先海战（S7/S8 共享）；
-        # STALEMATE/DEFEAT/DISASTER → 陆战不执行（R-05）→ 军团保持 ACTIVE+assigned
-        # （G1-15，零陆战伤亡）→ 战争继续；本回合已处理 → resolved_wars → 不阻塞 advance。
-        # TRIUMPH/VICTORY → resolve_naval_battle 内 mutation 获控（K 件 §7）→ 同场继续陆战；
-        # 获控后同战未来战斗跳过海战（R-06）。
-        ns = getattr(state, "naval_system", None)
-        naval_gate_triggered = False
-        if war.naval_required and not war.sea_control_acquired and ns:
-            naval_gate_triggered = True
-            naval_result, naval_losses = ns.resolve_naval_battle(war)
-            roman_losses = 0
-            if isinstance(naval_losses, dict):
-                roman_losses = naval_losses.get("roman_losses", 0) or 0
-            if naval_result in ("STALEMATE", "DEFEAT", "DISASTER"):
-                war.duration += 1
-                block_dto = _build_naval_block_result(war, state, naval_result, roman_losses)
-                phase_data = state.get_phase_result("combat") or {}
-                if not isinstance(phase_data, dict):
-                    phase_data = {}
-                phase_data["pending_result"] = block_dto
-                resolved = list(phase_data.get("resolved_wars", []))
-                if war_id not in resolved:
-                    resolved.append(war_id)  # 关键：本回合已处理 → 不阻塞 advance
-                phase_data["resolved_wars"] = resolved
-                phase_data["selected_war_id"] = war_id
-                war_results = phase_data.get("war_results", {})
-                if not isinstance(war_results, dict):
-                    war_results = {}
-                war_results[war_id] = block_dto
-                phase_data["war_results"] = war_results
-                state.record_phase_result("combat", phase_data)
-                return api_response(True, f"海战{naval_result}，无法登陆，战争持续", data=block_dto)
-            # TRIUMPH/VICTORY → sea_control_acquired=True（resolve_naval_battle 已 mutation）→ 同场继续陆战
+        # ── Naval gate（G1-09 / R-04 / R-05 / R-06，WP-G GC；WP-G-R4 G02 前置）──
+        # WP-G-R4 (SA v1.7 §3.3)：readiness 前置在任何结果副作用之前——NOT_READY →
+        # api False + code（零 CRT/零损失/零 event/零 duration/零 battled/pending/war_results，
+        # 不 roll Land 骰）；NavalSystem 缺失 = 技术 fail-closed（不落入正常 skip）。
+        readiness_code, readiness_reason = _naval_attack_readiness(state, war)
+        if readiness_code:
+            state.log_event(
+                f"do_combat_action: war={war.id} readiness 拒绝（{readiness_code}）",
+                level=logging.DEBUG,
+                extra={"war_id": war.id, "code": readiness_code, "reason": readiness_reason},
+            )
+            return api_response(
+                False,
+                "海军未就绪：本战无已指派可用舰队（readiness，非战败）"
+                if readiness_code == "NAVAL_NOT_READY" else "海军系统不可用（技术失败）",
+                data={
+                    "code": readiness_code,
+                    "reason": readiness_reason,
+                    "attack_result": _naval_not_ready_dto(war, readiness_reason),
+                },
+            )
 
-        # Roll dice（置于海军门之后：门阻断时无需陆战骰子；TRIUMPH/VICTORY 继续路径在此掷）
+        ns = getattr(state, "naval_system", None)
+        duration_before = int(getattr(war, "duration", 0) or 0)
+        sea_before = bool(war.sea_control_acquired)
+
+        # ── Naval gate（SA v1.7 §5.2 构建次序：gate_required → resolve_naval_battle →
+        #     naval 真实结果快照（实际 losses + acquired）→ blocking 则 Land NOT_EXECUTED）──
+        naval_gate_triggered = False
+        naval_stage = None
+        if war.naval_required and not war.sea_control_acquired:
+            naval_gate_triggered = True
+            naval_result, naval_details = ns.resolve_naval_battle(war)
+            if naval_result == "NAVAL_NOT_READY":
+                # 防御性（view/action 间舰队毁伤竞态）：共享 Core 前置不得造 battle result
+                return api_response(
+                    False,
+                    "海军未就绪：本战无已指派可用舰队（readiness，非战败）",
+                    data={"code": "NAVAL_NOT_READY",
+                          "reason": "NO_READY_ASSIGNED_FLEET",
+                          "attack_result": _naval_not_ready_dto(war, "NO_READY_ASSIGNED_FLEET")},
+                )
+            if not isinstance(naval_details, dict):
+                naval_details = {}
+            # naval 阶段快照（Land mutation 前捕获——获控可能被 Land terminal 清理，§0.2-5/§5.2）
+            participating = list(naval_details.get("participating_fleet_ids", []) or [])
+            if not participating:
+                participating = list(getattr(war, "_assigned_fleet_ids", None) or [])
+            remaining = set(getattr(war, "_assigned_fleet_ids", None) or [])
+            casualty_ids = sorted(fid for fid in participating if fid not in remaining)
+            naval_label_map = {
+                "TRIUMPH": "海战大胜", "VICTORY": "海战胜利", "STALEMATE": "海战僵持",
+                "DEFEAT": "海战战败", "DISASTER": "海战灾难",
+            }
+            naval_stage = {
+                "required": True,
+                "gate_required": True,
+                "executed": True,
+                "status": "RESOLVED",
+                "result": naval_result,
+                "result_label": naval_label_map.get(naval_result, naval_result),
+                "roman_losses": naval_details.get("roman_losses", 0) or 0,
+                "enemy_losses": naval_details.get("enemy_loss", 0) or 0,
+                "participating_fleet_ids": sorted(set(participating)),
+                "casualty_fleet_ids": casualty_ids,
+                "sea_control_before": sea_before,
+                "sea_control_acquired": bool(
+                    war.sea_control_acquired or naval_details.get("sea_control_acquired")
+                ),
+            }
+            if naval_result in ("STALEMATE", "DEFEAT", "DISASTER"):
+                # blocking：duration+1 一次；land=NOT_EXECUTED(NAVAL_GATE_BLOCKED)；envelope
+                # finalize + persist + return naval_blocked（R4-05：无假 Land 统计）
+                war.duration += 1
+                envelope = _build_naval_block_result(
+                    war, state, naval_result, naval_details,
+                    participating=participating, casualty_ids=casualty_ids,
+                    sea_before=sea_before,
+                    duration_delta=war.duration - duration_before,
+                )
+                _persist_combat_envelope(state, war, envelope)
+                _emit_combat_action_resolved(state, war, envelope)
+                return api_response(True, f"海战{naval_result}，无法登陆，战争持续", data=envelope)
+            # 非 blocking：须真实 sea_control acquired（内部矛盾 fail-closed，不默认继续 Land，§5.2）
+            if not (war.sea_control_acquired
+                    or naval_details.get("sea_control_acquired")):
+                logger.error(
+                    "do_combat_action internal contradiction: naval success without "
+                    "sea_control acquired (war=%s result=%s)", war.id, naval_result
+                )
+                return api_response(
+                    False,
+                    "海战成功但未获制海权（内部矛盾，fail-closed；真实异常半完成 mutation 需单列缺陷/STOP）",
+                )
+        else:
+            # 无海军门 → naval NOT_EXECUTED（NOT_REQUIRED / SEA_CONTROL_ALREADY_ACQUIRED；§3.2 BYPASSED）
+            reason = "NOT_REQUIRED" if not war.naval_required else "SEA_CONTROL_ALREADY_ACQUIRED"
+            naval_stage = _v2_naval_not_executed_stage(war, reason)
+
+        # ── Land：同一 ATTACK 条件执行（_compute_combat_result 保留原 Land 词）──
         dice = random.randint(2, 12)
         result_data = _compute_combat_result(war, state, dice, action)
         result = result_data["result"]
 
         # 决定性结果四分支（INV-C1/C3，替代 5898ef1 两分）：
-        # - triumph/victory → resolve_war(True)：war 结束 RESOLVED + discard（不变）
+        # - triumph/victory → resolve_war(True, combat_result)：war 结束 RESOLVED + discard（不变）
         # - draw → _generate_peace_treaty：→ TRUCE（不变）
         # - defeat/disaster → _apply_loss_consequence：war 保持 ACTIVE（不 resolve、
         #   不 discard、commander consequence + duration+1；INV-C3）
         if ws:
             if result in ("triumph", "victory"):
-                ws.resolve_war(war_id, True)
+                # WP-G-R4 (§4.2)：现代成功入口必传显式 CRT 身份（禁 bool-only 塌缩）
+                ws.resolve_war(war_id, True, combat_result=result)
             elif result == "draw":
                 _generate_peace_treaty(war, result, state)
             elif result in ("defeat", "disaster"):
@@ -780,7 +1066,7 @@ def do_combat_action(
             if isinstance(raw, (list, tuple)):
                 casualty_numbers = list(raw)
 
-        # Build battle result
+        # Build land flat DTO（旧顶层兼容 alias 源——land.executed=true 时顶层字段纯 alias）
         battle_result = _build_battle_result(
             war, state,
             dice=result_data["dice"],
@@ -793,43 +1079,29 @@ def do_combat_action(
             casualty_numbers=casualty_numbers,
         )
 
-        # WP-G GC（S7）：本场曾触发海军门且获控（TRIUMPH/VICTORY）→ 陆战继续路径增量标注
-        # （naval/land_battle 只加不减，向后兼容，R-07）
-        if naval_gate_triggered:
-            battle_result["naval"] = {
-                "result": naval_result,
-                "roman_losses": roman_losses,
-                "sea_control_acquired": True,
-            }
-            battle_result["land_battle"] = "allowed"
+        # WP-G GC（S7）：本场曾触发海军门且获控（TRIUMPH/VICTORY）→ 陆战继续路径标注
+        # （land_battle deprecated presentation alias：allowed/bypassed）
+        land_battle_alias = "allowed" if naval_gate_triggered else "bypassed"
 
-        # Defence is DEPRECATED (FUNC-03 attack-only). Retained for API
-        # compatibility (B-19); the GUI no longer exposes this action.
+        # 单一 finalized envelope（schema_version=2；naval/land 并列 executed）→ 持久 + summary
+        envelope = _v2_finalize_land_envelope(
+            war, state, battle_result, naval_stage,
+            duration_delta=war.duration - duration_before,
+            land_battle_alias=land_battle_alias,
+        )
+        # Defence is DEPRECATED (FUNC-03 attack-only). Retained for API compatibility (B-19);
+        # the GUI no longer exposes this action. Marker 保留（非新双阶段产品入口宣传，§8.1 T15）。
         if action == "defence":
+            envelope["deprecated"] = True
             battle_result["deprecated"] = True
 
-        # Store in phase data
-        phase_data = state.get_phase_result("combat") or {}
-        if not isinstance(phase_data, dict):
-            phase_data = {}
-        phase_data["pending_result"] = battle_result
-        resolved = phase_data.get("resolved_wars", [])
-        if war_id not in resolved:
-            resolved.append(war_id)
-        phase_data["resolved_wars"] = resolved
-        phase_data["selected_war_id"] = war_id  # Keep selected for result display
-        # AC-4.3: per-war result 持久化 — 按 war_id 累积，不被下一场覆盖 / 确认后不清空
-        war_results = phase_data.get("war_results", {})
-        if not isinstance(war_results, dict):
-            war_results = {}
-        war_results[war_id] = battle_result
-        phase_data["war_results"] = war_results
-        state.record_phase_result("combat", phase_data)
+        _persist_combat_envelope(state, war, envelope)
+        _emit_combat_action_resolved(state, war, envelope)
 
         return api_response(
             True,
             f"战斗结算完成: {result}",
-            data=battle_result,
+            data=envelope,
         )
     except Exception as exc:
         logger.exception("do_combat_action failed")
@@ -856,7 +1128,7 @@ def confirm_battle_result(state: GameState, viewer_player_id: str) -> dict:
         # 替代 len(active_wars)==0：LOSS 后 war 仍 ACTIVE，但 commander 已离场/阵亡
         # （consequence）→ 视同无需再战；TRUCE war 天然不计入。
         ws = _war_system(state)
-        all_battled = _all_battled(ws, phase_data)
+        all_battled = _all_battled(ws, phase_data, state=state)
         if all_battled:
             next_step = "advance"
         else:
@@ -891,7 +1163,7 @@ def advance_combat(state: GameState, viewer_player_id: str) -> dict:
 
         # INV-C3/Δ6：剩余计数 = 可战斗战争（有指挥官且未战）
         # 无指挥官 war（含 LOSS 后 commander 离场）不阻塞；TRUCE war 不计入
-        actionable = _actionable_wars(ws, phase_data)
+        actionable = _actionable_wars(ws, phase_data, state=state)
         if actionable:
             remaining = len(actionable)
             return api_response(False, f"尚有 {remaining} 场战争未结算")
@@ -1095,6 +1367,17 @@ def auto_resolve_combat(state: GameState, player_id: str) -> dict:
         assigned_wars = [w for w in active_wars if w.commander_id is not None]
         skipped = total_active - len(assigned_wars)
 
+        # WP-G-R4 (SA v1.7 §3.4)：no-ready 战争输出独立 unavailable_wars（非 battles），
+        # 继续其他 ready war；不 _skip_all_unassigned、不标 battled、不进 wars_resolved。
+        unavailable_wars = []
+        battle_candidates = []
+        for w in assigned_wars:
+            code, reason = _naval_attack_readiness(state, w)
+            if code is not None:
+                unavailable_wars.append({"war_id": w.id, "code": code, "reason": reason})
+            else:
+                battle_candidates.append(w)
+
         if not assigned_wars:
             # 无指挥官战争：全部标记为已处理，然后推进（与 CLI 一致）
             _skip_all_unassigned(state, active_wars)
@@ -1116,10 +1399,10 @@ def auto_resolve_combat(state: GameState, player_id: str) -> dict:
         # 先处理无指挥官战争：标记为已跳过
         _skip_all_unassigned(state, [w for w in active_wars if w.commander_id is None])
 
-        # 逐场结算
+        # 逐场结算（仅 ready wars；NOT_READY 已在 unavailable_wars）
         battles = []
         treaties = []
-        for war in assigned_wars:
+        for war in battle_candidates:
             # Select war
             select_war(state, player_id, war.id)
 
@@ -1149,6 +1432,7 @@ def auto_resolve_combat(state: GameState, player_id: str) -> dict:
             "wars_resolved": len(battles),
             "active_war_count": total_active,
             "skipped_no_commander": skipped,
+            "unavailable_wars": unavailable_wars,
             "battles": battles,
             "treaties": treaties,
             "commanders_returned": commanders_returned,

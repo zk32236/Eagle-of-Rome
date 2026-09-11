@@ -12,6 +12,10 @@ Rectangle {
     property var selectedProposalKeys: []
     property var selectedVetoProposalIds: []
     property bool proposalStepDone: sessionStore.senateCurrentStep !== "proposal"
+    // WP-G-R4 (O5)：Takeover 选区草稿暂存（纯 QML 输入暂存；单 reservation / 单 commitment /
+    // 互斥业务真值由 Core/API/Store 强制——QML 只渲染 capability 与灰显，R4-20/R4-21）
+    property string takeoverDraftWarId: ""
+    property int takeoverDraftN: 1
 
     FactionStyle { id: factionStyle }
 
@@ -337,6 +341,74 @@ Rectangle {
         expandedBillKeys = expanded
     }
 
+    // ---- WP-G-R4 (O5 / SA v1.7 §2.2/§2.3)：Takeover T/V 读模型展示 helper（Store 透传渲染，零本地推断）----
+    function takeoverPendingStatus() {
+        var pending = sessionStore.senatePendingTakeover || {}
+        var st = pending.status || ""
+        if (st === "RESERVED" || st === "LOCKED") return st
+        return ""
+    }
+    function takeoverLockedNow() {
+        return !!sessionStore.senatePendingTakeoverLocked
+    }
+    function takeoverPendingWarId() {
+        var pending = sessionStore.senatePendingTakeover || {}
+        return pending.war_id || ""
+    }
+    function takeoverPendingN() {
+        var pending = sessionStore.senatePendingTakeover || {}
+        var n = parseInt(pending.reinforcement_n, 10)
+        return isNaN(n) ? 0 : n
+    }
+    function takeoverStatusLine() {
+        var st = root.takeoverPendingStatus()
+        if (st === "") return ""
+        var pending = sessionStore.senatePendingTakeover || {}
+        var label = (st === "LOCKED") ? "🔒 已锁定（零部署）" : "⚙️ 已暂存（reservation）"
+        var name = pending.war_name || root.takeoverPendingWarId() || "—"
+        return label + "：" + name + " · 增援 " + root.takeoverPendingN()
+    }
+    function takeoverZoneNote() {
+        if (!root.takeoverLockedNow()) return ""
+        return "本会期至多锁定 1 个接管目标，其余战争灰显顺延；部署仅经显式推进（右侧 ⏭）发生。"
+    }
+    function takeoverPeaceConflict(warId) {
+        var options = sessionStore.senateProposalOptions || []
+        for (var i = 0; i < options.length; i++) {
+            var o = options[i]
+            if (!o || o.type !== "peace") continue
+            var p = o.params || {}
+            if (String(p.war_id) === String(warId) && root.hasSelectedProposal(o.key || "")) return true
+        }
+        return false
+    }
+    function isTakeoverRowChecked(warId) {
+        if (root.takeoverDraftWarId === warId) return true
+        if (root.takeoverLockedNow() && root.takeoverPendingWarId() === warId) return true
+        return false
+    }
+    function takeoverRowNote(row) {
+        if (!row) return ""
+        if (root.takeoverLockedNow()) {
+            return row.war_id === root.takeoverPendingWarId() ? "（已锁定）" : "（已锁定他战 · 单会期至多 1 战）"
+        }
+        if (root.takeoverPeaceConflict(row.war_id)) return "（同战停战已勾选 · 互斥）"
+        return ""
+    }
+    function takeoverZoneContentHeight() {
+        var rows = (sessionStore.senateTakeoverOptions || []).length
+        var h = 88 + rows * 37
+        if (root.takeoverStatusLine().length > 0) h += 19
+        if (root.takeoverLockedNow()) h += 29
+        return h
+    }
+    function settlementBannerText() {
+        if (root.takeoverLockedNow()) {
+            return "⚖️ 元老院结算未完成：接管承诺已锁定（零部署）。完成空结算后，经「推进」按钮显式部署。"
+        }
+        return "⚖️ 元老院结算未完成：提案选择已结束，等待完成结算。"
+    }
+
     function selectedProposals() {
         var rows = []
         var options = sessionStore.senateProposalOptions || []
@@ -610,7 +682,7 @@ Rectangle {
                 anchors.margins: 8
                 spacing: 8
                 Text {
-                    text: "\u2696\ufe0f \u5143\u8001\u9662\u7ed3\u7b97\u672a\u5b8c\u6210\uff1a\u6218\u4e89\u63a5\u7ba1\u5df2\u751f\u6548\uff0c\u6b63\u5728\u7b49\u5f85\u5b8c\u6210\u7a7a\u7ed3\u7b97\u3002"
+                    text: root.settlementBannerText()
                     color: "#9A2D0A"
                     font.pixelSize: 11
                     Layout.fillWidth: true
@@ -670,18 +742,26 @@ Rectangle {
                     // DEV-13: 战争接管（直接职权，无需表决）+ G1-21: Continue Existing Command
                     // WP-G GA（R-01/R-20）：仅输入转发——N 选择范围来自 DTO reinforcement_range，
                     // 禁 QML 生命周期推断；展示样式不做 polish（归 WP-F）。
+                    // WP-G-R4 (O5 / SA v1.7 §2.2/§2.3，FROZEN)：takeover 选区 = Checkbox 单选草稿 +
+                    // 单「锁定接管（Submit）」动作——Store doTakeoverWar = reserve+submit 锁 T 零部署。
+                    // 部署唯一 owner = 显式推进（ContextPanel 通用 advance）；本区不出现第二确认/部署钮（R4-19）。
+                    // T/V 状态条直读 Store senatePendingTakeover/senatePendingTakeoverLocked（零 QML 推断）；
+                    // 第二 war 在锁定后灰显（Store 暴露 locked+war_id → 绑定）；同战 Peace 互斥：DTO 未暴露
+                    // 互斥标志 → 仅 enabled 门 + 注记（R4-20 真值仍在 Core/API）。
                     Rectangle {
                         visible: sessionStore.senateCurrentStep === "proposal" && (sessionStore.senateTakeoverOptions || []).length > 0
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 112
+                        Layout.preferredHeight: root.takeoverZoneContentHeight()
+                        Layout.minimumHeight: root.takeoverZoneContentHeight()
                         radius: 4
                         color: "#FDF3E0"
                         border.color: "#E6A542"
                         border.width: 1
+                        clip: true
                         ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: 8
-                            spacing: 4
+                            spacing: 3
                             Text {
                                 text: "🛡️ 接管战争 ⚡ 无需表决"
                                 color: "#9A2D0A"
@@ -689,11 +769,34 @@ Rectangle {
                                 font.bold: true
                             }
                             Text {
-                                text: "执政官可直接接管进行中的外战（含停战待决），不进入元老院表决。"
+                                text: "勾选并设增援数→锁定承诺（零部署）；仅推进阶段原子部署。"
                                 color: "#766652"
                                 font.pixelSize: 10
                                 Layout.fillWidth: true
                                 wrapMode: Text.Wrap
+                                maximumLineCount: 1
+                                elide: Text.ElideRight
+                            }
+                            // 当前 T/V 状态（reserved/locked）可见——Store 读模型透传；CONSUMED/CANCELLED/无 → 区不显示状态
+                            Text {
+                                visible: root.takeoverStatusLine().length > 0
+                                text: root.takeoverStatusLine()
+                                color: root.takeoverLockedNow() ? "#9A2D0A" : "#766652"
+                                font.pixelSize: 10
+                                font.bold: root.takeoverLockedNow()
+                                Layout.fillWidth: true
+                                maximumLineCount: 1
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                visible: root.takeoverZoneNote().length > 0
+                                text: root.takeoverZoneNote()
+                                color: "#9A2D0A"
+                                font.pixelSize: 10
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
                             }
                             Repeater {
                                 model: sessionStore.senateTakeoverOptions || []
@@ -704,47 +807,74 @@ Rectangle {
                                     color: "#FFF7E9"
                                     border.color: "#D9AF63"
                                     border.width: 1
+                                    opacity: (root.takeoverLockedNow() && root.takeoverPendingWarId() !== modelData.war_id) ? 0.55 : 1.0
                                     RowLayout {
                                         anchors.fill: parent
                                         anchors.margins: 4
                                         spacing: 6
+                                        // R4 选区形态：Checkbox 单选草稿（等效单选控件，非每 war 立即执行钮）；
+                                        // 单选限制只是本地输入暂存——单 reservation/单 commitment 由 Core/API 强制（R4-20/21）
+                                        CheckBox {
+                                            enabled: sessionStore.canTakeoverSenateWar && !root.takeoverLockedNow() && !root.takeoverPeaceConflict(modelData.war_id)
+                                            checked: root.isTakeoverRowChecked(modelData.war_id)
+                                            onToggled: {
+                                                if (checked) {
+                                                    root.takeoverDraftWarId = modelData.war_id
+                                                    var rng = modelData.reinforcement_range || {}
+                                                    if (rng.default !== undefined && rng.default !== null) root.takeoverDraftN = rng.default
+                                                    else if (rng.min !== undefined && rng.min !== null) root.takeoverDraftN = rng.min
+                                                    else root.takeoverDraftN = 1
+                                                } else if (root.takeoverDraftWarId === modelData.war_id) {
+                                                    root.takeoverDraftWarId = ""
+                                                }
+                                            }
+                                        }
                                         Text {
-                                            text: (modelData.name || modelData.war_id) + (modelData.reason ? "（" + modelData.reason + "）" : "")
-                                            color: "#2C1E12"
+                                            text: (modelData.name || modelData.war_id) + (modelData.reason ? "（" + modelData.reason + "）" : "") + root.takeoverRowNote(modelData)
+                                            color: root.takeoverRowNote(modelData).length > 0 ? "#9A2D0A" : "#2C1E12"
                                             font.pixelSize: 11
                                             Layout.fillWidth: true
                                             elide: Text.ElideRight
                                         }
-                                        // GA：N 选择（值域来自 DTO reinforcement_range，G 件 §4）
+                                        // N 值域仍来自 DTO reinforcement_range（G 件 §4；禁 QML 生命周期推断/本地算 N）
                                         SpinBox {
                                             id: takeoverN
                                             from: (modelData.reinforcement_range && modelData.reinforcement_range.min) || 0
                                             to: (modelData.reinforcement_range && modelData.reinforcement_range.max) || 0
                                             value: (modelData.reinforcement_range && modelData.reinforcement_range.default) || 0
                                             editable: false
-                                            visible: (modelData.reinforcement_range && modelData.reinforcement_range.max || 0) > 0
+                                            visible: !root.takeoverLockedNow() && ((modelData.reinforcement_range && modelData.reinforcement_range.max || 0) > 0)
+                                            enabled: root.takeoverDraftWarId === modelData.war_id
                                             Layout.preferredWidth: 64
-                                        }
-                                        Rectangle {
-                                            Layout.preferredWidth: 52
-                                            Layout.preferredHeight: 20
-                                            radius: 3
-                                            enabled: sessionStore.canTakeoverSenateWar
-                                            opacity: enabled ? 1.0 : 0.45
-                                            color: enabled ? "#D9AA52" : "#D8B16C"
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: "接管"
-                                                color: "#2C1E12"
-                                                font.pixelSize: 11
-                                                font.bold: true
-                                            }
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                enabled: parent.enabled
-                                                onClicked: sessionStore.doTakeoverWar(modelData.war_id, takeoverN.value)
+                                            onValueChanged: {
+                                                if (root.takeoverDraftWarId === modelData.war_id) root.takeoverDraftN = takeoverN.value
                                             }
                                         }
+                                    }
+                                }
+                            }
+                            // 单 Submit 动作（锁定 = reserve+submit 零部署；无独立确认/部署第二钮 R4-19）
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 22
+                                radius: 3
+                                enabled: root.takeoverDraftWarId.length > 0 && sessionStore.canTakeoverSenateWar && !root.takeoverLockedNow() && !root.takeoverPeaceConflict(root.takeoverDraftWarId)
+                                opacity: enabled ? 1.0 : 0.45
+                                color: enabled ? "#D9AA52" : "#D8B16C"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: root.takeoverLockedNow() ? "已锁定 — 显式推进阶段时原子部署" : (root.takeoverDraftWarId.length > 0 ? "锁定接管（Submit · 零部署）" : "勾选接管战争并设定增援数")
+                                    color: "#2C1E12"
+                                    font.pixelSize: 11
+                                    font.bold: true
+                                    maximumLineCount: 1
+                                    elide: Text.ElideRight
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: parent.enabled
+                                    onClicked: {
+                                        sessionStore.doTakeoverWar(root.takeoverDraftWarId, root.takeoverDraftN)
                                     }
                                 }
                             }

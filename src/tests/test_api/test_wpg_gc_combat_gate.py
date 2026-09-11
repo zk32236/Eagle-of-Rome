@@ -118,8 +118,14 @@ def gate_state():
 # T-GC-14 — GUI do_combat_action 海军门（§11.8）
 # ════════════════════════════════════════════════════════════════════════
 def test_tgc14_gui_do_combat_action_naval_gate_blocks(gate_state):
-    """naval_required + 未获控 attack → naval 阻断 DTO（land_battle=blocked）+ 陆战零执行
-    + resolved_wars 含该 war + 不阻塞 advance + DTO 字段齐备"""
+    """naval_required + 未获控 attack → naval 阻断 v2 envelope（land_battle=blocked，Land
+    NOT_EXECUTED）+ 陆战零执行 + resolved_wars 含该 war + 不阻塞 advance。
+
+    WP-G-R4 S3 supersede（SA v1.7 §5.1/§1 G03，R4-05）：旧「顶层 Land 零值面」断言
+    （losses/triumph/dice/total_attack/... 均在 = 假 0）被 v2 语义替代——land=false 删除
+    全部顶层 Land 统计；顶层 result = 显式 naval summary；真实 Naval 损失只在
+    naval.roman_losses。land_battle 保留为 deprecated presentation alias。
+    """
     state, war, commander = gate_state
     # STALEMATE：3 舰队战力 27（martial 6），enemy 30，dice 5 → total 2
     war._enemy_naval_current = 30
@@ -128,16 +134,27 @@ def test_tgc14_gui_do_combat_action_naval_gate_blocks(gate_state):
     assert result["success"]
     data = result["data"]
 
-    # 阻断 DTO 字段齐备（向后兼容字段名 + 增量字段）
-    for field in ("war_id", "war_name", "result", "result_label", "losses",
-                  "triumph", "dice", "total_attack", "enemy_defence", "total_score",
-                  "loot", "casualty_numbers"):
-        assert field in data, f"naval block DTO missing {field}"
+    # v2 envelope 必备字段（R4 supersede 旧 flat 零值面）
+    for field in ("schema_version", "war_id", "war_name", "action", "action_status",
+                  "result_stage", "result", "result_label", "naval", "land", "war_outcome"):
+        assert field in data, f"naval block envelope missing {field}"
+    assert data["schema_version"] == 2
+    assert data["action_status"] == "naval_blocked"
+    # R4-05：land=false → 顶层 Land 统计全部 absent（禁假 0 占位）
+    for field in ("losses", "triumph", "dice", "total_attack", "enemy_defence",
+                  "total_score", "loot", "casualty_numbers"):
+        assert field not in data, f"land=false 顶层 Land 统计必须 absent（R4-05）: {field}"
     assert data["war_id"] == "war1"
     assert data["land_battle"] == "blocked"
-    assert data["naval"] == {"result": "STALEMATE", "roman_losses": 0,
-                             "sea_control_acquired": False}
-    assert data["losses"] == 0
+    # Naval stage：真实 STALEMATE 执行、0 舰队损失（读 naval.roman_losses，非顶层 losses）
+    assert data["naval"]["result"] == "STALEMATE"
+    assert data["naval"]["executed"] is True
+    assert data["naval"]["roman_losses"] == 0
+    assert data["naval"]["sea_control_acquired"] is False
+    assert data["naval"]["participating_fleet_ids"] == [1, 2, 3]
+    assert data["naval"]["casualty_fleet_ids"] == []
+    assert data["land"]["executed"] is False
+    assert data["land"]["reason"] == "NAVAL_GATE_BLOCKED"
 
     # 陆战零执行：军团保持 ACTIVE + assigned（G1-15 零陆战伤亡）
     ms = state._military_system

@@ -151,53 +151,68 @@ class TestSenateAnnouncement(unittest.TestCase):
     # ---------------- 场景 I：仅 takeover ----------------
 
     def test_scenario_i_takeover_only(self):
-        """I：仅接管 → direct_actions 进公示；无 vote/veto 痕迹；enacted ∅。"""
+        """I（WP-G-R4 supersede，OD-R4-05/06）：接管锁 T（不进 vote/veto）；resolve 时 R 公示
+        enacted ∅/D ∅（D_Takeover 部署后写）；显式 advance 部署 → D 恰一次。"""
         war = War(id="war_takeover_i", name="接管测试战争", war_type=WarType.FOREIGN, strength=5, naval_required=False)
         war.status = WarStatus.ACTIVE
         self.state.get_war_system()._active_wars.append(war)
 
-        result = senate_api.takeover_war(self.state, "player1", war.id)
+        result = senate_api.takeover_war(self.state, "player1", war.id, 1, action="reserve")
         self.assertTrue(result["success"])
+        locked = senate_api.takeover_war(self.state, "player1", war.id, 1, action="submit")
+        self.assertTrue(locked["success"], locked.get("message"))
         self.assertEqual(len(self.state.get_senate_proposals()), 0)
         self.assertEqual(len(self.state.get_senate_vetoes_copy()), 0)
 
+        self.assertTrue(senate_api.propose_many(self.state, "player1", [])["success"])
         resolved = senate_api.resolve_senate(self.state)
         self.assertTrue(resolved["success"])
         announcement = resolved["data"]["public_announcement"]
         self.assertEqual(announcement["enacted_proposals"], [])
-        self.assertEqual(len(announcement["direct_actions"]), 1)
-        da = announcement["direct_actions"][0]
-        self.assertEqual(da["action_type"], "takeover")
+        self.assertEqual(announcement["direct_actions"], [], "R4：D_Takeover 不回溯 R")
+
+        adv = senate_api.advance_senate_phase(self.state, "player1")
+        self.assertTrue(adv["success"], adv.get("message"))
+        das = [a for a in self.state.get_senate_direct_actions() if a.get("kind") == "takeover_deploy"]
+        self.assertEqual(len(das), 1)
+        da = das[0]
+        self.assertEqual(da["action_type"], "takeover_deploy")
         self.assertEqual(da["war_id"], war.id)
         self.assertEqual(da["commander_id"], 1)
 
     # ---------------- 场景 J：takeover + 普通提案 ----------------
 
     def test_scenario_j_takeover_plus_ordinary(self):
-        """J：混合公示（enacted + direct_actions 同区展示）。"""
+        """J（R4 supersede）：混合公示——enacted 提案在 R；D_Takeover 部署后写（不混入 R 快照）。"""
         self.state.senate_proposal_decision_complete = True
         pid = self._add_proposal({"type": "land", "act_type": "distribution", "amount_C": 200, "percent": 0.2})
 
         war = War(id="war_takeover_j", name="接管测试战争J", war_type=WarType.FOREIGN, strength=5, naval_required=False)
         war.status = WarStatus.ACTIVE
         self.state.get_war_system()._active_wars.append(war)
-        result = senate_api.takeover_war(self.state, "player1", war.id)
+        result = senate_api.takeover_war(self.state, "player1", war.id, 1, action="reserve")
         self.assertTrue(result["success"])
+        locked = senate_api.takeover_war(self.state, "player1", war.id, 1, action="submit")
+        self.assertTrue(locked["success"], locked.get("message"))
 
         resolved = senate_api.resolve_senate(self.state)
         self.assertTrue(resolved["success"])
         announcement = resolved["data"]["public_announcement"]
         self.assertEqual([p["proposal_id"] for p in announcement["enacted_proposals"]], [pid])
-        self.assertEqual(len(announcement["direct_actions"]), 1)
-        self.assertEqual(announcement["direct_actions"][0]["action_type"], "takeover")
+        self.assertEqual(announcement["direct_actions"], [], "R4：D_Takeover 部署后写，不混入 R 公示快照")
 
-        # view 回读（公示随 phase_result 持久化）
+        adv = senate_api.advance_senate_phase(self.state, "player1")
+        self.assertTrue(adv["success"], adv.get("message"))
+        das = [a for a in self.state.get_senate_direct_actions() if a.get("kind") == "takeover_deploy"]
+        self.assertEqual(len(das), 1)
+        self.assertEqual(das[0]["action_type"], "takeover_deploy")
+
+        # view 回读：R 公示 enacted 保留（随 phase_result 持久化）；实时 D 在 pending 载体
         view = senate_api.get_senate_view(self.state, "player1")
         pa = view["data"]["public_announcement"]
         self.assertEqual(len(pa["enacted_proposals"]), 1)
-        self.assertEqual(len(pa["direct_actions"]), 1)
-        # 实时 pending 列表已随 clear_senate_pending 清空；持久副本在 public_announcement
-        self.assertEqual(view["data"]["direct_actions"], [])
+        self.assertEqual(pa["direct_actions"], [])
+        self.assertEqual(len(view["data"]["direct_actions"]), 1)
 
 
 if __name__ == "__main__":

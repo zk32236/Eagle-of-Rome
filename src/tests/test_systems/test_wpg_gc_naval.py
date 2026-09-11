@@ -181,7 +181,11 @@ def test_tgc04_naval_stalemate_blocks_land_battle_zero_losses(naval_state):
     data = result["data"]
     assert data["naval"]["result"] == "STALEMATE"
     assert data["land_battle"] == "blocked"
-    assert data["losses"] == 0  # STALEMATE 0 舰队损失（G1-10）
+    # WP-G-R4 S3 supersede（SA v1.7 §5.1，R4-05）：旧顶层 `losses`（假 Land 零值面）删除——
+    # STALEMATE 0 舰队损失读 naval.roman_losses（禁把 Naval 损失放顶层 losses）
+    assert data["naval"]["roman_losses"] == 0
+    assert data["naval"]["casualty_fleet_ids"] == []
+    assert "losses" not in data
 
     # 舰队零损失：全部 ON_MISSION
     ns = state.naval_system
@@ -252,7 +256,11 @@ def test_tgc06_naval_disaster_destroys_all_fleets(naval_state):
     data = result["data"]
     assert data["naval"]["result"] == "DISASTER"
     assert data["land_battle"] == "blocked"
-    assert data["losses"] == 3
+    # WP-G-R4 S3 supersede（SA v1.7 §5.1，R4-05）：旧顶层 `losses`（假 Land 零值面）删除——
+    # DISASTER 3 舰队损失读 naval.roman_losses / casualty_fleet_ids（真实伤亡实体断言 KEEP）
+    assert data["naval"]["roman_losses"] == 3
+    assert data["naval"]["casualty_fleet_ids"] == [1, 2, 3]
+    assert "losses" not in data
 
     fleets = state.naval_system.get_all_fleets()
     assert all(f.status == FleetStatus.DESTROYED for f in fleets)
@@ -292,9 +300,14 @@ def test_tgc07_sea_control_skips_future_naval_battle(naval_state):
             with patch.object(combat_api.random, "randint", return_value=7):
                 r2 = combat_api.do_combat_action(state, "player_opt", war.id, "attack")
     assert r2["success"]
-    # 关键断言：不再触发海战（R-06）——直达陆战
+    # 关键断言：不再触发海战（R-06）——直达陆战（resolve_naval_battle 未被调用）
     assert calls == []
-    assert "naval" not in r2["data"]
+    # WP-G-R4 S3 supersede（SA v1.7 §3.2/§5.1 BYPASSED）：已获控不再触发海战但 stage 以
+    # naval.executed=false + reason=SEA_CONTROL_ALREADY_ACQUIRED 显式入镜（禁伪造 Naval
+    # VICTORY 表示 bypass）；旧「无 naval key」断言被 v2 stage 语义替代
+    assert r2["data"]["naval"]["executed"] is False
+    assert r2["data"]["naval"]["reason"] == "SEA_CONTROL_ALREADY_ACQUIRED"
+    assert r2["data"]["land"]["executed"] is True
     assert war.sea_control_acquired is True  # 制海权保持（G1-16）
 
 

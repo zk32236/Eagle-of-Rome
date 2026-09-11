@@ -71,10 +71,33 @@ TRIUMPH/VICTORY 分支；False 清理 = clear_sea_control，随战争正式结�
 
 - [Technical Mapping](../technical-mappings/MVP0.7-04_海军与海战.md)
 
+## WP-G-R4 同步注记（2026-09-09，DA-R4-B3；append-only，目标锚点 §2.2）
+
+> 权威：SA-Design-WP-G-R4 v1.7（FROZEN）§3/§5；冻结矩阵/CRT/伤亡/Sea Control 持久规则零改。
+>
+> - **readiness 前置 ≠ 海战失败**：`naval_required` 且未获控时若本战无 ready 舰队
+>   （`NavalSystem.get_ready_fleets_for_war` 单一事实源：assigned 实体按 ID 去重、仅
+>   `ON_MISSION`；非 effective/strength/nominal 阈值）→ `NAVAL_NOT_READY`，**不产生任何
+>   battle 事实**（零 CRT/损失/Sea mutation/事件/duration/battled）。force DEFEAT/TRIUMPH
+>   不能穿透 NOT_READY。技术性 NavalSystem 缺失 = fail-closed，不作合法 NOT_READY。
+> - **one ATTACK 双阶段（dual stage）**：海军门通过后同一次 ATTACK 内 Naval 成功
+>   （TRIUMPH/VICTORY 且真实获控）→ 自动执行 Land（无需玩家二次确认，R4-02）；
+>   Naval STALEMATE/DEFEAT/DISASTER → Land `NOT_EXECUTED(NAVAL_GATE_BLOCKED)`。
+> - **NOT_READY / block 零副作用**：不写 pending/war_results/battled/summary event；
+>   auto/CLI 以独立 `unavailable_wars` 名单表达（非 battles）。
+> - **海权 stage 快照 ≠ terminal live 值**：envelope 内 `naval.sea_control_acquired` 是
+>   Naval 阶段结束快照；War RESOLVED 后 `war_outcome.sea_control_after` 可为 false，两字段
+>   并列不矛盾（Land TRIUMPH 终结清海权不覆盖阶段快照）。
+> - **结果 DTO v2**（`schema_version=2`，每次 ATTACK 单一 finalized envelope）：`naval/land`
+>   并列强类型 `executed`；未执行 stage 只写 executed/status/reason（omitted keys，非 0 占位，
+>   R4-05）；envelope deepcopy 持久 `pending_result` + `war_results[war_id]`，get_combat_view 三类
+>   卡同回合附 result（TRUCE_LOCKED 卡亦保留双结果）；`combat_action_resolved` 纯观察 summary event。
+
 ## 4. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.3 | 2026-09-09 | DA Sub-Agent (WP-G-R4 B3) | R4 同步（FROZEN v1.7 §3/§5）：§2.2 追加注记——Naval readiness 单一事实源/NOT_READY 非 battle 零副作用、one ATTACK Naval 成功自动 Land、dual-stage v2 envelope（未执行 stage omitted keys）、海权 stage 快照与 terminal 值并列、TRUCE 卡双结果入镜；CRT/伤亡/Sea Control 持久规则零改（GAME_RULE_CHANGE=NO） |
 | v1.2 | 2026-09-05 | DA Sub-Agent (WP-G-R3 B3) | R3-G-04 同步：§2.2 单舰战力表述改 quality-adjusted/package aggregate（nominal 快照 + q=D/A + raw→cap→round 一次；per-fleet 无 floor；D=0 不 fallback）+ 补「replacement 见 MVP0.5-04，nominal 非 effective」注；CRT/Sea Control/伤亡矩阵零改（GAME_RULE_CHANGE=NO） |
 | v1.0 | 2026-07-12 | Document Officer Worker K | 初版创建 |
 | v1.1 | 2026-08-31 | DA Sub-Agent (WP-G GC) | 冻结语义落地（G1-09/10/16/20）：§2.2 补五结果矩阵（STALEMATE 0 损、DEFEAT ceil(N/2) 随机无放回）；海军门槛状态机（naval_required 门 / STALEMATE-DEFEAT-DISASTER 阻断陆战 / TRIUMPH-VICTORY 获控）；Sea Control 持久契约（sea_control_acquired 权威字段替代 _sea_control_ratio）；舰队战力 martial 权威 = War Commander |

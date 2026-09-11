@@ -271,9 +271,10 @@ class TestTr101nForcedNavalMatrix(unittest.TestCase):
         self.assertFalse(war.sea_control_acquired)
 
     def test_no_fleet_auto_defeat_not_overridden(self):
-        """无可用舰队 → 既有「自动 DEFEAT」分支强制生效（override 不覆盖「无舰队必败」）。"""
+        """无可用舰队（WP-G-R4 supersede，SA v1.7 §8.3/§3.1）：R4-G-02 后空舰队不再是
+        自动 DEFEAT——readiness 前置拒绝（NAVAL_NOT_READY 零副作用）；override 不穿透。"""
         state, _faction, _commander = _base_state(with_naval=True)
-        # 不指派任何舰队 → roman_fleets 为空
+        # 不指派任何舰队 → 零 ready
         war = War(
             id="war_nofleet", name="No Fleet War", war_type=WarType.FOREIGN,
             strength=5, threat_level=3, rewards=dict(_WAR_REWARDS),
@@ -283,13 +284,13 @@ class TestTr101nForcedNavalMatrix(unittest.TestCase):
         war.commander_id = 1
         war.status = WarStatus.ACTIVE
         state._war_system._active_wars.append(war)
-        state.config.testing.force_naval_result = "TRIUMPH"  # override 不覆盖
+        state.config.testing.force_naval_result = "TRIUMPH"  # override 不穿透 readiness
         result = combat_api.do_combat_action(state, "player_opt", war.id, "attack")
-        self.assertTrue(result["success"])
-        data = result["data"]
-        self.assertEqual(data["naval"]["result"], "DEFEAT")
-        self.assertEqual(data["naval"]["roman_losses"], 0)
-        self.assertEqual(data["land_battle"], "blocked")
+        self.assertFalse(result["success"])
+        self.assertEqual(result["data"]["code"], "NAVAL_NOT_READY")
+        self.assertEqual(war.status, WarStatus.ACTIVE)
+        self.assertFalse(war.sea_control_acquired)
+        self.assertEqual(war.duration, 0, "NOT_READY 零副作用")
 
 
 class TestTr102EmptyPreservesRandom(unittest.TestCase):

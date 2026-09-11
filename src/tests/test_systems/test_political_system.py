@@ -473,11 +473,9 @@ def test_tribune_absent_guard_module_level(state):
 
 
 def test_execute_ai_takeover_direct_action_excludes_live_tribune(state):
-    """防线 1（ODR-WP-D-01）：出征指挥官选择天然排除在职 tribune（office in consul/praetor 筛选）。
-
-    正向：consul 被选为指挥官并置位 absent；负向：tribune 在 living 池中但永不入选、不被置位 absent。
-    AU-R1-05b（G3 C1，D-1 采纳）：process_war_takeover 重构为 execute_ai_takeover_direct_action
-    （Direct Action 语义）；Scheme B 防线 1 断言完整保留（迁移至新方法名）。
+    """防线 1（ODR-WP-D-01）+ WP-G-R4 supersede（SA v1.7 §2.5/R4-24）：AI 废弃直连——
+    execute_ai_takeover_direct_action 只锁 T（零部署/零 absent/零 Commander）；候选限 office
+    consul（在职 tribune 天然排除）；部署唯一 owner = advance_senate_phase。
     """
     from src.core.deciders.impl.auto_war_takeover_decider import AutoWarTakeoverDecider
 
@@ -493,19 +491,21 @@ def test_execute_ai_takeover_direct_action_excludes_live_tribune(state):
     politics = PoliticalSystem(state)
     records = politics.execute_ai_takeover_direct_action(decider=decider)
 
-    assert war.commander_id == 1  # consul 入选（tribune 被 office 筛选排除）
-    assert state.get_member(1).is_absent is True
+    assert war.commander_id is None  # 锁 T 零部署（不再直接指派）
+    assert state.get_member(1).is_absent is False  # 留城（O5：部署边界才 absent）
     assert state.get_member(3).is_absent is False  # tribune 未被置位 absent
-    assert state.get_member(3) not in [
-        m for m in state.get_living_members() if m.office in ("consul", "praetor")
-    ]
-    # AU-R1-05b：返回成功接管记录列表 + provenance（trigger_source=ai_auto + N）
+    pending = state.get_takeover_pending()
+    assert pending is not None
+    assert pending["status"] == "LOCKED"
+    assert pending["war_id"] == war.id
+    # R4：返回锁定记录列表（trigger_source=ai_auto + N + deployed=False）
     assert len(records) == 1
     assert records[0]["war_id"] == war.id
     assert records[0]["trigger_source"] == "ai_auto"
     assert records[0]["action"] == "takeover"
     assert records[0]["commander_id"] == 1
     assert records[0]["reinforcement_n"] == 1
+    assert records[0]["deployed"] is False
 
 
 def test_governor_candidates_exclude_tribune(state):

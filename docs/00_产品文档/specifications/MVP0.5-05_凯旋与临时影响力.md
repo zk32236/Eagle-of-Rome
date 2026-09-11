@@ -186,10 +186,25 @@
 
 - [Technical Mapping](../technical-mappings/MVP0.5-05_凯旋与临时影响力.md)
 
+## WP-G-R4 同步注记（2026-09-09，DA-R4-B3；append-only，目标锚点 §2.1/§3.1/§4.3）
+
+> 权威：SA-Design-WP-G-R4 v1.7（FROZEN）§4.3/§8.1 T10；凯旋 share/vote/reward 规则零改。
+>
+> - **VICTORY 与 TRIUMPH 均按当前四条件 eligible**（RESOLVED + soldier_share>0 +
+>   triumph_commander_id 存在 + commander 存活）：ordinary VICTORY 保留政治凯旋资格，
+>   不加「CRT 必须 TRIUMPH」门（R4-07）。`triumph_commander_id` = ceremony candidate，
+>   不是 CRT 身份证据（R4-08：不从候选反推战斗结果）。
+> - **CRT 身份与 ceremony 分离**：战斗结果身份（combat_victory / combat_triumph）由
+>   `resolve_war(..., combat_result=...)` 显式 carrier 携带（legacy bool-only 调用 = 中性
+>   `war_resolved`/unknown，不推断 CRT）；事件/phase DTO 保存本次 CRT。
+> - **Forum 公开 seam**：get_forum_view（triumph_wars 行）→ vote_triumph → resolve_forum
+>   恰一次；批准后 soldier_share 消费归零、二次 resolve 无二次奖励（J 链同 run 断言）。
+
 ## 9. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.1 | 2026-09-09 | DA Sub-Agent (WP-G-R4 B3) | R4 同步（FROZEN v1.7 §4.3）：§2.1/§3.1/§4.3 追加注记——VICTORY/TRIUMPH 均按当前四条件可 eligible（ordinary VICTORY 保留仪式，无 CRT==TRIUMPH 门）；triumph_commander_id=ceremony candidate 非 CRT 证据；战斗身份 carrier 与 legacy unknown 中性事件；Forum 公开 vote/resolve 一次 + share 单次消费（GAME_RULE_CHANGE=NO） |
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent E | 初版创建 |
 
 > **维护规则：** 本文件为活文档，每次修改规格说明正文或技术映射时，必须在版本日志中追加新条目。版本号递增规则：大功能修改升主版本（v1→v2），小修小改升次版本（v1.0→v1.1）。

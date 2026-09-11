@@ -202,15 +202,18 @@ Rectangle {
 
                 property var result: sessionStore.combatBattleResultDetail
 
+                // WP-G-R4 (SA v1.7 §5.5)：resultBox 与 WarCard.cardResult 共用同一
+                // stage renderer（内联组件，纯 display）。固定 header + 可滚动阶段内容 +
+                // 常驻确认钮（整次 action 一个确认钮可见可用；无第二确认）。
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 12
                     spacing: 6
 
-                    // Result header
+                    // Result summary header（中性色；两阶段颜色由 StageResultBlock 内按阶段读 result）
                     Text {
-                        text: resultBox.result ? (resultBox.result.result_label || "") : ""
-                        color: root.resultColor(resultBox.result)
+                        text: resultBox.result ? (resultBox.result.result_label || "战果详情") : "战果详情"
+                        color: "#2C1E12"
                         font.pixelSize: theme.titleSize
                         font.bold: true
                         Layout.fillWidth: true
@@ -218,80 +221,27 @@ Rectangle {
                         elide: Text.ElideRight
                     }
 
-                    // Battle stats
-                    Text {
-                        text: "🎲 骰子: " + (resultBox.result ? resultBox.result.dice || 0 : "") + " / 12"
-                            + "  |  攻击总值: " + (resultBox.result ? resultBox.result.total_attack || 0 : 0)
-                            + "  vs  敌军防御: " + (resultBox.result ? resultBox.result.enemy_defence || 0 : 0)
-                            + "  =  " + (resultBox.result ? resultBox.result.total_score || 0 : 0)
-                        color: "#2C1E12"
-                        font.pixelSize: theme.bodySize
+                    // 可滚动阶段内容区（内容自适应；高度超出时滚动，确认钮不被挤出）
+                    Flickable {
+                        id: resultScroll
                         Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                    }
-
-                    // Loot breakdown table
-                    Rectangle {
-                        visible: resultBox.result && resultBox.result.loot > 0
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 150
-                        color: "#FFF6E6"
-                        radius: 4
-                        border.color: "#D9AF63"
-                        border.width: 1
+                        Layout.fillHeight: true
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        contentWidth: resultScroll.width
+                        contentHeight: resultCol.implicitHeight
 
                         ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: 10
-                            spacing: 3
+                            id: resultCol
+                            width: resultScroll.width
+                            spacing: 8
 
-                            Text {
-                                text: "📦 战利品分配"
-                                font.bold: true
-                                color: "#2C1E12"
-                                font.pixelSize: theme.bodySize
-                            }
-
-                            LootRow { label: "总额"; value: resultBox.result ? resultBox.result.loot : 0; bold: true }
-                            LootRow { label: "国库"; value: resultBox.result ? resultBox.result.treasury_share : 0; textColor: "#8B2500" }
-                            LootRow {
-                                visible: resultBox.result && resultBox.result.commander_share > 0
-                                label: "指挥官私库"
-                                value: resultBox.result ? resultBox.result.commander_share : 0
-                            }
-                            LootRow {
-                                visible: resultBox.result && resultBox.result.faction_share > 0
-                                label: "派系金库"
-                                value: resultBox.result ? resultBox.result.faction_share : 0
-                            }
-                            LootRow { label: "士兵份额"; value: resultBox.result ? resultBox.result.soldier_share : 0 }
-                            LootRow {
-                                visible: resultBox.result && resultBox.result.losses > 0
-                                label: "💀 军团损失"
-                                value: resultBox.result ? resultBox.result.losses : 0
-                                textColor: "#B3261E"
-                            }
+                            // 同一 stage renderer：Naval + Land 并列（executed 驱动）
+                            StageResultBlock { envelope: resultBox.result }
                         }
                     }
 
-                    // No-loot info
-                    Text {
-                        visible: resultBox.result && resultBox.result.loot <= 0
-                        text: {
-                            var r = resultBox.result ? resultBox.result.result : ""
-                            if (r === "disaster") return "💀 惨败：全军覆没，无战利品"
-                            if (r === "defeat") return "😞 战败：被迫撤退，未获得战利品"
-                            if (r === "draw") return "🤝 僵持：未能突破敌军防线"
-                            return "⚔️ 战斗结束"
-                        }
-                        color: "#766652"
-                        font.pixelSize: theme.bodySize
-                        Layout.topMargin: 4
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                    }
-
-                    // Confirm button
+                    // Confirm button（常驻底部，整次 action 一个确认钮）
                     ActionButton {
                         text: "✓ 确认战果"
                         Layout.alignment: Qt.AlignHCenter
@@ -631,48 +581,17 @@ Rectangle {
                 Layout.topMargin: 2
             }
 
-            // ── AC-4.3: Resolved state — per-war result summary (result left in card) ──
+            // ── Resolved/TRUCE 卡结果区：同一 stage renderer（AC-4.3 result left in card；
+            // SA v1.7 §5.5/§5.4：TRUCE_LOCKED 卡保留双结果块）──
             ColumnLayout {
-                visible: !isEmptySlot && isResolved
+                visible: !isEmptySlot && (isResolved || isTruceLocked)
                 Layout.fillWidth: true
                 Layout.leftMargin: 8
                 Layout.rightMargin: 8
                 Layout.topMargin: 4
                 spacing: 2
 
-                // Result label (胜/败/平)
-                Text {
-                    text: cardResult ? (cardResult.result_label || "") : ""
-                    color: cardResultColor
-                    font.pixelSize: theme.bodySize
-                    font.bold: true
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    elide: Text.ElideRight
-                }
-
-                // Battle stats: 骰子 X/12 · 攻击总值 A vs 敌军防御 B = C
-                Text {
-                    text: cardResult
-                        ? "🎲 骰子: " + (cardResult.dice || 0) + " / 12"
-                          + "  攻击总值: " + (cardResult.total_attack || 0)
-                          + " vs 敌军防御: " + (cardResult.enemy_defence || 0)
-                          + " = " + (cardResult.total_score || 0)
-                        : ""
-                    color: "#2C1E12"
-                    font.pixelSize: theme.smallSize
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                }
-
-                // Loot: 战利品 L T
-                Text {
-                    visible: cardResult && (cardResult.loot || 0) > 0
-                    text: "📦 战利品: " + (cardResult ? (cardResult.loot || 0) : 0) + " T"
-                    color: "#766652"
-                    font.pixelSize: theme.smallSize
-                    Layout.fillWidth: true
-                }
+                StageResultBlock { envelope: cardResult; compact: true }
             }
 
             // Spacer
@@ -787,6 +706,150 @@ Rectangle {
                 font.pixelSize: theme.smallSize
                 font.bold: bold
             }
+        }
+    }
+
+    // WP-G-R4（SA v1.7 §5.5）：两个结果区（resultBox + WarCard.cardResult）共用的同一
+    // stage renderer——纯 display，不执行业务/不重建规则（R4-03）。naval/land 并列读 v2
+    // envelope（schema_version=2）:
+    //   - Naval executed → 「海战: 大胜/胜利/僵持/战败/灾难」+ 舰队损失 + 海权阶段结果
+    //   - Land executed → 「陆战: …」+ 骰子/攻击总值/敌军防御/分数 + 军团损失 + 战利品
+    //   - Land 未执行（NAVAL_GATE_BLOCKED）→ 固定「陆战: 未执行 — 海战门未通过」
+    //   - NOT_READY（naval.status==NOT_READY / reason NO_READY_ASSIGNED_FLEET）→ 「海军未就绪」，
+    //     不出现任何 Land 数值行
+    //   - Naval bypass（NOT_REQUIRED / SEA_CONTROL_ALREADY_ACQUIRED）→ 说明原因，不渲染作「海战胜利」
+    // 未执行 stage 无数值行；executed 且字段缺失 → 「未记录」（暴露 DTO contract failure，不制造
+    // 零，R4-05）；色彩/图标按阶段读 result（禁顶层 success 两阶段同绿、禁 final War.RESOLVED
+    // 改写 Naval label）；readiness 渲染不读 API 的 attack 能力布尔位（stage.reason 驱动）。
+    component StageResultBlock: ColumnLayout {
+        property var envelope: null
+        property bool compact: false
+
+        spacing: compact ? 2 : 6
+        Layout.fillWidth: true
+
+        readonly property var naval: (envelope && envelope.naval) ? envelope.naval : null
+        readonly property var land: (envelope && envelope.land) ? envelope.land : null
+        readonly property bool navalExecuted: naval !== null && naval.executed === true
+        readonly property bool landExecuted: land !== null && land.executed === true
+
+        function hasField(obj, key) {
+            return obj !== null && obj !== undefined
+                && Object.prototype.hasOwnProperty.call(obj, key)
+        }
+        function stageWord(result) {
+            var m = { "TRIUMPH": "大胜", "VICTORY": "胜利", "STALEMATE": "僵持",
+                      "DEFEAT": "战败", "DISASTER": "灾难",
+                      "triumph": "大胜", "victory": "胜利", "draw": "僵持",
+                      "defeat": "战败", "disaster": "灾难" }
+            return m[result] !== undefined ? m[result] : ""
+        }
+        function stageResultColor(result) {
+            var m = { "TRIUMPH": "#2E9D4D", "VICTORY": "#228B22", "STALEMATE": "#FF8C00",
+                      "DEFEAT": "#B3261E", "DISASTER": "#8B0000",
+                      "triumph": "#2E9D4D", "victory": "#228B22", "draw": "#FF8C00",
+                      "defeat": "#B3261E", "disaster": "#8B0000" }
+            return m[result] !== undefined ? m[result] : "#2C1E12"
+        }
+        function navalTitle(n) {
+            if (n === null || n === undefined) return ""
+            if (n.executed === true) return "海战: " + stageWord(n.result)
+            if (n.status === "NOT_READY") return "海军未就绪"
+            if (n.reason === "NOT_REQUIRED") return "海战: 未执行 — 本战无需海军"
+            if (n.reason === "SEA_CONTROL_ALREADY_ACQUIRED")
+                return "海战: 未执行 — 已获取制海权，本场跳过海战"
+            return "海战: 未执行"
+        }
+        function landTitle(l) {
+            if (l === null || l === undefined) return ""
+            if (l.executed === true) return "陆战: " + stageWord(l.result)
+            if (l.reason === "NAVAL_GATE_BLOCKED") return "陆战: 未执行 — 海战门未通过"
+            if (l.reason === "NAVAL_NOT_READY") return "陆战: 未执行"
+            return "陆战: 未执行"
+        }
+        function valueText(stage, key, suffix) {
+            if (hasField(stage, key)) return String(stage[key]) + (suffix || "")
+            return "未记录"   // executed 但字段缺失：暴露 DTO contract failure，不制造零
+        }
+
+        // ── Naval stage ──
+        Text {
+            visible: !!naval
+            text: navalTitle(naval)
+            color: navalExecuted ? stageResultColor(naval.result) : "#5B5B76"
+            font.pixelSize: compact ? theme.smallSize : theme.bodySize
+            font.bold: true
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            elide: Text.ElideRight
+        }
+        // NOT_READY 说明（无任何 battle 数值行；reason 常量来自 API gate，非 attack 能力位）
+        Text {
+            visible: naval !== null && !navalExecuted && naval.status === "NOT_READY"
+            text: naval && naval.reason === "NO_READY_ASSIGNED_FLEET"
+                ? "未就绪：本战无已指派可用舰队" : "未就绪"
+            color: "#8A6F52"
+            font.pixelSize: compact ? theme.smallSize : theme.bodySize
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+        }
+        // Naval executed → 舰队损失（真实损失差集）+ 海权阶段结果（stage 快照）
+        Text {
+            visible: navalExecuted
+            text: "⚓ 舰队损失: " + valueText(naval, "roman_losses", " 艘")
+                  + (hasField(naval, "casualty_fleet_ids") && naval.casualty_fleet_ids.length > 0
+                     ? "（损失舰号: " + naval.casualty_fleet_ids.join(", ") + "）" : "")
+            color: "#2C1E12"
+            font.pixelSize: compact ? theme.smallSize : theme.bodySize
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+        }
+        Text {
+            visible: navalExecuted
+            text: naval.sea_control_acquired === true
+                ? "🌊 海权: 已获取制海权" : "🌊 海权: 未获取制海权"
+            color: naval.sea_control_acquired === true ? "#1E6FA8" : "#766652"
+            font.pixelSize: compact ? theme.smallSize : theme.bodySize
+            Layout.fillWidth: true
+        }
+
+        // ── Land stage ──
+        Text {
+            visible: !!land
+            text: landTitle(land)
+            color: landExecuted ? stageResultColor(land.result) : "#766652"
+            font.pixelSize: compact ? theme.smallSize : theme.bodySize
+            font.bold: landExecuted
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            elide: Text.ElideRight
+        }
+        Text {
+            visible: landExecuted
+            text: "🎲 骰子: " + valueText(land, "dice", " / 12")
+                + " | 攻击总值: " + valueText(land, "total_attack")
+                + " vs 敌军防御: " + valueText(land, "enemy_defence")
+                + " = " + valueText(land, "total_score")
+            color: "#2C1E12"
+            font.pixelSize: compact ? theme.smallSize : theme.bodySize
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+        }
+        Text {
+            visible: landExecuted && hasField(land, "losses") && land.losses > 0
+            text: "💀 军团损失: " + valueText(land, "losses")
+            color: "#B3261E"
+            font.pixelSize: compact ? theme.smallSize : theme.bodySize
+            Layout.fillWidth: true
+        }
+        Text {
+            visible: landExecuted && hasField(land, "loot") && land.loot > 0
+            text: "📦 战利品: " + valueText(land, "loot", " T")
+                  + (hasField(land, "soldier_share") ? "（士兵份额 " + land.soldier_share + "）" : "")
+            color: "#766652"
+            font.pixelSize: compact ? theme.smallSize : theme.bodySize
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
         }
     }
 }

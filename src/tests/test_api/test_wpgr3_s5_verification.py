@@ -169,19 +169,20 @@ class TestR3V01EmptyAbsentInvalidRandom(unittest.TestCase):
         self.assertEqual(war.status, WarStatus.ACTIVE)
 
     def test_land_override_does_not_bypass_naval_gate(self):
-        """隔离：land override（victory）不能跨过无舰队自动 DEFEAT / 海战阻断（R-05）。"""
+        """隔离（WP-G-R4 supersede，SA v1.7 §8.3/§3.1）：land override（victory）不能穿透
+        readiness——无 ready 舰队 = NAVAL_NOT_READY（非 DEFEAT、零 battle 副作用）。"""
         state, war = r1s1_naval_state(enemy_naval=20, n_fleets=0)
         state.config.testing.force_battle_result = "victory"   # 仅 land override
         state.config.testing.force_naval_result = ""           # naval 默认（committed 空）
         result = combat_api.do_combat_action(state, "player_opt", war.id, "attack")
-        self.assertTrue(result["success"])
-        data = result["data"]
-        self.assertEqual(data["naval"]["result"], "DEFEAT")    # 无可用舰队 → 既有自动失败
-        self.assertEqual(data["land_battle"], "blocked")       # land 未执行 → victory override 无效
-        self.assertEqual(war.status, WarStatus.ACTIVE)
+        self.assertFalse(result["success"])
+        self.assertEqual(result["data"]["code"], "NAVAL_NOT_READY")
+        self.assertEqual(war.status, WarStatus.ACTIVE, "land victory override 未生效（未 RESOLVED）")
+        self.assertEqual(war.duration, 0)
 
     def test_live_naval_gate_store_level_default(self):
-        """live Store 层：naval-required + 无舰队 + land victory override → DEFEAT 阻断。"""
+        """live Store 层（WP-G-R4 supersede）：naval-required + 无 ready 舰队 → Store 反馈
+        readiness 拒绝（只读刷新，不写 battle victory/defeat data）。"""
         state, war = r1s1_naval_state(enemy_naval=20, n_fleets=0)
         state.config.testing.force_battle_result = "victory"
         state.config.testing.force_naval_result = ""
@@ -189,10 +190,8 @@ class TestR3V01EmptyAbsentInvalidRandom(unittest.TestCase):
         sel = store.doSelectWar(war.id)
         self.assertTrue(sel["success"], sel.get("message"))
         fb = store.doCombatAction(war.id, "attack")
-        self.assertTrue(fb["success"], fb.get("message"))
-        data = fb["data"]
-        self.assertEqual(data["naval"]["result"], "DEFEAT")
-        self.assertEqual(data["land_battle"], "blocked")
+        self.assertFalse(fb["success"], "readiness 拒绝 → False")
+        self.assertEqual(fb["data"]["code"], "NAVAL_NOT_READY")
         self.assertEqual(war.status, WarStatus.ACTIVE)
         self.assertFalse(war.sea_control_acquired)
 

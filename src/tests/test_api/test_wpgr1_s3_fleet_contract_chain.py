@@ -194,7 +194,11 @@ def _population_round(state, consul_figure_id, rival_vote_figure_id=0):
 
 
 def _senate_resolve_advance(state, proposals=True):
-    """F6/F7 或 A6 前半：resolve_senate（确定性 approve）→ advance_senate_phase。"""
+    """F6/F7 或 A6 前半：resolve_senate（确定性 approve）→ advance_senate_phase。
+    WP-G-R4（OD-R4-05/06 supersede，SA v1.7 §2.3b）：零提案先显式空选择写 P。"""
+    if not state.get_senate_proposals() and not state.senate_proposal_decision_complete:
+        fin = senate_api.propose_many(state, P1, [])
+        assert fin["success"], fin.get("message")
     resolved = senate_api.resolve_senate(state, vote_decider=DeterministicApproveDecider())
     assert resolved["success"], f"resolve_senate failed: {resolved.get('message')}"
     adv = senate_api.advance_senate_phase(state, P1)
@@ -205,13 +209,13 @@ def _senate_resolve_advance(state, proposals=True):
 def _combat_resolution_advance_year(state):
     """F8/F9 / A6 后半：Combat → resolution → advance_year。
 
-    R3-G-01 supersession（2026-09-05，设计 §8.2 Chain FC step 5/7）：fixture war 有 valid
-    commander → actionable → 不能以 commanderless nonactionable 跳过；真实 do_combat_action
-    attack → canonical naval 门（无成舰/未获控 → auto-DEFEAT 阻断陆战，war 保持 ACTIVE）→
-    advance → resolution → advance_year。
+    WP-G-R4 supersede（2026-09-09，SA v1.7 §8.3）：fixture war 有 valid commander → actionable
+    → 真实 do_combat_action attack；无 ready 成舰 = NAVAL_NOT_READY（取代 R3 auto-DEFEAT，零
+    副作用）→ 显式 advance → resolution → advance_year。
     """
     act = combat_api.do_combat_action(state, P1, state.get_war_system().get_active_wars()[0].id, "attack")
-    assert act["success"], f"do_combat_action failed: {act.get('message')}"
+    if not act["success"]:
+        assert act["data"]["code"] in ("NAVAL_NOT_READY", "NAVAL_SYSTEM_UNAVAILABLE"), act
     ac = combat_api.advance_combat(state, P1)
     assert ac["success"], f"advance_combat failed: {ac.get('message')}"
     res = resolution_api.execute_resolution(state)
@@ -456,6 +460,10 @@ def _run_full_sc04_chain():
     _population_round(state, consul_figure_id=0)
 
     # ── Y2 A6 Senate（空提案 Path A）→ combat → resolution → advance_year ──
+    # WP-G-R4（OD-R4-05/06 supersede，SA v1.7 §2.3b）：零提案先显式空选择写 P
+    if not state.get_senate_proposals() and not state.senate_proposal_decision_complete:
+        fin = senate_api.propose_many(state, P1, [])
+        assert fin["success"], fin.get("message")
     s_res = senate_api.resolve_senate(state, vote_decider=DeterministicApproveDecider())
     assert s_res["success"], s_res.get("message")
     assert senate_api.advance_senate_phase(state, P1)["success"]

@@ -390,6 +390,26 @@ ACTIVE（no valid commander）──T15（Takeover P2）──▶ ACTIVE（新 C
 
 - [Technical Mapping](../technical-mappings/MVP0.3-02_战争系统.md)
 
+## WP-G-R4 同步注记（2026-09-09，DA-R4-B3；append-only，目标锚点 §2.3/§2.7/§3.2）
+
+> 权威：SA-Design-WP-G-R4 v1.7（FROZEN）§2/§3/§4/§5；treaty/loss 生命周期、Commander
+> absent/Consul 资格、R3 闭包规则零改（GAME_RULE_CHANGE=NO）。
+>
+> - **Takeover 决策/承诺与物理部署分离（O5）**：§3.2 Takeover 路径 = 选择/Submit 锁
+>   `_takeover_pending`（LOCKED，零部署）→ Senate 正常提案/投票/结算（pending-aware M：
+>   LOCKED T 覆盖 commanderless ACTIVE 战 → M_open=False 放行，无死锁 R4-18）→ 显式
+>   `advance_senate_phase` 原子部署恰一次；Takeover↔Peace 同战双向互斥保留；一执政官/
+>   一会期至多 1 pending（单 commitment，双 mandatory 战仅锁 1、另一顺延下会期）。
+> - **Takeover 不是 selection complete**：Submit 不写 P（proposal_selection 完成）、不隐式
+>   空结算（R4-09）；另一合法非空提案在 O5 下可构造（执政官留城 → proposal_control HUMAN/AI）。
+> - **§2.3 战斗阶段 readiness 前置**：海军门未 ready = `NAVAL_NOT_READY`（非 DEFEAT），
+>   无任何 battle 副作用；舰队就绪后同回合可重试一次（未 battled 不误拒）。
+> - **§2.7 战争胜利结算 identity**：`resolve_war(war_id, victory, *, combat_result=...)`——
+>   显式 CRT 身份（现代入口必传）；legacy bool-only = unknown + 中性 `war_resolved` 事件
+>   （不推断/不伪造 TRIUMPH）；非法/矛盾 combat_result 零 mutation。
+> - **dual stage**：一次 ATTACK 内 Naval 成功后自动 Land；未执行 stage 无数值统计（v2
+>   envelope omitted keys，R4-05）；Land terminal 清海权不覆盖 Naval 阶段快照。
+
 ## 9. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
@@ -400,6 +420,7 @@ ACTIVE（no valid commander）──T15（Takeover P2）──▶ ACTIVE（新 C
 | v1.3 | 2026-08-31 | DA Sub-Agent (WP-G GA) | 冻结语义同步（G1-08/G1-14/G1-21/G1-23/G1-24/G1-17/ODR-G-01）：条约仅 STALEMATE；Takeover 双前置 P1/P2 + Continue/Peace 三路径；Reinforcement N 契约（零池例外、国库无关）；DEFEATED 枚举退役禁新写入。⚠️ 其中「approved=战争正式结束（RESOLVED，truce 到期恢复退役）」条款 = DESIGN DRIFT，已被 v1.6（G3C）撤销 |
 | v1.4 | 2026-08-31 | DA Sub-Agent (WP-G GB) | 陆战权威收敛（G1-05/06/07/19/22/25）：DEFEAT=随机无放回 ceil(N/2)→DESTROYED（禁「一半 DISBANDED」/前缀序）；DISASTER=全部参战 DESTROYED；TRIUMPH/VICTORY=全部幸存参战者晋升 Veteran→RESOLVED→召回→AVAILABLE；参战集/战力/伤亡源=live 实体（镜像退役，R-17）；伤亡单一 owner=apply_land_casualties |
 | v1.5 | 2026-08-31 | DA Sub-Agent (WP-G GC) | 海军门语义同步（G1-09/16/R-05/R-06）：§2.3 海战前置句补完整状态机——STALEMATE/DEFEAT/DISASTER 阻断陆战（legacy CLI 同步）、TRIUMPH/VICTORY 获控后同场陆战、已获控跳过海战；制海权持久至战争正式结束（sea_control_acquired 权威字段，替代 _sea_control_ratio；GameState 存档接线 = GD） |
+| v1.7 | 2026-09-09 | DA Sub-Agent (WP-G-R4 B3) | R4 同步（FROZEN v1.7 §2/§3/§4/§5）：Takeover 决策/承诺与物理部署分离（O5）；互斥/单 commitment/pending-aware M；§2.3 readiness 前置（NAVAL_NOT_READY 非 DEFEAT、就绪后可重试）；§2.7 resolve_war 显式 combat_result 载体 + legacy unknown 中性事件；dual-stage v2 envelope（未执行无统计/海权 stage 快照）——GAME_RULE_CHANGE=NO |
 | v1.6 | 2026-09-01 | DA Sub-Agent (WP-G G3C) | Treaty Lifecycle 修正（Owner Correction 2026-09-01 / DC-TREATY-LIFECYCLE-CORRECTION-01）：**approved = TEMPORARY TRUCE（撤销 v1.3 的 approved=RESOLVED）**——War 保持 TRUCE + truce_end_turn + Commander 返回 + Legion/Fleet 释放 + Revenue 最后维护 + Population DISBANDED；到期 → THREAT（threat_level=1，禁直接 ACTIVE / 旧绑定恢复，Sea Control 保持）→ 自动升级 → ACTIVE；TRIUMPH/VICTORY = RESOLVED 独立；ODR-CAND-01 修复 = enqueue-then-clear（_legions_to_disband 双入残留消除） |
 
 ---

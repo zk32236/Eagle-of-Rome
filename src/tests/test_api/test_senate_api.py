@@ -412,11 +412,17 @@ class TestAutoSubmitProposals(unittest.TestCase):
         # A7（F 件 §2.3）：同轮不双路径——AI 接管路径下不提交 peace 提案
         self.assertEqual(len(peace_proposals), 0)
         self.assertEqual(peace_proposals, [])
-        # S19：pending + Takeover → 清条约 + ACTIVE + 新 Commander
-        self.assertEqual(war.status, WarStatus.ACTIVE)
-        self.assertIn(war, ws.get_active_wars())
-        self.assertEqual(war.commander_id, self.consul.id)
-        self.assertIsNone(war.peace_treaty)
+        # WP-G-R4 supersede（OD-R4-05/06，SA v1.7 §2.5/R4-24）：AI 接管 = 单 commitment 锁 T
+        # （Submit 零部署）——war 保持 TRUCE+pending、无 Commander；部署唯一 owner =
+        # advance_senate_phase（显式 Senate→Combat 原子推进，§2.4b 迁移表 #1/#2/#3）
+        self.assertEqual(war.status, WarStatus.TRUCE)
+        self.assertIn(war, ws.get_truce_wars())
+        self.assertIsNone(war.commander_id)
+        self.assertIsNotNone(war.peace_treaty)
+        pending = self.state.get_takeover_pending()
+        self.assertIsNotNone(pending)
+        self.assertEqual(pending["status"], "LOCKED")
+        self.assertEqual(pending["war_id"], "peace_test")
 
     def test_auto_submit_proposals_returns_valid_structure(self):
         """返回值结构符合 api_response 规范"""
@@ -477,10 +483,16 @@ class TestAutoSubmitProposals(unittest.TestCase):
         proposals = result["data"].get("proposals", [])
         types_found = set(p["type"] for p in proposals)
         self.assertIn("war", types_found)
-        # A7 互斥：war2（TRUCE+pending，无 commander）被 AI 接管而非 peace 提案
+        # A7 互斥：war2（TRUCE+pending，无 commander）被 AI 接管（单 commitment 锁 T）而非 peace 提案
         self.assertNotIn("peace", types_found)
-        self.assertEqual(war2.status, WarStatus.ACTIVE)
-        self.assertEqual(war2.commander_id, self.consul.id)
+        # WP-G-R4 supersede（OD-R4-05/06，SA v1.7 §2.5/R4-24）：AI Submit 锁 T 零部署——
+        # war2 保持 TRUCE+无 Commander，部署仅发生在显式 advance_senate_phase（§2.4b）
+        self.assertEqual(war2.status, WarStatus.TRUCE)
+        self.assertIsNone(war2.commander_id)
+        pending = self.state.get_takeover_pending()
+        self.assertIsNotNone(pending)
+        self.assertEqual(pending["status"], "LOCKED")
+        self.assertEqual(pending["war_id"], "w2")
         # 总督任命依赖候选人选举逻辑，可能因随机性跳过行省
         # budget 和 land 依赖合同/公地数据，不强制断言
 

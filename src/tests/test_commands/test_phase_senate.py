@@ -1046,7 +1046,8 @@ class TestManualTakeover(unittest.TestCase):
 
 
     def test_manual_no_takeover_option(self):
-        """测试 CLI 不再将进行中外国战争注册为接管提案选项（AC-01）"""
+        """AC-01（WP-G-R4 §2.3b）：接管不注册为 proposal 选项（proposals_map 无 takeover ptype）；
+        CLI 显式 takeover <war_id> [N] 命令 = 锁 T 动作点（帮助文本含命令，非提案）。"""
         cmd = SenateCommand(self.state)
         cmd._auto_mode = False
 
@@ -1057,11 +1058,13 @@ class TestManualTakeover(unittest.TestCase):
         proposals_map = getattr(cmd, "_proposals_map", {})
         for ptype, _params in proposals_map.values():
             self.assertNotEqual(ptype, "takeover")
-        self.assertNotIn("接管", output)
+        self.assertIn("takeover <war_id>", output)  # R4：CLI Takeover 显式动作命令
 
     @patch('builtins.input')
     def test_manual_takeover_invalid_war_id(self, mock_input):
-        """测试接管不存在的战争"""
+        """接管不存在的战争（propose B99 无效）；R4 supersede（SA v1.7 §2.3b）：
+        本会期存在 commanderless ACTIVE 战（M_open）→ 空选择被拒 → 不 mark executed（返回 False），
+        不再无条件完成阶段（R3 CLI 曾无视 guard 强制 mark executed）。"""
         mock_input.side_effect = ["next", "propose B99 3", "next", "next"]
 
         cmd = SenateCommand(self.state)
@@ -1072,8 +1075,9 @@ class TestManualTakeover(unittest.TestCase):
             result = cmd.execute([])
             output = out.getvalue()
             error = err.getvalue()
-        self.assertTrue(result)
+        self.assertFalse(result, "M_open 拒绝 → 非 True")
         self.assertIn("❌ 无效的法案ID: B99", output + error)
+        self.assertFalse(self.state.is_phase_executed("senate"), "拒绝不得 mark executed")
 
     @patch('builtins.input')
     def test_manual_takeover_no_consul(self, mock_input):
@@ -1149,8 +1153,9 @@ class TestManualTakeover(unittest.TestCase):
             output = out.getvalue()
             error = err.getvalue()
 
-        self.assertTrue(result)  # 阶段仍正常完成
+        self.assertFalse(result)  # WP-G-R4 supersede（§2.3b）：M_open 下空结束被拒，不强制完成
         self.assertIn("战争需要海战，但当前无可用舰队，无法宣战。请先建造舰队。", output + error)
+        self.assertFalse(self.state.is_phase_executed("senate"), "拒绝不得 mark executed")
 
         # 验证战争未被激活（仍然在威胁列表）
         self.assertIn(war, self.state._war_system._threats)

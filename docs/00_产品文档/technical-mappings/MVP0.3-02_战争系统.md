@@ -43,9 +43,26 @@ CRT 判定: combat_total = 2d6 + commander.martial + sum(legion_strengths) - war
 - **返回：** `{triumphs: [{war_id, commander_id, popularity_gain, influence_gain}], disbandments: [{legion_id, reason}], summary: str}`
 - **日志：** DBUG（凯旋条件/解散决策）+ INFO（执行结果）
 
+## WP-G-R4 同步注记（2026-09-09，DA-R4-B3；append-only）
+
+> 权威：SA-Design-WP-G-R4 v1.7（FROZEN）§2/§4/§5；对应规格 MVP0.3-02 §2.3/§2.7/§3.2 注记。
+>
+> - **resolve_war 兼容参数/unknown 边界**：`resolve_war(war_id, victory, *, combat_result=None)`；
+>   显式非 victory/triumph 或与 victory=False 矛盾 → ValueError 零 mutation；legacy bool-only 成功
+>   → `combat_result=None/result_identity_source=legacy_unspecified/resolution_kind=successful_war_resolution`
+>   + 中性 `war_resolved` 事件（不伪造 combat_triumph/victory）。
+> - **DTO persistence/Store/CombatStage/event 链（引用规格 MVP0.7-04 §2.2 R4 注记 schema §5）**：
+>   ATTACK v2 envelope → `_persist_combat_envelope`（pending_result + war_results[id] deepcopy，
+>   battled 恰一次）→ get_combat_view battle_results/war cards → Store
+>   combatBattleResultDetail/combatResolvedWarCards 透传 → CombatStage resultBox 与
+>   WarCard.cardResult 共用同一 stage renderer（naval/land 并列 executed；未执行固定文案/无
+>   ||0 fallback/缺失→未记录）；`combat_action_resolved` summary event（turn/phase/war_id/
+>   action_status/naval/land/outcome/schema_version）。
+
 ## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.5 | 2026-09-09 | WP-G-R4 B3：resolve_war 显式 combat_result/legacy unknown 边界 + v2 DTO persistence→Store→CombatStage 两结果区消费链 + summary event（DA-R4-B3） |
 | v1.4 | 2026-08-29 | WP-F 003（S1-7）：`_war_card` 增 `commander_faction_id`（commander.faction_id，无指挥官 → None）；CombatStage 指挥官 label 经 FactionStyle 着色 |
 | v1.3 | 2026-08-23 | GUI-BETA-R1 WP-E（Slice 11 PU-04）：①TRUCE 剩余回合 DTO（combat_api.py `_war_card` 新增 `truce_end_turn` / `truce_remaining_turns` 权威计算）；②`_forum_war_events` 保留载体（forum_api.py `initialize_forum_turn` 写入 war_events，`get_forum_view` 暴露 `war_events` / `has_active_war`=ws.get_active_wars() 权威）；③TRUCE 卡军团投影边界（展示=实体镜像；实体错 → WP-G traceability 移交，禁 QML 掩盖） |
 | v1.2 | 2026-07-26 | 追加 process_triumph_and_disbandment() 方法（Wave-04 Finale, C-E1） |

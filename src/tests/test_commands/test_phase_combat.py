@@ -262,7 +262,8 @@ class TestCombatCommand(unittest.TestCase):
         self.assertTrue(result)
         self.assertTrue("victory" in output.lower() or "胜利" in output or "大胜" in output)
         # WP-G GB（G1-22，S5 收敛）：VICTORY → 战争结束（RESOLVED）
-        self.mock_war_system.resolve_war.assert_called_with(war.id, True)
+        # WP-G-R4 (§4.2)：现代入口必传显式 CRT 身份（定向更新，SA §4.3）
+        self.mock_war_system.resolve_war.assert_called_with(war.id, True, combat_result="victory")
 
     @patch('random.randint')
     def test_battle_outcomes_stalemate(self, mock_randint):

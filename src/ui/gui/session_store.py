@@ -400,6 +400,31 @@ class GuiSessionStore(QObject):
         """G2：Continue Existing Command 可用位（Q 件 J，DTO 只透传权威值，禁 QML 推断 R-01）。"""
         return self._senate_view.get("can_continue", False)
 
+    @Property(dict, notify=senateViewChanged)
+    def senatePendingTakeover(self) -> Dict[str, Any]:
+        """WP-G-R4（SA v1.7 §2.5）：T/V 读模型（V=RESERVED / T=LOCKED）。"""
+        return self._senate_view.get("pending_takeover") or {}
+
+    @Property(bool, notify=senateViewChanged)
+    def senatePendingTakeoverLocked(self) -> bool:
+        return self._senate_view.get("pending_takeover_locked", False)
+
+    @Property(bool, notify=senateViewChanged)
+    def senateCanDeployTakeover(self) -> bool:
+        """WP-G-R4：真实 Senate result + LOCKED T + not M_open → 显式部署可用（advance 触发）。"""
+        return self._senate_view.get("can_deploy", False)
+
+    @Property(bool, notify=senateViewChanged)
+    def senateCanFinishEmpty(self) -> bool:
+        """WP-G-R4：显式空结束能力（零提案关闭选择需先提交 []；M_open 时禁用）。"""
+        return self._senate_view.get("can_finish_proposal_selection", False)
+
+    @Property(dict, notify=senateViewChanged)
+    def senateTakeoverRequired(self) -> Dict[str, Any]:
+        """R1/R4：takeover_required 并列权威态（rows + m_open/m_deploy_ready 会期级）。"""
+        return self._senate_view.get("takeover_required") or {}
+
+
     @Property(list, notify=senateViewChanged)
     def senateContinueOptions(self) -> List[Dict[str, Any]]:
         """G2：Continue 候选（含 reinforcement_range，Q 件 J）。"""
@@ -1220,6 +1245,13 @@ class GuiSessionStore(QObject):
             self._combat_result = feedback.get("data", {}) or {}
             self._refresh_snapshot()
             self._refresh_combat_view()
+        else:
+            # WP-G-R4（SA v1.7 §3.3）：readiness 拒绝 → 只读刷新 + 结构化 feedback 原因；
+            # 不把失败 data 写进 _combat_result 当 battle victory/defeat（R4-04）
+            data = feedback.get("data") or {}
+            if data.get("code") in ("NAVAL_NOT_READY", "NAVAL_SYSTEM_UNAVAILABLE"):
+                self._combat_result = {}
+                self._refresh_combat_view()
         self.combatViewChanged.emit()
         return feedback
 
@@ -1366,12 +1398,11 @@ class GuiSessionStore(QObject):
             self._refresh_snapshot()
             self._refresh_senate_view()
             created = (feedback.get("data") or {}).get("created") or (feedback.get("data") or {}).get("proposals") or []
-            if not created and not (self._senate_view.get("submitted_proposals") or []):
-                # P2-01：Path A 空批 → 空结算 → record_phase_result → advance 可过
-                resolve_feedback = self._adapter.resolve_senate()
-                self._raise_feedback(resolve_feedback)
-                self._refresh_snapshot()
-                self._refresh_senate_view()
+            # WP-G-R4（SA v1.7 §2.5，OD-R4-05/06 supersede R3 P2-01 Path A 自动空结算）：
+            # 空批提交只写 P（proposal_selection 完成）；不再隐式 resolve_senate(0)——
+            # 结算由显式入口（doResolveSenateSettlement 完成结算按钮）触发，Takeover-only
+            # Submit 不得误触发零提案自动结算（R4-09）。
+            _ = created
         self.senateViewChanged.emit()
         return feedback
 
@@ -1481,14 +1512,29 @@ class GuiSessionStore(QObject):
 
     @Slot(str, int, result=dict)
     def doTakeoverWar(self, war_id: str, reinforcement_n: int = 1) -> dict:
+        """WP-G-R4（SA v1.7 §2.5，O5）：Takeover Submit/lock 语义——reserve + Submit 锁 T
+        （零部署）；失败反馈不静默改配置（校验失败留 RESERVED 可重试）。部署唯一 owner =
+        advance_senate_phase（doAdvanceSenate → senate_api.advance_senate_phase）。"""
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
-        feedback = self._adapter.takeover_war(self._viewer_id, war_id, reinforcement_n)
+        from src.api import senate_api
+        feedback = self._adapter.call(senate_api.takeover_war, self._state, self._viewer_id,
+                                      war_id, reinforcement_n, action="submit")
+        if not feedback.get("success"):
+            # 无 RESERVED 配置（GUI 直锁场景）→ 先 reserve 再 submit（两段锁 T 零部署）
+            reserved = self._adapter.call(senate_api.takeover_war, self._state, self._viewer_id,
+                                          war_id, reinforcement_n, action="reserve")
+            if not reserved.get("success"):
+                self._raise_feedback(reserved)
+                self._refresh_senate_view()
+                self.senateViewChanged.emit()
+                return reserved
+            feedback = self._adapter.call(senate_api.takeover_war, self._state, self._viewer_id,
+                                          war_id, reinforcement_n, action="submit")
         self._raise_feedback(feedback)
         if feedback.get("success"):
             self._refresh_snapshot()
             self._refresh_senate_view()
-            self._refresh_combat_view()
         self.senateViewChanged.emit()
         return feedback
 

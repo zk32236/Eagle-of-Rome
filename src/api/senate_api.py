@@ -4,8 +4,10 @@
 提供统一的操作接口，供 CLI 和决策器调用。
 """
 
+import copy
 import logging
 import random
+import uuid
 from typing import Any, Dict, List, Optional
 
 from src.api import api_response
@@ -169,6 +171,9 @@ def _legion_options_for_war(state: GameState, war) -> Optional[Dict[str, Any]]:
         return None
     ms = state.get_military_system()
     pool = len(ms.get_available_legions()) if ms else 0
+    # WP-G-R4 (§2.5)：reserved N（其他目标战）从本战可征召池扣除
+    pool -= _takeover_reserved_offset(state, getattr(war, "id", None))
+    pool = max(pool, 0)
     lo = int(sw.get("min", 1))
     default = int(sw.get("default", 4))
     allowed = list(range(lo, pool + 1))
@@ -185,6 +190,9 @@ def reinforcement_range(state: GameState, war) -> Optional[Dict[str, Any]]:
     """
     ms = state.get_military_system()
     pool = len(ms.get_available_legions()) if ms else 0
+    # WP-G-R4 (§2.5 生产者消费者守恒)：同一 session 内 V/T 持有的 N（其他目标战）从池中扣除
+    pool -= _takeover_reserved_offset(state, getattr(war, "id", None))
+    pool = max(pool, 0)
     if pool == 0:
         return {
             "min": 0, "max": 0, "default": 0,
@@ -194,6 +202,17 @@ def reinforcement_range(state: GameState, war) -> Optional[Dict[str, Any]]:
         "min": 1, "max": pool, "default": 1,
         "allowed": list(range(1, pool + 1)), "zero_pool_exception": False,
     }
+
+
+def _takeover_reserved_offset(state: GameState, for_war_id: Optional[str]) -> int:
+    """WP-G-R4 (§2.5)：跨消费者守恒——V（RESERVED）或 T（LOCKED）持有的增援 N
+    在目标战之外的所有军团消费者（宣战/继续指挥/其他接管）可见池中扣除。"""
+    pending = getattr(state, "_takeover_pending", None)
+    if not pending or pending.get("status") not in ("RESERVED", "LOCKED"):
+        return 0
+    if pending.get("war_id") == for_war_id:
+        return 0
+    return int(pending.get("reinforcement_n", 0) or 0)
 
 
 def _war_has_valid_commander(state: GameState, war) -> bool:
@@ -272,8 +291,22 @@ def _resolve_takeover_required(state: GameState) -> Dict[str, Any]:
                 "reason": _commander_unavailable_token(state, war),
             })
     rows.sort(key=lambda row: row["war_id"])
+    # WP-G-R4 (SA v1.7 §2.1/§2.3, P1-RF-01)：pending-aware M——会期级 commitment slot 语义，
+    # 非 per-war。M_open（未作 mandatory 决策，仍阻塞）= C 非空 ∧ 无 LOCKED T 覆盖任何 C 战
+    # ∧ 有 eligible Consul；M_deploy_ready（已 LOCKED 待部署，放行）= C 非空 ∧ ∃LOCKED T 覆盖
+    # 某 C 战 ∧ 有 eligible Consul。两者全局互斥（单 commitment 至多锁 1 战）。
+    # `required` 保持 R3 兼容语义 = M_open（无解软锁防护不变：无 eligible Consul → M 不适用）。
+    pending = getattr(state, "_takeover_pending", None)
+    locked_covers_c = bool(
+        pending and pending.get("status") == "LOCKED"
+        and any(row["war_id"] == pending.get("war_id") for row in rows)
+    )
+    m_open = bool(rows) and not locked_covers_c and consul_figure is not None
+    m_deploy_ready = bool(rows) and locked_covers_c and consul_figure is not None
     return {
-        "required": bool(rows) and consul_figure is not None,
+        "required": m_open,
+        "m_open": m_open,
+        "m_deploy_ready": m_deploy_ready,
         "rows": rows,
     }
 
@@ -708,6 +741,24 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         takeover_required = _resolve_takeover_required(state)
         has_real_senate_result = bool(senate_result)
         senate_settlement_pending = (current_step == "results") and not has_real_senate_result
+        # WP-G-R4 (SA v1.7 §2.3/§2.5)：T/V 读模型 + 显式空选择/部署 capability（O5）
+        pending_takeover = _takeover_pending_dto(state)
+        pending_takeover_locked = bool(pending_takeover and pending_takeover.get("status") == "LOCKED")
+        can_finish_empty = (
+            actionable and current_step == "proposal"
+            and not takeover_required.get("m_open", False) and viewer_has_consul
+        )
+        can_deploy = (
+            actionable and (current_step == "results") and has_real_senate_result
+            and not takeover_required.get("m_open", False) and pending_takeover_locked
+        )
+        proposal_selection_disabled_reason = ""
+        if current_step != "proposal":
+            proposal_selection_disabled_reason = "当前不在提案选择环节"
+        elif not viewer_has_consul:
+            proposal_selection_disabled_reason = "您的派系没有在城执政官可提交（接管配置为边界空结束保留）"
+        elif takeover_required.get("m_open", False):
+            proposal_selection_disabled_reason = "存在未承诺的强制战争接管（先锁定 commanderless 接管目标）"
 
         data = {
             "phase_id": "senate",
@@ -733,8 +784,17 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "can_resolve": actionable and current_step == "tribune_veto",
             # R3-G-01 §1.5 冻结公式：can_advance = (current_step=="results") and
             # has_real_senate_result and not takeover_required.required
+            # R3-G-01 §1.5 冻结公式：can_advance = (current_step=="results") and
+            # has_real_senate_result and not takeover_required.required（required==M_open）
             "can_advance": (current_step == "results") and has_real_senate_result
                            and not takeover_required.get("required", False),
+            # WP-G-R4：pending Takeover / 显式空结束 / can_deploy 读模型（会期级 M）
+            "pending_takeover": pending_takeover,
+            "pending_takeover_locked": pending_takeover_locked,
+            "can_deploy": can_deploy,
+            "can_finish_proposal_selection": can_finish_empty,
+            "can_finish_empty": can_finish_empty,
+            "proposal_selection_disabled_reason": proposal_selection_disabled_reason,
             # R3-G-01 §1.5：settlement-pending 可见恢复态（DTO 字段 + 恢复动作位）
             "senate_settlement_pending": senate_settlement_pending,
             "can_resolve_settlement": senate_settlement_pending,
@@ -767,7 +827,7 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "can_takeover": can_takeover,
             # R1-G-05（WP-G-R1 v1.6 §2.5，S4）：并列权威态 takeover_required（per-war
             # required rows）——commanderless ACTIVE 强制接管 Core truth；can_takeover /
-            # takeover_options 保持既有可选动作语义不变。
+            # takeover_options 保持既有可选动作语义不变。R4 增 m_open/m_deploy_ready 会期级。
             "takeover_required": takeover_required,
             "continue_options": continue_options,
             "can_continue": can_continue,
@@ -800,23 +860,36 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         return api_response(False, f"获取元老院视图失败: {exc}", errors=[str(exc)])
 
 
-def takeover_war(state: GameState, player_id: str, war_id: str, reinforcement_n: Optional[int] = None) -> dict:
-    """战争接管直接职权（DEV-13 + ODR-G-01 统一 Takeover）：执政官直接接管，无需表决。
+def takeover_war(
+    state: GameState,
+    player_id: str,
+    war_id: str,
+    reinforcement_n: Optional[int] = None,
+    *,
+    action: str = "reserve",
+    bypass_turn_check: bool = False,
+) -> dict:
+    """WP-G-R4 (SA v1.7 §2.2/§2.5, O5/OD-R4-06)：Takeover 决策/承诺与物理部署分离。
 
-    可执行校验（A1，F 件 §2.1 双前置）：
-      P1 — TRUCE + pending treaty（T7）：terminate treaty → ACTIVE → 新 Consul
-      P2 — ACTIVE + no valid commander（T15）：无状态转换、无条约 mutation
-      异常态（ACTIVE+pending / TRUCE+无 pending / 其他）→ fail closed 拒绝；
-      ACTIVE + valid commander → 幂等拒绝（禁任意接管）。
-    reinforcement_n 经 reinforcement_range 重校验（G 件 §4，fail-closed）。
-    后端保证权限与表决链分离（FC-01/02/03/04/05/06/07/09/10）：不创建 proposal、
-    不进入 calculate_vote_result / record_veto / execute_passed_proposal。
+    action 语义（V=reservation，T=pending commitment，同一持久对象两个状态）：
+      reserve（默认）——勾选+选 War+设 N → 创建/更新单 reservation（RESERVED）；
+        edit N 释放旧 N 占用新 N；换 war 重建；reservation 保持至 Submit。
+      cancel —— RESERVED → 释放（None）；不触碰已锁定配置。
+      submit —— whole-package 校验 → RESERVED→LOCKED（T 写入）；**零部署副作用**：
+        不清 treaty / 不 TRUCE→ACTIVE / 不改 Commander / 不 rebind / 不征召 /
+        不置 absent / 不结束 Senate / 不写 D_Takeover（R4-17/R4-18/R4-10）。
+
+    C 优先单 commitment：C（commanderless ACTIVE）非空时 lock 目标必须为 C 战；
+    P（TRUCE+pending）战仅 C 为空时可锁。同战 Peace 双向互斥（Core 强制，R4-20）。
+    校验失败留在 RESERVED、零写入、可编辑重试（whole-package 原子，P1-RF-02）。
+
+    部署唯一 owner = advance_senate_phase（§2.4b 迁移表 #1~#14）。
     """
     if not state:
         return api_response(False, "无效的游戏状态")
 
-    # 1. 权限校验
-    if not state.is_current_player(player_id):
+    # 1. 权限校验（bypass_turn_check 仅供 AI canonical 路径内部使用，语义与 propose 同源）
+    if not bypass_turn_check and not state.is_current_player(player_id):
         state.log_event(
             "战争接管: 权限失败（非当前玩家）",
             level=logging.DEBUG,
@@ -941,111 +1014,371 @@ def takeover_war(state: GameState, player_id: str, war_id: str, reinforcement_n:
         )
         return api_response(False, f"增援数量超出允许范围（{rng['min']}~{rng['max']}）")
 
-    # 5. 直接执行（统一 Takeover mutation，F 件 §2.1 Shared Core）
-    previous_status = war.status.value if hasattr(war.status, "value") else str(war.status)
-    if not politics.execute_war_takeover_direct(war, consul_figure, reinforcement_n=reinforcement_n):
-        state.log_event(
-            "战争接管: 拒绝（接管执行失败）",
-            level=logging.DEBUG,
-            extra={"war_id": war_id, "player_id": player_id, "reason": "takeover_execution_failed"},
-        )
-        return api_response(False, "接管失败：军团招募失败或前置不满足")
-    resulting_status = war.status.value if hasattr(war.status, "value") else str(war.status)
+    # ===== WP-G-R4 (O5 / SA v1.7 §2.2/§2.5)：T/V 生命周期（Submit 零部署，R4-17/R4-18）=====
+    if action not in ("reserve", "submit", "cancel"):
+        return api_response(False, "未知的接管动作（reserve/submit/cancel）")
 
-    state.log_event(
-        "战争接管: 成功",
-        level=logging.DEBUG,
-        extra={"war_id": war_id, "player_id": player_id, "commander_id": consul_figure.id,
-               "reinforcement_n": reinforcement_n, "legions": list(getattr(war, "legion_numbers", []) or [])},
-    )
-    # AU-R1-05c（G3 C4）：provenance 字段扩展——与既有字段并存；trigger_source 区分
-    # human_explicit / ai_auto；P1 接管 previous_status=truce / resulting_status=active。
-    state.record_senate_direct_action({
-        "action_type": "takeover",
-        "action": "takeover",
-        "war_id": war_id,
-        "war_name": war.name,
-        "commander_id": consul_figure.id,
-        "commander_name": consul_figure.get_formal_name(),
-        "legions": list(getattr(war, "legion_numbers", []) or []),
-        "reinforcement_n": reinforcement_n,
-        "trigger_source": "human_explicit",
-        "previous_status": previous_status,
-        "resulting_status": resulting_status,
-    })
-    # R3-G-01（设计 §1.2 #2/#3，FROZEN）：仅 canonical mutation 成功且 provenance 已记录后，
-    # 将当前会期决策标记完成（直接动作 = 合法当次决策完成）；随后经 _converge_after_takeover
-    # 驱动 Senate 真实收敛（无提案/无 required → 恰一次空结算落真实 phase_result），
-    # 不拿 DTO current_step 冒充阶段完成。
-    state.senate_proposal_decision_complete = True
-    convergence = _converge_after_takeover(state)
+    # 目标战合法性（P1/P2 双前置 + 起义排除）——reserve/submit 共用同一可接管面：
+    # P1 = TRUCE + pending treaty；P2 = commanderless ACTIVE（无 pending treaty）。
+    treaty = war.peace_treaty
+    treaty_pending = bool(treaty and treaty.get("status") == "pending")
+    takeoverable = (
+        (war.status == WarStatus.TRUCE and treaty_pending)
+        or (war.status == WarStatus.ACTIVE and not treaty_pending
+            and not _war_has_valid_commander(state, war))
+    ) and war.rebellion_province_id is None
+    if not takeoverable:
+        state.log_event(
+            "战争接管: 拒绝（目标不可接管）",
+            level=logging.DEBUG,
+            extra={"war_id": war_id, "reason": "war_not_takeoverable"},
+        )
+        return api_response(False, "该战争当前不可作为接管目标（需 TRUCE+待决草案 或 commanderless ACTIVE 非起义战）")
+
+    pending = state._takeover_pending
+    if action == "cancel":
+        if not pending or pending.get("status") != "RESERVED":
+            return api_response(False, "当前没有可取消的接管配置")
+        if pending.get("actor", {}).get("player_id") != player_id:
+            return api_response(False, "接管配置不属于当前玩家")
+        state.log_event(
+            "接管配置: 已取消（reservation 释放）",
+            level=logging.DEBUG,
+            extra={"war_id": pending.get("war_id"), "reason": "user_cancel"},
+        )
+        state.set_takeover_pending(None)
+        return api_response(True, "已取消接管配置（reservation 释放）", data={"pending_takeover": None, "locked": False})
+
+    # 同战 Peace 双向互斥（Core 强制，R4-20）：目标战已有 peace 提案 → 拒绝新接管配置
+    for prop in state.get_senate_proposals():
+        if prop.get("type") == "peace" and prop.get("war_id") == war_id:
+            return api_response(False, "该战争已有停战提案——接管与停战互斥（需先经表决/否决处置停战提案）")
+
+    # C 集合（mandatory commanderless ACTIVE）；P 战仅 C 为空时可作 commitment 目标
+    m_state = _resolve_takeover_required(state)
+    c_rows = m_state.get("rows", []) or []
+    target_in_c = any(row["war_id"] == war_id for row in c_rows)
+
+    if action == "submit":
+        # whole-package 校验（零写入；失败留 RESERVED 可编辑重试）
+        if not pending or pending.get("status") != "RESERVED":
+            return api_response(False, "没有待锁定的接管配置（请先勾选接管并设置增援数）")
+        if pending.get("actor", {}).get("player_id") != player_id:
+            return api_response(False, "接管配置不属于当前玩家")
+        if pending.get("war_id") != war_id:
+            return api_response(False, "接管配置目标与提交目标不一致")
+        if c_rows and not target_in_c:
+            return api_response(
+                False,
+                "存在未承诺的强制接管战争——接管目标须为 commanderless ACTIVE 战（P 战仅 C 为空时可锁）",
+                data={"pending_takeover": _takeover_pending_dto(state), "whole_package_failed": True},
+            )
+        ms_now = state.get_military_system()
+        pool_now = len(ms_now.get_available_legions()) if ms_now else 0
+        n_lock = pending.get("reinforcement_n", 0)
+        if pool_now < n_lock:
+            return api_response(
+                False,
+                "增援数量超出当前可用军团池（reservation 保持，可编辑重试）",
+                data={"pending_takeover": _takeover_pending_dto(state), "whole_package_failed": True},
+            )
+        previous_status = war.status.value if hasattr(war.status, "value") else str(war.status)
+        pending["status"] = "LOCKED"
+        pending["target_commander_id"] = consul_figure.id
+        pending["locked_at"] = _turn_label(state)
+        pending["provenance"] = "AI" if bypass_turn_check else "HUMAN"
+        state.set_takeover_pending(pending)
+        state.log_event(
+            "战争接管: Submit 锁定（零部署；Senate→Combat 显式推进时原子部署）",
+            level=logging.INFO,
+            extra={
+                "war_id": war_id, "player_id": player_id, "commander_id": consul_figure.id,
+                "reinforcement_n": n_lock, "previous_status": previous_status,
+                "reason": "takeover_submit_locked", "method": "takeover_war",
+            },
+        )
+        return api_response(
+            True,
+            "接管配置已锁定（Submit 零部署；显式 Senate→Combat 推进时部署）",
+            data={
+                "war_id": war_id,
+                "commander_id": consul_figure.id,
+                "reinforcement_n": n_lock,
+                "locked": True,
+                "pending_takeover": _takeover_pending_dto(state),
+            },
+        )
+
+    # reserve（create / edit）：单 reservation（R4-21，无 Soft/Hard 拆分）
+    if pending and pending.get("status") == "LOCKED":
+        return api_response(False, "接管配置已锁定（Submit 后不可编辑；如无需部署请完成本会期推进）")
+    n = reinforcement_n if reinforcement_n is not None else rng.get("default", 1)
+    if pending and pending.get("actor", {}).get("player_id") == player_id and pending.get("war_id") == war_id:
+        # edit N：旧 N 释放回池、新 N 占用（守恒）；reservation_id 不变
+        pending["reinforcement_n"] = n
+        state.set_takeover_pending(pending)
+        state.log_event(
+            "接管配置: reservation 更新 N",
+            level=logging.DEBUG,
+            extra={"war_id": war_id, "reinforcement_n": n, "reason": "reservation_edit"},
+        )
+    else:
+        # create（或换 war 重建；单 reservation 覆盖释放旧占用）
+        new_pending = {
+            "reservation_id": uuid.uuid4().hex[:12],
+            "session_id": _turn_label(state),
+            "actor": {"player_id": player_id, "faction_id": faction.id},
+            "war_id": war_id,
+            "reinforcement_n": n,
+            "status": "RESERVED",
+            "provenance": "HUMAN",
+            "created_at": _turn_label(state),
+            "locked_at": None,
+            "consumed_at": None,
+        }
+        state.set_takeover_pending(new_pending)
+        state.log_event(
+            "接管配置: reservation 暂存",
+            level=logging.DEBUG,
+            extra={"war_id": war_id, "reinforcement_n": n, "reason": "reservation_created"},
+        )
     return api_response(
         True,
-        "接管战争成功",
-        data={
-            "war_id": war_id,
-            "commander_id": consul_figure.id,
-            "legions": list(getattr(war, "legion_numbers", []) or []),
-            "reinforcement_n": reinforcement_n,
-            # R3-G-01 §1.2 #7：结果区分 takeover_applied 与后续收敛态——空结算失败时
-            # 不得反馈成 Takeover 未执行而诱导重复 mutation（恢复链见 §1.5）。
-            "takeover_applied": True,
-            "senate_converged": convergence["senate_converged"],
-            "senate_settlement_pending": convergence["senate_settlement_pending"],
-        },
+        "接管配置已暂存（reservation；Submit 锁定后零部署，显式推进时部署）",
+        data={"war_id": war_id, "reinforcement_n": n, "locked": False,
+              "pending_takeover": _takeover_pending_dto(state)},
     )
 
 
-def _converge_after_takeover(state: GameState) -> Dict[str, Any]:
-    """R3-G-01 Senate 收敛 helper（设计 §1.2 #3-5 + §1.5，FROZEN）。
+def _turn_label(state: GameState) -> str:
+    """session/turn 审计标签（WP-G-R4 §2.5 schema created_at/locked_at/consumed_at）。"""
+    if state.turn is None:
+        return "turn0"
+    return f"t{state.turn.turn_number}y{abs(state.turn.year)}"
 
-    仅由 takeover_war 成功路径调用（不成为 War mutation owner——唯一 mutation owner 仍是
-    PoliticalSystem.execute_war_takeover_direct，R3-03）。按序判定：
-      1. live takeover_required.required==True → 不执行 Senate final settlement、不允许
-         advance（reason=takeover_required；下一次合法 Takeover 仍可执行）；
-      2. 仍有 submitted proposals → 只让既有 vote/veto 流继续，不自动通过/清空、不调用
-         空结算（reason=proposals_pending）；
-      3. 已存在成功 senate phase_result → 幂等 no-op（reason=already_resolved）；
-      4. 否则调用既有 resolve_senate(state) 恰一次空结算（canonical；reason=settled）；
-         空结算失败 → 返回失败且不写任何 phase_result（reason=settlement_failed，
-         settlement-pending 保持，见 §1.5）。
-    """
-    takeover_required = _resolve_takeover_required(state)
-    if takeover_required.get("required"):
-        return {
-            "senate_converged": False, "senate_settlement_pending": True,
-            "takeover_required": takeover_required, "reason": "takeover_required",
-            "settlement": None,
-        }
-    if state.get_senate_proposals():
-        return {
-            "senate_converged": False, "senate_settlement_pending": False,
-            "takeover_required": takeover_required, "reason": "proposals_pending",
-            "settlement": None,
-        }
-    if state.get_phase_result("senate"):
-        return {
-            "senate_converged": True, "senate_settlement_pending": False,
-            "takeover_required": takeover_required, "reason": "already_resolved",
-            "settlement": None,
-        }
-    settlement = resolve_senate(state)
-    if not settlement.get("success"):
-        state.log_event(
-            "战争接管后空结算失败: settlement-pending（不写 phase_result，恢复入口可重试结算）",
-            level=logging.WARNING,
-            extra={"reason": "settlement_failed", "message": settlement.get("message", "")},
-        )
-        return {
-            "senate_converged": False, "senate_settlement_pending": True,
-            "takeover_required": takeover_required, "reason": "settlement_failed",
-            "settlement": settlement,
-        }
+
+def _takeover_pending_dto(state: GameState) -> Optional[Dict[str, Any]]:
+    """get_senate_view T/V 读模型（V/T 共享持有者 GameState._takeover_pending）。"""
+    pending = state.get_takeover_pending()
+    if not pending:
+        return None
+    war_name = None
+    ws = state.get_war_system()
+    if ws:
+        war = ws.get_war_by_id(pending.get("war_id"))
+        war_name = war.name if war else None
     return {
-        "senate_converged": True, "senate_settlement_pending": False,
-        "takeover_required": takeover_required, "reason": "settled",
-        "settlement": settlement,
+        "reservation_id": pending.get("reservation_id"),
+        "session_id": pending.get("session_id"),
+        "war_id": pending.get("war_id"),
+        "war_name": war_name,
+        "reinforcement_n": pending.get("reinforcement_n"),
+        "status": pending.get("status"),
+        "provenance": pending.get("provenance"),
+        "target_commander_id": pending.get("target_commander_id"),
+        "created_at": pending.get("created_at"),
+        "locked_at": pending.get("locked_at"),
+        "consumed_at": pending.get("consumed_at"),
     }
+
+
+def _takeover_pool_available(state: GameState, pending: Dict[str, Any]) -> bool:
+    """whole-package 校验：reserved N 仍 ≤ 当前可用军团池（跨消费者守恒 §2.5）。"""
+    ms = state.get_military_system()
+    pool = len(ms.get_available_legions()) if ms else 0
+    return pool >= int(pending.get("reinforcement_n", 0) or 0)
+
+
+def _snapshot_takeover_deploy(state: GameState, war, consul, ms, ns):
+    """PRE-COMMIT 受控快照（§2.4b 语义 1 rollback domain 列全）。"""
+    ws = state.get_war_system()
+    surviving_legions = ms.get_legions_for_battle(war.id) if ms else []
+    surviving_fleets = ns.get_fleets_by_war(war.id) if ns else []
+    old_cmd = state.get_member(war.commander_id) if war.commander_id else None
+    pool_before = {}
+    if ms:
+        for legion in ms.get_available_legions():
+            pool_before[legion.number] = legion.status
+    return {
+        "war": war,
+        "status": war.status,
+        "treaty": copy.deepcopy(war.peace_treaty),
+        "commander_id": war.commander_id,
+        "legion_numbers": list(getattr(war, "legion_numbers", []) or []),
+        "in_truce": bool(ws and war in ws._truce_wars),
+        "in_active": bool(ws and war in ws._active_wars),
+        "legion_cmd": {legion.number: legion.commander_id for legion in surviving_legions},
+        "fleet_cmd": {fleet.number: fleet.commander_id for fleet in surviving_fleets},
+        "old_cmd": {
+            "id": old_cmd.id,
+            "is_absent": old_cmd.is_absent,
+            "office": old_cmd.office,
+            "influence": old_cmd.influence,
+        } if old_cmd and old_cmd.id != consul.id and not old_cmd.is_dead else None,
+        "consul": consul,
+        "consul_absent": consul.is_absent,
+        "treasury": state.treasury,
+        "pool_before": pool_before,
+    }
+
+
+def _rollback_takeover_deploy(state: GameState, snap: Dict[str, Any]) -> None:
+    """完整回滚（§2.4b 语义 1/2：operational mutations + T/V + executed 全回滚域）。"""
+    war = snap["war"]
+    ws = state.get_war_system()
+    ms = state.get_military_system()
+    ns = state.naval_system
+    # 容器成员 + status/treaty/commander（迁移表 #1/#2/#3 回滚）
+    if snap["in_truce"]:
+        if war in ws._active_wars:
+            ws._active_wars.remove(war)
+        if war not in ws._truce_wars:
+            ws._truce_wars.append(war)
+    else:
+        if war in ws._truce_wars:
+            ws._truce_wars.remove(war)
+        if not snap["in_active"] and war in ws._active_wars:
+            ws._active_wars.remove(war)
+        if snap["in_active"] and war not in ws._active_wars:
+            ws._active_wars.append(war)
+    war.status = snap["status"]
+    if snap["treaty"] is None:
+        war.clear_peace_treaty()
+    else:
+        war.set_peace_treaty(copy.deepcopy(snap["treaty"]))
+    war.commander_id = snap["commander_id"]
+    war._legion_numbers = list(snap["legion_numbers"])
+    # 幸存 Legion/Fleet rebind 回滚（#7）
+    for num, cid in snap["legion_cmd"].items():
+        legion = ms.get_legion_by_number(num) if ms else None
+        if legion:
+            legion.commander_id = cid
+    for num, cid in snap["fleet_cmd"].items():
+        fleet = ns.get_fleet(num) if ns else None
+        if fleet:
+            fleet.commander_id = cid
+    # 新征召/部分征召军团回滚（#8）：凡来自部署前可用池而现在不再可用的实体 → 释放回池
+    # （覆盖「已征召未指派 war_id=None」的 partial recruit 注入与「已指派」两条路径）
+    if ms:
+        current_available = {legion.number for legion in ms.get_available_legions()}
+        for number, pre_status in snap["pool_before"].items():
+            legion = ms.get_legion_by_number(number)
+            if legion and legion.number not in current_available:
+                legion.status = pre_status
+                legion.war_id = None
+                legion.commander_id = None
+    # 旧 Commander 清理回滚（#4/#5/#6）
+    old = snap.get("old_cmd")
+    if old:
+        fig = state.get_member(old["id"])
+        if fig:
+            fig.is_absent = old["is_absent"]
+            fig.office = old["office"]
+            fig.influence = old["influence"]
+    # Consul absent 回滚（#9）
+    if snap["consul"]:
+        snap["consul"].is_absent = snap["consul_absent"]
+    # treasury 回滚（#10）
+    state.treasury = snap["treasury"]
+
+
+def _deploy_pending_takeover(state: GameState, pending: Dict[str, Any]) -> dict:
+    """Senate→Combat 部署单元（SA v1.7 §2.4b）：唯一部署 owner（R4-10），
+    由 advance_senate_phase 调用。PRE-COMMIT TRANSACTION → COMMIT FINALIZATION
+    （顺序 A 冻结：先 T/V→CONSUMED 后 mark_phase_executed）→ POST-COMMIT AUDIT。
+    """
+    politics = _political_system(state)
+    ws = state.get_war_system()
+    ms = state.get_military_system()
+    ns = state.naval_system
+    war = ws.get_war_by_id(pending.get("war_id")) if ws else None
+    if war is None:
+        return {"success": False, "message": "接管目标战争不存在（fail-closed）", "reason": "war_not_found"}
+    consul = state.get_member(pending.get("target_commander_id") or -1)
+    if consul is None or consul.is_dead or consul.is_absent or consul.office != "consul":
+        return {"success": False, "message": "锁定执政官不再 eligible（fail-closed）", "reason": "consul_not_eligible"}
+    n = int(pending.get("reinforcement_n", 0) or 0)
+    previous_status = war.status.value if hasattr(war.status, "value") else str(war.status)
+
+    # ---- A. PRE-COMMIT TRANSACTION ----
+    snap = _snapshot_takeover_deploy(state, war, consul, ms, ns)
+    try:
+        deployed = politics.execute_war_takeover_deploy(war, consul, reinforcement_n=n)
+        if not deployed:
+            raise RuntimeError("deployment_step_failed")
+    except Exception as exc:  # F1/F2/F3 注入 + 真实失败 → 全回滚
+        _rollback_takeover_deploy(state, snap)
+        state.set_takeover_pending(pending)
+        state.log_event(
+            "接管部署失败: 完整回滚（T 回 LOCKED，no D，no executed）",
+            level=logging.WARNING,
+            extra={"war_id": war.id, "reason": "precommit_failed", "error": str(exc)},
+        )
+        return {"success": False, "message": f"接管部署失败（已回滚，可重试）: {exc}",
+                "reason": "precommit_failed", "rolled_back": True}
+
+    # ---- B. COMMIT FINALIZATION（顺序 A 冻结：先 T/V→CONSUMED 后 mark_phase_executed）----
+    try:
+        pending["status"] = "CONSUMED"
+        pending["consumed_at"] = _turn_label(state)
+        state.set_takeover_pending(pending)
+        state.mark_phase_executed("senate")
+    except Exception as exc:  # F3b：commit-finalization 内失败 → 全回滚 + T 回 LOCKED
+        _rollback_takeover_deploy(state, snap)
+        pending["status"] = "LOCKED"
+        pending["consumed_at"] = None
+        state.set_takeover_pending(pending)
+        state.log_event(
+            "接管部署 commit-finalization 失败: 完整回滚（T 回 LOCKED，retry-safe）",
+            level=logging.WARNING,
+            extra={"war_id": war.id, "reason": "commit_finalization_failed", "error": str(exc)},
+        )
+        return {"success": False, "message": f"接管部署提交失败（已回滚，可重试）: {exc}",
+                "reason": "commit_finalization_failed", "rolled_back": True}
+
+    resulting_status = war.status.value if hasattr(war.status, "value") else str(war.status)
+    trigger = "ai_auto" if pending.get("provenance") == "AI" else "human_explicit"
+
+    # ---- C. POST-COMMIT AUDIT（不回滚业务；失败独立上报不重跑，§2.4b 语义 8）----
+    try:
+        state.record_senate_direct_action({
+            "action_type": "takeover_deploy",
+            "action": "takeover",
+            "kind": "takeover_deploy",
+            "exactly_once_key": (
+                f"takeover_deploy:{war.id}:{pending.get('session_id')}:{pending.get('reservation_id')}"
+            ),
+            "war_id": war.id,
+            "war_name": war.name,
+            "commander_id": consul.id,
+            "commander_name": consul.get_formal_name(),
+            "legions": list(getattr(war, "legion_numbers", []) or []),
+            "reinforcement_n": n,
+            "trigger_source": trigger,
+            "previous_status": previous_status,
+            "resulting_status": resulting_status,
+        })
+        state.log_event(
+            "战争接管: Senate→Combat 原子部署完成",
+            level=logging.INFO,
+            extra={
+                "type": "senate_takeover_deployed",
+                "war_id": war.id,
+                "new_commander": consul.id,
+                "reinforcement_n": n,
+                "exactly_once_key": f"takeover_deploy:{war.id}:{pending.get('session_id')}:{pending.get('reservation_id')}",
+                "trigger_source": trigger,
+            },
+        )
+    except Exception as exc:
+        state.log_event(
+            "接管部署 audit 上报失败（业务已 committed；独立记录，不重跑军事部署）",
+            level=logging.WARNING,
+            extra={"war_id": war.id, "reason": "audit_failed", "error": str(exc)},
+        )
+    return {"success": True, "war_id": war.id, "commander_id": consul.id, "reinforcement_n": n,
+            "reason": "deployed", "previous_status": previous_status,
+            "resulting_status": resulting_status}
 
 
 def continue_war(state: GameState, player_id: str, war_id: str, reinforcement_n: Optional[int] = None) -> dict:
@@ -1474,7 +1807,13 @@ def auto_submit_proposals(
 
 
 def advance_senate_phase(state: GameState, player_id: str) -> dict:
-    """Mark senate complete and advance the GUI shell to combat."""
+    """Mark senate complete and advance the GUI shell to combat.
+
+    WP-G-R4 (SA v1.7 §2.4b, O5)：本函数 = Senate→Combat **唯一部署 owner**。当存在
+    LOCKED pending Takeover 时，在真实 Senate result 之后执行原子部署单元（迁移表
+    #1→#14，PRE-COMMIT/COMMIT FINALIZATION 顺序 A/POST-COMMIT AUDIT）；无 pending 时
+    保持原 mark-executed 语义。开 Combat GUI/打开 Combat 阶段不是部署触发（R4-23）。
+    """
     if not state:
         return api_response(False, "Invalid game state")
     if not state.is_current_player(player_id):
@@ -1482,17 +1821,37 @@ def advance_senate_phase(state: GameState, player_id: str) -> dict:
     # Guard: prevents double-advance if phase already marked executed
     if state.is_phase_executed("senate"):
         return api_response(False, "Senate phase already executed")
-    # R3-G-01（设计 §1.2 #5 / §1.5，FROZEN）：mark executed 前复检 live takeover_required
-    # （旧 result/cache、votes 已完、空批 decision 均不得在 required 未清时开启 advance）。
-    takeover_required = _resolve_takeover_required(state)
-    if takeover_required.get("required"):
+    # pending-aware M 门（SA v1.7 §2.3）：not M_open 才放行（LOCKED T 覆盖 C 战 → 放行）
+    takeover_state = _resolve_takeover_required(state)
+    if takeover_state.get("m_open"):
         return api_response(
             False,
-            "存在未完成的强制战争接管（执政官须先完成接管），暂不能推进阶段",
-            data={"takeover_required": takeover_required, "advance_guard": "takeover_required"},
+            "存在未完成的强制战争接管（执政官须先锁定接管目标），暂不能推进阶段",
+            data={"takeover_required": takeover_state, "advance_guard": "takeover_required"},
         )
     if not state.get_phase_result("senate"):
         return api_response(False, "Senate result is not ready")
+    pending = state._takeover_pending
+    if pending and pending.get("status") == "LOCKED":
+        # 唯一部署边界：原子/exactly-once 部署（失败 fail-closed，T 回 LOCKED 可重试）
+        deploy = _deploy_pending_takeover(state, pending)
+        if not deploy.get("success"):
+            return api_response(
+                False,
+                deploy.get("message", "接管部署失败（已回滚，不进入 Combat）"),
+                data={
+                    "takeover_required": takeover_state,
+                    "pending_takeover": _takeover_pending_dto(state),
+                    "deploy": deploy,
+                    "advance_guard": "deployment_failed",
+                },
+            )
+        return api_response(
+            True,
+            "Advanced to combat phase（Senate→Combat 原子部署完成）",
+            data={"next_phase_id": "combat", "deploy": deploy,
+                  "pending_takeover": _takeover_pending_dto(state)},
+        )
     state.mark_phase_executed("senate")
     return api_response(True, "Advanced to combat phase", data={"next_phase_id": "combat"})
 
@@ -1565,6 +1924,19 @@ def resolve_senate(
             True,
             "元老院结果已记录（幂等 no-op）",
             data=existing_result.get("data", {}) if isinstance(existing_result, dict) else {},
+        )
+    # WP-G-R4 (SA v1.7 §2.3/§2.3b)：显式空选择守卫——零 proposals、P=false、R 不存在时
+    # 必须先显式提交空批（propose_many([]) → P=true）关闭选择，禁隐式 resolve（R4-09：
+    # Takeover-only Submit 不触发隐式 resolve_senate(0)；空批合法决策 = 显式 finish）。
+    if not state.get_senate_proposals() and not state.senate_proposal_decision_complete:
+        return api_response(
+            False,
+            "提案选择未完成：请先显式提交空批或完成提案后再结算",
+            data={
+                "proposal_selection_not_complete": True,
+                "takeover_required": takeover_required,
+                "settlement_guard": "proposal_selection_not_complete",
+            },
         )
     result = _political_system(state).resolve_senate(vote_decider)
 
@@ -1821,6 +2193,11 @@ def assign_fleets_to_active_wars(state: GameState) -> dict:
     target_wars = [
         war for war in ws.get_active_wars()
         if war.naval_required and not war.assigned_fleet_ids
+        # WP-G-R4 (SA v1.7 §2.3, P1-01/Oracle-A)：LOCKED pending Takeover 目标战免自动配舰
+        # ——幸存 force rebind/指派仅属于 advance 部署单元（迁移表 #7/#8），resolve 不提前绑舰
+        and not (state._takeover_pending is not None
+                 and state._takeover_pending.get("status") == "LOCKED"
+                 and state._takeover_pending.get("war_id") == war.id)
     ]
     if not target_wars:
         return api_response(True, "无需指派舰队")

@@ -533,6 +533,32 @@ class NavalSystem:
         }
 
     # ---------- 舰队指派 ----------
+    def get_ready_fleets_for_war(self, war) -> List[Fleet]:
+        """WP-G-R4 (SA v1.7 §3.1)：read-only readiness 单一事实源。
+
+        从 war.assigned_fleet_ids 取实际实体按 ID 去重；只取 status == ON_MISSION
+        （BUILDING/DESTROYED/DISBANDED/AVAILABLE/缺实体一律不 ready）；损坏绑定
+        （assigned_war_id 与本战不一致）fail-closed 排除。ready = 至少一艘，**非
+        effective/strength/nominal 阈值**（D=0 非空 ON_MISSION 仍可进入原 CRT）。
+        resolve_naval_battle 与 get_war_fleet_strength_read_model 共用本 helper。
+        """
+        ready: List[Fleet] = []
+        seen = set()
+        for fid in (getattr(war, "_assigned_fleet_ids", None) or []):
+            if fid in seen:
+                continue
+            seen.add(fid)
+            fleet = self.get_fleet(fid)
+            if fleet is None:
+                continue  # 缺实体不 ready（可诊断）
+            if fleet.status != FleetStatus.ON_MISSION:
+                continue
+            # 损坏绑定 fail-closed：已归属其他战（assigned_war_id 与本战不一致）禁跨战借舰
+            if getattr(fleet, "assigned_war_id", None) not in (None, war.id):
+                continue
+            ready.append(fleet)
+        return ready
+
     def get_war_fleet_strength_read_model(self, war) -> Dict[str, Any]:
         """R3-G-04（§4.5，FROZEN）：per-war 舰队 strength 分层读模型——单一实现，供
         combat_api._war_card / gui_query_api._war_summary 同源消费（不重复实现/不漂移）。
@@ -545,10 +571,8 @@ class NavalSystem:
         rounded）；不泄漏其他派系未公布的 bid。
         """
         assigned_ids = []
-        for fid in (getattr(war, "_assigned_fleet_ids", None) or []):
-            fleet = self.get_fleet(fid)
-            if fleet is not None and fleet.status == FleetStatus.ON_MISSION:
-                assigned_ids.append(fid)
+        for fleet in self.get_ready_fleets_for_war(war):
+            assigned_ids.append(fleet.number)
         assigned_ids = sorted(assigned_ids)
         zero = {
             "assigned_fleet_ids": [],
@@ -700,24 +724,22 @@ class NavalSystem:
         """
         执行海战，返回 (结果字符串, 损失详情)
         结果: "TRIUMPH", "VICTORY", "STALEMATE", "DEFEAT", "DISASTER"
+        或 "NAVAL_NOT_READY"（WP-G-R4 §3.1：零 ready 前置拒绝，零副作用）
         """
-        # 获取我方舰队（排除建造中的）
-        roman_fleets = [self.get_fleet(fid) for fid in war.assigned_fleet_ids
-                        if self.get_fleet(fid) and not self.get_fleet(fid).is_building]
+        # WP-G-R4 (SA v1.7 §3.1，R4-G-02)：readiness 单一事实源前置守卫——早于
+        # strength/随机/override/_apply_naval_losses/sea-control/event。空舰队不再是
+        # DEFEAT（R4-G-02 缺陷面，supersede R3「无舰队必败」）；直接调用共享 Core
+        # 也不得造 battle result。
+        roman_fleets = self.get_ready_fleets_for_war(war)
         if not roman_fleets:
-            # 没有可用舰队，海战自动失败
-            result = "DEFEAT"
-            self.state.log_event(
-                f"海战自动战败（无可用舰队）: {war.name}",
-                extra={
-                    "type": "naval_battle_defeat",
-                    "war_id": war.id,
-                    "result": result,
-                    "roman_losses": 0,
-                    "enemy_loss": 0,
-                }
-            )
-            return result, {"roman_losses": 0, "enemy_loss": 0}
+            return "NAVAL_NOT_READY", {
+                "executed": False,
+                "reason": "NO_READY_ASSIGNED_FLEET",
+                "roman_losses": 0,
+                "enemy_loss": 0,
+                "participating_fleet_ids": [],
+                "sea_control_acquired": False,
+            }
 
         roman_strength = self.get_fleet_strength_breakdown(roman_fleets)["effective_combat_strength"]
         enemy_strength = war.enemy_naval_current
@@ -768,7 +790,15 @@ class NavalSystem:
             }
         )
 
-        return result, {"roman_losses": losses, "enemy_loss": 0}
+        return result, {
+            "roman_losses": losses,
+            "enemy_loss": 0,
+            # WP-G-R4 (§3.1)：真实结果 details 增 executed/实际参战损失编号/海权阶段快照；
+            # 原两元解包兼容（既有消费者只读 roman_losses/enemy_loss）
+            "executed": True,
+            "participating_fleet_ids": [fleet.number for fleet in roman_fleets],
+            "sea_control_acquired": bool(war.sea_control_acquired),
+        }
 
     def _simplified_crt(self, dice: int, total: int, war) -> str:
         """简化版CRT判定，与 combat 阶段一致"""

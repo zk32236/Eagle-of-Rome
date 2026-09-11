@@ -87,44 +87,42 @@ class TestGaIdempotency(unittest.TestCase):
         self.assertEqual(war.status, WarStatus.ACTIVE)
 
     def test_human_api_reentry(self):
-        """A1 幂等：human takeover_war 第二次 → 拒绝；权威 direct_actions 副本仅 1 份。
-
-        R3-G-01 §1.2/#7 + §1.5 supersession（Plan §4.2 L6，2026-09-05）：takeover 成功后驱动
-        empty-settle 收敛 → pending direct_actions 清空并移入 senate phase_result
-        （public_announcement.direct_actions 权威副本恰 1 份）；断言源由 pending 改为权威副本，
-        保留原 negative 语义（重复 takeover 拒绝零新增）。
-        """
+        """WP-G-R4 supersede（OD-R4-05/06，SA v1.7 §2.4b）：human takeover_war Submit = 锁 T
+        零部署；部署唯一 owner = advance_senate_phase。重入：L O C K E D 后重复 submit 拒绝。"""
         war = self._make_truce_war(war_id="w_api")
-        first = senate_api.takeover_war(self.state, "player1", war.id, reinforcement_n=1)
+        first = senate_api.takeover_war(self.state, "player1", war.id, 1, action="reserve")
         self.assertTrue(first["success"])
-        self.assertIs(first["data"]["takeover_applied"], True)
-        self.assertIs(first["data"]["senate_converged"], True)  # 无提案 → 空结算收敛
-        # 权威副本：phase_result.public_announcement.direct_actions 恰 1 份
-        result = self.state.get_phase_result("senate")
-        copy = result["data"]["public_announcement"]["direct_actions"]
-        self.assertEqual(len(copy), 1)
-        self.assertEqual(copy[0]["action_type"], "takeover")
-        self.assertEqual(copy[0]["war_id"], war.id)
-        # pending 载体已随收敛清空（不双份）
+        locked = senate_api.takeover_war(self.state, "player1", war.id, 1, action="submit")
+        self.assertTrue(locked["success"], locked.get("message"))
+        # 锁 T 零部署：war 保持 TRUCE+pending、Commander 不变（2）、无 D、无 R
+        self.assertEqual(war.status, WarStatus.TRUCE)
+        self.assertIsNotNone(war.peace_treaty)
+        self.assertEqual(war.commander_id, 2, "Submit 零部署：Commander 未变")
+        self.assertEqual(self.state.get_takeover_pending()["status"], "LOCKED")
         self.assertEqual(self.state.get_senate_direct_actions(), [])
 
-        second = senate_api.takeover_war(self.state, "player1", war.id, reinforcement_n=1)
-        self.assertFalse(second["success"])
-        # 重复拒绝零新增（权威副本仍 1 份）
-        result2 = self.state.get_phase_result("senate")
-        self.assertEqual(len(result2["data"]["public_announcement"]["direct_actions"]), 1)
-        self.assertEqual(len(self.state.get_senate_direct_actions()), 0)
+        second = senate_api.takeover_war(self.state, "player1", war.id, 1, action="submit")
+        self.assertFalse(second["success"], "LOCKED 后重复 submit 拒绝")
+        self.assertEqual(self.state.get_takeover_pending()["status"], "LOCKED")
+        self.assertEqual(self.state.get_senate_direct_actions(), [])
 
-    def test_ai_reentry_skips_already_commanded(self):
-        """AI 路径：已接管战争（ACTIVE+valid commander）不再被重复接管。"""
+    def test_ai_reentry_skips_already_locked(self):
+        """WP-G-R4 supersede（R4-24）：AI 锁 T 后重入——同一 LOCKED commitment 存在 → 不重复
+        锁定（records 0）；部署前零 D/mutation（废弃直连）。"""
         war = self._make_truce_war(war_id="w_ai")
         politics = PoliticalSystem(self.state)
         records = politics.execute_ai_takeover_direct_action()
-        self.assertEqual(len(records), 1)
-        # 再次调用：war 已 ACTIVE+valid commander → 候选集排除 → 无新接管
+        self.assertLessEqual(len(records), 1)
+        pending = self.state.get_takeover_pending()
+        self.assertIsNotNone(pending, "AI 单 commitment 锁 T")
+        self.assertEqual(pending["status"], "LOCKED")
+        self.assertEqual(pending["war_id"], war.id)
+        self.assertEqual(war.commander_id, 2, "锁 T 零部署（旧 Commander 未动）")
+        self.assertEqual(self.state.get_senate_direct_actions(), [], "部署前无 D")
+        # 重入：LOCKED 已存在 → 不重复锁定（records 空）
         records2 = politics.execute_ai_takeover_direct_action()
-        self.assertEqual(len(records2), 0)
-        self.assertEqual(len(self.state.get_senate_direct_actions()), 1)
+        self.assertEqual(records2, [])
+        self.assertEqual(self.state.get_takeover_pending()["status"], "LOCKED")
 
 
 if __name__ == "__main__":

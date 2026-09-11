@@ -147,11 +147,20 @@ class GameState:
             "direct_actions": [],  # WP-D AU-5：本会期已直接生效动作（如接管）
         }
 
+        # WP-G-R4 (SA v1.7 §2.5, O5/OD-R4-06): T/V 共享持久持有者——pending Takeover
+        # commitment (T) 与 reservation (V) 是同一对象的两个状态（RESERVED→LOCKED→
+        # CONSUMED/CANCELLED），属 _senate_pending 的兄弟字段；clear_senate_pending
+        # 永不触碰。零部署副作用：锁承诺不部署（R4-17/R4-18）。
+        self._takeover_pending: Optional[dict] = None
+
         # 初始化时调用 reset，确保状态一致性
         self.reset()
 
     def reset(self):
         """重置状态 - 实例方法，仅影响当前实例"""
+        # WP-G-R4: 全新状态 → 清 pending Takeover commitment（仅整局 reset 路径；
+        # clear_senate_pending 永不触碰该字段——跨 settlement 存续由本字段保证）
+        self._takeover_pending = None
         self._members.clear()
         self._factions.clear()
         self._treasury = 0
@@ -301,6 +310,26 @@ class GameState:
     def get_senate_direct_actions(self) -> list:
         """返回本会期直接生效动作列表副本。"""
         return self._senate_pending["direct_actions"].copy()
+
+    # ========== WP-G-R4 (SA v1.7 §2.5): T/V pending Takeover 共享持有者访问器 ==========
+
+    def get_takeover_pending(self) -> Optional[dict]:
+        """返回 pending Takeover commitment/reservation 的深拷贝（T=status LOCKED；
+        V=status RESERVED）。读模型必须经此访问，禁原地改返回值（副本不持久）。"""
+        if self._takeover_pending is None:
+            return None
+        return copy.deepcopy(self._takeover_pending)
+
+    def set_takeover_pending(self, value: Optional[dict]) -> None:
+        """写入/替换 pending Takeover 对象（None=清除）。写入做深拷贝防外部突变。
+
+        clear_senate_pending 永不触碰本字段（跨 settlement 存续，R4 P1-RF-02）；
+        清除仅由显式 cancel/consume/整局 reset 路径触发。
+        """
+        if value is None:
+            self._takeover_pending = None
+        else:
+            self._takeover_pending = copy.deepcopy(value)
 
     # 人口阶段玩家操作
     def record_population_campaign(self, player_id: str, figure_id: int, amount: int) -> None:
@@ -932,6 +961,9 @@ class GameState:
             "decision_complete": senate_data.get("decision_complete", False),
             "direct_actions": [a.copy() for a in senate_data.get("direct_actions", [])],
         }
+        # WP-G-R4: pending Takeover commitment 为 session 级内存 commitment，存档往返不要求
+        # 保留（设计 §12 无 Save/Load 迁移）；load 一律置 None 防旧对象残留（无回归 smoke）
+        self._takeover_pending = None
 
         # Phase 2 新增：恢复待售公地配额
         self._pending_land_sale_quota = data.get("_pending_land_sale_quota", 0)
@@ -1031,7 +1063,8 @@ class GameState:
             "decision_complete": False,
             "direct_actions": [],
         }
-
+        # WP-G-R4 (SA v1.7 §2.5): T/V 共享持久持有者（与 _senate_pending 兄弟字段）
+        instance._takeover_pending = None
 
         return instance
 

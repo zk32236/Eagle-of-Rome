@@ -277,10 +277,26 @@ if self.state.is_phase_executed("senate"):
 
 - [Technical Mapping](../technical-mappings/MVP0.3-01_7阶段回合制系统.md)
 
+## WP-G-R4 同步注记（2026-09-09，DA-R4-B3；append-only，O5 Deferred Takeover Deployment）
+
+> 权威：SA-Design-WP-G-R4 v1.7（FROZEN）§2（O5/OD-R4-06）+ DA-Plan §6；阶段顺序/执行标记零改。
+>
+> - **显式 Senate→Combat 转换 = Takeover 部署唯一边界**：Takeover 选择/Submit 只写 pending
+>   commitment（`GameState._takeover_pending` LOCKED，零部署副作用——R4-17/18）；执政官留城
+>   （不置 absent），Senate 期间仍可继续合法提案/投票；Senate→Combat 显式
+>   `advance_senate_phase` 原子/exactly-once 部署（treaty clear/TRUCE→ACTIVE/Commander/
+>   旧 Commander 清理/force rebind/完整 N 招募/absent + D_Takeover + mark executed），
+>   失败全回滚 fail-closed。
+> - **phase transition 非 GUI-lazy（R4-23）**：打开 Combat GUI/进入 Combat 阶段不是部署触发，
+>   不隐式 resolve/advance/部署；部署只随显式 advance。
+> - **单一推进 owner**：Senate CLI 尾部不再自行 `mark_phase_executed("senate")`，改经
+>   `senate_api.advance_senate_phase` 部署推进（失败不推进、不 return True）。
+
 ## 9. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.5 | 2026-09-09 | DA Sub-Agent (WP-G-R4 B3) | R4 同步（O5/OD-R4-06，FROZEN v1.7 §2）：Senate-War 生命周期注记——显式 Senate→Combat advance = Takeover 部署唯一边界（Submit 锁 commitment 零部署、执政官留城、部署原子/exactly-once/fail-closed）；phase transition 非 GUI-lazy（R4-23）；CLI 尾部经 advance 推进（GAME_RULE_CHANGE=NO） |
 | v1.4 | 2026-09-01 | DA Sub-Agent (WP-G G3C) | Treaty Lifecycle 修正（G3C，2026-09-01 Owner Correction / DC-TREATY-LIFECYCLE-CORRECTION-01）：年度推进注记更新——和约到期恢复（到期 → THREAT → 自动升级 → ACTIVE）；§3.1 补「和约到期恢复」依赖句；撤销 v1.3 DI-4 的「无和约到期恢复」表述 |
 | v1.3 | 2026-08-31 | DA Sub-Agent (WP-G GD) | DI-2：§2.1 后新增「军事生命周期时序」小节（G1-14 精确链：战争结束 → recall → 下个 Revenue 最后维护 → 下个 Population DISBANDED，GUI/CLI 共享 canonical；维护数学零变更）；§3.1 补 Resolution 顺序不变式（G1-25：先判胜负后恢复）；DI-4：年度推进注记（⚠️「无和约到期恢复」表述已被 v1.4 G3C 撤销） |
 | v1.2 | 2026-08-24 | DA-Exec (WP-E-G7R) | REVIEWED-NO-CHANGE（主体无 GUI 阶段推进描述）；v1.1 注中「两段式年度推进」已由 GUI 侧单命令修订（见 tech mapping §6.1，GUI-BETA-005 E-05）——本文档 CLI 状态机语义不受影响 |

@@ -494,10 +494,27 @@ class WarSystem:
         )
         return True
 
-    def resolve_war(self, war_id: str, victory: bool) -> Dict[str, Any]:
+    def resolve_war(self, war_id: str, victory: bool, *, combat_result: Optional[str] = None) -> Dict[str, Any]:
+        """War 终结 resolver（WP-G-R4 §4.2，R4-G-04）：保留 victory 名称/位置兼容
+        `resolve_war(id, True)`/`victory=True`；追加显式 keyword-only combat_result 身份。
+
+        合法性验证先于任何 mutation：显式 combat_result 非 victory/triumph 或与
+        victory=False 矛盾 → ValueError（零 status/reward/recall/event）。legacy bool-only
+        成功不猜 CRT（combat_result=None + result_identity_source=legacy_unspecified +
+        中性事件 war_resolved）；现代入口（do_combat_action/_apply_battle_result 成功分支）
+        必传显式结果。现代 defeat/disaster 走 _apply_loss_consequence，不借本函数写退役。
+        """
         war = self.get_war_by_id(war_id)
         if not war:
             return {}
+        # WP-G-R4 §4.2：显式 CRT 身份校验先行（坏值零 mutation，不吞坏值统一成功）
+        cr = None
+        if combat_result is not None:
+            cr = str(combat_result).strip().lower()
+            if cr not in ("victory", "triumph") or not victory:
+                raise ValueError(
+                    f"combat_result invalid or contradicts victory flag: {combat_result!r}"
+                )
 
         terms = TerminologyService.get()
 
@@ -516,14 +533,24 @@ class WarSystem:
             # （唯一写 False 原语；弃牌堆战争若重洗回牌堆再战，无 stale True 残留，R-06 守护）
             war.clear_sea_control()
 
-            # ---- 战斗大胜日志 ----
+            # ---- 结果身份事件（WP-G-R4 §4.2/§4.3：显式 CRT 词 vs legacy unknown）----
+            resolved_type = (
+                "combat_triumph" if cr == "triumph"
+                else ("combat_victory" if cr == "victory" else "war_resolved")
+            )
+            resolved_label = (
+                "战斗大胜" if cr == "triumph"
+                else ("战斗胜利" if cr == "victory" else "战争胜利结算（CRT结果未提供）")
+            )
             self.state.log_event(
-                f"战斗大胜: {war.name}",
+                f"{resolved_label}: {war.name}",
                 extra={
-                    "type": "combat_triumph",
+                    "type": resolved_type,
                     "war_id": war.id,
                     "war_name": war.name,
                     "victory": True,
+                    "combat_result": cr,
+                    "result_identity_source": "explicit_crt" if cr else "legacy_unspecified",
                 }
             )
 
@@ -695,6 +722,8 @@ class WarSystem:
                     "war_id": war.id,
                     "war_name": war.name,
                     "victory": False,
+                    "combat_result": None,
+                    "result_identity_source": "legacy_unspecified",
                 }
             )
 
@@ -716,6 +745,10 @@ class WarSystem:
         war.legions_assigned = 0
         war.fleets_assigned = 0
 
+        # WP-G-R4 §4.2：return 增身份载体（legacy bool-only 成功 = unknown 中性）
+        result["combat_result"] = cr
+        result["result_identity_source"] = "explicit_crt" if cr else "legacy_unspecified"
+        result["resolution_kind"] = "successful_war_resolution" if victory else "war_lost"
         return result
 
     def apply_turn_penalties(self) -> List[str]:

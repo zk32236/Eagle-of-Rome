@@ -185,7 +185,8 @@ class TestSenateZeroProposal(unittest.TestCase):
     # ---------------- C 场景：session_store 层 AI 路由 + resolve hook（P2-01） ----------------
 
     def test_session_store_ai_routing_and_resolve_hook(self):
-        """场景 C（P2-01）：非执政官 doSubmitSenateProposals → AI proposer → 空批自动 resolve → results。"""
+        """场景 C（WP-G-R4 supersede，SA v1.7 §2.5）：空批提交只写 P（不再隐式自动 resolve）；
+        结算走显式恢复入口（doResolveSenateSettlement）→ R 真实 → 可推进。"""
         from src.ui.gui.session_store import GuiSessionStore
         # 关闭全部 AI 提案源，保证 AI proposer 产出 0 提案（确定性空批）
         self.state.config.testing.propose_war_chance = 0.0
@@ -202,16 +203,18 @@ class TestSenateZeroProposal(unittest.TestCase):
 
         feedback = store.doSubmitSenateProposals([])
         self.assertTrue(feedback["success"])
-        # AI proposer 已执行（0 提案）；resolve hook 已触发 → phase_result 存在 → results 步
+        # AI proposer 已执行（0 提案）+ P=true；无隐式 resolve → settlement-pending 可见
         self.assertEqual(store.senateCurrentStep, "results")
+        self.assertTrue(store.senateSettlementPending)
+        self.assertFalse(store.canAdvanceSenate, "R4：无真实 R 不可推进（显式结算才可）")
+        recovery = store.doResolveSenateSettlement()
+        self.assertTrue(recovery["success"], recovery.get("message"))
+        self.assertTrue(self.state.get_phase_result("senate"))
         self.assertTrue(store.canAdvanceSenate)
 
     def test_session_store_consul_empty_batch_resolve_hook(self):
-        """Path A（P2-01）：执政官空批 → propose_many 空批合法 → resolve hook → results 可推进。
-
-        注：resolve_senate 内 clear_senate_pending 会重置 decision_complete 标记（其职责仅在
-        提交后、结算前区分「未决策/已决策为空」）；结算后由 result_data 驱动 results 步。
-        """
+        """Path A（WP-G-R4 supersede）：执政官空批 → P=true → 显式结算（settlement 恢复入口）→
+        真实 R → 可推进（不再自动 resolve hook——R4-09 禁隐式结算）。"""
         from src.ui.gui.session_store import GuiSessionStore
         store = GuiSessionStore(self.state)
         store.initialize("player1")
@@ -219,8 +222,12 @@ class TestSenateZeroProposal(unittest.TestCase):
         self.assertTrue(store.canCreateSenateProposal)
         feedback = store.doSubmitSenateProposals([])
         self.assertTrue(feedback["success"])
-        # 提交空批合法（无死锁）；resolve hook 已触发 → results 可推进
+        # 提交空批合法（无死锁）；显式结算后 results 可推进
         self.assertEqual(store.senateCurrentStep, "results")
+        self.assertTrue(store.senateSettlementPending)
+        recovery = store.doResolveSenateSettlement()
+        self.assertTrue(recovery["success"], recovery.get("message"))
+        self.assertTrue(self.state.get_phase_result("senate"))
         self.assertTrue(store.canAdvanceSenate)
 
 

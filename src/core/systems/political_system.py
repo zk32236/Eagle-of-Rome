@@ -772,61 +772,66 @@ class PoliticalSystem:
         return wars
 
     def plan_ai_takeovers(self, decider: Optional[AutoWarTakeoverDecider] = None) -> list:
-        """只读 AI 接管预决策（A7 同轮互斥）：单次 decider 决策，零 mutation。
+        """只读 AI 接管预决策（WP-G-R4，SA v1.7 §2.5：R4-24 单 commitment 收缩）。
 
-        auto_submit_proposals 4b 用它跳过「AI 将接管」的 TRUCE 战争的 peace 提案
+        C（commanderless ACTIVE）优先评估、至多选 1 war 建 commitment（其余 C 战顺延下会期）；
+        C 为空时评估 P（TRUCE+pending）。零 mutation；返回 ≤1 项
+        [{"war", "war_id", "candidate", "old_commander", "previous_status"}]。
+        auto_submit_proposals 4b 用其跳过「AI 将接管」的 TRUCE 战争的 peace 提案
         （同轮不双路径）；尾部执行复用同一决策（防 decider 二次 random 漂移）。
-        返回 [{"war", "war_id", "candidate", "old_commander", "previous_status"}]。
         """
         ws = self.state.get_war_system()
         if not ws:
             return []
         decider = decider or AutoWarTakeoverDecider()
-        plan = []
+        # C 集合（commanderless ACTIVE 非起义）优先；P 集合（TRUCE+pending）仅 C 空时评估
+        c_wars = []
+        p_wars = []
         for war in self._ai_takeover_candidate_wars(ws):
+            if war.status == WarStatus.TRUCE:
+                p_wars.append(war)
+            else:
+                c_wars.append(war)
+        c_wars.sort(key=lambda w: w.id)
+        p_wars.sort(key=lambda w: w.id)
+        ordered = c_wars + p_wars
+        for war in ordered:
             old_cmd = self.state.get_member(war.commander_id) if war.commander_id else None
-            # 候选 Consul：living + office consul/praetor + 未 absent/未死 + consul 优先
+            # 候选 Consul（O5 留城语义）：living + office consul + 未 absent/未死
             candidates = [
                 fig for fig in self.state.get_living_members()
-                if not fig.is_absent and not fig.is_dead and fig.office in ("consul", "praetor")
+                if not fig.is_absent and not fig.is_dead and fig.office == "consul"
             ]
             if not candidates:
                 continue
-            candidates.sort(key=lambda fig: 0 if fig.office == "consul" else 1)
+            candidates.sort(key=lambda fig: fig.id)
             candidate = candidates[0]
             if not decider.decide_takeover(war, candidate, old_cmd, self.state):
                 self.state.log_event(
-                    f"[R1] AI 决策器拒绝接管战争 {war.id}（candidate={candidate.id}）",
+                    f"[R4] AI 决策器拒绝接管战争 {war.id}（candidate={candidate.id}）",
                     level=logging.DEBUG,
                     extra={"function": "plan_ai_takeovers", "war_id": war.id,
                            "candidate": candidate.id, "trigger_source": "ai_auto"},
                 )
                 continue
-            plan.append({
+            # 单 commitment（R4-21）：至多 1 项
+            return [{
                 "war": war,
                 "war_id": war.id,
                 "candidate": candidate,
                 "old_commander": old_cmd,
                 "previous_status": war.status.value if hasattr(war.status, "value") else str(war.status),
-            })
-        return plan
+            }]
+        return []
 
     def execute_ai_takeover_direct_action(self, decider: Optional[AutoWarTakeoverDecider] = None,
                                           predecided: Optional[list] = None) -> list:
-        """AU-R1-05b：AI 自动接管走 Direct Action 语义（与 human takeover_war 同 mutation 路径）。
+        """WP-G-R4（SA v1.7 §2.5，R4-24）：废弃直连——AI 接管不再直接 mutation。
 
-        - 候选集（M5，Q 件 A）= P1（TRUCE+pending treaty）∪ P2（ACTIVE+no valid commander）；
-        - 候选 Consul 选择（living + office consul/praetor + 未 absent/未死 + consul 优先）；
-        - 决策走 decider.decide_takeover（AI 自动化决策保留）；predecided 传入时复用
-          plan_ai_takeovers 的单次决策（A7 同轮互斥防二次 random 漂移）；
-        - N 显式化（Q 件 F）：decider.decide_reinforcement（值域内，默认 min，禁 random）；
-        - mutation 统一走 execute_war_takeover_direct（FC-05 原子性：征召失败 commander 不回写）；
-        - 每条成功接管 record_senate_direct_action 写 provenance（trigger_source="ai_auto"，含 N）；
-        - 返回成功接管记录列表（供测试/日志断言）。
-
-        **C1（G3，D-1 采纳）：严禁在 resolve_senate 内调用——唯一 AI 接管调用点 =
-        senate_api.auto_submit_proposals 尾部（GUI session_store / CLI phase_senate
-        双入口共享同一活跃函数）。**
+        改走 takeover_war（reserve + Submit/lock 写 T，零部署）+ advance_senate_phase
+        （部署唯一 owner）路径；D_Takeover 由部署单元统一写。本函数只锁 commitment、
+        不部署、不置 absent、不改 treaty/Commander/force。返回锁定记录列表（≤1，供
+        日志/测试断言；多 eligible 只 1 LOCKED T——单 commitment）。
         """
         ws = self.state.get_war_system()
         if not ws:
@@ -844,22 +849,33 @@ class PoliticalSystem:
         for decision in decisions:
             war = decision["war"]
             candidate = decision["candidate"]
-            previous_status = decision.get("previous_status")
-
-            # M5（Q 件 F）：N 显式化——decider 值域内决策（默认 min），禁 random
+            player = self.state.get_player_by_faction(candidate.faction_id)
+            if player is None:
+                continue
             n_raw = decider.decide_reinforcement(war, self.state)
             n = n_raw if isinstance(n_raw, int) and not isinstance(n_raw, bool) else self._default_reinforcement_n()
 
-            if not self.execute_war_takeover_direct(war, candidate, reinforcement_n=n):
+            from src.api.senate_api import takeover_war
+            reserved = takeover_war(self.state, player.player_id, war.id, n, action="reserve",
+                                    bypass_turn_check=True)
+            if not reserved.get("success"):
                 self.state.log_event(
-                    f"[R1] AI 接管失败（军团招募失败）: war={war.id}",
+                    f"[R4] AI 接管 reservation 失败: war={war.id} ({reserved.get('message')})",
                     level=logging.DEBUG,
                     extra={"function": "execute_ai_takeover_direct_action", "war_id": war.id,
-                           "candidate": candidate.id, "trigger_source": "ai_auto"},
+                           "trigger_source": "ai_auto"},
                 )
                 continue
-            resulting_status = war.status.value if hasattr(war.status, "value") else str(war.status)
-
+            locked = takeover_war(self.state, player.player_id, war.id, n, action="submit",
+                                  bypass_turn_check=True)
+            if not locked.get("success"):
+                self.state.log_event(
+                    f"[R4] AI 接管 Submit 锁定失败: war={war.id} ({locked.get('message')})",
+                    level=logging.DEBUG,
+                    extra={"function": "execute_ai_takeover_direct_action", "war_id": war.id,
+                           "trigger_source": "ai_auto"},
+                )
+                continue
             record = {
                 "action_type": "takeover",
                 "action": "takeover",
@@ -867,18 +883,18 @@ class PoliticalSystem:
                 "war_name": war.name,
                 "commander_id": candidate.id,
                 "commander_name": candidate.get_formal_name(),
-                "legions": list(getattr(war, "legion_numbers", []) or []),
+                "legions": [],
                 "reinforcement_n": n,
                 "trigger_source": "ai_auto",
-                "previous_status": previous_status,
-                "resulting_status": resulting_status,
+                "previous_status": decision.get("previous_status"),
+                "resulting_status": "LOCKED",
+                "deployed": False,
             }
-            self.state.record_senate_direct_action(record)
             self.state.log_event(
-                f"AI 自动接管战争 {war.name}: {candidate.get_formal_name()}",
+                f"AI 接管已锁定（零部署）: {war.name}（{candidate.get_formal_name()}）",
                 level=logging.INFO,
                 extra={
-                    "type": "senate_takeover_direct_action",
+                    "type": "senate_takeover_locked",
                     "war_id": war.id,
                     "new_commander": candidate.id,
                     "reinforcement_n": n,
@@ -1094,6 +1110,11 @@ class PoliticalSystem:
             war_id = kwargs.get("war_id")
             if not war_id:
                 return self._result(False, "停战提案需要 war_id")
+            # WP-G-R4（SA v1.7 §2.2/§2.5，R4-20）：同战 Peace 双向互斥 Core 强制——
+            # 目标战已有接管配置（V=RESERVED / T=LOCKED）→ Peace 提案拒绝（UI 灰显同源）
+            pending = getattr(self.state, "_takeover_pending", None)
+            if pending and pending.get("war_id") == war_id and pending.get("status") in ("RESERVED", "LOCKED"):
+                return self._result(False, "该战争已有接管配置——停战提案与接管互斥（先取消/完成接管）")
             ws = self.state.get_war_system()
             war = ws.get_war_by_id(war_id) if ws else None
             if not war or not war.peace_treaty:
@@ -1243,8 +1264,9 @@ class PoliticalSystem:
             return n if n == 0 else None
         return n if 1 <= n <= pool else None
 
-    def execute_war_takeover_direct(self, war, consul_figure, reinforcement_n: Optional[int] = None) -> bool:
-        """统一 Takeover mutation（F 件 §2.1，ODR-G-01：P1/P2 双前置 + Shared Core 十步）。
+    def execute_war_takeover_deploy(self, war, consul_figure, reinforcement_n: Optional[int] = None) -> bool:
+        """统一 Takeover 部署 mutation（WP-G-R4，SA v1.7 §2.4b：原 execute_war_takeover_direct
+        部署十步，业务语义/R3 六闭包 KEEP，owner 边界移动到 advance_senate_phase 部署单元）。
 
         P1（TRUCE + pending treaty，T7）：terminate treaty（clear）→ TRUCE→ACTIVE；
         P2（ACTIVE + no valid commander，T15）：无状态转换、无条约 mutation；
@@ -1252,7 +1274,9 @@ class PoliticalSystem:
         Shared Core：保留幸存 → Legion 全量 rebind → Fleet 全量 rebind → 设 commander →
         显式 Reinforcement N → 新军团 bind 新 Commander → 一致结果（R-14 反 split-brain）。
         FC-05 原子性：显式 N>0 但征召 0 成功 → commander 回滚不回写。
-        human takeover_war（senate_api）与 AI execute_ai_takeover_direct_action 共用此路径。
+
+        调用约束（R4-10）：仅 senate_api.advance_senate_phase 的部署单元可调用（takeover_war
+        Submit 零部署、execute_ai_takeover_direct_action 废弃直连——均不得直接调用）。
         """
         if not war or not consul_figure:
             return False
@@ -1360,12 +1384,18 @@ class PoliticalSystem:
         # 10. 持久一致结果
         self._set_absent(consul_figure)
         self.state.log_event(
-            f"战争接管直接执行: war={war.id}, commander={consul_figure.id}, reinforcement_n={n}",
+            f"战争接管部署执行: war={war.id}, commander={consul_figure.id}, reinforcement_n={n}",
             level=logging.INFO,
             extra={"war_id": war.id, "commander_id": consul_figure.id, "reinforcement_n": n,
-                   "method": "execute_war_takeover_direct"},
+                   "method": "execute_war_takeover_deploy", "owner": "advance_senate_phase"},
         )
         return True
+
+    # WP-G-R4（SA v1.7 §2.4b）：legacy 名称别名——部署十步仍居本方法体，但唯一调用 owner
+    # = advance_senate_phase 部署单元（R4-10 不双写）。旧直连调用语义被 R4 废弃：
+    # takeover_war 不再经此部署；execute_ai_takeover_direct_action 不再直接 mutation。
+    def execute_war_takeover_direct(self, war, consul_figure, reinforcement_n: Optional[int] = None) -> bool:
+        return self.execute_war_takeover_deploy(war, consul_figure, reinforcement_n=reinforcement_n)
 
     def execute_war_continue_direct(self, war, consul_figure, reinforcement_n: Optional[int] = None) -> bool:
         """Continue Existing Command 唯一 mutation（G1-21 / F 件 §2.2 / T8）。

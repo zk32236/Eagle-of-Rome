@@ -144,7 +144,11 @@ def _resolve_and_advance_population(state, player_id="player_opt"):
 
 
 def _senate_resolve_advance(state, player_id="player_opt"):
-    """S13/S14：Senate 空提案 resolve（record result）→ advance（Path A，D-09）。"""
+    """S13/S14：Senate 空提案 resolve（record result）→ advance
+    （WP-G-R4 supersede：先显式空选择写 P，OD-R4-05/06，SA v1.7 §2.3b）。"""
+    if not state.get_senate_proposals() and not state.senate_proposal_decision_complete:
+        fin = senate_api.propose_many(state, player_id, [])
+        assert fin["success"], fin.get("message")
     resolved = senate_api.resolve_senate(state)
     assert resolved["success"], f"resolve_senate failed: {resolved.get('message')}"
     adv = senate_api.advance_senate_phase(state, player_id)

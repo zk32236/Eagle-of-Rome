@@ -275,40 +275,47 @@ class TestLongChainTA(unittest.TestCase):
         self.assertFalse(senate_api.advance_senate_phase(state, s1.P1)["success"])
         self.assertEqual(war.status, WarStatus.ACTIVE)
 
-        # live Store doTakeoverWar → canonical mutation/provenance → 收敛（真实 phase result）
+        # live Store doTakeoverWar（R4 supersede，OD-R4-05/06）：Submit/lock 锁 T 零部署
         calls = {"n": 0}
-        original = PoliticalSystem.execute_war_takeover_direct
+        original = PoliticalSystem.execute_war_takeover_deploy
 
         def counting(self_, war_, consul_, reinforcement_n=None):
             calls["n"] += 1
             return original(self_, war_, consul_, reinforcement_n=reinforcement_n)
 
-        with mock.patch.object(PoliticalSystem, "execute_war_takeover_direct", counting):
-            fb = store.doTakeoverWar(war.id, consul.id)
+        with mock.patch.object(PoliticalSystem, "execute_war_takeover_deploy", counting):
+            fb = store.doTakeoverWar(war.id, 1)
         self.assertTrue(fb["success"], fb.get("message"))
-        self.assertEqual(calls["n"], 1, "canonical takeover mutation 恰一次")
-        self.assertTrue(fb["data"]["takeover_applied"])
-        self.assertTrue(fb["data"]["senate_converged"])
-        self.assertTrue(state.get_phase_result("senate"))
-        self.assertEqual(war.commander_id, consul.id)
-        self.assertIs(store.canAdvanceSenate, True)
+        self.assertEqual(calls["n"], 0, "Submit 零部署")
+        self.assertEqual(state.get_takeover_pending()["status"], "LOCKED")
+        self.assertFalse(state.get_phase_result("senate"), "无隐式结算")
+        self.assertIsNone(war.commander_id)
+        self.assertFalse(consul.is_absent, "R4-17：执政官留城")
 
-        # 重复 takeover 请求 no-op（零新增 mutation）
-        repeat = store.doTakeoverWar(war.id, consul.id)
+        # 重复 takeover 请求 no-op（LOCKED 后重复 submit 拒绝，零新增 mutation）
+        repeat = store.doTakeoverWar(war.id, 1)
         self.assertFalse(repeat["success"])
 
-        # doAdvanceSenate → 下一合法 phase（combat）；Combat 真实 naval 门：无舰队 auto-DEFEAT
-        adv = store.doAdvanceSenate()
+        # 显式空结束 + settlement 恢复 → R 真实 → doAdvanceSenate 部署恰一次 → combat
+        self.assertTrue(store.doSubmitSenateProposals([])["success"])
+        recovery = store.doResolveSenateSettlement()
+        self.assertTrue(recovery["success"], recovery.get("message"))
+        self.assertTrue(state.get_phase_result("senate"))
+        with mock.patch.object(PoliticalSystem, "execute_war_takeover_deploy", counting):
+            adv = store.doAdvanceSenate()
         self.assertTrue(adv["success"], adv.get("message"))
+        self.assertEqual(calls["n"], 1, "部署恰一次（advance 唯一 owner）")
         self.assertTrue(state.is_phase_executed("senate"))
+        self.assertEqual(war.commander_id, consul.id)
+        self.assertTrue(consul.is_absent)
+
+        # Combat 真实 naval 门（R4 supersede）：无 ready 舰队 = NAVAL_NOT_READY（非自动 DEFEAT）
         state.set_current_player(s1.P1)
-        state.config.testing.force_battle_result = "victory"   # land override 不得跨过 naval 门
-        state.config.testing.force_naval_result = ""
+        state.config.testing.force_battle_result = "victory"   # land override 不得跨过 readiness
+        state.config.testing.force_naval_result = "TRIUMPH"     # naval override 也不穿透 readiness
         act = combat_api.do_combat_action(state, s1.P1, war.id, "attack")
-        self.assertTrue(act["success"], act.get("message"))
-        data = act["data"]
-        self.assertEqual(data["naval"]["result"], "DEFEAT")    # 无舰队自动失败（既有分支）
-        self.assertEqual(data["land_battle"], "blocked")       # land override 无效（R-05）
+        self.assertFalse(act["success"])
+        self.assertEqual(act["data"]["code"], "NAVAL_NOT_READY")
         self.assertEqual(war.status, WarStatus.ACTIVE)         # war 保持 ACTIVE + 新 Commander
         self.assertEqual(war.commander_id, consul.id)
         self.assertTrue(consul.is_absent)

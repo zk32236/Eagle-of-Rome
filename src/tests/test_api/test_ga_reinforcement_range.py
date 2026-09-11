@@ -85,24 +85,44 @@ class TestGaReinforcementRange(unittest.TestCase):
         self.assertEqual(rng["min"], 1)
 
     def test_takeover_with_zero_treasury_succeeds_and_goes_negative(self):
-        """S25：国库 0 时接管 + N=1 成功，征召扣款照扣（国库可为负）。"""
+        """S25（WP-G-R4 supersede，OD-R4-05/06）：国库 0 时 Submit 锁 T（N=1）零扣费；
+        显式 advance 部署时征召扣款照扣（国库可为负）。"""
         self.state._treasury = 0
         war = self._make_commanderless_active_war()
-        result = senate_api.takeover_war(self.state, "player1", war.id, reinforcement_n=1)
+        result = senate_api.takeover_war(self.state, "player1", war.id, reinforcement_n=1,
+                                         action="reserve")
         self.assertTrue(result["success"])
+        locked = senate_api.takeover_war(self.state, "player1", war.id, 1, action="submit")
+        self.assertTrue(locked["success"], locked.get("message"))
+        self.assertIsNone(war.commander_id, "Submit 零部署")
+        self.assertEqual(self.state._treasury, 0, "Submit 零扣款（国库不参与上限）")
+        # 显式空结束 → R → advance 部署（N=1 征召扣 10）
+        self.assertTrue(senate_api.propose_many(self.state, "player1", [])["success"])
+        self.assertTrue(senate_api.resolve_senate(self.state)["success"])
+        adv = senate_api.advance_senate_phase(self.state, "player1")
+        self.assertTrue(adv["success"], adv.get("message"))
         self.assertEqual(war.commander_id, self.consul.id)
         self.assertEqual(self.state._treasury, -10)  # 征召费 10 照扣
 
     def test_api_rejects_n_out_of_allowed(self):
-        """API 层 fail-closed：N 超出 allowed → 拒绝。"""
+        """API 层 fail-closed：N 超出 allowed → 拒绝（零写入）。"""
         war = self._make_commanderless_active_war()
         for bad_n in (-1, 0, 26, 100):
-            result = senate_api.takeover_war(self.state, "player1", war.id, reinforcement_n=bad_n)
+            result = senate_api.takeover_war(self.state, "player1", war.id, reinforcement_n=bad_n,
+                                             action="reserve")
             self.assertFalse(result["success"], f"N={bad_n} 应被拒绝")
             self.assertIsNone(war.commander_id)
-        # 合法 N 成功
-        result = senate_api.takeover_war(self.state, "player1", war.id, reinforcement_n=2)
+        # 合法 N reserve+submit（锁 T 零部署）→ advance 部署完整 N
+        result = senate_api.takeover_war(self.state, "player1", war.id, reinforcement_n=2,
+                                         action="reserve")
         self.assertTrue(result["success"])
+        locked = senate_api.takeover_war(self.state, "player1", war.id, 2, action="submit")
+        self.assertTrue(locked["success"], locked.get("message"))
+        self.assertEqual(war.legion_numbers, [], "Submit 零征召")
+        self.assertTrue(senate_api.propose_many(self.state, "player1", [])["success"])
+        self.assertTrue(senate_api.resolve_senate(self.state)["success"])
+        adv = senate_api.advance_senate_phase(self.state, "player1")
+        self.assertTrue(adv["success"], adv.get("message"))
         self.assertEqual(len(war.legion_numbers), 2)
 
     def test_api_none_n_defaults_to_min(self):

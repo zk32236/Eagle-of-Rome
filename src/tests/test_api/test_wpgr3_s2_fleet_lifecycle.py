@@ -184,6 +184,10 @@ def _population_votes_and_resolve(state):
 
 
 def _senate_resolve_advance(state):
+    """resolve_senate → advance（WP-G-R4 supersede：零提案先显式空选择写 P）。"""
+    if not state.get_senate_proposals() and not state.senate_proposal_decision_complete:
+        fin = senate_api.propose_many(state, "player_opt", [])
+        assert fin["success"], fin.get("message")
     resolved = senate_api.resolve_senate(state)
     assert resolved["success"], f"resolve_senate: {resolved.get('message')}"
     adv = senate_api.advance_senate_phase(state, "player_opt")

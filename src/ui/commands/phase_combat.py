@@ -20,6 +20,77 @@ if TYPE_CHECKING:
     from src.core.entities.war import War
 
 
+# WP-G-R4（SA v1.7 §5.5/§3.4，S4 主 CLI nested 渲染）：两 stage 文本 helper（纯 display）。
+# 消费同一 v2 envelope（naval/land 并列 executed）；数值逐项取自 stage（与 DATA 同 run 值
+# 一致）；未执行 stage 无数值行（R4-05）；executed 字段缺失 → 「未记录」不制造零。
+_STAGE_WORD = {
+    "TRIUMPH": "大胜", "VICTORY": "胜利", "STALEMATE": "僵持",
+    "DEFEAT": "战败", "DISASTER": "灾难",
+    "triumph": "大胜", "victory": "胜利", "draw": "僵持",
+    "defeat": "战败", "disaster": "灾难",
+}
+
+
+def _stage_value(stage, key, suffix=""):
+    """executed stage 字段读取：缺失 → 「未记录」（暴露 DTO contract failure，不制造零）。"""
+    if isinstance(stage, dict) and key in stage:
+        return f"{stage[key]}{suffix}"
+    return f"未记录{suffix}"
+
+
+def _naval_stage_lines(naval):
+    """Naval stage 文本行。NOT_READY → 「海军未就绪」（无 Land 数值行）；bypass 说明原因，
+    不渲染作「海战胜利」；executed → 海战结果词 + 舰队损失 + 海权阶段结果（stage 快照）。"""
+    if not isinstance(naval, dict):
+        return []
+    lines = []
+    if naval.get("executed") is True:
+        word = _STAGE_WORD.get(naval.get("result"), naval.get("result") or "未知")
+        lines.append(f"⚓ 海战: {word}")
+        lines.append(f"   舰队损失: {_stage_value(naval, 'roman_losses', ' 艘')}")
+        if naval.get("sea_control_acquired") is True:
+            lines.append("   海权: 已获取制海权")
+        else:
+            lines.append("   海权: 未获取制海权")
+    elif naval.get("status") == "NOT_READY":
+        lines.append("海军未就绪")
+        if naval.get("reason") == "NO_READY_ASSIGNED_FLEET":
+            lines.append("   未就绪：本战无已指派可用舰队")
+    elif naval.get("reason") == "NOT_REQUIRED":
+        lines.append("海战: 未执行 — 本战无需海军")
+    elif naval.get("reason") == "SEA_CONTROL_ALREADY_ACQUIRED":
+        lines.append("海战: 未执行 — 已获取制海权，本场跳过海战")
+    else:
+        lines.append("海战: 未执行")
+    return lines
+
+
+def _land_stage_lines(land):
+    """Land stage 文本行。未执行（NAVAL_GATE_BLOCKED）→ 固定「陆战: 未执行 — 海战门未通过」；
+    executed → 陆战结果词 + 骰子/攻击/防御/分数 + 真实损失/战利品（有才显示）。"""
+    if not isinstance(land, dict):
+        return []
+    lines = []
+    if land.get("executed") is True:
+        word = _STAGE_WORD.get(land.get("result"), land.get("result") or "未知")
+        lines.append(f"陆战: {word}")
+        lines.append("   🎲 骰子: " + _stage_value(land, "dice", " / 12")
+                     + " | 攻击总值: " + _stage_value(land, "total_attack")
+                     + " vs 敌军防御: " + _stage_value(land, "enemy_defence")
+                     + " = " + _stage_value(land, "total_score"))
+        if "losses" in land and land.get("losses", 0) > 0:
+            lines.append(f"   💀 军团损失: {land['losses']}")
+        if "loot" in land and land.get("loot", 0) > 0:
+            lines.append(f"   📦 战利品: {land['loot']} T")
+    elif land.get("reason") == "NAVAL_GATE_BLOCKED":
+        lines.append("陆战: 未执行 — 海战门未通过")
+    elif land.get("reason") == "NAVAL_NOT_READY":
+        lines.append("陆战: 未执行")
+    else:
+        lines.append("陆战: 未执行")
+    return lines
+
+
 class CombatCommand(Command):
     """战斗阶段命令"""
 
@@ -78,27 +149,53 @@ class CombatCommand(Command):
                 print(f"   ⚠️  {skipped_no_commander} war(s) without commanders!")
                 print(f"   💀 Wars continue without leadership...")
 
-            # 战斗结果
+            # 战斗结果（WP-G-R4 S4：nested 两 stage 文本渲染，consume 同一 v2 envelope）
             if battles:
                 print(f"\n   ⚔️  Resolving {len(battles)} active conflict(s)...")
                 for b in battles:
-                    result_emojis = {
-                        "triumph": "🏆", "victory": "✅",
-                        "draw": "⏸️", "defeat": "❌", "disaster": "💀",
-                    }
-                    emoji = result_emojis.get(b.get("result", ""), "❓")
                     print(f"\n   ⚔️  {b.get('war_name', 'Unknown')}:")
-                    print(f"      🎲 Dice: {b.get('dice', '?')} | "
-                          f"{emoji} Result: {b.get('result_label', b.get('result', '?'))}")
-                    if b.get("losses", 0) > 0:
-                        print(f"      💀 Legion losses: {b['losses']}")
-                    if b.get("loot", 0) > 0:
-                        print(f"      🏆 Loot: {b['loot']} "
-                              f"(Treasury: {b.get('treasury_share', 0)}"
-                              f", Commander: {b.get('commander_share', 0)})")
-                    if b.get("triumph"):
-                        print(f"      🎉 {b.get('war_name', '')} ends in triumph!")
-            else:
+                    if isinstance(b, dict) and b.get("schema_version") == 2 \
+                            and isinstance(b.get("land"), dict) and isinstance(b.get("naval"), dict):
+                        for line in _naval_stage_lines(b.get("naval")):
+                            print(f"      {line}")
+                        for line in _land_stage_lines(b.get("land")):
+                            print(f"      {line}")
+                        outcome = b.get("war_outcome") or {}
+                        if outcome.get("terminal_success"):
+                            print(f"      🎉 {b.get('war_name', '')} resolved!")
+                    else:
+                        # legacy flat 回退（旧消费者/旧 DTO）
+                        result_emojis = {
+                            "triumph": "🏆", "victory": "✅",
+                            "draw": "⏸️", "defeat": "❌", "disaster": "💀",
+                        }
+                        emoji = result_emojis.get(b.get("result", ""), "❓")
+                        print(f"      🎲 Dice: {b.get('dice', '?')} | "
+                              f"{emoji} Result: {b.get('result_label', b.get('result', '?'))}")
+                        if b.get("losses", 0) > 0:
+                            print(f"      💀 Legion losses: {b['losses']}")
+                        if b.get("loot", 0) > 0:
+                            print(f"      🏆 Loot: {b['loot']} "
+                                  f"(Treasury: {b.get('treasury_share', 0)}"
+                                  f", Commander: {b.get('commander_share', 0)})")
+                        if b.get("triumph"):
+                            print(f"      🎉 {b.get('war_name', '')} ends in triumph!")
+
+            # WP-G-R4（SA v1.7 §3.4）：no-ready 战争独立 unavailable 提示（非 battles）
+            unavailable = data.get("unavailable_wars", []) or []
+            for u in unavailable:
+                w = war_system.get_war_by_id(u.get("war_id")) if war_system else None
+                name = w.name if w is not None else u.get("war_id", "Unknown")
+                code = u.get("code", "")
+                if code == "NAVAL_NOT_READY":
+                    print(f"      ⚓ {name} 海军未就绪（NAVAL_NOT_READY）："
+                          f"本战无已指派可用舰队，跳过海战与登陆")
+                elif code == "NAVAL_SYSTEM_UNAVAILABLE":
+                    print(f"      ⚓ {name} 海军系统不可用（技术失败，阻断攻击）")
+                else:
+                    print(f"      ⚓ {name} 不可用（{code}）")
+
+            if not battles and not unavailable:
                 print("   ⏸️  No wars ready for combat")
 
             # 停战条约（防范 Mock 值）
@@ -172,7 +269,15 @@ class CombatCommand(Command):
 
         ms = self.state.get_military_system()
 
-        if war.naval_required and self.state.naval_system:
+        # WP-G-R4（SA v1.7 §3.1/§3.3 legacy 窄 parity）：共享 NavalSystem readiness 门 +
+        # 已获控 skip；NOT_READY 独立返回（零副作用，不加 duration、不打陆战）。
+        if war.naval_required and not war.sea_control_acquired:
+            from src.api.combat_api import _naval_attack_readiness
+            _code, _reason = _naval_attack_readiness(self.state, war)
+            if _code is not None:
+                print(f"      ⚓ 海军未就绪（{_code}）：本战无已指派可用舰队，跳过海战与登陆")
+                return
+        if war.naval_required and self.state.naval_system and not war.sea_control_acquired:
             print(f"\n      ⚓ 进行海战...")
             # ----- 海战前日志 -----
             fleet_ids = war.assigned_fleet_ids
@@ -338,7 +443,8 @@ class CombatCommand(Command):
             for legion in legions:
                 legion.promote_to_veteran()
                 legion.recall()
-            war_system.resolve_war(war.id, victory=True)
+            # WP-G-R4（§4.2/§4.3）：legacy helper 成功分支显式传 CRT 词（identity）
+            war_system.resolve_war(war.id, victory=True, combat_result="triumph")
 
 
         elif result == "VICTORY":
@@ -350,7 +456,7 @@ class CombatCommand(Command):
             # resolve_war victory 分支（先于召回）→ RESOLVED → recall→AVAILABLE（Veteran 保留）；
             # 不生成条约（GA G1-08 门收敛后天然不触发）。晋升不再在本分支重复执行（防
             # battles_won 双计，单一晋升 owner = resolve_war）。
-            war_system.resolve_war(war.id, victory=True)
+            war_system.resolve_war(war.id, victory=True, combat_result="victory")
 
         elif result == "STALEMATE":
             print(f"\n      {emoji} RESULT: STALEMATE (0 losses)")

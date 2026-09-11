@@ -209,7 +209,11 @@ def _population_round(state, consul_figure_id, rival_vote_figure_id=0):
 
 
 def _senate_resolve_advance(state):
-    """resolve_senate（确定性 approve）→ advance_senate_phase。"""
+    """resolve_senate（确定性 approve）→ advance_senate_phase。
+    WP-G-R4（OD-R4-05/06 supersede，SA v1.7 §2.3b）：零提案先显式空选择写 P。"""
+    if not state.get_senate_proposals() and not state.senate_proposal_decision_complete:
+        fin = senate_api.propose_many(state, P1, [])
+        assert fin["success"], fin.get("message")
     resolved = senate_api.resolve_senate(state, vote_decider=DeterministicApproveDecider())
     assert resolved["success"], f"resolve_senate failed: {resolved.get('message')}"
     adv = senate_api.advance_senate_phase(state, P1)
@@ -223,9 +227,14 @@ def _combat_naval_gate_year(state, war_id):
 
     设计 §8.2 Chain FC step 5/7：不得以 commanderless nonactionable 跳过（本 fixture war 有
     valid commander → actionable → 必须真实处理 naval gate）。
+    WP-G-R4 supersede（SA v1.7 §8.3）：无 ready 成舰 → NAVAL_NOT_READY（非 R3 自动 DEFEAT）
+    ——零副作用 + 显式 advance（年 1 无舰队战斗 = 合法跳过）。
     """
     act = combat_api.do_combat_action(state, P1, war_id, "attack")
-    assert act["success"], f"do_combat_action failed: {act.get('message')}"
+    if not act["success"]:
+        assert act["data"]["code"] in ("NAVAL_NOT_READY", "NAVAL_SYSTEM_UNAVAILABLE"), act
+        w = state.get_war_system().get_war_by_id(war_id)
+        assert w.status == WarStatus.ACTIVE
     adv = combat_api.advance_combat(state, P1)
     assert adv["success"], f"advance_combat failed: {adv.get('message')}"
     res = resolution_api.execute_resolution(state)
