@@ -221,8 +221,8 @@ def test_ac22_no_vacancy_zero_governor_ui():
     store = _MockSenateStore(_options("war", "peace", "budget"), appointments={})
     engine, root = _load_senate_stage(store)
 
-    # 默认勾选 {war,peace,budget}，无 governor 条目
-    assert _key_set(root) == {"war:k", "peace:k", "budget:k"}
+    # R5（Plan §4.2 L9）：非 War 提案默认仅 budget；war/peace 由 War Card 承担（无 governor 条目）
+    assert _key_set(root) == {"budget:k"}
 
     # 无独立 GovernorAppointmentPanel 实例（FC-14 ⑤）
     assert _gov_panel_count(root) == 0, "standalone GovernorAppointmentPanel must be removed"
@@ -239,8 +239,8 @@ def test_ac23_vacancy_governor_entry_default_unchecked():
     )
     engine, root = _load_senate_stage(store)
 
-    # governor 默认不勾选（仅 {war,peace,budget}）
-    assert _key_set(root) == {"war:k", "peace:k", "budget:k"}
+    # governor 默认不勾选（R5：非 War 提案默认仅 budget）
+    assert _key_set(root) == {"budget:k"}
 
     # 无独立 GovernorAppointmentPanel 实例（governor 统一提案列表内渲染）
     assert _gov_panel_count(root) == 0

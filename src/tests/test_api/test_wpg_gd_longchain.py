@@ -315,9 +315,14 @@ def test_tgd04_s33_reentry_no_duplicate_mutation():
 
     # destroy 重入：mark_destroyed 状态门幂等（DISBANDED 不满足 destroy 前置）
     # （DESTROYED 唯一清除点语义由 GB 覆盖；此处断言 DISBANDED 不可再 destroy）
-    # takeover 重入：RESOLVED 战争 fail-closed（P1/P2 前置不命中）
-    to = senate_api.takeover_war(state, "player_opt", "war1", 1)
+    # takeover 重入 → R5（Plan §4.2 L16；SA §4.10 C-M01~M10）：旧 takeover_war 入口退役；
+    # RESOLVED 战争经唯一整包入口 fail-closed（不可提案）
+    to = senate_api.propose_many(state, "player_opt", {"war_drafts": [
+        {"war_id": "war1", "checked": True, "mode": "command",
+         "target_commander_id": commander.id, "reinforcement_n": 1}]})
     assert to["success"] is False
+    assert {e.get("code") for e in (to.get("errors") or [])} & {
+        "SUBMIT_NOT_AUTHORIZED", "WAR_TARGET_INVALID", "WAR_NOT_PROPOSABLE"}
 
 
 # ════════════════════════════════════════════════════════════════════════

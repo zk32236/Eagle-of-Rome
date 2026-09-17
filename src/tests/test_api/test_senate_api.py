@@ -179,8 +179,9 @@ class TestSenateAPI(unittest.TestCase):
         self.assertIn("只有保民官可以行使否决权", result["message"])
 
     @patch("src.core.systems.political_system.PoliticalSystem.execute_war_declaration")
-    @patch("src.core.systems.political_system.PoliticalSystem.execute_ai_takeover_direct_action")
-    def test_resolve_senate(self, mock_takeover, mock_execute):
+    def test_resolve_senate(self, mock_execute):
+        """R5 supersede（Plan §4.2 L7；SA §4.10 C-M01/C-M08，DA-3/DA-4）：resolve 只 finalize
+        Decision——旧 `execute_ai_takeover_direct_action` 直连入口退役（不再存在，故不再 patch）。"""
         war = War(id="war1", name="测试战争", war_type=WarType.FOREIGN, strength=5, naval_required=False)
         war.status = WarStatus.THREAT
         self.state.get_war_system()._threats.append(war)
@@ -204,13 +205,19 @@ class TestSenateAPI(unittest.TestCase):
         self.assertEqual(enacted[0]["proposal_id"], war_proposal_id)
         self.assertEqual(enacted[0]["type"], "war")
         self.assertIn("key_parameters", enacted[0])
-        mock_execute.assert_called_once()
-        # AU-R1-05a（G3 C1，D-1 采纳）：resolve_senate 零 takeover mutation——AI 接管
-        # 唯一触发点 = auto_submit_proposals 尾部，resolve 不得触发 execute_ai_takeover_direct_action
-        mock_takeover.assert_not_called()
+        # R5（Plan §4.2 L5/L6；SA §4.10 C-M01，DA-3）：War Proposal 军事效果延迟到
+        # Senate→Combat 边界事务——resolve 只 finalize Decision，不再早写宣战/部署。
+        mock_execute.assert_not_called()
+        self.assertEqual(war.status, WarStatus.THREAT, "resolve 不激活战争（待边界）")
+        # SA §4.10 C-M08（DA-4）：旧 AI 接管直连入口已退役——resolve 零接管 mutation
+        from src.core.systems.political_system import PoliticalSystem
+        self.assertFalse(hasattr(PoliticalSystem, "execute_ai_takeover_direct_action"))
 
     def test_propose_peace_manually(self):
-        """手动模式下停战提案应将草案状态设置为 submitted"""
+        """R5 supersede（Plan §4.2 L5/L6/L7；SA §3.7 DD-01 / C-M03）：Submit 不再军事早写——
+        War.peace_treaty.status 保持权威 pending，submitted 身份只在政治账本表达；
+        proposal 携带深冻结 treaty 副本（无 live alias）。
+        """
         # 创建一个停战战争，并设置 pending 草案
         war = War(id="war_peace_test", name="停战测试战争", war_type=WarType.FOREIGN, strength=5)
         war.status = WarStatus.TRUCE
@@ -224,8 +231,13 @@ class TestSenateAPI(unittest.TestCase):
         result = senate_api.propose(self.state, "player1", "peace", war_id="war_peace_test")
 
         self.assertTrue(result["success"])
-        # 验证草案状态已变为 submitted
-        self.assertEqual(war.peace_treaty["status"], "submitted")
+        # R5：Submit 零军事/条约早写（DD-01）——treaty.status 保持 pending
+        self.assertEqual(war.peace_treaty["status"], "pending")
+        # proposal 携带深冻结副本（改 War treaty 不影响已提交副本）
+        proposal = self.state.get_senate_proposals()[0]
+        self.assertEqual(proposal["treaty"]["status"], "pending")
+        war.peace_treaty["status"] = "tampered"
+        self.assertEqual(proposal["treaty"]["status"], "pending")
 
 class TestGovernorEligibility(unittest.TestCase):
     def setUp(self):
@@ -391,13 +403,15 @@ class TestAutoSubmitProposals(unittest.TestCase):
         # 验证提案已存入 state
         stored = self.state.get_senate_proposals()
         self.assertGreaterEqual(len(stored), 1)
-        self.assertEqual(stored[0]["type"], "war")
-        self.assertGreaterEqual(stored[0]["legions"], 1)
-        self.assertLessEqual(stored[0]["legions"], len(self.state.get_military_system().get_available_legions()))
+        # R5（Plan §4.2 L7；SA §3.1）：整包 Submit 发布 `war_proposal` 快照（schema_version=1）
+        self.assertEqual(stored[0]["type"], "war_proposal")
+        n = stored[0]["payload"]["reinforcement_n"]
+        self.assertGreaterEqual(n, 1)
+        self.assertLessEqual(n, len(self.state.get_military_system().get_available_legions()))
 
     def test_auto_submit_proposals_peace_treaty(self):
-        """待决停战：A7 同轮互斥——AI 接管（decider 默认 chance=1.0）优先，peace 提案跳过；
-        TRUCE+pending 战争经统一 Takeover → ACTIVE + 新 Commander（S19 语义）。"""
+        """R5 supersede（Plan §4.2 L7；SA §2.1/§5.1，DA-4）：Peace 意图经同一 War Card
+        （mode=peace）提交——不再走旧「AI 接管优先于 peace」互斥；Submit 零军事写。"""
         ws = self.state.get_war_system()
         war = War(id="peace_test", name="停战测试战争", war_type=WarType.FOREIGN, strength=5)
         war.status = WarStatus.TRUCE
@@ -409,20 +423,17 @@ class TestAutoSubmitProposals(unittest.TestCase):
         self.assertTrue(result["success"])
         proposals = result["data"].get("proposals", [])
         peace_proposals = [p for p in proposals if p["type"] == "peace"]
-        # A7（F 件 §2.3）：同轮不双路径——AI 接管路径下不提交 peace 提案
-        self.assertEqual(len(peace_proposals), 0)
-        self.assertEqual(peace_proposals, [])
-        # WP-G-R4 supersede（OD-R4-05/06，SA v1.7 §2.5/R4-24）：AI 接管 = 单 commitment 锁 T
-        # （Submit 零部署）——war 保持 TRUCE+pending、无 Commander；部署唯一 owner =
-        # advance_senate_phase（显式 Senate→Combat 原子推进，§2.4b 迁移表 #1/#2/#3）
+        self.assertEqual(len(peace_proposals), 1)
+        # Submit 零军事/条约早写：war 保持 TRUCE+pending、无 Commander；旧直连接管已退役
         self.assertEqual(war.status, WarStatus.TRUCE)
         self.assertIn(war, ws.get_truce_wars())
         self.assertIsNone(war.commander_id)
         self.assertIsNotNone(war.peace_treaty)
-        pending = self.state.get_takeover_pending()
-        self.assertIsNotNone(pending)
-        self.assertEqual(pending["status"], "LOCKED")
-        self.assertEqual(pending["war_id"], "peace_test")
+        self.assertIsNone(self.state.get_takeover_pending(), "旧直连接管已退役")
+        props = self.state.get_senate_proposals()
+        peace_rows = [p for p in props if p.get("type") == "war_proposal" and p.get("mode") == "peace"]
+        self.assertEqual(len(peace_rows), 1)
+        self.assertEqual(peace_rows[0]["war_id"], "peace_test")
 
     def test_auto_submit_proposals_returns_valid_structure(self):
         """返回值结构符合 api_response 规范"""
@@ -483,16 +494,12 @@ class TestAutoSubmitProposals(unittest.TestCase):
         proposals = result["data"].get("proposals", [])
         types_found = set(p["type"] for p in proposals)
         self.assertIn("war", types_found)
-        # A7 互斥：war2（TRUCE+pending，无 commander）被 AI 接管（单 commitment 锁 T）而非 peace 提案
-        self.assertNotIn("peace", types_found)
-        # WP-G-R4 supersede（OD-R4-05/06，SA v1.7 §2.5/R4-24）：AI Submit 锁 T 零部署——
-        # war2 保持 TRUCE+无 Commander，部署仅发生在显式 advance_senate_phase（§2.4b）
+        # R5（Plan §4.2 L7；SA §2.1/§5.1）：Peace 经同一 War Card（mode=peace）提交，不再被旧接管互斥跳过
+        self.assertIn("peace", types_found)
+        # Submit 零部署：war2 保持 TRUCE+pending、无 Commander；旧直连接管已退役
         self.assertEqual(war2.status, WarStatus.TRUCE)
         self.assertIsNone(war2.commander_id)
-        pending = self.state.get_takeover_pending()
-        self.assertIsNotNone(pending)
-        self.assertEqual(pending["status"], "LOCKED")
-        self.assertEqual(pending["war_id"], "w2")
+        self.assertIsNone(self.state.get_takeover_pending())
         # 总督任命依赖候选人选举逻辑，可能因随机性跳过行省
         # budget 和 land 依赖合同/公地数据，不强制断言
 
@@ -568,7 +575,7 @@ class TestAutoSubmitProposals(unittest.TestCase):
         self.assertIn("budget", types)
         # 提案均已成功写入 state（即经 _populate_proposal 全 success）
         stored_types = {p["type"] for p in self.state.get_senate_proposals()}
-        self.assertIn("war", stored_types)
+        self.assertIn("war_proposal", stored_types)
         self.assertIn("budget", stored_types)
 
 

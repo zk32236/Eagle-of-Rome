@@ -278,13 +278,37 @@ class GuiApiAdapter:
         from src.api import senate_api
         return self.call(senate_api.advance_senate_phase, self._state, player_id)
 
-    def takeover_war(self, player_id: str, war_id: str, reinforcement_n: Optional[int] = None) -> Dict[str, Any]:
-        from src.api import senate_api
-        return self.call(senate_api.takeover_war, self._state, player_id, war_id, reinforcement_n)
+    # R5（SA §5.2 C-M08，DA-4）：takeover_war / continue_war 绑定已退役——Human/AI/CLI
+    # 统一经 submit_senate_proposals（propose_many）；无旁路直接部署入口。
 
-    def continue_war(self, player_id: str, war_id: str, reinforcement_n: Optional[int] = None) -> Dict[str, Any]:
-        from src.api import senate_api
-        return self.call(senate_api.continue_war, self._state, player_id, war_id, reinforcement_n)
+    # -----------------------------------------------------------------------
+    # Configure/Test force 控件（R5 DA-6，SA §5.5 / Owner §20 #44）
+    # -----------------------------------------------------------------------
+    # 两键独立读写（testing.force_battle_result / testing.force_naval_result）；空值 =
+    # 正常结算。写路径 = in-memory 测试/配置面（不落盘；committed 默认 "" 不入提交面）。
+    def get_test_config(self, viewer_id: str = "") -> Dict[str, Any]:
+        from src.api import test_config_api
+        result = test_config_api.get_test_config(self._state, viewer_id or None)
+        if result.get("success"):
+            return result.get("data", {})
+        logger.error(f"Test config read failed: {result.get('message')}")
+        return {}
+
+    def set_force_battle_result(self, player_id: str, value: str) -> Dict[str, Any]:
+        """Land/CRT 强制结果控件写 Slot（空 = 正常结算；不动 naval 键）。"""
+        from src.api import test_config_api
+        return self.call(
+            test_config_api.set_test_config,
+            self._state, player_id, test_config_api.FORCE_LAND_FIELD, value,
+        )
+
+    def set_force_naval_result(self, player_id: str, value: str) -> Dict[str, Any]:
+        """Naval 强制结果控件写 Slot（空 = 正常结算；不动 land 键）。"""
+        from src.api import test_config_api
+        return self.call(
+            test_config_api.set_test_config,
+            self._state, player_id, test_config_api.FORCE_NAVAL_FIELD, value,
+        )
 
     # -----------------------------------------------------------------------
     # Combat stage API

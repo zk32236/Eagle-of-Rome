@@ -615,3 +615,7 @@ AutoWarTakeoverDecider     # 元老院-接管战争
 ---
 
 *本文档将随原型迭代持续更新。CODEX 开发时以本文档 + `EOR_GUI设计文档.md` V2.0 为最终依据。*
+
+---
+
+> **R5 supersede（2026-09-12，WP-G-R5 DA-7 文档同步 / append-only）：** 本文「接管战争 checkbox（跳过表决）」一行所述 `senate_api.process_war_takeover(state, decider)` 已退役。R5 中出征任命/续战统一经 War Card（`get_senate_view`.`war_cards`）+ 唯一整包入口 `senate_api.propose_many`（可投票/可 veto），部署仅由边界 `senate_api.advance_senate_phase` 原子执行。GUI 绑定面：`session_store.senateWarCards` → `WarProposalCard.qml`。

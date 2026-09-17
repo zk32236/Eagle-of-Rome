@@ -248,3 +248,7 @@ senate_view DTO faction 字段（既有，消费面）：
   → map 驱动（config 全名键 optimates/populares/equites + f4/f5/f6 + fallback #3A3530）
 GovernorAppointmentPanel.qml 同改（候选人行 :276）。
 ```
+
+---
+
+> **R5 supersede（2026-09-12，WP-G-R5 DA-7 文档同步 / append-only）：** 本文 §2.2 `process_war_takeover`、`takeover_war`、`execute_ai_takeover_direct_action` 与 AI 自动接管直连语义已由 WP-G-R5 冻结设计退役。R5 唯一整包 Submit 入口 = `senate_api.propose_many`（Core `PoliticalSystem.submit_proposal_package`）；唯一边界 mutation 入口 = `senate_api.advance_senate_phase`（Senate→Combat 整包原子事务 + receipt exactly-once）。出征任命/续战统一经 War Card（`get_senate_view`.`war_cards`）。旧单槽 reservation / mandatory takeover / 即时 Continue 均退役。证据：`WP-G-WarTruceTakeover/03-da-evidence/DA-R5-B5/Ledger-归零对照表.md`。

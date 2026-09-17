@@ -42,7 +42,7 @@ class SenateCommand(Command):
         self.vote_decider = vote_decider if vote_decider is not None else AutoSenateVoteDecider()
         self.budget_decider = AutoBudgetDecider()
         # AU-R1-05a（C1，D-1 采纳）：takeover_decider 参数/属性已移除——resolve_senate 零
-        # takeover；CLI auto 模式经 _auto_generate_proposals（:1025 auto_submit_proposals 尾部）
+        # takeover；R5（DA-4）三入口统一经 propose_many / advance_senate_phase。
         # 继承 AI 接管触发（Direct Action 语义，D-4 语义不回归）。
         self.land_proposal_deciders = land_proposal_deciders if land_proposal_deciders is not None else [
             AutoLandProposalDecider("populares", "distribution"),
@@ -343,12 +343,8 @@ class SenateCommand(Command):
                         break
                     elif cmd == "propose":
                         self._handle_propose(parts[1:])
-                    elif cmd == "takeover":
-                        self._handle_takeover_cli(parts[1:])
-                    elif cmd == "cancel_takeover":
-                        self._handle_takeover_cli_cancel(parts[1:])
                     else:
-                        print("未知命令，支持 propose、takeover <war_id> [N]、cancel_takeover、next", flush=True)
+                        print("未知命令，支持 propose、next", flush=True)
             else:
                 # AI 玩家：自动生成提案
                 self.state.log_event(
@@ -652,21 +648,13 @@ class SenateCommand(Command):
         print("\t📜 元老院最终通过的法案：")
 
         from src.api import senate_api
-        # WP-G-R4（SA v1.7 §2.3b/§2.4b）：human 零提案 next/n 路径——先显式空选择写 P
-        # （提交 []，合法政治决策）；M_open（存在未承诺强制接管）拒绝空结束；结算失败/
-        # guard 拒绝 → _phase_failed（不 mark executed/不 return True，可重试/退出）
-        player_id = self._takeover_player_id()
+        # R5（SA §2.3b/§2.7 A-I14 / §5.2 C-M09，DA-4）：human 零提案 next/n 路径——先显式空选择写 P
+        # （提交 []，合法政治决策）；mandatory Takeover 门（M_open）已退役，不再拒绝空结束；
+        # 结算失败/guard 拒绝 → _phase_failed（不 mark executed/不 return True，可重试/退出）
+        player_id = self._proposal_player_id()
         if (not self.state.get_senate_proposals()
                 and not self.state.senate_proposal_decision_complete
                 and not self.state.get_phase_result("senate")):
-            view = senate_api.get_senate_view(self.state, player_id) if player_id else None
-            m_open = bool(view and view.get("success")
-                          and (view.get("data", {}).get("takeover_required") or {}).get("m_open"))
-            if m_open:
-                print("❌ 存在未承诺的强制战争接管（M_open）——请先 takeover <war_id> [N] 锁定接管目标", flush=True)
-                self._phase_failed = True
-                self._step += 1
-                return
             empty = senate_api.propose_many(self.state, player_id, [])
             if not empty.get("success"):
                 print(f"❌ 显式空选择失败: {empty.get('message')}", flush=True)
@@ -821,11 +809,9 @@ class SenateCommand(Command):
         print("            propose B04 1     (总督，提名候选人ID)")
         print("            propose B05 0.05  (公地出售，5%国家公地)")
         print("            propose B06 0.06  (分地法案，6%国家公地)")
-        # WP-G-R4（SA v1.7 §2.3b）：CLI Takeover 选择/Submit（锁 T 零部署；部署唯一经
-        # advance_senate_phase——显式 Senate→Combat 推进）
-        print("   2. takeover <war_id> [N] → 接管战争（提交=锁定，零部署；执政官留城可继续提案/投票）")
-        print("   3. cancel_takeover → 取消未锁定的接管配置")
-        print("   4. next/n → 进入元老院表决环节（零提案 = 显式空选择结束提案）")
+        # R5（SA §5.2，DA-4）：CLI 入口与 Human/AI 同源——统一经 propose_many（Package Submit），
+        # 推进统一经 advance_senate_phase（唯一 owner）；旧接管/取消子命令已退役。
+        print("   2. next/n → 进入元老院表决环节（零提案 = 显式空选择结束提案）")
 
     def _handle_propose(self, args: List[str]):
         """处理 propose 命令，格式：propose <提案ID> [参数]"""
@@ -935,61 +921,12 @@ class SenateCommand(Command):
         else:
             print(f"❌ {result['message']}", flush=True)
 
-    # WP-G-R4（SA v1.7 §2.3b/§2.5）：CLI Takeover 选择/Submit（锁 T 零部署）——
-    # 部署唯一 owner = senate_api.advance_senate_phase（显式 Senate→Combat 推进）。
-    # 非空旧提案不重复提交；Takeover 不进 Vote/Veto；执政官留城可继续提案/投票（O5）。
-    def _takeover_player_id(self):
+    # R5（SA §5.2 C-M08，DA-4）：CLI 旧接管/取消子命令及处理器已退役——
+    # Human/AI/CLI 三入口统一经 Package Submit（propose_many）；无第二 mutation owner。
+    def _proposal_player_id(self):
         if hasattr(self, "_current_consul_player_id") and self._current_consul_player_id:
             return self._current_consul_player_id
         return self._get_current_player_id()
-
-    def _handle_takeover_cli(self, args: List[str]):
-        """takeover <war_id> [N]：reserve + Submit 锁 T（零部署）；失败不推进、可重试/取消。"""
-        if len(args) < 1:
-            print("❌ 用法: takeover <war_id> [增援数N]", flush=True)
-            return
-        war_id = args[0]
-        n = None
-        if len(args) >= 2:
-            try:
-                n = int(args[1])
-            except ValueError:
-                print("❌ 增援数必须是数字", flush=True)
-                return
-        player_id = self._takeover_player_id()
-        if not player_id:
-            print("❌ 无法获取当前玩家", flush=True)
-            return
-        from src.api import senate_api as _sa
-        r = _sa.takeover_war(self.state, player_id, war_id, n, action="reserve", bypass_turn_check=True)
-        if not r["success"]:
-            print(f"❌ 接管配置失败: {r['message']}", flush=True)
-            return
-        s = _sa.takeover_war(self.state, player_id, war_id, n, action="submit", bypass_turn_check=True)
-        if not s["success"]:
-            print(f"❌ 接管锁定失败（配置留 RESERVED，可调整/取消）: {s['message']}", flush=True)
-            return
-        pending = (s.get("data") or {}).get("pending_takeover") or {}
-        print(f"✅ 接管已锁定（零部署）：war={war_id} N={pending.get('reinforcement_n', n)}；"
-              f"执政官留城可继续提案/投票；部署仅在显式 Senate→Combat 推进时发生", flush=True)
-
-    def _handle_takeover_cli_cancel(self, args: List[str]):
-        """cancel_takeover：取消未锁定的接管配置（reservation 释放）。"""
-        player_id = self._takeover_player_id()
-        if not player_id:
-            print("❌ 无法获取当前玩家", flush=True)
-            return
-        from src.api import senate_api as _sa
-        pending = self.state.get_takeover_pending()
-        if not pending or pending.get("status") != "RESERVED":
-            print("❌ 当前没有可取消的接管配置（已锁定配置需先完成部署）", flush=True)
-            return
-        r = _sa.takeover_war(self.state, player_id, pending["war_id"],
-                             pending.get("reinforcement_n"), action="cancel", bypass_turn_check=True)
-        if r["success"]:
-            print("✅ 已取消接管配置（reservation 释放）", flush=True)
-        else:
-            print(f"❌ 取消失败: {r['message']}", flush=True)
 
     def _get_current_player_id(self) -> Optional[str]:
         """获取当前玩家ID（直接使用游戏状态中的当前玩家）"""
@@ -1031,12 +968,6 @@ class SenateCommand(Command):
             percent = kwargs.get("percent")
             act_name = "公地出售法案" if act_type == "sale" else "公地分配法案"
             return f"{act_name} {percent * 100:.1f}% 国家公地"
-        elif proposal_type == "takeover":
-            war_id = kwargs.get("war_id")
-            legions = kwargs.get("legions", 0)
-            war = self.state.get_war_system().get_war_by_id(war_id) if war_id else None
-            war_name = war.name if war else "未知战争"
-            return f"接管 {war_name}，增援 {legions} 个军团"
         else:
             return "提案已记录"
 

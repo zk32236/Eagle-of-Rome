@@ -177,23 +177,25 @@ def _key_set(root):
 
 
 def test_wp05_default_selection():
+    """R5（Plan §4.2 L9；SA §2.3(1)）：War Card 默认 unchecked；非 War 提案默认仅 budget。
+    （旧「war/peace 默认勾选」已 supersede——war/peace 由统一 War Card 承担。）"""
     store = _MockSenateStore(_options("war", "peace", "budget", "governor", "land"))
     _engine, root = _load_senate_stage(store)
 
-    # AC-07: 默认勾选 {war, peace, budget}，governor/land 不勾选
+    # AC-07（R5）：非 War 提案默认勾选仅 budget；war/peace 不在 bill 选择集
     keys = _key_set(root)
-    assert keys == {"war:k", "peace:k", "budget:k"}
+    assert keys == {"budget:k"}
 
     # AC-08: 用户 toggle 后 selectedProposalKeys 即时变化
     QMetaObject.invokeMethod(root, "setProposalSelected", Qt.DirectConnection,
                              Q_ARG("QVariant", "land:k"), Q_ARG("QVariant", True))
     keys = _key_set(root)
-    assert keys == {"war:k", "peace:k", "budget:k", "land:k"}
+    assert keys == {"budget:k", "land:k"}
 
     QMetaObject.invokeMethod(root, "setProposalSelected", Qt.DirectConnection,
-                             Q_ARG("QVariant", "war:k"), Q_ARG("QVariant", False))
+                             Q_ARG("QVariant", "land:k"), Q_ARG("QVariant", False))
     keys = _key_set(root)
-    assert keys == {"peace:k", "budget:k", "land:k"}
+    assert keys == {"budget:k"}
 
 
 def test_wp05_default_no_side_effect():
@@ -206,10 +208,10 @@ def test_wp05_default_no_side_effect():
 
 
 def test_wp05_default_reentry():
-    # AC-10 未提交重建 → 重新应用默认集合
+    # AC-10 未提交重建 → 重新应用默认集合（R5：非 War 提案默认仅 budget）
     store = _MockSenateStore(_options("war", "peace", "budget", "governor", "land"), current_step="proposal")
     _engine, root = _load_senate_stage(store)
-    assert _key_set(root) == {"war:k", "peace:k", "budget:k"}
+    assert _key_set(root) == {"budget:k"}
     assert root.property("proposalStepDone") is False
 
     # AC-10 已提交（current_step != "proposal"）→ 显示 submitted_proposals

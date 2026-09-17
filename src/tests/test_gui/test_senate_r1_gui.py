@@ -238,8 +238,7 @@ def test_unauthorised_viewer_controls_gated():
         assert tri.property("enabled") is False, "非执政官 viewer 三角必须禁用（参数面板不可展开）"
 
     combos = _legion_combos(root)
-    assert len(combos) == 1
-    assert combos[0].property("enabled") is False, "非执政官 viewer 军团 ComboBox 必须禁用"
+    assert len(combos) == 0, "R5（Plan §4.2 L9）：war legion ComboBox 已退役（War Card 承担）"
 
     sliders = [s for s in _sliders(root) if s.isVisible()]
     assert len(sliders) == 1, f"预期 1 个可见 budget Slider，got {len(sliders)}"
@@ -265,9 +264,7 @@ def test_consul_viewer_controls_enabled_no_regression():
         assert tri.property("enabled") is True
 
     combos = _legion_combos(root)
-    assert len(combos) == 1
-    assert combos[0].property("enabled") is True
-    assert str(combos[0].property("currentText")) == "4"  # legion_options.default（真实 producer）
+    assert len(combos) == 0, "R5（Plan §4.2 L9）：war legion ComboBox 已退役（War Card 承担）"
 
     sliders = [s for s in _sliders(root) if s.isVisible()]
     assert len(sliders) == 1

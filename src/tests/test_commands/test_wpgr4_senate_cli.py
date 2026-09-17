@@ -1,10 +1,11 @@
 # src/tests/test_commands/test_wpgr4_senate_cli.py
 """WP-G-R4 S1（SA v1.7 §8.1 G，T-R4-16）— SenateCommand CLI 最小收敛契约（§2.3b）。
 
-Takeover 选择/Submit 经 takeover_war 写 T（不部署）；human 零提案 next/n 先显式空选择
-写 P→resolve→真实 R→经 advance_senate_phase 部署→executed+True（正）；M_open 拒 /
-resolve 注入失败 / 部署失败 → mark_phase_executed 未调、execute 返回非 True、无额外
-副作用、可重试退出；LOCKED T 时 M_open=False 放行；AI canonical 尾部 P=true 保留。
+R5 supersede（Plan §4.2 L8/L11；SA §5.2 C-M08 + §2.7 A-I14 / §4.10 C-M09，DA-4）：
+CLI `takeover`/`cancel_takeover` 子命令与 mandatory M_open 门均已退役；human 经唯一整包
+入口（卡 unchecked → next 空结束 → resolve → advance_senate_phase）合法收敛。
+本文件保留：auto canonical 空批 P=true 推进；resolve 注入失败不 mark executed 且可重试；
+commanderless ACTIVE 不再阻止空结束（保留反例：无 checked 卡不得自动任命/部署）。
 """
 import unittest
 from unittest import mock
@@ -26,14 +27,14 @@ class TestT16SenateCli(unittest.TestCase):
         return state, ctx
 
     def test_t16_auto_mode_takeover_submit_lock_deploy_via_advance(self):
-        """auto 模式全链：AI canonical 顺序（lock T→P→resolve→advance 部署）→ executed。"""
+        """auto 模式全链：AI canonical 顺序（AI 整包 → resolve → advance 部署）→ executed。"""
         state, ctx = self._human_state(auto_senate=True)
         consul, war_a = ctx["consul"], ctx["war_a"]
         cmd = SenateCommand(state)
         result = cmd.execute([])
         self.assertTrue(result)
         self.assertTrue(state.is_phase_executed("senate"))
-        # auto AI 接管锁 T（decider chance=1.0 默认）→ 部署恰一次
+        # auto AI 路径零直连接管；若边界确实部署了则 commander = Consul
         if state.get_takeover_pending() is not None or war_a.commander_id is not None:
             self.assertEqual(war_a.commander_id, consul.id,
                              "部署后 war commander = Consul")
@@ -41,29 +42,34 @@ class TestT16SenateCli(unittest.TestCase):
         self.assertTrue(state.get_phase_result("senate"))
 
     def test_t16_human_takeover_command_locks_then_next_deploys(self):
-        """human CLI：takeover 命令锁 T（零部署）→ next 空选择→resolve→advance 部署→executed。"""
+        """R5 supersede（Plan §4.2 L8；SA §5.2 C-M08，DA-4）：CLI `takeover` 子命令退役——
+        human 经「卡 unchecked → next 空结束 → resolve → advance」合法完成；commanderless
+        ACTIVE 不再被强制接管（commander 保持 None，无 takeover_deploy）。"""
         state, ctx = self._human_state()
         consul, war_a = ctx["consul"], ctx["war_a"]
-        with mock.patch("builtins.input", side_effect=["next", "takeover pyrrhic_war 1",
-                                                      "next", "next"]):
+        with mock.patch("builtins.input", side_effect=["next", "next", "next"]):
             cmd = SenateCommand(state)
             result = cmd.execute([])
         self.assertTrue(result)
         self.assertTrue(state.is_phase_executed("senate"))
-        self.assertEqual(war_a.commander_id, consul.id)
-        self.assertTrue(consul.is_absent)
+        self.assertTrue(state.get_phase_result("senate"))
+        self.assertIsNone(war_a.commander_id, "无 checked 卡 → 不自动任命")
+        self.assertIsNone(state.get_takeover_pending(), "旧直连接管已退役")
         das = [a for a in state.get_senate_direct_actions() if a.get("kind") == "takeover_deploy"]
-        self.assertEqual(len(das), 1)
+        self.assertEqual(das, [])
 
     def test_t16_m_open_refusal_does_not_execute(self):
-        """M_open（无 LOCKED T 的 commanderless ACTIVE）→ CLI 不推进、不 mark executed。"""
+        """R5 supersede（Plan §4.2 L8；SA §2.7 A-I14 / §4.10 C-M09，DA-4）：mandatory M_open
+        门拆除——commanderless ACTIVE 不再阻止空结束；旧 `takeover` CLI 命令不再部署。"""
         state, ctx = self._human_state()
         with mock.patch("builtins.input", side_effect=["next", "next", "next"]):
             cmd = SenateCommand(state)
             result = cmd.execute([])
-        self.assertFalse(result, "M_open 拒绝 → 非 True")
-        self.assertFalse(state.is_phase_executed("senate"), "拒绝不得 mark executed")
-        self.assertFalse(state.get_phase_result("senate"))
+        self.assertTrue(result, "R5：无 mandatory 门 → 合法空结束完成")
+        self.assertTrue(state.is_phase_executed("senate"))
+        self.assertTrue(state.get_phase_result("senate"))
+        self.assertIsNone(ctx["war_a"].commander_id, "commanderless 合法（无强制接管）")
+        self.assertIsNone(state.get_takeover_pending())
 
     def test_t16_resolve_failure_does_not_execute(self):
         """resolve 注入失败（无真实 R）→ 部署失败不 mark executed/不 return True。"""
@@ -83,7 +89,7 @@ class TestT16SenateCli(unittest.TestCase):
         with mock.patch("builtins.input", side_effect=["next", "next", "next"]):
             cmd2 = SenateCommand(state)
             result2 = cmd2.execute([])
-        self.assertTrue(result2, "重试成功路径（LOCKED T 放行）")
+        self.assertTrue(result2, "重试成功路径")
         self.assertTrue(state.is_phase_executed("senate"))
 
     def test_t16_ai_canonical_tail_p_true_preserved(self):

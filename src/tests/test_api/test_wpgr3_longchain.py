@@ -60,6 +60,13 @@ def _store(state, viewer):
     return store
 
 
+class _PassVoteDecider:
+    """R5 边界测试用：所有议题均通过。"""
+
+    def decide_vote(self, issue, faction, state):
+        return True
+
+
 def _war_card(store, war_id):
     for card in store.combatAllWarCards:
         if card.get("war_id") == war_id:
@@ -114,7 +121,10 @@ class TestLongChainFC(unittest.TestCase):
         self.assertEqual(war.commander_id, 40)
         sv = senate_api.get_senate_view(state, P1)
         self.assertTrue(sv["success"])
-        self.assertFalse(sv["data"]["takeover_required"]["required"])  # valid commander → 无强制接管
+        # R5（Plan §4.2 L17；SA §4.10 C-M09）：takeover_required 只读态退役——以 war_cards 表达
+        self.assertNotIn("takeover_required", sv["data"])
+        ongoing = next(c for c in sv["data"]["war_cards"] if c["war_id"] == war.id)
+        self.assertEqual(ongoing["current_commander_id"], 40)  # valid commander → 无强制接管
         self.assertTrue(state.get_phase_result("revenue"))
 
         # 读模型（combat 前）：assigned 7 / nominal21 / base18（martial→0 判别 modifiers 分列）
@@ -265,46 +275,27 @@ class TestLongChainTA(unittest.TestCase):
         state, consul, war = self._ta_state()
         store = _store(state, s1.P1)
         view = store.senateView
-        self.assertTrue(view["takeover_required"]["required"])
-
-        # 空批合法但 resolve/advance 拒绝（mandatory 不可跳过）
-        empty = senate_api.propose_many(state, s1.P1, [])
-        self.assertTrue(empty["success"])
-        refused = senate_api.resolve_senate(state)
-        self.assertFalse(refused["success"])
-        self.assertFalse(senate_api.advance_senate_phase(state, s1.P1)["success"])
+        # R5（Plan §4.2 L17；SA §4.10 C-M09）：takeover_required 只读态退役——以 war_cards 表达
+        self.assertNotIn("takeover_required", view)
+        card = next(c for c in store.senateWarCards if c["war_id"] == war.id)
+        self.assertIsNone(card["current_commander_id"])
+        self.assertIn("command", card["allowed_modes"])
         self.assertEqual(war.status, WarStatus.ACTIVE)
 
-        # live Store doTakeoverWar（R4 supersede，OD-R4-05/06）：Submit/lock 锁 T 零部署
-        calls = {"n": 0}
-        original = PoliticalSystem.execute_war_takeover_deploy
-
-        def counting(self_, war_, consul_, reinforcement_n=None):
-            calls["n"] += 1
-            return original(self_, war_, consul_, reinforcement_n=reinforcement_n)
-
-        with mock.patch.object(PoliticalSystem, "execute_war_takeover_deploy", counting):
-            fb = store.doTakeoverWar(war.id, 1)
-        self.assertTrue(fb["success"], fb.get("message"))
-        self.assertEqual(calls["n"], 0, "Submit 零部署")
-        self.assertEqual(state.get_takeover_pending()["status"], "LOCKED")
+        # R5：唯一整包 Submit（零部署）→ 边界 advance 原子部署恰一次
+        sub = senate_api.propose_many(state, s1.P1, {"war_drafts": [
+            {"war_id": war.id, "checked": True, "mode": "command",
+             "target_commander_id": consul.id, "reinforcement_n": 1}]})
+        self.assertTrue(sub["success"], sub.get("errors"))
+        self.assertIsNone(war.commander_id, "Submit 零部署")
+        self.assertFalse(consul.is_absent, "R5：Submit 零部署，执政官留城")
         self.assertFalse(state.get_phase_result("senate"), "无隐式结算")
-        self.assertIsNone(war.commander_id)
-        self.assertFalse(consul.is_absent, "R4-17：执政官留城")
 
-        # 重复 takeover 请求 no-op（LOCKED 后重复 submit 拒绝，零新增 mutation）
-        repeat = store.doTakeoverWar(war.id, 1)
-        self.assertFalse(repeat["success"])
-
-        # 显式空结束 + settlement 恢复 → R 真实 → doAdvanceSenate 部署恰一次 → combat
-        self.assertTrue(store.doSubmitSenateProposals([])["success"])
-        recovery = store.doResolveSenateSettlement()
-        self.assertTrue(recovery["success"], recovery.get("message"))
+        resolved = senate_api.resolve_senate(state, vote_decider=_PassVoteDecider())
+        self.assertTrue(resolved["success"], resolved.get("message"))
         self.assertTrue(state.get_phase_result("senate"))
-        with mock.patch.object(PoliticalSystem, "execute_war_takeover_deploy", counting):
-            adv = store.doAdvanceSenate()
+        adv = senate_api.advance_senate_phase(state, s1.P1)
         self.assertTrue(adv["success"], adv.get("message"))
-        self.assertEqual(calls["n"], 1, "部署恰一次（advance 唯一 owner）")
         self.assertTrue(state.is_phase_executed("senate"))
         self.assertEqual(war.commander_id, consul.id)
         self.assertTrue(consul.is_absent)

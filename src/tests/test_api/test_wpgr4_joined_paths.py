@@ -186,41 +186,35 @@ def _build_a_state():
 
 
 def test_ja_joined_run_senate_takeover_nonempty_vote_advance_combat():
-    """SC-R4-A 同 run join：Submit 零部署 → land:sale 非空提案 → vote/veto → resolve →
+    """SC-R4-A 同 run join（R5：统一整包入口）——整包 Submit（war command + land:sale）
     advance 原子部署 → 同 run Combat 攻击（actionseq 连续）。"""
     ctx = _build_a_state()
     state, war_a, consul = ctx["state"], ctx["war_a"], ctx["consul"]
     run = RunContext("run-r4a-b3-j-20260909", state)
     view = senate_api.get_senate_view(state, P1)["data"]
-    assert view["takeover_required"]["required"] is True
     assert view["current_step"] == "proposal"
+    card = next(c for c in view["war_cards"] if c["war_id"] == war_a.id)
+    assert card["current_commander_id"] is None
     run.record("senate-view", phase="senate", war_id=war_a.id,
                commander_id=consul.id, actionseq=0)
 
-    # ① Takeover 选择 + Submit 锁 T（零部署；R4-17/R4-18）
-    assert senate_api.takeover_war(state, P1, war_a.id, 2, action="reserve")["success"]
-    s = senate_api.takeover_war(state, P1, war_a.id, 2, action="submit")
-    assert s["success"], s.get("message")
-    assert state.get_takeover_pending()["status"] == "LOCKED"
-    assert war_a.commander_id is None and not consul.is_absent
-    assert state.get_senate_proposals() == [] and state.get_senate_direct_actions() == []
-    run.record("takeover-submit", phase="senate", war_id=war_a.id,
-               commander_id=consul.id, direct_action="none", actionseq=1)
-
-    # pending-aware M：LOCKED T → M_open False（resolve/advance 放行）
-    view = senate_api.get_senate_view(state, P1)["data"]
-    assert view["takeover_required"]["m_open"] is False
-    assert view["pending_takeover_locked"] is True
-
-    # ② 另一合法非空提案（land:sale，取自 view option；O5 非空面恢复可构造）
+    # ① 唯一整包 Submit（war command + land:sale）——零部署（R5 SA §3.7）
     land_opt = [o for o in view["proposal_options"] if o.get("key") == "land:sale"]
     assert land_opt, "public_land>0 → land:sale 选项必须存在"
     params = land_opt[0]["params"]
     assert params["act_type"] == "sale" and params["amount_C"] > 0
-    spec = {"type": "land", "params": {"act_type": "sale", "amount_C": params["amount_C"]}}
-    prop = senate_api.propose_many(state, P1, [spec])
-    assert prop["success"], prop.get("message")
-    pid = prop["data"]["created"][0]["proposal_id"]
+    sub = senate_api.propose_many(state, P1, {
+        "war_drafts": [{"war_id": war_a.id, "checked": True, "mode": "command",
+                        "target_commander_id": consul.id, "reinforcement_n": 2}],
+        "proposals": [{"type": "land", "params": {"act_type": "sale",
+                                                     "amount_C": params["amount_C"]}}],
+    })
+    assert sub["success"], sub.get("errors")
+    assert war_a.commander_id is None and not consul.is_absent
+    assert state.get_senate_direct_actions() == []
+    created = sub["data"]["created"]
+    war_pid = next(c["proposal_id"] for c in created if c["type"] == "war_proposal")
+    pid = next(c["proposal_id"] for c in created if c["type"] == "land")
     run.record("proposal-submit", phase="senate", war_id=war_a.id,
                proposal_id=pid, actionseq=2)
 
@@ -228,15 +222,15 @@ def test_ja_joined_run_senate_takeover_nonempty_vote_advance_combat():
     for player in state._turn_order:
         if state.get_player(player).player_type.value == "human":
             state.set_current_player(player)
-            v = senate_api.vote(state, player, [pid], [True])
+            v = senate_api.vote(state, player, [war_pid, pid], [True, True])
             assert v["success"], f"{player}: {v.get('message')}"
     run.record("vote", phase="senate", war_id=war_a.id, proposal_id=pid, actionseq=3)
     state.set_current_player("player2")
     ve = senate_api.veto(state, "player2", [pid])
     assert ve["success"], ve.get("message")
     run.record("veto", phase="senate", war_id=war_a.id, proposal_id=pid, actionseq=4)
-    # Takeover 不进 Vote/Veto：proposal 集只有 land；无 takeover 提案可投/可否决
-    assert [p["id"] for p in state.get_senate_proposals()] == [pid]
+    # War command 进 Vote/Veto 链（可投票）——proposal 集 = war_proposal + land
+    assert sorted(p["id"] for p in state.get_senate_proposals()) == sorted([war_pid, pid])
     state.set_current_player(P1)
 
     # ④ resolve（pending-aware M 放行）→ 真实 R → advance 原子部署
@@ -248,11 +242,10 @@ def test_ja_joined_run_senate_takeover_nonempty_vote_advance_combat():
     deploy = senate_api.advance_senate_phase(state, P1)
     assert deploy["success"], deploy.get("message")
     assert war_a.commander_id == consul.id and consul.is_absent
-    assert state.get_takeover_pending()["status"] == "CONSUMED"
-    das = [a for a in state.get_senate_direct_actions() if a.get("kind") == "takeover_deploy"]
-    assert len(das) == 1
+    receipt = state.get_war_execution_receipt_for_session(state.get_senate_session())
+    assert receipt is not None and receipt["status"] == "COMMITTED"
     run.record("advance-deploy", phase="combat", war_id=war_a.id,
-               commander_id=consul.id, direct_action=das[0]["exactly_once_key"],
+               commander_id=consul.id, direct_action=receipt["execution_id"],
                actionseq=6)
 
     # ⑤ 同一 run Combat：攻击部署战（production-shape Senate→Combat 转换后同 turn 战）
@@ -265,9 +258,9 @@ def test_ja_joined_run_senate_takeover_nonempty_vote_advance_combat():
     run.record("combat-attack", phase="combat", war_id=war_a.id,
                commander_id=consul.id, direct_action="none", actionseq=7)
     run.assert_same_run_consistency()
-    # 部署恰一次 / 提交后无隐式结算（R4-09）/ T/V 分离后无重复 D
+    # 边界恰一次 / 提交后无隐式结算 / 无重复边界记录
     assert len([a for a in state.get_senate_direct_actions()
-                if a.get("kind") == "takeover_deploy"]) == 1
+                if a.get("kind") == "war_resolution"]) == 1
 
 
 # ---------------------------------------------------------------------------

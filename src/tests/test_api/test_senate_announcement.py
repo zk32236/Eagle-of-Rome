@@ -151,61 +151,61 @@ class TestSenateAnnouncement(unittest.TestCase):
     # ---------------- 场景 I：仅 takeover ----------------
 
     def test_scenario_i_takeover_only(self):
-        """I（WP-G-R4 supersede，OD-R4-05/06）：接管锁 T（不进 vote/veto）；resolve 时 R 公示
-        enacted ∅/D ∅（D_Takeover 部署后写）；显式 advance 部署 → D 恰一次。"""
+        """I → R5（Plan §4.2 L13；SA §1.2 SUPERSEDED + §5.3 PA 投影）：commanderless 真实战
+        unchecked 卡不进 vote/veto；resolve 公示 enacted ∅ / D ∅；边界 advance 为唯一
+        mutation owner（receipt 恰一次，不回溯改写 R 公示）。"""
         war = War(id="war_takeover_i", name="接管测试战争", war_type=WarType.FOREIGN, strength=5, naval_required=False)
         war.status = WarStatus.ACTIVE
         self.state.get_war_system()._active_wars.append(war)
 
-        result = senate_api.takeover_war(self.state, "player1", war.id, 1, action="reserve")
-        self.assertTrue(result["success"])
-        locked = senate_api.takeover_war(self.state, "player1", war.id, 1, action="submit")
-        self.assertTrue(locked["success"], locked.get("message"))
+        # 空批（unchecked 卡）→ 不进 vote/veto，零提案
+        sub = senate_api.propose_many(self.state, "player1", [])
+        self.assertTrue(sub["success"])
         self.assertEqual(len(self.state.get_senate_proposals()), 0)
         self.assertEqual(len(self.state.get_senate_vetoes_copy()), 0)
 
-        self.assertTrue(senate_api.propose_many(self.state, "player1", [])["success"])
         resolved = senate_api.resolve_senate(self.state)
         self.assertTrue(resolved["success"])
         announcement = resolved["data"]["public_announcement"]
         self.assertEqual(announcement["enacted_proposals"], [])
-        self.assertEqual(announcement["direct_actions"], [], "R4：D_Takeover 不回溯 R")
+        self.assertEqual(announcement["direct_actions"], [], "R：边界未执行，无 D")
 
         adv = senate_api.advance_senate_phase(self.state, "player1")
         self.assertTrue(adv["success"], adv.get("message"))
-        das = [a for a in self.state.get_senate_direct_actions() if a.get("kind") == "takeover_deploy"]
+        # 边界唯一执行凭证（旧 D_Takeover 由 war_resolution receipt 承担）
+        self.assertIsNotNone(self.state.get_war_execution_receipt_for_session(
+            self.state.get_senate_session()))
+        self.assertIsNone(war.commander_id, "unchecked → 不部署")
+        das = [a for a in self.state.get_senate_direct_actions() if a.get("kind") == "war_resolution"]
         self.assertEqual(len(das), 1)
-        da = das[0]
-        self.assertEqual(da["action_type"], "takeover_deploy")
-        self.assertEqual(da["war_id"], war.id)
-        self.assertEqual(da["commander_id"], 1)
+        self.assertEqual(das[0]["action_type"], "war_resolution_commit")
 
-    # ---------------- 场景 J：takeover + 普通提案 ----------------
+    # ---------------- 场景 J：边界执行 + 普通提案 ----------------
 
     def test_scenario_j_takeover_plus_ordinary(self):
-        """J（R4 supersede）：混合公示——enacted 提案在 R；D_Takeover 部署后写（不混入 R 快照）。"""
+        """J → R5：混合公示——enacted 提案在 R 公示（持久化）；边界 mutation 在 R 后独立记录
+        （不混入 R 公示快照）。"""
         self.state.senate_proposal_decision_complete = True
         pid = self._add_proposal({"type": "land", "act_type": "distribution", "amount_C": 200, "percent": 0.2})
 
         war = War(id="war_takeover_j", name="接管测试战争J", war_type=WarType.FOREIGN, strength=5, naval_required=False)
         war.status = WarStatus.ACTIVE
         self.state.get_war_system()._active_wars.append(war)
-        result = senate_api.takeover_war(self.state, "player1", war.id, 1, action="reserve")
-        self.assertTrue(result["success"])
-        locked = senate_api.takeover_war(self.state, "player1", war.id, 1, action="submit")
-        self.assertTrue(locked["success"], locked.get("message"))
+        # unchecked 卡（不部署）：决策完成
+        sub = senate_api.propose_many(self.state, "player1", [])
+        self.assertTrue(sub["success"])
 
         resolved = senate_api.resolve_senate(self.state)
         self.assertTrue(resolved["success"])
         announcement = resolved["data"]["public_announcement"]
         self.assertEqual([p["proposal_id"] for p in announcement["enacted_proposals"]], [pid])
-        self.assertEqual(announcement["direct_actions"], [], "R4：D_Takeover 部署后写，不混入 R 公示快照")
+        self.assertEqual(announcement["direct_actions"], [], "R：边界 D 不混入 R 公示快照")
 
         adv = senate_api.advance_senate_phase(self.state, "player1")
         self.assertTrue(adv["success"], adv.get("message"))
-        das = [a for a in self.state.get_senate_direct_actions() if a.get("kind") == "takeover_deploy"]
+        das = [a for a in self.state.get_senate_direct_actions() if a.get("kind") == "war_resolution"]
         self.assertEqual(len(das), 1)
-        self.assertEqual(das[0]["action_type"], "takeover_deploy")
+        self.assertEqual(das[0]["action_type"], "war_resolution_commit")
 
         # view 回读：R 公示 enacted 保留（随 phase_result 持久化）；实时 D 在 pending 载体
         view = senate_api.get_senate_view(self.state, "player1")

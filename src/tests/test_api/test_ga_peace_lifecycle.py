@@ -39,7 +39,8 @@ class TestGaPeaceLifecycle(unittest.TestCase):
     def _make_submitted_truce_war(self, war_id="w_peace", legion_number=1):
         war = War(id=war_id, name="Peace War", war_type=WarType.FOREIGN, strength=5)
         war.status = WarStatus.TRUCE
-        war.set_peace_treaty({"indemnity": 100, "duration": 3, "status": "submitted", "generated_turn": 1})
+        # R5（E-07 / C-M03）：Submit 不再早写 submitted——权威 pending 草案是边界执行前提。
+        war.set_peace_treaty({"indemnity": 100, "duration": 3, "status": "pending", "generated_turn": 1})
         war.commander_id = 1
         self.state._war_system._truce_wars.append(war)
         ms = self.state._military_system
@@ -76,13 +77,14 @@ class TestGaPeaceLifecycle(unittest.TestCase):
         self.assertTrue(hasattr(self.state, "process_truce_expiry"))
         self.assertTrue(hasattr(war, "is_truce_expired"))
 
-    def test_approved_requires_submitted_status(self):
-        """approved 路径前置：条约非 submitted → 无 mutation。"""
+    def test_approved_no_longer_requires_early_submitted_write(self):
+        """R5（E-07 / C-M03/C-M04；Plan §4.2 L5）：Submit 早写 submitted 已拆除——边界以
+        权威 pending 草案为前提执行（旧「必须 submitted 才 approved」断言已 supersede）。
+        """
         war = self._make_submitted_truce_war(war_id="w_pending")
-        war.set_peace_treaty_status("pending")
+        self.assertEqual(war.peace_treaty["status"], "pending")
         PoliticalSystem(self.state).execute_passed_peace_treaty(war)
-        self.assertEqual(war.status, WarStatus.TRUCE)  # 未处理
-        self.assertIn(war, self.state._war_system._truce_wars)
+        self.assertEqual(war.peace_treaty["status"], "approved")  # pending 亦可（无早写依赖）
 
     def test_rejected_restores_active_preserves_commander(self):
         """S18：rejected → TRUCE→ACTIVE + 保留 commander/legion + 条约清除（W2）。"""

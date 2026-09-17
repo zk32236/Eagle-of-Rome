@@ -473,39 +473,28 @@ def test_tribune_absent_guard_module_level(state):
 
 
 def test_execute_ai_takeover_direct_action_excludes_live_tribune(state):
-    """防线 1（ODR-WP-D-01）+ WP-G-R4 supersede（SA v1.7 §2.5/R4-24）：AI 废弃直连——
-    execute_ai_takeover_direct_action 只锁 T（零部署/零 absent/零 Commander）；候选限 office
-    consul（在职 tribune 天然排除）；部署唯一 owner = advance_senate_phase。
-    """
-    from src.core.deciders.impl.auto_war_takeover_decider import AutoWarTakeoverDecider
+    """防线 1（ODR-WP-D-01）+ R5 supersede（Plan §4.2 L19；SA §4.10 C-M08，DA-4）：
+    AI 直连接管（execute_ai_takeover_direct_action）退位——AI 意图经唯一整包 propose_many；
+    在职 tribune 不入 Commander 候选，AI 路径不置位 tribune absent、不直接指派/部署。"""
+    from src.api import senate_api
 
     war = War(id="war_active", name="Active War", war_type=WarType.FOREIGN, strength=5, naval_required=False)
     war.status = WarStatus.ACTIVE
     state.get_war_system()._active_wars.append(war)
 
-    decider = MagicMock(spec=AutoWarTakeoverDecider)
-    decider.decide_takeover.return_value = True
-    # M5（Q 件 F）：N 显式化——decider 值域内决策（测试固定 1）
-    decider.decide_reinforcement.return_value = 1
-
     politics = PoliticalSystem(state)
-    records = politics.execute_ai_takeover_direct_action(decider=decider)
-
-    assert war.commander_id is None  # 锁 T 零部署（不再直接指派）
-    assert state.get_member(1).is_absent is False  # 留城（O5：部署边界才 absent）
+    # 旧直连入口已退役（不得恢复第二 mutation owner）
+    assert not hasattr(politics, "execute_ai_takeover_direct_action")
+    # 防线 1：在职 tribune 不入 Commander 候选（含历史任期）
+    candidate_ids = [r["figure_id"] for r in politics.build_war_commander_candidates({})]
+    assert 3 not in candidate_ids
+    # AI 路径 = 唯一整包入口（零部署 / 零 absent / 零直接指派）
+    result = senate_api.auto_submit_proposals(state, land_proposal_deciders=[])
+    assert result["success"], result.get("message")
     assert state.get_member(3).is_absent is False  # tribune 未被置位 absent
-    pending = state.get_takeover_pending()
-    assert pending is not None
-    assert pending["status"] == "LOCKED"
-    assert pending["war_id"] == war.id
-    # R4：返回锁定记录列表（trigger_source=ai_auto + N + deployed=False）
-    assert len(records) == 1
-    assert records[0]["war_id"] == war.id
-    assert records[0]["trigger_source"] == "ai_auto"
-    assert records[0]["action"] == "takeover"
-    assert records[0]["commander_id"] == 1
-    assert records[0]["reinforcement_n"] == 1
-    assert records[0]["deployed"] is False
+    assert state.get_member(1).is_absent is False  # 执政官留城（部署边界才 absent）
+    assert war.commander_id is None                # 不得直接指派 Commander
+    assert state.get_takeover_pending() is None    # 旧直连接管 pending 已退役
 
 
 def test_governor_candidates_exclude_tribune(state):

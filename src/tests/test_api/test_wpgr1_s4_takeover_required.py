@@ -1,19 +1,13 @@
 # src/tests/test_api/test_wpgr1_s4_takeover_required.py
-"""WP-G-R1 S4（R1-G-05）— Commanderless ACTIVE Mandatory Takeover Core Contract。
+"""WP-G-R1 S4（R1-G-05）→ WP-G-R5 卡投影改写（Plan §4.2 L2；SA §2.7 A-I14 / §4.10 C-M09）。
 
-冻结设计：SA-Design-WP-G-R1 v1.6 §2.5 + §3 T-R1-08（per-war required rows，P2-03）。
+R5 supersede：`takeover_required` / `takeover_options` 只读态与 mandatory Takeover 门退役——
+War lifecycle 事实统一经 `get_senate_view`.`war_cards`（§2.1 五事实 + defaults + 候选）；
+commanderless 真实战照常投影为 `ongoing` 卡（不再强制任命，无软锁）。
 
-覆盖（SC-05，Evidence Class=DATA）：
-- commanderless ACTIVE（≥1 场，非起义）→ get_senate_view DTO `takeover_required`：
-  required==True + rows 长度==场数 + 每行 eligible_consul==True + target_commander_id
-  存在（复用 `_is_eligible_consul` 权威，political_system:906）
-- ACTIVE + valid commander → 不产生 required row（禁任意接管，F 件 §5.1）
-- TRUCE + pending（P1 可选接管）不计入 takeover_required
-- 起义战争排除（总督接管路径）
-- 无 eligible consul → required=False（无解软锁规避）；reason = 冻结 machine token
-  三态（commander_dead/commander_absent/commander_missing，v1.6 §2.5.1 值域）与
-  `_commander_unavailable_token` 同源（中文展示文案由 legacy takeover_options 展示层
-  映射，不在此 DTO）
+保留反例/判据：commander 有效性（dead/absent proconsul）仍经 `is_war_commander_valid` 判定；
+无 eligible consul 不引入无解软锁（resolve/advance 仍放行）。
+Evidence Class=DATA。
 """
 import unittest
 
@@ -25,6 +19,7 @@ from src.core.entities.war import War, WarType, WarStatus
 from src.core.systems.war_system import WarSystem
 from src.core.systems.military_system import MilitarySystem
 from src.core.systems.naval_system import NavalSystem
+from src.core.systems.political_system import PoliticalSystem
 from src.api import senate_api
 
 
@@ -63,122 +58,134 @@ def _make_active_war(state, war_id, commander_id=None, rebellion_province_id=Non
     return war
 
 
-def _takeover_required_dto(state, viewer="player_opt"):
+def _view(state, viewer="player_opt"):
     view = senate_api.get_senate_view(state, viewer)
     assert view["success"], view.get("message")
-    return view["data"]["takeover_required"]
+    return view["data"]
+
+
+def _card(state, war_id, viewer="player_opt"):
+    data = _view(state, viewer)
+    for card in data["war_cards"]:
+        if card["war_id"] == war_id:
+            return card
+    raise AssertionError(f"card missing for {war_id}: {[c['war_id'] for c in data['war_cards']]}")
 
 
 class TestTr108TakeoverRequiredCore(unittest.TestCase):
-    """T-R1-08：commanderless ACTIVE → takeover_required 权威态（per-war rows）。"""
+    """T-R1-08 → R5：commanderless ACTIVE 卡投影（defaults/候选），无 mandatory 门。"""
 
     def test_commanderless_active_exposes_required_rows(self):
-        """单场 commanderless ACTIVE → required True；rows==1；eligible_consul True + target 存在。"""
+        """单场 commanderless ACTIVE → 卡存在；current_commander None；默认目标 = eligible Consul。"""
         state, consul = _build_senate_state()
-        war = _make_active_war(state, "war_commanderless", commander_id=None)
-        tr = _takeover_required_dto(state)
+        _make_active_war(state, "war_commanderless", commander_id=None)
+        card = _card(state, "war_commanderless")
 
-        self.assertTrue(tr["required"])
-        self.assertEqual(len(tr["rows"]), 1)
-        row = tr["rows"][0]
-        self.assertEqual(row["war_id"], "war_commanderless")
-        self.assertEqual(row["war_name"], war.name)
-        self.assertTrue(row["eligible_consul"])
-        self.assertEqual(row["target_commander_id"], consul.id)
-        self.assertEqual(row["reason"], "commander_missing")  # commander_id None → missing 同源
+        self.assertTrue(card["is_real_war"])
+        self.assertEqual(card["classification"], "ongoing")
+        self.assertIsNone(card["current_commander_id"])
+        self.assertEqual(card["defaults"]["target_commander_id"], consul.id)
+        candidate_ids = [c["figure_id"] for c in card["commander_candidates"]]
+        self.assertIn(consul.id, candidate_ids)
 
     def test_multi_war_per_war_rows(self):
-        """多场 commanderless ACTIVE → rows 长度==场数（per-war 完整表达，非单对象）。"""
-        state, _consul = _build_senate_state()
+        """多场 commanderless ACTIVE → 每场一卡（per-war 完整表达）。"""
+        state, consul = _build_senate_state()
         _make_active_war(state, "war_b", commander_id=None)
         _make_active_war(state, "war_a", commander_id=None)
         _make_active_war(state, "war_c", commander_id=None)
-        tr = _takeover_required_dto(state)
-
-        self.assertTrue(tr["required"])
-        self.assertEqual(len(tr["rows"]), 3)
-        # 确定性顺序：war_id 字典序
-        self.assertEqual([r["war_id"] for r in tr["rows"]], ["war_a", "war_b", "war_c"])
-        for row in tr["rows"]:
-            self.assertTrue(row["eligible_consul"])
-            self.assertIsNotNone(row["target_commander_id"])
+        data = _view(state)
+        ids = [c["war_id"] for c in data["war_cards"]]
+        for wid in ("war_a", "war_b", "war_c"):
+            self.assertIn(wid, ids)
+        for wid in ("war_a", "war_b", "war_c"):
+            card = _card(state, wid)
+            self.assertIsNone(card["current_commander_id"])
+            self.assertEqual(card["defaults"]["target_commander_id"], consul.id)
 
     def test_valid_commander_rows_empty(self):
-        """ACTIVE + valid commander → 不产生 required row（禁任意接管）。"""
+        """ACTIVE + valid commander → 卡默认保留现任 Commander（禁任意接管）。"""
         state, _consul = _build_senate_state()
         _make_active_war(state, "war_commanded", commander_id=1)
-        tr = _takeover_required_dto(state)
-        self.assertFalse(tr["required"])
-        self.assertEqual(tr["rows"], [])
+        card = _card(state, "war_commanded")
+        self.assertEqual(card["current_commander_id"], 1)
+        self.assertEqual(card["defaults"]["target_commander_id"], 1)
 
     def test_mixed_valid_and_commanderless_counts_only_commanderless(self):
-        """混合：valid-commander 与 commanderless 并存 → rows 只含 commanderless。"""
-        state, _consul = _build_senate_state()
+        """混合：valid-commander 与 commanderless 并存 → 两卡各自表达。"""
+        state, consul = _build_senate_state()
         _make_active_war(state, "war_cmd", commander_id=1)
         _make_active_war(state, "war_free", commander_id=None)
-        tr = _takeover_required_dto(state)
-        self.assertTrue(tr["required"])
-        self.assertEqual([r["war_id"] for r in tr["rows"]], ["war_free"])
+        self.assertEqual(_card(state, "war_cmd")["current_commander_id"], 1)
+        self.assertEqual(_card(state, "war_cmd")["defaults"]["target_commander_id"], 1)
+        self.assertIsNone(_card(state, "war_free")["current_commander_id"])
+        self.assertEqual(_card(state, "war_free")["defaults"]["target_commander_id"], consul.id)
 
     def test_rebellion_war_excluded(self):
-        """起义战争排除（总督接管，非执政官强制接管）。"""
+        """R5（Plan §4.2 L2；SA §2.7 A-I14 / C-M09）：mandatory takeover 退役——起义战争
+        照常投影为卡（无强制接管门）；`takeover_required` 键不再存在。"""
         state, _consul = _build_senate_state()
         _make_active_war(state, "war_rebellion", commander_id=None, rebellion_province_id=7)
-        tr = _takeover_required_dto(state)
-        self.assertFalse(tr["required"])
-        self.assertEqual(tr["rows"], [])
+        data = _view(state)
+        self.assertNotIn("takeover_required", data)
+        ids = [c["war_id"] for c in data["war_cards"]]
+        self.assertIn("war_rebellion", ids)
 
     def test_truce_pending_not_counted(self):
-        """P1（TRUCE + pending treaty）不计入 takeover_required（可选替换指挥官，非强制）。"""
+        """P1（TRUCE + pending treaty）→ pending_peace 卡（可选 peace 模式），非强制接管。"""
         state, _consul = _build_senate_state()
         war = War(id="war_p1", name="Truce War", war_type=WarType.FOREIGN, strength=5)
         war.status = WarStatus.TRUCE
         war.set_peace_treaty({"indemnity": 50, "duration": 3, "generated_turn": 1})  # status 默认 pending
         war.commander_id = 1
         state._war_system._truce_wars.append(war)
-        tr = _takeover_required_dto(state)
-        self.assertFalse(tr["required"])
-        self.assertEqual(tr["rows"], [])
-        # P1 仍以可选 takeover_options 暴露（既有语义不变）
-        view = senate_api.get_senate_view(state, "player_opt")
-        self.assertTrue(any(o["war_id"] == "war_p1" for o in view["data"]["takeover_options"]))
+        data = _view(state)
+        self.assertNotIn("takeover_required", data)
+        card = _card(state, "war_p1")
+        self.assertEqual(card["classification"], "pending_peace")
+        self.assertIs(card["peace_capability"], True)
+        self.assertEqual(card["allowed_modes"], ["command", "peace"])
 
     def test_no_eligible_consul_required_false_no_deadlock(self):
-        """无 eligible consul → required False（rows eligible_consul False；不引入无解软锁）。"""
+        """无 eligible consul → 卡默认目标 None；不引入无解软锁（resolve/advance 仍放行）。"""
         state, consul = _build_senate_state()
-        # consul 被派去战场（absent）→ 不再 eligible
-        consul.is_absent = True
+        consul.is_absent = True  # 被派去战场 → 不再 eligible
         _make_active_war(state, "war_free", commander_id=None)
-        tr = _takeover_required_dto(state)
-        self.assertFalse(tr["required"])
-        self.assertEqual(len(tr["rows"]), 1)
-        self.assertFalse(tr["rows"][0]["eligible_consul"])
-        self.assertIsNone(tr["rows"][0]["target_commander_id"])
+        card = _card(state, "war_free")
+        self.assertIsNone(card["current_commander_id"])
+        self.assertIsNone(card["defaults"]["target_commander_id"])
+
+        # 无 mandatory 门 → 结算/推进不被阻挡
+        state.senate_proposal_decision_complete = True
+        resolved = senate_api.resolve_senate(state)
+        self.assertTrue(resolved["success"], resolved.get("message"))
+        adv = senate_api.advance_senate_phase(state, "player_opt")
+        self.assertTrue(adv["success"], adv.get("message"))
 
     def test_dead_commander_reason_and_rows(self):
-        """commander 阵亡（commander_id 指向 dead figure）→ reason=commander_dead + required row。"""
+        """commander 阵亡（commander_id 指向 dead figure）→ is_war_commander_valid False；
+        卡仍表达现任（不静默替换）。"""
         state, _consul = _build_senate_state()
         dead = Figure(id=50, name="Dead General", faction_id="optimates", age=55)
         dead.is_dead = True
         state.add_member(dead)
         state.get_faction("optimates").member_ids.append(50)
-        _make_active_war(state, "war_dead_cmd", commander_id=50)
-        tr = _takeover_required_dto(state)
-        self.assertTrue(tr["required"])
-        self.assertEqual(tr["rows"][0]["reason"], "commander_dead")
+        war = _make_active_war(state, "war_dead_cmd", commander_id=50)
+        self.assertFalse(PoliticalSystem(state).is_war_commander_valid(war))
+        card = _card(state, "war_dead_cmd")
+        self.assertEqual(card["current_commander_id"], 50)
+        self.assertNotIn(50, [c["figure_id"] for c in card["commander_candidates"]])
 
     def test_absent_commander_not_valid_war_commander(self):
-        """absent proconsul/propraetor commander → is_war_commander_valid False → required row。"""
+        """absent proconsul/propraetor commander → is_war_commander_valid False（需重新任命）。"""
         state, _consul = _build_senate_state()
         absent_cmd = Figure(id=60, name="Absent Proconsul", faction_id="optimates", age=50)
         absent_cmd.office = "proconsul"
         absent_cmd.is_absent = True
         state.add_member(absent_cmd)
         state.get_faction("optimates").member_ids.append(60)
-        _make_active_war(state, "war_absent_cmd", commander_id=60)
-        tr = _takeover_required_dto(state)
-        self.assertTrue(tr["required"])
-        self.assertEqual(tr["rows"][0]["reason"], "commander_absent")
+        war = _make_active_war(state, "war_absent_cmd", commander_id=60)
+        self.assertFalse(PoliticalSystem(state).is_war_commander_valid(war))
 
 
 if __name__ == "__main__":

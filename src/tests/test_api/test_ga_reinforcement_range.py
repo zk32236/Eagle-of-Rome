@@ -5,7 +5,10 @@
 - 池>0 → {min:1, max:pool, default:1, allowed:range(1..pool), zero_pool_exception:False}
 - 池=0 → {min:0, max:0, default:0, allowed:[0], zero_pool_exception:True}
 - 国库不参与上限（S25）：treasury=0 时值域不变、征召照扣可致国库为负
-- API takeover_war 的 N 重校验（fail-closed）
+- API N 重校验（fail-closed）
+
+R5 supersede（Plan §4.2 L3；SA §2.5/§3.6 N≥0 统一 + C-M10）：旧 `takeover_war(action=reserve|submit)`
+入口已退役——N 校验经唯一整包入口 `senate_api.propose_many`（Core `submit_proposal_package`）；
 """
 import unittest
 from unittest.mock import MagicMock
@@ -18,6 +21,13 @@ from src.core.systems.war_system import WarSystem
 from src.core.systems.military_system import MilitarySystem
 from src.core.systems.naval_system import NavalSystem
 from src.api import senate_api
+
+
+class _PassVoteDecider:
+    """R5 边界测试用：所有议题均通过（与 DA-R5-B2 deferred_execution 同源）。"""
+
+    def decide_vote(self, issue, faction, state):
+        return True
 
 
 class TestGaReinforcementRange(unittest.TestCase):
@@ -85,52 +95,50 @@ class TestGaReinforcementRange(unittest.TestCase):
         self.assertEqual(rng["min"], 1)
 
     def test_takeover_with_zero_treasury_succeeds_and_goes_negative(self):
-        """S25（WP-G-R4 supersede，OD-R4-05/06）：国库 0 时 Submit 锁 T（N=1）零扣费；
-        显式 advance 部署时征召扣款照扣（国库可为负）。"""
+        """S25 → R5（Plan §4.2 L3；§2.5/§3.6 N≥0 统一 + C-M10）：国库不参与 N 上限——
+        Submit N=1 整包成功零扣费；边界部署时征召扣款照扣（国库可为负）。"""
         self.state._treasury = 0
         war = self._make_commanderless_active_war()
-        result = senate_api.takeover_war(self.state, "player1", war.id, reinforcement_n=1,
-                                         action="reserve")
-        self.assertTrue(result["success"])
-        locked = senate_api.takeover_war(self.state, "player1", war.id, 1, action="submit")
-        self.assertTrue(locked["success"], locked.get("message"))
+        self.consul.influence = 50  # 会期表决支撑（NOBILE∈Rome）
+        sub = senate_api.propose_many(self.state, "player1", {"war_drafts": [
+            {"war_id": war.id, "checked": True, "mode": "command",
+             "target_commander_id": self.consul.id, "reinforcement_n": 1}]})
+        self.assertTrue(sub["success"], sub.get("errors"))
         self.assertIsNone(war.commander_id, "Submit 零部署")
         self.assertEqual(self.state._treasury, 0, "Submit 零扣款（国库不参与上限）")
-        # 显式空结束 → R → advance 部署（N=1 征召扣 10）
-        self.assertTrue(senate_api.propose_many(self.state, "player1", [])["success"])
-        self.assertTrue(senate_api.resolve_senate(self.state)["success"])
+        self.assertTrue(senate_api.resolve_senate(self.state, vote_decider=_PassVoteDecider())["success"])
         adv = senate_api.advance_senate_phase(self.state, "player1")
         self.assertTrue(adv["success"], adv.get("message"))
         self.assertEqual(war.commander_id, self.consul.id)
         self.assertEqual(self.state._treasury, -10)  # 征召费 10 照扣
 
     def test_api_rejects_n_out_of_allowed(self):
-        """API 层 fail-closed：N 超出 allowed → 拒绝（零写入）。"""
+        """API 层 fail-closed → R5（Plan §4.2 L3）：N<0 / N>池 → REINFORCEMENT_INVALID /
+        LEGION_POOL_EXCEEDED（整包零发布）；N=0 现合法（N≥0 统一，旧「池>0 拒 N=0」已 supersede）。"""
         war = self._make_commanderless_active_war()
-        for bad_n in (-1, 0, 26, 100):
-            result = senate_api.takeover_war(self.state, "player1", war.id, reinforcement_n=bad_n,
-                                             action="reserve")
+        for bad_n in (-1, 26, 100):
+            result = senate_api.propose_many(self.state, "player1", {"war_drafts": [
+                {"war_id": war.id, "checked": True, "mode": "command",
+                 "target_commander_id": self.consul.id, "reinforcement_n": bad_n}]})
             self.assertFalse(result["success"], f"N={bad_n} 应被拒绝")
             self.assertIsNone(war.commander_id)
-        # 合法 N reserve+submit（锁 T 零部署）→ advance 部署完整 N
-        result = senate_api.takeover_war(self.state, "player1", war.id, reinforcement_n=2,
-                                         action="reserve")
-        self.assertTrue(result["success"])
-        locked = senate_api.takeover_war(self.state, "player1", war.id, 2, action="submit")
-        self.assertTrue(locked["success"], locked.get("message"))
+        # N=0 合法（N≥0 统一）：整包成功零军事写
+        ok0 = senate_api.propose_many(self.state, "player1", {"war_drafts": [
+            {"war_id": war.id, "checked": True, "mode": "command",
+             "target_commander_id": self.consul.id, "reinforcement_n": 0}]})
+        self.assertTrue(ok0["success"], ok0.get("errors"))
         self.assertEqual(war.legion_numbers, [], "Submit 零征召")
-        self.assertTrue(senate_api.propose_many(self.state, "player1", [])["success"])
-        self.assertTrue(senate_api.resolve_senate(self.state)["success"])
-        adv = senate_api.advance_senate_phase(self.state, "player1")
-        self.assertTrue(adv["success"], adv.get("message"))
-        self.assertEqual(len(war.legion_numbers), 2)
 
     def test_api_none_n_defaults_to_min(self):
-        """N 缺省 → default（min=1）。"""
+        """N 缺省 → R5（§3.6）：Reinforcement N 必须显式（卡默认由 Core 提供）——
+        缺失/None → REINFORCEMENT_INVALID fail-closed（旧 API min 默认已 supersede）。"""
         war = self._make_commanderless_active_war()
-        result = senate_api.takeover_war(self.state, "player1", war.id)
-        self.assertTrue(result["success"])
-        self.assertEqual(result["data"]["reinforcement_n"], 1)
+        result = senate_api.propose_many(self.state, "player1", {"war_drafts": [
+            {"war_id": war.id, "checked": True, "mode": "command",
+             "target_commander_id": self.consul.id}]})
+        self.assertFalse(result["success"])
+        self.assertIn("REINFORCEMENT_INVALID",
+                      [e.get("code") for e in (result.get("errors") or [])])
 
 
 if __name__ == "__main__":

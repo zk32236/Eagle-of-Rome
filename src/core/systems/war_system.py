@@ -426,6 +426,8 @@ class WarSystem:
         war.proposed_legions = legions
         war.activation_turn = self.state.turn.turn_number
         war.set_commander_assigned_turn(self.state.turn.turn_number)
+        # R5（SA §2.2，DD-02）：主动宣战激活 origin 记载（与威胁升级被动爆发分离）
+        war.set_activation_origin("active_declaration")
         if war in self._threats:
             self._threats.remove(war)
         if war not in self._active_wars:
@@ -821,6 +823,8 @@ class WarSystem:
                 if war.threat_level >= 3:
                     war.status = WarStatus.ACTIVE
                     war.activation_turn = self.state.turn.turn_number
+                    # R5（SA §2.2，DD-02）：威胁升级直接 ACTIVE = 被动爆发 origin（非同一政治动作）
+                    war.set_activation_origin("passive_declaration")
                     self._active_wars.append(war)
                     self._threats.remove(war)
                     war.commander_id = None
@@ -1026,6 +1030,67 @@ class WarSystem:
     def get_active_wars_without_commander(self) -> List[War]:
         """获取活跃战争中无指挥官的列表"""
         return [w for w in self._active_wars if w.status == WarStatus.ACTIVE and w.commander_id is None]
+
+    # ========== R5（SA §2.1/§2.2，DA-1）Senate War lifecycle facts ==========
+
+    def describe_senate_war(self, war_id: str, senate_context: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """R5 §2.2 唯一 War lifecycle facts producer（分类/条约能力/实际军事事实）。
+
+        返回逻辑事实（不含候选/defaults——由 PoliticalSystem.build_war_card_views 组合）：
+        classification ∈ {active_declaration, passive_declaration, ongoing, pending_peace,
+        other_existing}；is_real_war = ACTIVE/TRUCE 且未正式结束（RESOLVED/DEFEATED 排除）。
+
+        - THREAT 未爆发 → active_declaration（Core 给主动宣战 capability 的候选）；
+        - 真实战 + 有效 pending treaty → pending_peace（优先于 passive/ongoing）；
+        - 本会期（activation_turn == current_turn）被动爆发 → passive_declaration；
+        - 其余真实战 → ongoing；
+        - activation_origin 缺失的真实战 → legacy_unknown，投影 ongoing（不猜 N=4、不降格）。
+        - 不提前激活战争、不虚构历史 origin。
+        """
+        war = self.get_war_by_id(war_id)
+        if war is None:
+            return None
+        ctx = senate_context or {}
+        current_turn = ctx.get("current_turn")
+        status = war.status
+        is_real = status in (WarStatus.ACTIVE, WarStatus.TRUCE)
+        treaty = war.peace_treaty
+        pending_peace = bool(is_real and treaty and treaty.get("status") == "pending")
+
+        origin = war.activation_origin
+        if is_real and not origin:
+            origin = "legacy_unknown"
+
+        if not is_real:
+            classification = "active_declaration" if status == WarStatus.THREAT else "other_existing"
+        elif pending_peace:
+            classification = "pending_peace"
+        elif (origin == "passive_declaration" and war.activation_turn is not None
+              and current_turn is not None and war.activation_turn == current_turn):
+            classification = "passive_declaration"
+        else:
+            classification = "ongoing"
+
+        ms = self.state.get_military_system()
+        try:
+            surviving = len(ms.get_legions_for_battle(war.id)) if ms else 0
+        except Exception:
+            surviving = len(getattr(war, "legion_numbers", []) or [])
+
+        allowed_modes = ["command", "peace"] if pending_peace else ["command"]
+        return {
+            "war_id": war.id,
+            "war_name": war.name,
+            "classification": classification,
+            "is_real_war": is_real,
+            "war_status": status.value,
+            "activation_origin": origin,
+            "activation_turn": war.activation_turn,
+            "current_commander_id": war.commander_id,
+            "surviving_legion_count": surviving,
+            "peace_capability": pending_peace,
+            "allowed_modes": allowed_modes,
+        }
 
     # ========== 战争操作 ==========
 

@@ -43,6 +43,7 @@ class GuiSessionStore(QObject):
     feedbackRaised = Signal(str, str)  # type, message
     handoffRequired = Signal(str)  # next_player_id
     populationVoteSubmittingChanged = Signal()
+    testConfigChanged = Signal()  # R5 DA-6：force 控件（§20 #44）读写通知
 
     def __init__(self, state: GameState, parent=None):
         super().__init__(parent)
@@ -75,6 +76,9 @@ class GuiSessionStore(QObject):
         self._forum_ai_processed = False
         self._last_reset_turn: int = 0
         self._faction_style_map: Dict[str, Any] = {}
+        # R5 DA-6：Configure/Test force 控件只读投影（testing.force_battle_result /
+        # testing.force_naval_result；空 = 正常结算）
+        self._test_config: Dict[str, Any] = {}
 
     # -----------------------------------------------------------------------
     # 初始化
@@ -91,6 +95,7 @@ class GuiSessionStore(QObject):
         self._refresh_forum_view()
         self._refresh_combat_view()
         self._refresh_resolution_view()
+        self._refresh_test_config()
 
     # -----------------------------------------------------------------------
     # QML 可访问属性
@@ -388,47 +393,19 @@ class GuiSessionStore(QObject):
         return self._senate_view.get("can_resolve_settlement", False)
 
     @Property(bool, notify=senateViewChanged)
-    def canTakeoverSenateWar(self) -> bool:
-        return self._senate_view.get("can_takeover", False)
-
-    @Property(list, notify=senateViewChanged)
-    def senateTakeoverOptions(self) -> List[Dict[str, Any]]:
-        return self._senate_view.get("takeover_options", [])
-
-    @Property(bool, notify=senateViewChanged)
-    def canContinueSenateWar(self) -> bool:
-        """G2：Continue Existing Command 可用位（Q 件 J，DTO 只透传权威值，禁 QML 推断 R-01）。"""
-        return self._senate_view.get("can_continue", False)
-
-    @Property(dict, notify=senateViewChanged)
-    def senatePendingTakeover(self) -> Dict[str, Any]:
-        """WP-G-R4（SA v1.7 §2.5）：T/V 读模型（V=RESERVED / T=LOCKED）。"""
-        return self._senate_view.get("pending_takeover") or {}
-
-    @Property(bool, notify=senateViewChanged)
-    def senatePendingTakeoverLocked(self) -> bool:
-        return self._senate_view.get("pending_takeover_locked", False)
-
-    @Property(bool, notify=senateViewChanged)
-    def senateCanDeployTakeover(self) -> bool:
-        """WP-G-R4：真实 Senate result + LOCKED T + not M_open → 显式部署可用（advance 触发）。"""
-        return self._senate_view.get("can_deploy", False)
-
-    @Property(bool, notify=senateViewChanged)
     def senateCanFinishEmpty(self) -> bool:
-        """WP-G-R4：显式空结束能力（零提案关闭选择需先提交 []；M_open 时禁用）。"""
+        """R5：显式空结束能力（零提案关闭选择需先提交 []）。"""
         return self._senate_view.get("can_finish_proposal_selection", False)
 
-    @Property(dict, notify=senateViewChanged)
-    def senateTakeoverRequired(self) -> Dict[str, Any]:
-        """R1/R4：takeover_required 并列权威态（rows + m_open/m_deploy_ready 会期级）。"""
-        return self._senate_view.get("takeover_required") or {}
-
-
     @Property(list, notify=senateViewChanged)
-    def senateContinueOptions(self) -> List[Dict[str, Any]]:
-        """G2：Continue 候选（含 reinforcement_range，Q 件 J）。"""
-        return self._senate_view.get("continue_options", [])
+    def senateWarCards(self) -> List[Dict[str, Any]]:
+        """R5（SA §5.1/§5.3）：统一 War Card 只读投影（WarCardView）——QML 零推导。"""
+        return self._senate_view.get("war_cards", [])
+
+    @Property(dict, notify=senateViewChanged)
+    def senateWarExecution(self) -> Dict[str, Any]:
+        """R5（SA §5.1/§5.3）：WarExecutionReceipt 只读摘要（不得据 receipt 重新执行）。"""
+        return self._senate_view.get("senate_result", {}).get("war_execution", {})
 
     @Property(dict, notify=senateViewChanged)
     def senateResult(self) -> Dict[str, Any]:
@@ -455,6 +432,34 @@ class GuiSessionStore(QObject):
     def senateVetoCandidateIds(self) -> List[int]:
         """WP-F R2-01：权威 passed-only 否决候选 id 集，只读透传 DTO（空集 = 无否决候选）。"""
         return self._senate_view.get("veto_candidate_ids", [])
+
+    # -----------------------------------------------------------------------
+    # Configure/Test force 控件（R5 DA-6，SA §5.5 / Owner §20 #44）
+    # -----------------------------------------------------------------------
+    @Property(dict, notify=testConfigChanged)
+    def testConfigView(self) -> Dict[str, Any]:
+        """force 控件只读投影（两键当前值 + 各自选项；QML 零推导）。"""
+        return self._test_config
+
+    @Property(str, notify=testConfigChanged)
+    def forceBattleResult(self) -> str:
+        """Land/CRT 强制结果（空 = 正常结算）；与 forceNavalResult 独立。"""
+        return self._test_config.get("force_battle_result", "")
+
+    @Property(str, notify=testConfigChanged)
+    def forceNavalResult(self) -> str:
+        """Naval 强制结果（空 = 正常结算）；与 forceBattleResult 独立。"""
+        return self._test_config.get("force_naval_result", "")
+
+    @Property(list, notify=testConfigChanged)
+    def forceBattleResultOptions(self) -> List[str]:
+        """Land 控件选项（none + 现五词归一结果）。"""
+        return self._test_config.get("land_options", [])
+
+    @Property(list, notify=testConfigChanged)
+    def forceNavalResultOptions(self) -> List[str]:
+        """Naval 控件选项（none + 现五词归一结果）；与 land 选项独立。"""
+        return self._test_config.get("naval_options", [])
 
     # -----------------------------------------------------------------------
     # 收入阶段属性
@@ -1510,34 +1515,6 @@ class GuiSessionStore(QObject):
         self.senateViewChanged.emit()
         return feedback
 
-    @Slot(str, int, result=dict)
-    def doTakeoverWar(self, war_id: str, reinforcement_n: int = 1) -> dict:
-        """WP-G-R4（SA v1.7 §2.5，O5）：Takeover Submit/lock 语义——reserve + Submit 锁 T
-        （零部署）；失败反馈不静默改配置（校验失败留 RESERVED 可重试）。部署唯一 owner =
-        advance_senate_phase（doAdvanceSenate → senate_api.advance_senate_phase）。"""
-        if not self._viewer_id:
-            return {"success": False, "message": "Not initialized"}
-        from src.api import senate_api
-        feedback = self._adapter.call(senate_api.takeover_war, self._state, self._viewer_id,
-                                      war_id, reinforcement_n, action="submit")
-        if not feedback.get("success"):
-            # 无 RESERVED 配置（GUI 直锁场景）→ 先 reserve 再 submit（两段锁 T 零部署）
-            reserved = self._adapter.call(senate_api.takeover_war, self._state, self._viewer_id,
-                                          war_id, reinforcement_n, action="reserve")
-            if not reserved.get("success"):
-                self._raise_feedback(reserved)
-                self._refresh_senate_view()
-                self.senateViewChanged.emit()
-                return reserved
-            feedback = self._adapter.call(senate_api.takeover_war, self._state, self._viewer_id,
-                                          war_id, reinforcement_n, action="submit")
-        self._raise_feedback(feedback)
-        if feedback.get("success"):
-            self._refresh_snapshot()
-            self._refresh_senate_view()
-        self.senateViewChanged.emit()
-        return feedback
-
     @Slot(result=dict)
     def doResolveSenateSettlement(self) -> dict:
         """R3-G-01 §1.5：settlement-pending 唯一恢复入口（结算-only，零 takeover mutation 重放）。
@@ -1570,20 +1547,6 @@ class GuiSessionStore(QObject):
         if feedback.get("success"):
             self._refresh_snapshot()
             self._refresh_senate_view()
-        self.senateViewChanged.emit()
-        return feedback
-
-    @Slot(str, int, result=dict)
-    def doContinueWar(self, war_id: str, reinforcement_n: int = 1) -> dict:
-        """G2：Continue Existing Command 输入转发（G1-21 / Q 件 J；store 零 lifecycle 推断）。"""
-        if not self._viewer_id:
-            return {"success": False, "message": "Not initialized"}
-        feedback = self._adapter.continue_war(self._viewer_id, war_id, reinforcement_n)
-        self._raise_feedback(feedback)
-        if feedback.get("success"):
-            self._refresh_snapshot()
-            self._refresh_senate_view()
-            self._refresh_combat_view()
         self.senateViewChanged.emit()
         return feedback
 
@@ -1668,6 +1631,27 @@ class GuiSessionStore(QObject):
         self._raise_feedback(feedback)
         return feedback
 
+    # -----------------------------------------------------------------------
+    # Configure/Test force 控件写 Slot（R5 DA-6，SA §5.5 / Owner §20 #44）
+    # -----------------------------------------------------------------------
+    @Slot(str, result=dict)
+    def doSetForceBattleResult(self, value: str) -> dict:
+        """设置 Land/CRT 强制结果（空 = 正常结算）；**不动** naval 键。"""
+        feedback = self._adapter.set_force_battle_result(self._viewer_id, value)
+        if feedback.get("success"):
+            self._refresh_test_config()
+        self._raise_feedback(feedback)
+        return feedback
+
+    @Slot(str, result=dict)
+    def doSetForceNavalResult(self, value: str) -> dict:
+        """设置 Naval 强制结果（空 = 正常结算）；**不动** land 键。"""
+        feedback = self._adapter.set_force_naval_result(self._viewer_id, value)
+        if feedback.get("success"):
+            self._refresh_test_config()
+        self._raise_feedback(feedback)
+        return feedback
+
     @Slot(result=dict)
     def refreshSnapshot(self) -> dict:
         """Refresh the shell snapshot from authoritative API DTO."""
@@ -1679,6 +1663,7 @@ class GuiSessionStore(QObject):
         self._refresh_forum_view()
         self._refresh_combat_view()
         self._refresh_resolution_view()
+        self._refresh_test_config()
         feedback = self._feedback(True, gui_text("feedback.snapshot.refreshed"), "success")
         self._raise_feedback(feedback)
         return feedback
@@ -1720,6 +1705,7 @@ class GuiSessionStore(QObject):
         self._refresh_forum_view()
         self._refresh_combat_view()
         self._refresh_resolution_view()
+        self._refresh_test_config()
         # Auto-settlement trigger: resolution phase, not yet resolved, not currently resolving
         if (self._selected_phase_id == "resolution"
                 and not self._resolution_view.get("resolved", False)
@@ -1768,6 +1754,11 @@ class GuiSessionStore(QObject):
     def _refresh_resolution_view(self):
         self._resolution_view = self._adapter.get_resolution_view(self._viewer_id)
         self.resolutionViewChanged.emit()
+
+    def _refresh_test_config(self):
+        """R5 DA-6：force 控件只读投影刷新（两键独立；空值 = 正常结算）。"""
+        self._test_config = self._adapter.get_test_config(self._viewer_id)
+        self.testConfigChanged.emit()
 
     def _executeResolution(self):
         """自动结算：进入 resolution 阶段时触发，防重复。"""

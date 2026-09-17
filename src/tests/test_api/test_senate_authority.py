@@ -21,6 +21,8 @@ from src.core.entities.province import Province
 from src.core.systems.war_system import WarSystem
 from src.core.systems.military_system import MilitarySystem
 from src.core.systems.naval_system import NavalSystem
+from src.core.entities.war import War, WarType, WarStatus
+from src.core.systems.political_system import PoliticalSystem
 
 
 class TestSenateAuthorityBase(unittest.TestCase):
@@ -195,11 +197,34 @@ class TestTribuneAuthority(TestSenateAuthorityBase):
         self.assertIn("只有保民官", result["message"])
 
     def test_takeover_war_rejects_faction_with_only_tribune(self):
-        """防线 1（ODR-WP-D-01）：出征指挥官必须为 eligible consul——仅持 tribune 的派系被拒（fail-closed）。"""
+        """防线 1（ODR-WP-D-01）+ R5 supersede（Plan §4.2 L14；SA §1.2 SUPERSEDED，Takeover
+        非独立 Direct Action）：出征指挥官必须为 eligible consul——仅持 tribune 的派系无
+        Commander 提名权：（a）tribune 不入候选；（b）无 consul 派系 actor → SUBMIT_NOT_AUTHORIZED；
+        （c）target=tribune → COMMANDER_INELIGIBLE（fail-closed）。"""
         self.state._current_player_id = "player2"  # populares 仅有 tribune，无 consul
-        result = senate_api.takeover_war(self.state, "player2", "w1")
-        self.assertFalse(result["success"])
-        self.assertIn("没有存活且在罗马的执政官", result["message"])
+        # (a) 在职 tribune 不入 Commander 候选
+        politics = PoliticalSystem(self.state)
+        candidate_ids = [r["figure_id"] for r in politics.build_war_commander_candidates({})]
+        self.assertNotIn(3, candidate_ids)
+        # (b) 无 eligible consul 的派系 → 无权提交整包
+        denied = senate_api.propose_many(self.state, "player2", {"war_drafts": [
+            {"war_id": "w1", "checked": True, "mode": "command",
+             "target_commander_id": 1, "reinforcement_n": 0}]})
+        self.assertFalse(denied["success"])
+        self.assertIn("SUBMIT_NOT_AUTHORIZED",
+                      [e.get("code") for e in (denied.get("errors") or [])])
+        # (c) 以 tribune 为 target → 资格拒绝
+        war = War(id="w1", name="war1", war_type=WarType.FOREIGN, strength=5, naval_required=False)
+        war.status = WarStatus.ACTIVE
+        war.commander_id = None
+        self.state.get_war_system()._active_wars.append(war)
+        self.state._current_player_id = "player1"
+        rejected = senate_api.propose_many(self.state, "player1", {"war_drafts": [
+            {"war_id": "w1", "checked": True, "mode": "command",
+             "target_commander_id": 3, "reinforcement_n": 0}]})
+        self.assertFalse(rejected["success"])
+        self.assertIn("COMMANDER_INELIGIBLE",
+                      [e.get("code") for e in (rejected.get("errors") or [])])
 
     def test_current_tribune_returns_eligible(self):
         """AU-4：_current_tribune 全局首查 eligible Tribune。"""

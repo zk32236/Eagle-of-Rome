@@ -1,14 +1,14 @@
 # src/tests/test_api/test_wpgr4_s1_takeover_session.py
-"""WP-G-R4 S1（R4-G-01，SA v1.7 §8.1 A）— Human Takeover Deferred Decision/Deployment
-Lifecycle（O5/OD-R4-06）。T01/T02/T03 + Oracle-A（P1-01 pending-target 免配舰）+
-Oracle-B（P1-02 部署事务 failure injection F1~F5 + F3b）。Evidence Class=DATA（SC-R4-A）。
+"""WP-G-R4 S1 → WP-G-R5 整包/边界改写（Plan §4.2 L1；SA §4.6/§4.10 C-M09，DA-2~DA-4）。
 
-权威：SA-Design-WP-G-R4-2026-09-07.md v1.7（FROZEN）§2.2/§2.3/§2.4b/§2.5/§8.4；
-R4 任务包 v1.1 §5/§11（G01 接受准则）；DA-Plan-WP-G-R4 §1 S1。
-R3 §1（Takeover 自动 finish/空结算）由 OD-R4-05/06 supersede（ledger 逐条依据见注释）。
+R5 supersede：旧 `takeover_war(action=reserve|submit)` 单槽锁 T + pending 部署单元退役；
+「出征任命」统一经唯一整包入口 `senate_api.propose_many`（Submit 零军事写）→ resolve
+（R 只 finalize Decision）→ Senate→Combat 边界 `advance_senate_phase` 原子部署
+（receipt exactly-once，12 域回滚）。
 
-TDD 必红主因（baseline 775dbfc）：takeover_war 立即部署+置 decision_complete+空结算；
-advance 无部署 owner/无回滚；assign_fleets 对 pending 目标战提前绑舰；无 T/V 持有者。
+保留反例（原 T01/T02/T03 语义）：Submit 零部署；整包失败零写入；部署失败全回滚 + 可重试；
+重复 advance receipt 重放；audit 失败不回滚业务且不重复征召。
+Evidence Class=DATA。
 """
 import unittest
 from unittest import mock
@@ -24,89 +24,82 @@ from src.tests.fixtures import wpgr4_fixtures as F
 P1 = F.P1
 
 
+class _PassVoteDecider:
+    def decide_vote(self, issue, faction, state):
+        return True
+
+
 def _view(state, player=P1):
     view = senate_api.get_senate_view(state, player)
     assert view["success"], view.get("message")
     return view["data"]
 
 
-class TestT01DeferredDeploymentPreservesSelection(unittest.TestCase):
-    """T-R4-01：reserve→Submit 锁 T 零部署→另一合法非空提案→vote/veto/resolve
-    （pending-aware M 放行）→显式 advance 原子部署 exactly-once；T/V 跨 settlement 存续。"""
+def _command(war, target, n=0):
+    return {"war_id": war.id, "checked": True, "mode": "command",
+            "target_commander_id": target, "reinforcement_n": n}
 
-    def _lock_takeover(self, ctx, n=2):
-        state = ctx["state"]
-        r = senate_api.takeover_war(state, P1, ctx["war_a"].id, n, action="reserve")
-        self.assertTrue(r["success"], r.get("message"))
-        s = senate_api.takeover_war(state, P1, ctx["war_a"].id, n, action="submit")
-        self.assertTrue(s["success"], s.get("message"))
-        return s
+
+def _submit(state, drafts, player=P1):
+    return senate_api.propose_many(state, player, {"war_drafts": drafts})
+
+
+def _resolve(state):
+    return senate_api.resolve_senate(state, vote_decider=_PassVoteDecider())
+
+
+def _codes(result):
+    return [e.get("code") for e in (result.get("errors") or [])]
+
+
+class TestT01DeferredDeploymentPreservesSelection(unittest.TestCase):
+    """T-R4-01 → R5：Submit 零部署 → resolve 只 finalize → 边界 advance 原子部署 exactly-once；
+    receipt 跨重入重放（不重复部署）。"""
 
     def test_t01_reserve_submit_zero_deploy_then_second_proposal_then_advance(self):
         ctx = F.build_fix01()
         state, consul, war_a = ctx["state"], ctx["consul"], ctx["war_a"]
         dto = _view(state)
-        self.assertTrue(dto["takeover_required"]["required"])   # M_open：commanderless C 战
-        self.assertTrue(dto["takeover_required"]["m_open"])
+        card = next(c for c in dto["war_cards"] if c["war_id"] == war_a.id)
+        self.assertIsNone(card["current_commander_id"])  # commanderless C 战活在卡中
 
-        # reserve（V=RESERVED）+ Submit（T=LOCKED）零部署
-        self._lock_takeover(ctx, n=2)
-        pending = state.get_takeover_pending()
-        self.assertIsNotNone(pending)
-        self.assertEqual(pending["status"], "LOCKED")
-        self.assertEqual(pending["war_id"], war_a.id)
-        self.assertEqual(pending["reinforcement_n"], 2)
-        # 零部署副作用（R4-18）：无 treaty/status/Commander/force/absent
+        sub = _submit(state, [_command(war_a, consul.id, 2)])
+        self.assertTrue(sub["success"], sub.get("errors"))
+        # Submit 零部署副作用：Commander/legion/absent 均未变
         self.assertIsNone(war_a.commander_id)
-        self.assertEqual(war_a.status, WarStatus.ACTIVE)
         self.assertEqual(war_a.legion_numbers, [])
-        self.assertFalse(consul.is_absent, "R4-17：Submit 不置 absent（执政官留城）")
-        self.assertFalse(state.senate_proposal_decision_complete, "Submit 不写 P（不关闭选择）")
-        self.assertFalse(state.get_phase_result("senate"), "Submit 不收敛 R")
-        self.assertEqual(state.get_senate_direct_actions(), [], "Submit 不写 D_Takeover")
-
-        # pending-aware M：LOCKED T 覆盖 C 战 → M_open False（resolve/advance 放行，无死锁 R4-18）
-        dto = _view(state)
-        self.assertFalse(dto["takeover_required"]["m_open"])
-        self.assertTrue(dto["takeover_required"]["m_deploy_ready"])
-        self.assertFalse(dto["takeover_required"]["required"])
-
-        # 显式空结束写 P（跨 settlement 前 T 存续）→ resolve（M 放行）→ 真实 R
-        empty = senate_api.propose_many(state, P1, [])
-        self.assertTrue(empty["success"])
+        self.assertFalse(consul.is_absent, "Submit 不置 absent（执政官留城）")
         self.assertTrue(state.senate_proposal_decision_complete)
-        resolved = senate_api.resolve_senate(state)
+        self.assertFalse(state.get_phase_result("senate"), "Submit 不收敛 R")
+        self.assertEqual(state.get_senate_direct_actions(), [], "Submit 不写边界记录")
+
+        resolved = _resolve(state)
         self.assertTrue(resolved["success"], resolved.get("message"))
         self.assertTrue(state.get_phase_result("senate"))
-        # T 跨 settlement 存续（P1-RF-02）：resolve 的 clear_senate_pending 不清 _takeover_pending
-        self.assertEqual(state.get_takeover_pending()["status"], "LOCKED")
-        state.clear_senate_pending()
-        self.assertEqual(state.get_takeover_pending()["status"], "LOCKED",
-                         "clear_senate_pending 永不触碰 _takeover_pending")
-        self.assertFalse(state.is_phase_executed("senate"))
+        self.assertFalse(state.is_phase_executed("senate"), "R 不等于执行")
 
-        # 显式 advance → 原子部署恰一次
         deploy = senate_api.advance_senate_phase(state, P1)
         self.assertTrue(deploy["success"], deploy.get("message"))
         self.assertEqual(war_a.commander_id, consul.id)
-        self.assertTrue(consul.is_absent, "O5：部署边界才 absent")
+        self.assertTrue(consul.is_absent, "部署边界才 absent")
         self.assertEqual(len(war_a.legion_numbers), 2, "完整 N 兑现")
-        self.assertEqual(state.get_takeover_pending()["status"], "CONSUMED")
         self.assertTrue(state.is_phase_executed("senate"))
-        # D_Takeover 恰一次（POST-COMMIT AUDIT，exactly-once 键）
-        das = [a for a in state.get_senate_direct_actions() if a.get("kind") == "takeover_deploy"]
-        self.assertEqual(len(das), 1)
-        self.assertTrue(das[0]["exactly_once_key"].startswith(f"takeover_deploy:{war_a.id}:"))
+        receipt = state.get_war_execution_receipt_for_session(state.get_senate_session())
+        self.assertIsNotNone(receipt)
+        self.assertEqual(receipt["status"], "COMMITTED")
+        das = [a for a in state.get_senate_direct_actions() if a.get("kind") == "war_resolution"]
+        self.assertEqual(len(das), 1, "边界恰一次")
 
-        # refresh/重入不重复（F5）
+        # refresh/重入：receipt 重放优先 → 不重复部署
         again = senate_api.advance_senate_phase(state, P1)
-        self.assertFalse(again["success"])
+        self.assertTrue(again["success"])
+        self.assertIs(again["data"]["replayed"], True)
         self.assertEqual(len([a for a in state.get_senate_direct_actions()
-                              if a.get("kind") == "takeover_deploy"]), 1)
+                              if a.get("kind") == "war_resolution"]), 1)
 
     def test_t01_oracle_a_assign_fleets_skips_locked_pending_target(self):
-        """Oracle-A（SA v1.7 §8.4 P1-01）：naval-required commanderless ACTIVE + LOCKED T →
-        resolve_senate 后 assigned_fleet_ids/Fleet owner 零变化、T 保持 LOCKED；仅 advance 后部署。"""
+        """Oracle-A → R5：Submit 对 naval-required commanderless 战零舰队/Commander/absent
+        变化；部署仅边界承担。"""
         state = F.make_base_state(turn_number=1, year=-282)
         faction = F.add_faction(state, treasury=500)
         F.add_player(state)
@@ -115,7 +108,6 @@ class TestT01DeferredDeploymentPreservesSelection(unittest.TestCase):
         war = F.make_war("naval_cmdless", "Naval Commanderless", status=WarStatus.ACTIVE,
                          naval_required=True, enemy_naval=18, commander_id=None)
         F.attach_active(state, war)
-        # available fleet（未指派——正常 Senate 自动配舰会吃掉它；R4 必须跳过 pending 目标战）
         ns = state.naval_system
         from src.core.entities.fleet import Fleet, FleetStatus
         fl = Fleet(number=1, fleet_type="trireme")
@@ -123,85 +115,68 @@ class TestT01DeferredDeploymentPreservesSelection(unittest.TestCase):
         fl._status = FleetStatus.AVAILABLE
         ns._fleets[1] = fl
 
-        self.assertTrue(senate_api.takeover_war(state, P1, war.id, 1, action="reserve")["success"])
-        self.assertTrue(senate_api.takeover_war(state, P1, war.id, 1, action="submit")["success"])
-        self.assertTrue(senate_api.propose_many(state, P1, [])["success"])
-        resolved = senate_api.resolve_senate(state)
-        self.assertTrue(resolved["success"], resolved.get("message"))
-        # 零变化（Oracle-A 硬断言）
-        self.assertEqual(war.assigned_fleet_ids, [], "resolve 不得对 LOCKED pending 目标战绑舰")
-        self.assertEqual(ns.get_fleets_by_war(war.id), [], "Fleet owner 零变化（未绑舰）")
+        sub = _submit(state, [_command(war, consul.id, 1)])
+        self.assertTrue(sub["success"], sub.get("errors"))
+        # Submit 零绑舰/零任命
+        self.assertIsNone(war.commander_id)
+        self.assertEqual(war.assigned_fleet_ids, [], "Submit 不得绑舰")
+        self.assertEqual(ns.get_fleets_by_war(war.id), [], "Fleet owner 零变化")
         self.assertEqual(fl.status, FleetStatus.AVAILABLE)
-        self.assertEqual(state.get_takeover_pending()["status"], "LOCKED")
         self.assertFalse(consul.is_absent)
-        # 显式 advance → 部署恰一次（此战不 naval-required deploy 逻辑仍适用 commander 指派）
+
+        resolved = _resolve(state)
+        self.assertTrue(resolved["success"], resolved.get("message"))
         adv = senate_api.advance_senate_phase(state, P1)
         self.assertTrue(adv["success"], adv.get("message"))
         self.assertEqual(war.commander_id, consul.id)
 
 
 class TestT02SubmitNeverDeploysOrSettles(unittest.TestCase):
-    """T-R4-02：Submit 零部署副作用（spy 部署 owner 0 次/resolve 0 次）；不置 P；
-    Takeover 不进 Vote/Veto；Takeover-only 不隐式 resolve；whole-package 失败零写入；AI parity。"""
+    """T-R4-02 → R5：Submit 零部署（边界事务 0 次）；提案进入 Vote/Veto 链；整包失败零写入；
+    AI 路径无直连 mutation。"""
 
     def test_t02_submit_deploy_owner_zero_and_no_settlement(self):
         ctx = F.build_fix01()
         state, consul, war_a = ctx["state"], ctx["consul"], ctx["war_a"]
-        calls = {"deploy": 0, "resolve": 0}
-        orig_deploy = PoliticalSystem.execute_war_takeover_deploy
+        calls = {"commit": 0}
+        orig_commit = PoliticalSystem.commit_war_resolution
 
-        def counting_deploy(self_, war_, consul_, reinforcement_n=None):
-            calls["deploy"] += 1
-            return orig_deploy(self_, war_, consul_, reinforcement_n=reinforcement_n)
+        def counting_commit(self_, plan, transaction=None):
+            calls["commit"] += 1
+            return orig_commit(self_, plan, transaction)
 
-        orig_resolve = senate_api.resolve_senate
-
-        def counting_resolve(state_, vote_decider=None):
-            calls["resolve"] += 1
-            return orig_resolve(state_, vote_decider)
-
-        with mock.patch.object(PoliticalSystem, "execute_war_takeover_deploy", counting_deploy), \
-             mock.patch.object(senate_api, "resolve_senate", counting_resolve):
-            r = senate_api.takeover_war(state, P1, war_a.id, 2, action="reserve")
-            self.assertTrue(r["success"])
-            s = senate_api.takeover_war(state, P1, war_a.id, 2, action="submit")
-            self.assertTrue(s["success"], s.get("message"))
-        self.assertEqual(calls["deploy"], 0, "Submit 不得触发部署 mutation")
-        self.assertEqual(calls["resolve"], 0, "Submit 不得隐式 resolve_senate")
+        with mock.patch.object(PoliticalSystem, "commit_war_resolution", counting_commit):
+            s = _submit(state, [_command(war_a, consul.id, 2)])
+            self.assertTrue(s["success"], s.get("errors"))
+        self.assertEqual(calls["commit"], 0, "Submit 不得触发部署事务")
         self.assertIsNone(war_a.commander_id)
         self.assertFalse(consul.is_absent)
-        self.assertEqual(state.get_senate_proposals(), [], "Takeover 不产生 Vote/Veto 提案")
-        self.assertEqual(state.get_senate_votes_copy(), {})
-        self.assertFalse(state.senate_proposal_decision_complete)
+        props = state.get_senate_proposals()
+        self.assertEqual(len(props), 1)
+        self.assertEqual(props[0]["type"], "war_proposal")
         self.assertFalse(state.get_phase_result("senate"))
         self.assertFalse(state.is_phase_executed("senate"))
-        dto = _view(state)
-        self.assertEqual(dto["current_step"], "proposal", "Takeover-only Submit 停留 selection")
+        self.assertEqual(_view(state)["current_step"], "senate_vote",
+                         "提案已发布 → 进入表决步（未部署/未结算）")
 
     def test_t02_whole_package_failure_zero_write(self):
-        """C 非空时对 P 战（TRUCE+pending）Submit → whole-package 拒绝（C 优先单 commitment）；
-        T 留 RESERVED、不写 P、reservation 保持可重试（P1-RF-02）。"""
+        """同一 Commander 被两张卡 claim → COMMANDER_CLAIM_DUPLICATE → 整包零发布；
+        改为合法包可重试。"""
         ctx = F.build_fix01()
-        state = ctx["state"]
-        war_b = ctx["war_b"]
-        r = senate_api.takeover_war(state, P1, war_b.id, 1, action="reserve")
-        self.assertTrue(r["success"], r.get("message"))
-        s = senate_api.takeover_war(state, P1, war_b.id, 1, action="submit")
-        self.assertFalse(s["success"], "C 非空 → P 战不可锁（C 优先）")
-        pending = state.get_takeover_pending()
-        self.assertEqual(pending["status"], "RESERVED", "失败零写入：留 RESERVED")
+        state, consul = ctx["state"], ctx["consul"]
+        war_a, war_b = ctx["war_a"], ctx["war_b"]
+        s = _submit(state, [_command(war_a, consul.id, 0), _command(war_b, consul.id, 0)])
+        self.assertFalse(s["success"], "同人双 claim → 整包拒绝")
+        self.assertIn("COMMANDER_CLAIM_DUPLICATE", _codes(s))
+        self.assertEqual(state.get_senate_proposals(), [], "失败零发布")
         self.assertFalse(state.senate_proposal_decision_complete)
-        self.assertEqual(state.get_senate_proposals(), [])
-        # 可编辑重试：reserve 换目标 war_a（单 reservation 覆盖）→ submit 成功锁 C 战
-        r2 = senate_api.takeover_war(state, P1, ctx["war_a"].id, 1, action="reserve")
-        self.assertTrue(r2["success"], r2.get("message"))
-        s2 = senate_api.takeover_war(state, P1, ctx["war_a"].id, 1, action="submit")
-        self.assertTrue(s2["success"], s2.get("message"))
-        self.assertEqual(state.get_takeover_pending()["status"], "LOCKED")
+        # 可重试：单卡合法包成功
+        s2 = _submit(state, [_command(war_a, consul.id, 0)])
+        self.assertTrue(s2["success"], s2.get("errors"))
+        self.assertEqual(len(state.get_senate_proposals()), 1)
 
     def test_t02_ai_single_commitment_no_direct_mutation(self):
-        """AI parity（R4-24）：多 eligible C 战 → plan 单 commitment（至多 1 LOCKED T）；
-        execute_ai_takeover_direct_action 不直接 mutation（部署 owner spy 0 次）。"""
+        """AI parity → R5：旧 AI 直连接管入口退役；AI 路径经唯一整包入口、零边界 mutation。"""
         state = F.make_base_state(turn_number=1, year=-282)
         faction = F.add_faction(state, treasury=500)
         F.add_player(state)
@@ -212,43 +187,38 @@ class TestT02SubmitNeverDeploysOrSettles(unittest.TestCase):
         F.attach_active(state, war1)
         F.attach_active(state, war2)
         politics = PoliticalSystem(state)
-        plan = politics.plan_ai_takeovers()
-        self.assertLessEqual(len(plan), 1, "单 commitment：至多 1 war")
-        if not plan:
-            self.skipTest("decider 拒绝全部候选（非断言面）")
-        calls = {"deploy": 0}
-        orig_deploy = PoliticalSystem.execute_war_takeover_deploy
+        self.assertFalse(hasattr(politics, "plan_ai_takeovers"))
+        self.assertFalse(hasattr(politics, "execute_ai_takeover_direct_action"))
 
-        def counting(self_, war_, consul_, reinforcement_n=None):
-            calls["deploy"] += 1
-            return orig_deploy(self_, war_, consul_, reinforcement_n=reinforcement_n)
+        calls = {"commit": 0}
+        orig_commit = PoliticalSystem.commit_war_resolution
 
-        with mock.patch.object(PoliticalSystem, "execute_war_takeover_deploy", counting):
-            records = politics.execute_ai_takeover_direct_action(predecided=plan)
-        self.assertEqual(calls["deploy"], 0, "AI 废弃直连：不得直接 mutation")
-        self.assertLessEqual(len(records), 1)
-        locked = [w for w in (war1, war2)
-                  if state.get_takeover_pending() and state.get_takeover_pending()["war_id"] == w.id]
-        self.assertEqual(len(locked), 1 if records else 0)
-        if records:
-            pending = state.get_takeover_pending()
-            self.assertEqual(pending["status"], "LOCKED")
-            self.assertIsNone(pending["war_id"] and None if False else locked[0].commander_id)
-            self.assertIsNone(locked[0].commander_id, "锁 T 零部署")
-            self.assertFalse(consul.is_absent)
+        def counting_commit(self_, plan, transaction=None):
+            calls["commit"] += 1
+            return orig_commit(self_, plan, transaction)
+
+        with mock.patch.object(PoliticalSystem, "commit_war_resolution", counting_commit):
+            result = senate_api.auto_submit_proposals(state, land_proposal_deciders=[])
+        self.assertTrue(result["success"], result.get("message"))
+        self.assertEqual(calls["commit"], 0, "AI 路径零直接 mutation")
+        self.assertIsNone(war1.commander_id)
+        self.assertIsNone(war2.commander_id)
+        self.assertIsNone(state.get_takeover_pending())
+        self.assertFalse(consul.is_absent)
 
 
 class TestT03RefreshReentryRepeatExactlyOnceDeploy(unittest.TestCase):
-    """T-R4-03 + Oracle-B（SA v1.7 §8.4）：部署事务 F1~F5 + F3b 六注入。"""
+    """T-R4-03 + Oracle-B → R5：边界部署 F1~F5 注入全回滚 + 可重试 exactly-once。
+
+    注入点改为 R5 真实生产点：`_strict_recruit_and_bind` / `MilitarySystem.recruit_legion` /
+    `GameState.record_war_execution_receipt` / `GameState.mark_phase_executed`（commit-finalization）。
+    """
 
     def _ready_for_advance(self, ctx, n=2):
         state = ctx["state"]
-        r = senate_api.takeover_war(state, P1, ctx["war_a"].id, n, action="reserve")
-        assert r["success"], r.get("message")
-        s = senate_api.takeover_war(state, P1, ctx["war_a"].id, n, action="submit")
-        assert s["success"], s.get("message")
-        assert senate_api.propose_many(state, P1, [])["success"]
-        resolved = senate_api.resolve_senate(state)
+        s = _submit(state, [_command(ctx["war_a"], ctx["consul"].id, n)])
+        assert s["success"], s.get("errors")
+        resolved = _resolve(state)
         assert resolved["success"], resolved.get("message")
         return state
 
@@ -261,50 +231,33 @@ class TestT03RefreshReentryRepeatExactlyOnceDeploy(unittest.TestCase):
         ms = state.get_military_system()
         self.assertGreaterEqual(len(ms.get_available_legions()), n, "增援池回滚")
         self.assertFalse(state.is_phase_executed("senate"), "Senate not executed")
-        pending = state.get_takeover_pending()
-        self.assertIsNotNone(pending)
-        self.assertEqual(pending["status"], "LOCKED", "T 回 LOCKED")
+        self.assertIsNone(state.get_war_execution_receipt_for_session(state.get_senate_session()),
+                          "receipt 回滚（零部分提交）")
         self.assertEqual([a for a in state.get_senate_direct_actions()
-                          if a.get("kind") == "takeover_deploy"], [], "no D_Takeover")
-
-    def _deploy_owner_patch(self, inject=None):
-        orig = PoliticalSystem.execute_war_takeover_deploy
-
-        def wrapped(self_, war_, consul_, reinforcement_n=None):
-            if inject == "raise_early":
-                raise RuntimeError("F1 injected before force rebind")
-            result = orig(self_, war_, consul_, reinforcement_n=reinforcement_n)
-            if inject == "raise_after_ops":
-                raise RuntimeError("F3 injected immediately before commit point")
-            return result
-        return mock.patch.object(PoliticalSystem, "execute_war_takeover_deploy", wrapped)
+                          if a.get("kind") == "war_resolution"], [], "no 边界记录")
 
     def test_t03_refresh_reentry_repeat_no_duplicate(self):
         ctx = F.build_fix01()
         state = self._ready_for_advance(ctx)
-        # refresh/重入 view 稳定
-        for _ in range(2):
-            dto = _view(state)
-            self.assertTrue(dto["can_advance"])
-            self.assertTrue(dto["pending_takeover_locked"])
         adv = senate_api.advance_senate_phase(state, P1)
         self.assertTrue(adv["success"], adv.get("message"))
-        # repeat advance → idempotent rejection（F5）
+        # repeat advance → receipt 重放（不重复部署）
         for _ in range(2):
             again = senate_api.advance_senate_phase(state, P1)
-            self.assertFalse(again["success"])
+            self.assertTrue(again["success"])
+            self.assertIs(again["data"]["replayed"], True)
         deploy_das = [a for a in state.get_senate_direct_actions()
-                      if a.get("kind") == "takeover_deploy"]
-        self.assertEqual(len(deploy_das), 1, "exactly-once D")
+                      if a.get("kind") == "war_resolution"]
+        self.assertEqual(len(deploy_das), 1, "exactly-once 边界记录")
 
     def test_t03_f1_failure_before_force_rebind_full_rollback(self):
         ctx = F.build_fix01()
         state = self._ready_for_advance(ctx)
-        with self._deploy_owner_patch(inject="raise_early"):
+        with mock.patch.object(PoliticalSystem, "_strict_recruit_and_bind",
+                               side_effect=RuntimeError("F1 injected before force rebind")):
             adv = senate_api.advance_senate_phase(state, P1)
         self.assertFalse(adv["success"])
         self._assert_full_rollback(state, ctx, 2)
-        # retry deploys exactly once
         adv2 = senate_api.advance_senate_phase(state, P1)
         self.assertTrue(adv2["success"], adv2.get("message"))
         self.assertTrue(state.is_phase_executed("senate"))
@@ -315,18 +268,16 @@ class TestT03RefreshReentryRepeatExactlyOnceDeploy(unittest.TestCase):
         ms = state.get_military_system()
         pool_before = len(ms.get_available_legions())
         treasury_before = state.treasury
-        orig_recruit = MilitarySystem.recruit_multiple
+        orig_recruit = MilitarySystem.recruit_legion
         calls = {"n": 0}
 
-        def flaky_recruit(self_, count):
+        def flaky_recruit(self_, number):
             calls["n"] += 1
-            if calls["n"] == 1 and count > 1:
-                # 先真实征召 1 个（partial），随后注入失败
-                first = orig_recruit(self_, 1)
+            if calls["n"] == 2:
                 raise RuntimeError("F2 injected partial reinforcement recruit failure")
-            return orig_recruit(self_, count)
+            return orig_recruit(self_, number)
 
-        with mock.patch.object(MilitarySystem, "recruit_multiple", flaky_recruit):
+        with mock.patch.object(MilitarySystem, "recruit_legion", flaky_recruit):
             adv = senate_api.advance_senate_phase(state, P1)
         self.assertFalse(adv["success"])
         self._assert_full_rollback(state, ctx, 2)
@@ -338,20 +289,19 @@ class TestT03RefreshReentryRepeatExactlyOnceDeploy(unittest.TestCase):
     def test_t03_f3_failure_immediately_before_commit_point(self):
         ctx = F.build_fix01()
         state = self._ready_for_advance(ctx)
-        with self._deploy_owner_patch(inject="raise_after_ops"):
+        with mock.patch.object(GameState, "record_war_execution_receipt",
+                               side_effect=RuntimeError("F3 injected at commit point")):
             adv = senate_api.advance_senate_phase(state, P1)
         self.assertFalse(adv["success"])
         self._assert_full_rollback(state, ctx, 2)
         adv2 = senate_api.advance_senate_phase(state, P1)
         self.assertTrue(adv2["success"], adv2.get("message"))
         deploy_das = [a for a in state.get_senate_direct_actions()
-                      if a.get("kind") == "takeover_deploy"]
+                      if a.get("kind") == "war_resolution"]
         self.assertEqual(len(deploy_das), 1)
 
     def test_t03_f3b_commit_finalization_partial_failure_rollback(self):
-        """F3b（Oracle-B，SA v1.7 §8.4）：T/V→CONSUMED 后、mark_phase_executed 前/中注入 →
-        全回滚 + T 回 LOCKED + retry exactly once（production-shape：真实 mark_phase_executed
-        调用点 = advance_senate_phase 内两 authoritative publication 之间）。"""
+        """F3b：receipt 写入后、mark_phase_executed 前/中注入 → 全回滚 + retry exactly once。"""
         ctx = F.build_fix01()
         state = self._ready_for_advance(ctx)
         ms = state.get_military_system()
@@ -373,17 +323,16 @@ class TestT03RefreshReentryRepeatExactlyOnceDeploy(unittest.TestCase):
         self._assert_full_rollback(state, ctx, 2)
         self.assertEqual(len(ms.get_available_legions()), pool_before)
         self.assertEqual(state.treasury, treasury_before)
-        # retry 部署 exactly once（mark 再次调用成功）
         adv2 = senate_api.advance_senate_phase(state, P1)
         self.assertTrue(adv2["success"], adv2.get("message"))
         self.assertTrue(state.is_phase_executed("senate"))
         self.assertEqual(ctx["war_a"].commander_id, ctx["consul"].id)
         deploy_das = [a for a in state.get_senate_direct_actions()
-                      if a.get("kind") == "takeover_deploy"]
+                      if a.get("kind") == "war_resolution"]
         self.assertEqual(len(deploy_das), 1)
 
     def test_t03_f4_audit_failure_business_stays_committed(self):
-        """F4：audit/event 失败 → 业务保持 committed、禁止重试军事部署、无重复 recruit。"""
+        """F4：audit/event 失败 → 业务保持 committed、不重跑军事部署、无重复 recruit。"""
         ctx = F.build_fix01()
         state = self._ready_for_advance(ctx)
         war_a, consul = ctx["war_a"], ctx["consul"]
@@ -401,12 +350,11 @@ class TestT03RefreshReentryRepeatExactlyOnceDeploy(unittest.TestCase):
         self.assertTrue(adv["success"], "audit 失败不回滚业务（独立上报）")
         self.assertTrue(state.is_phase_executed("senate"))
         self.assertEqual(war_a.commander_id, consul.id)
-        # audit 失败后 D 缺失，但业务 committed——重试 advance 被 is_phase_executed guard 拒
+        # receipt 已在（业务 committed）→ 重试 advance 为重放，不重复征召
         again = senate_api.advance_senate_phase(state, P1)
-        self.assertFalse(again["success"])
-        deploy_calls = 0
-        # 无重复 recruit：legions == 2（恰好一次完整 N）
-        self.assertEqual(len(war_a.legion_numbers), 2)
+        self.assertTrue(again["success"])
+        self.assertIs(again["data"]["replayed"], True)
+        self.assertEqual(len(war_a.legion_numbers), 2, "恰一次完整 N")
 
 
 if __name__ == "__main__":

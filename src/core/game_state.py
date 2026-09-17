@@ -153,6 +153,22 @@ class GameState:
         # 永不触碰。零部署副作用：锁承诺不部署（R4-17/R4-18）。
         self._takeover_pending: Optional[dict] = None
 
+        # R5（SA §3.7/§3.8，DA-2）：政治账本 package 提交索引（copy-on-write 根）。
+        # requests: submit_request_id → {fingerprint, package_id, created, snapshots, ...}（重放/reuse 门）
+        # war_snapshots: (senate_session_id, war_id) → immutable WarProposalSnapshot（同会期唯一索引）
+        # contexts: submission_context_id → SubmissionContext 持有者
+        self._senate_package_ledger = {"requests": {}, "war_snapshots": {}, "contexts": {}}
+
+        # R5（SA §4.8，DA-3）：War resolution 执行账本（单一受锁边界事务的 receipt/decision 载体）。
+        # receipts: execution_id → WarExecutionReceipt（含 status/input_fingerprint/proposal_refs）
+        # by_session: senate_session_id → execution_id（同会期唯一 package execution）
+        # decisions: (senate_session_id, proposal_id) → WarProposalDecision（final outcome 冻结事实）
+        self._war_execution_ledger = {"receipts": {}, "by_session": {}, "decisions": {}}
+        # 当前会期身份（Submit 成功时冻结；旧路径按 turn 派生）
+        self._senate_session_id: Optional[str] = None
+        # R5（SA §4.6）：Senate→Combat 单一受锁临界区（runtime，不序列化）
+        self._senate_transaction_lock = threading.Lock()
+
         # 初始化时调用 reset，确保状态一致性
         self.reset()
 
@@ -161,6 +177,12 @@ class GameState:
         # WP-G-R4: 全新状态 → 清 pending Takeover commitment（仅整局 reset 路径；
         # clear_senate_pending 永不触碰该字段——跨 settlement 存续由本字段保证）
         self._takeover_pending = None
+        # R5（DA-2）：整局 reset 清空政治账本 package 索引
+        self._senate_package_ledger = {"requests": {}, "war_snapshots": {}, "contexts": {}}
+        # R5（DA-3）：整局 reset 清空 War 执行账本 + 会期身份
+        self._war_execution_ledger = {"receipts": {}, "by_session": {}, "decisions": {}}
+        self._senate_session_id = None
+        self._senate_transaction_lock = threading.Lock()
         self._members.clear()
         self._factions.clear()
         self._treasury = 0
@@ -330,6 +352,175 @@ class GameState:
             self._takeover_pending = None
         else:
             self._takeover_pending = copy.deepcopy(value)
+
+    # ========== R5（SA §3.7/§3.8，DA-2）：政治账本 package 索引 ==========
+
+    def get_senate_package_registry(self) -> dict:
+        """返回 package 提交账本（requests/war_snapshots/contexts）。只读消费。"""
+        return self._senate_package_ledger
+
+    def register_senate_package(self, request_id: str, record: dict) -> None:
+        """登记一次成功提交（submit_request_id → 指纹/包身份/created/快照）。"""
+        if request_id:
+            self._senate_package_ledger["requests"][request_id] = copy.deepcopy(record)
+
+    def register_submitted_war_snapshot(self, senate_session_id: str, war_id: str,
+                                        snapshot: dict) -> None:
+        """登记 (senate_session_id, war_id) 唯一快照索引。"""
+        self._senate_package_ledger["war_snapshots"][(senate_session_id, war_id)] = copy.deepcopy(snapshot)
+
+    def get_submitted_war_snapshot(self, senate_session_id: str, war_id: str) -> Optional[dict]:
+        return self._senate_package_ledger["war_snapshots"].get((senate_session_id, war_id))
+
+    def register_submission_context(self, context_id: str, context: dict) -> None:
+        if context_id:
+            self._senate_package_ledger["contexts"][context_id] = copy.deepcopy(context)
+
+    # ========== R5（SA §4.1/§4.8，DA-3）：War resolution 执行账本（决策 + receipt） ==========
+
+    def set_senate_session(self, senate_session_id: Optional[str]) -> None:
+        """冻结当前会期身份（Submit 成功点写入；跨 settlement 存续）。"""
+        self._senate_session_id = senate_session_id
+
+    def get_senate_session(self) -> Optional[str]:
+        return self._senate_session_id
+
+    def record_war_decision(self, senate_session_id: str, proposal_id, decision: dict) -> None:
+        """冻结一条 WarProposalDecision（final outcome）；Results 清理不销毁。"""
+        self._war_execution_ledger["decisions"][(senate_session_id, proposal_id)] = copy.deepcopy(decision)
+
+    def get_war_decisions(self) -> dict:
+        """返回全部 War 决策（(session, proposal_id) → decision）。只读消费。"""
+        return self._war_execution_ledger["decisions"]
+
+    def get_war_execution_ledger(self) -> dict:
+        return self._war_execution_ledger
+
+    def get_war_execution_receipt(self, execution_id: str) -> Optional[dict]:
+        return self._war_execution_ledger["receipts"].get(execution_id)
+
+    def get_war_execution_receipt_for_session(self, senate_session_id: str) -> Optional[dict]:
+        execution_id = self._war_execution_ledger["by_session"].get(senate_session_id)
+        if execution_id is None:
+            return None
+        return self._war_execution_ledger["receipts"].get(execution_id)
+
+    def record_war_execution_receipt(self, receipt: dict) -> None:
+        """登记 COMMITTED receipt（与 §4.7 全域、phase 同版）。"""
+        execution_id = receipt["execution_id"]
+        self._war_execution_ledger["receipts"][execution_id] = copy.deepcopy(receipt)
+        self._war_execution_ledger["by_session"][receipt["senate_session_id"]] = execution_id
+
+    # ---- 12 域原子状态快照 / 精确回滚（SA §4.7 C-D01~C-D12） ----
+
+    def snapshot_war_resolution_domains(self) -> dict:
+        """捕获边界前 S0（§4.7 最小封闭域）。失败时以此精确回滚（零部分变更）。"""
+        ws = self._war_system
+        ms = self._military_system
+        ns = self._naval_system
+        snap: Dict[str, Any] = {
+            "treasury": self._treasury,
+            "treasury_deficit_turns": self._treasury_deficit_turns,
+            "executed_phases": set(self._executed_phases),
+            "phase_results": copy.deepcopy(self._phase_results),
+            "war_execution_ledger": copy.deepcopy(self._war_execution_ledger),
+            "senate_package_ledger": copy.deepcopy(self._senate_package_ledger),
+            "senate_pending": copy.deepcopy(self._senate_pending),
+            "takeover_pending": copy.deepcopy(self._takeover_pending),
+            "direct_actions": list(self._senate_pending.get("direct_actions", [])),
+            "wars": {},
+            "legions": {},
+            "fleets": {},
+            "figures": {},
+        }
+        if ws is not None:
+            snap["war_containers"] = {
+                "active": list(ws._active_wars),
+                "truce": list(ws._truce_wars),
+                "threats": list(ws._threats),
+                "discard": list(getattr(ws, "_war_discard", []) or []),
+                "legions_to_disband": list(getattr(ws, "_legions_to_disband", []) or []),
+            }
+            for war in ws.get_all_wars():
+                snap["wars"][war.id] = {
+                    "status": war.status,
+                    "commander_id": war.commander_id,
+                    "commander_assigned_turn": war.commander_assigned_turn,
+                    "original_commander_id": war.original_commander_id,
+                    "activation_turn": war.activation_turn,
+                    "activation_origin": war.activation_origin,
+                    "activation_episode": war.activation_episode,
+                    "declared_by": war.declared_by,
+                    "peace_treaty": copy.deepcopy(war.peace_treaty),
+                    "indemnity_due": war.indemnity_due,
+                    "truce_end_turn": war.truce_end_turn,
+                    "legion_numbers": list(war.legion_numbers),
+                }
+        if ms is not None:
+            for legion in ms.get_all_legions():
+                snap["legions"][legion.number] = copy.deepcopy(dict(legion.__dict__))
+        if ns is not None:
+            for fleet in ns.get_all_fleets():
+                snap["fleets"][fleet.number] = copy.deepcopy(dict(fleet.__dict__))
+        for fid, fig in self._members.items():
+            snap["figures"][fid] = copy.deepcopy(dict(fig.__dict__))
+        return snap
+
+    def restore_war_resolution_domains(self, snap: dict) -> None:
+        """精确恢复 S0（§4.7 全域深值相等）；不改本体身份。"""
+        ws = self._war_system
+        ms = self._military_system
+        ns = self._naval_system
+        self._treasury = snap["treasury"]
+        self._treasury_deficit_turns = snap["treasury_deficit_turns"]
+        self._executed_phases = set(snap["executed_phases"])
+        self._phase_results = copy.deepcopy(snap["phase_results"])
+        self._war_execution_ledger = copy.deepcopy(snap["war_execution_ledger"])
+        self._senate_package_ledger = copy.deepcopy(snap["senate_package_ledger"])
+        self._senate_pending = copy.deepcopy(snap["senate_pending"])
+        self._takeover_pending = copy.deepcopy(snap["takeover_pending"])
+        if ws is not None and "war_containers" in snap:
+            cont = snap["war_containers"]
+            ws._active_wars[:] = list(cont["active"])
+            ws._truce_wars[:] = list(cont["truce"])
+            ws._threats[:] = list(cont["threats"])
+            if hasattr(ws, "_war_discard"):
+                ws._war_discard[:] = list(cont["discard"])
+            if hasattr(ws, "_legions_to_disband"):
+                ws._legions_to_disband[:] = list(cont["legions_to_disband"])
+            for wid, wsnap in snap["wars"].items():
+                war = ws.get_war_by_id(wid)
+                if war is None:
+                    continue
+                war.status = wsnap["status"]
+                war.commander_id = wsnap["commander_id"]
+                war._commander_assigned_turn = wsnap["commander_assigned_turn"]
+                war._original_commander_id = wsnap["original_commander_id"]
+                war.activation_turn = wsnap["activation_turn"]
+                war._activation_origin = wsnap["activation_origin"]
+                war._activation_episode = wsnap["activation_episode"]
+                war._declared_by = wsnap["declared_by"]
+                war._peace_treaty = copy.deepcopy(wsnap["peace_treaty"])
+                war._indemnity_due = wsnap["indemnity_due"]
+                war._truce_end_turn = wsnap["truce_end_turn"]
+                war._legion_numbers[:] = list(wsnap["legion_numbers"])
+        if ms is not None:
+            for number, lsnap in snap["legions"].items():
+                legion = ms.get_legion_by_number(number)
+                if legion is not None:
+                    legion.__dict__.clear()
+                    legion.__dict__.update(copy.deepcopy(lsnap))
+        if ns is not None:
+            for number, fsnap in snap["fleets"].items():
+                fleet = ns.get_fleet(number)
+                if fleet is not None:
+                    fleet.__dict__.clear()
+                    fleet.__dict__.update(copy.deepcopy(fsnap))
+        for fid, fsnap in snap["figures"].items():
+            fig = self._members.get(fid)
+            if fig is not None:
+                fig.__dict__.clear()
+                fig.__dict__.update(copy.deepcopy(fsnap))
 
     # 人口阶段玩家操作
     def record_population_campaign(self, player_id: str, figure_id: int, amount: int) -> None:
@@ -799,6 +990,10 @@ class GameState:
                 "direct_actions": [a.copy() for a in self._senate_pending["direct_actions"]],
             },
             "_pending_land_sale_quota": self._pending_land_sale_quota,
+            # R5（SA §5.4，DA-5）：政治账本 + 执行账本 + 会期身份同版序列化（禁止半套恢复）
+            "_senate_package_ledger": copy.deepcopy(self._senate_package_ledger),
+            "_war_execution_ledger": copy.deepcopy(self._war_execution_ledger),
+            "_senate_session_id": self._senate_session_id,
         }
         return data
 
@@ -964,6 +1159,24 @@ class GameState:
         # WP-G-R4: pending Takeover commitment 为 session 级内存 commitment，存档往返不要求
         # 保留（设计 §12 无 Save/Load 迁移）；load 一律置 None 防旧对象残留（无回归 smoke）
         self._takeover_pending = None
+        # R5（DA-2）：load 重建 package 账本（新容器；旧存档缺键 → 空，不残留旧对象）
+        ledger = data.get("_senate_package_ledger", {}) if isinstance(data, dict) else {}
+        self._senate_package_ledger = {
+            "requests": {k: v for k, v in (ledger.get("requests", {}) or {}).items()},
+            "war_snapshots": {k: v for k, v in (ledger.get("war_snapshots", {}) or {}).items()},
+            "contexts": {k: v for k, v in (ledger.get("contexts", {}) or {}).items()},
+        }
+        # R5（DA-3）：load 重建 War 执行账本（同版根：receipt/decision/phase 一套）；
+        # 旧存档缺键 → 空（不残留旧对象）；runtime 锁恒为全新。
+        wl = data.get("_war_execution_ledger", {}) if isinstance(data, dict) else {}
+        self._war_execution_ledger = {
+            "receipts": dict(wl.get("receipts", {}) or {}),
+            "by_session": dict(wl.get("by_session", {}) or {}),
+            "decisions": {tuple(k) if isinstance(k, list) else k: v
+                          for k, v in (wl.get("decisions", {}) or {}).items()},
+        }
+        self._senate_session_id = data.get("_senate_session_id")
+        self._senate_transaction_lock = threading.Lock()
 
         # Phase 2 新增：恢复待售公地配额
         self._pending_land_sale_quota = data.get("_pending_land_sale_quota", 0)
@@ -1065,6 +1278,12 @@ class GameState:
         }
         # WP-G-R4 (SA v1.7 §2.5): T/V 共享持久持有者（与 _senate_pending 兄弟字段）
         instance._takeover_pending = None
+        # R5（DA-2）：测试实例 package 账本
+        instance._senate_package_ledger = {"requests": {}, "war_snapshots": {}, "contexts": {}}
+        # R5（DA-3）：测试实例 War 执行账本 + 会期身份 + 受锁临界区
+        instance._war_execution_ledger = {"receipts": {}, "by_session": {}, "decisions": {}}
+        instance._senate_session_id = None
+        instance._senate_transaction_lock = threading.Lock()
 
         return instance
 
@@ -2401,3 +2620,42 @@ class GameState:
                 self._naval_system.on_contract_awarded(contract, winner["bidder_id"])
 
         return True
+
+
+class WarResolutionTransaction:
+    """R5（SA §4.6）Senate→Combat 单一受锁原子事务。
+
+    整包 S0 快照 + 单一受锁发布点：进入时锁临界区并捕获 S0（§4.7 12 域）；应用完成并
+    调用 commit() 才视为线性化点（同版 receipt/phase 在 commit 前写入）；任一异常或未
+    commit → 精确回滚 S0（零部分变更，S0 深值完全保留）。
+    """
+
+    def __init__(self, state: GameState):
+        self.state = state
+        self._lock = state._senate_transaction_lock
+        self._acquired = False
+        self._snap: Optional[dict] = None
+        self._committed = False
+
+    def __enter__(self) -> "WarResolutionTransaction":
+        self._lock.acquire()
+        self._acquired = True
+        self._snap = self.state.snapshot_war_resolution_domains()
+        self._committed = False
+        return self
+
+    def commit(self) -> None:
+        """发布：线性化点。此后异常不再回滚（receipt/phase 已同版写入）。"""
+        self._committed = True
+        self._snap = None
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        try:
+            if (exc_type is not None or not self._committed) and self._snap is not None:
+                self.state.restore_war_resolution_domains(self._snap)
+        finally:
+            self._snap = None
+            if self._acquired:
+                self._lock.release()
+                self._acquired = False
+        return False

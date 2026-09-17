@@ -384,8 +384,9 @@ class TestFR1TakeoverDirectAction(unittest.TestCase):
         self.assertEqual(self.state.get_senate_direct_actions(), [])
 
     def test_ai_auto_takeover_via_auto_submit_proposals(self):
-        """F-R1-04 AI 分支（WP-G-R4 supersede，SA v1.7 §2.5/R4-24）：auto_submit_proposals
-        尾部 AI 单 commitment 锁 T（零部署）；显式 resolve→advance 部署恰一次 + D_Takeover。"""
+        """F-R1-04 AI 分支 → R5（Plan §4.2 L15；SA §1.2 SUPERSEDED + §4.10 C-M08，DA-4）：
+        AI 接管直连退位——auto_submit_proposals 经唯一整包 propose_many 提交（零部署）；
+        commanderless 真实战不再被 AI 接管（无 mandatory/直连副作用），部署仅由边界承担。"""
         # resolve 先行（无 P → proposal_selection_not_complete 拒绝，零接管）
         refused = senate_api.resolve_senate(self.state)
         self.assertFalse(refused["success"])
@@ -393,47 +394,28 @@ class TestFR1TakeoverDirectAction(unittest.TestCase):
 
         result = senate_api.auto_submit_proposals(
             self.state,
-            land_proposal_deciders=[],  # 0 提案批（聚焦 takeover 副作用）
+            land_proposal_deciders=[],  # 0 提案批
         )
         self.assertTrue(result["success"], result.get("message"))
-        # 锁 T 零部署：war 仍 commanderless、Consul 留城
+        # 零部署/零接管：war 仍 commanderless、Consul 留城、无军团、无旧 pending 直连
         self.assertIsNone(self.war.commander_id)
         self.assertFalse(self.state.get_member(1).is_absent)
         self.assertFalse(self.war.legion_numbers)
-        pending = self.state.get_takeover_pending()
-        self.assertIsNotNone(pending)
-        self.assertEqual(pending["status"], "LOCKED")
-        self.assertEqual(pending["war_id"], self.war.id)
+        self.assertIsNone(self.state.get_takeover_pending(), "旧直连接管已退役")
         self.assertEqual(self.state.get_senate_direct_actions(), [], "部署前无 D")
 
-        # 显式 resolve（AI canonical 尾部 P=true 已写）→ 真实 R → advance 部署恰一次
+        # 边界仍可合法推进（无 mandatory 门）
         resolved = senate_api.resolve_senate(self.state)
         self.assertTrue(resolved["success"], resolved.get("message"))
-        self.assertTrue(self.state.get_phase_result("senate"))
         adv = senate_api.advance_senate_phase(self.state, "player1")
         self.assertTrue(adv["success"], adv.get("message"))
-        self.assertEqual(self.war.commander_id, 1)
-        self.assertTrue(self.state.get_member(1).is_absent)
-        self.assertTrue(self.war.legion_numbers)
-
-        # 恰 1 D_Takeover（kind=takeover_deploy，trigger_source=ai_auto）
+        self.assertIsNone(self.war.commander_id, "无 checked 卡 → 不部署")
+        self.assertFalse(self.state.get_member(1).is_absent)
+        self.assertTrue(self.state.is_phase_executed("senate"))
+        # 旧 D_Takeover provenance 退役：无 takeover_deploy 直连记录
         actions = [a for a in self.state.get_senate_direct_actions()
                    if a.get("kind") == "takeover_deploy"]
-        self.assertEqual(len(actions), 1)
-        record = actions[0]
-        self.assertEqual(record["action_type"], "takeover_deploy")
-        self.assertEqual(record["war_id"], self.war.id)
-        self.assertEqual(record["commander_id"], 1)
-        self.assertEqual(record["trigger_source"], "ai_auto")
-        self.assertEqual(record["previous_status"], "active")
-        self.assertEqual(record["resulting_status"], "active")
-        self.assertEqual(record["legions"], list(self.war.legion_numbers))
-
-        # C4：view DTO dict 透传零破坏
-        view = senate_api.get_senate_view(self.state, "player1")
-        self.assertTrue(view["success"])
-        self.assertEqual(len(view["data"]["direct_actions"]), 1)
-        self.assertEqual(view["data"]["direct_actions"][0]["trigger_source"], "ai_auto")
+        self.assertEqual(actions, [])
 
     def test_ai_takeover_skips_war_with_valid_commander(self):
         """§11 negative：已有有效指挥官 → AI 自动接管跳过（零 mutation）。"""

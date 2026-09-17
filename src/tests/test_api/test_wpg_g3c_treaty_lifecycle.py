@@ -68,13 +68,15 @@ class TestWpgG3cTreatyLifecycle(unittest.TestCase):
         self.faction.member_ids.append(1)
 
     # ------------------------------------------------------------------
-    # 工具：构造「TRUCE + submitted 条约 + 军团/舰队/指挥官绑定」的战争
+    # 工具：构造「TRUCE + 权威 pending 条约 + 军团/舰队/指挥官绑定」的战争
+    # （R5 DA-3 / E-07：旧 submitted 早写已拆除，边界以 pending 草案为前提；本 helper
+    #  名保留以减 churn）
     # ------------------------------------------------------------------
     def _make_submitted_truce_war(self, war_id="w_treaty", legion_numbers=(1, 2), fleet_numbers=(1,)):
         war = War(id=war_id, name="Treaty War", war_type=WarType.FOREIGN, strength=5,
                   naval_required=True, enemy_naval_current=5, enemy_land_current=5)
         war.status = WarStatus.TRUCE
-        war.set_peace_treaty({"indemnity": 100, "duration": 3, "status": "submitted", "generated_turn": 1})
+        war.set_peace_treaty({"indemnity": 100, "duration": 3, "status": "pending", "generated_turn": 1})
         war.commander_id = 1
         self.state._war_system._truce_wars.append(war)
         ms = self.state._military_system

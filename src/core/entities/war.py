@@ -95,6 +95,13 @@ class War:
         self._truce_end_turn: Optional[int] = None
         self._legion_numbers: List[int] = []
         self._combat_slot_index: int = -1  # 战斗槽位身份（-1 = 未分配）
+        # R5（SA §2.1/§2.2，DA-1）：War lifecycle activation-origin 事实。
+        # None = 尚未成为真实战争；真实战缺记载来源由 describe_senate_war 判为 legacy_unknown。
+        # 与当会期 classification 分离；取值 active_declaration/passive_declaration/
+        # other_existing/legacy_unknown。唯一写入者 = WarSystem 激活/威胁升级 owner。
+        self._activation_origin: Optional[str] = None
+        self._activation_episode: int = 0
+        self._declared_by: Optional[int] = None
 
         # ---------- MVP 0.7-2 新增 ----------
         self._unlocked_provinces = unlocked_provinces or []
@@ -331,6 +338,31 @@ class War:
     def combat_slot_index(self) -> int:
         return self._combat_slot_index
 
+    # ---------- R5 activation-origin 事实（DA-1）----------
+    @property
+    def activation_origin(self) -> Optional[str]:
+        return self._activation_origin
+
+    @property
+    def activation_episode(self) -> int:
+        return self._activation_episode
+
+    @property
+    def declared_by(self) -> Optional[int]:
+        return self._declared_by
+
+    @declared_by.setter
+    def declared_by(self, value: Optional[int]):
+        self._declared_by = value
+
+    def set_activation_origin(self, origin: str, episode: Optional[int] = None) -> None:
+        """记载当前战争激活 episode 的来源事实（仅 WarSystem 调用）。"""
+        self._activation_origin = origin
+        if episode is not None:
+            self._activation_episode = episode
+        else:
+            self._activation_episode = self._activation_episode + 1
+
     @combat_slot_index.setter
     def combat_slot_index(self, value: int):
         self._combat_slot_index = value
@@ -503,6 +535,9 @@ class War:
             "truce_end_turn": self._truce_end_turn,
             "legion_numbers": self._legion_numbers.copy(),
             "combat_slot_index": self._combat_slot_index,
+            "activation_origin": self._activation_origin,
+            "activation_episode": self._activation_episode,
+            "declared_by": self._declared_by,
             # MVP 0.7-2 新增
             "unlocked_provinces": self._unlocked_provinces.copy(),
 
@@ -577,6 +612,10 @@ class War:
         war._truce_end_turn = data.get("truce_end_turn")
         war._legion_numbers = data.get("legion_numbers", [])
         war._combat_slot_index = data.get("combat_slot_index", -1)
+        # R5：旧存档缺键 → None（真实战由 describe_senate_war 判 legacy_unknown；不虚构历史起源）
+        war._activation_origin = data.get("activation_origin")
+        war._activation_episode = data.get("activation_episode", 0)
+        war._declared_by = data.get("declared_by")
 
         # MVP 0.7-4 设置新增字段
         war._naval_required = data.get("_naval_required", False)

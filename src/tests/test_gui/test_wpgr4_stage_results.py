@@ -19,69 +19,80 @@ P1 = F.P1
 
 
 class TestE03StoreTakeoverDeferredDeployment(unittest.TestCase):
+    """R5 supersede（Plan §4.2 L10；SA §5.2 C-M08/C-M09）：Store 唯一 Submit/advance 入口——
+    整包 Submit 零部署 → resolve → 边界 advance 恰一次；新 Store 重建同态不重复部署。"""
+
     def _store(self, ctx):
         state = ctx["state"]
         store = GuiSessionStore(state)
         store.initialize(P1)
         return state, store
 
+    def _submit_command(self, state, store, war, consul, n=1):
+        fb = store.doSubmitSenateProposals([
+            {"war_id": war.id, "checked": True, "mode": "command",
+             "target_commander_id": consul.id, "reinforcement_n": n}])
+        assert fb["success"], fb.get("message")
+        pid = state.get_senate_proposals()[0]["id"]
+        return pid
+
     def test_store_submit_locks_zero_deploy_then_settlement_then_advance_exactly_once(self):
+        from src.api import senate_api
         ctx = F.build_fix01()
         state, store = self._store(ctx)
         war_a, consul = ctx["war_a"], ctx["consul"]
 
-        feedback = store.doTakeoverWar(war_a.id, 1)
-        self.assertTrue(feedback["success"], feedback.get("message"))
-        # Submit/lock：零部署 + Store 属性反映 T/V 读模型
+        pid = self._submit_command(state, store, war_a, consul, n=1)
+        # Submit：零部署
         self.assertIsNone(war_a.commander_id)
         self.assertFalse(consul.is_absent)
-        self.assertTrue(store.senatePendingTakeoverLocked)
-        self.assertEqual(store.senatePendingTakeover.get("war_id"), war_a.id)
         self.assertFalse(store.canAdvanceSenate, "无真实 R → 不可推进")
-        self.assertFalse(store.senateCanDeployTakeover)
-        # 重复 Submit（同战）→ 已锁定拒绝，无二次副作用
-        repeat = store.doTakeoverWar(war_a.id, 1)
-        self.assertFalse(repeat["success"])
 
-        # 显式空结束（P）→ settlement 恢复入口 → R 真实 → canDeploy
-        empty = store.doSubmitSenateProposals([])
-        self.assertTrue(empty["success"], empty.get("message"))
-        self.assertTrue(store.senateSettlementPending)
-        recovery = store.doResolveSenateSettlement()
-        self.assertTrue(recovery["success"], recovery.get("message"))
+        # 人类票（唯一派系）→ store veto 入口 → 真实 R
+        vote = senate_api.vote(state, P1, [pid], [True])
+        self.assertTrue(vote["success"], vote.get("message"))
+        resolved = store.doSubmitSenateVetoes([])
+        self.assertTrue(resolved["success"], resolved.get("message"))
         self.assertTrue(state.get_phase_result("senate"))
-        self.assertTrue(store.senateCanDeployTakeover)
         self.assertTrue(store.canAdvanceSenate)
 
-        # 显式 advance → 原子部署恰一次；repeat → 拒绝
+        # 显式 advance → 原子部署恰一次
         adv = store.doAdvanceSenate()
         self.assertTrue(adv["success"], adv.get("message"))
         self.assertEqual(war_a.commander_id, consul.id)
         self.assertTrue(consul.is_absent)
         self.assertTrue(state.is_phase_executed("senate"))
-        again = store.doAdvanceSenate()
-        self.assertFalse(again["success"], "repeat advance 拒绝（exactly-once）")
-        das = [a for a in state.get_senate_direct_actions() if a.get("kind") == "takeover_deploy"]
+        das = [a for a in state.get_senate_direct_actions() if a.get("kind") == "war_resolution"]
         self.assertEqual(len(das), 1)
+        # 重入 advance 不重复部署（receipt 重放或 store 门禁）
+        store.doAdvanceSenate()
+        self.assertEqual(len(war_a.legion_numbers), 1)
+        self.assertEqual(len([a for a in state.get_senate_direct_actions()
+                              if a.get("kind") == "war_resolution"]), 1)
 
     def test_store_refresh_reentry_no_duplicate(self):
-        """refresh（new Store 重建同态）/重入不重复 T/V/D。"""
+        """refresh（new Store 重建同态）/重入不重复部署。"""
+        from src.api import senate_api
         ctx = F.build_fix01()
         state, store = self._store(ctx)
-        war_a = ctx["war_a"]
-        store.doTakeoverWar(war_a.id, 1)
-        store.doSubmitSenateProposals([])
-        store.doResolveSenateSettlement()
+        war_a, consul = ctx["war_a"], ctx["consul"]
+        pid = self._submit_command(state, store, war_a, consul, n=1)
+        senate_api.vote(state, P1, [pid], [True])
+        store.doSubmitSenateVetoes([])
         store.doAdvanceSenate()
 
         # new Store 重建同一完成态（无重复部署）
         store2 = GuiSessionStore(state)
         store2.initialize(P1)
         self.assertTrue(state.is_phase_executed("senate"))
-        das = [a for a in state.get_senate_direct_actions() if a.get("kind") == "takeover_deploy"]
+        self.assertEqual(war_a.commander_id, consul.id)
+        das = [a for a in state.get_senate_direct_actions() if a.get("kind") == "war_resolution"]
         self.assertEqual(len(das), 1)
-        adv2 = store2.doAdvanceSenate()
-        self.assertFalse(adv2["success"])
+        self.assertEqual(len(war_a.legion_numbers), 1)
+        store2.doAdvanceSenate()
+        self.assertEqual(len([a for a in state.get_senate_direct_actions()
+                              if a.get("kind") == "war_resolution"]), 1)
+        self.assertEqual(len(war_a.legion_numbers), 1)
 
 
 # ---------------------------------------------------------------------------

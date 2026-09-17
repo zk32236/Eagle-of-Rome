@@ -99,12 +99,26 @@ Rectangle {
                 anchors.margins: 8
                 spacing: 2
 
-                Text {
-                    text: "🏛️ 共和国军力总览"
-                    color: "#2C1E12"
-                    font.pixelSize: theme.statLabelSize
-                    font.bold: true
+                RowLayout {
                     Layout.fillWidth: true
+                    spacing: 6
+
+                    Text {
+                        text: "🏛️ 共和国军力总览"
+                        color: "#2C1E12"
+                        font.pixelSize: theme.statLabelSize
+                        font.bold: true
+                        Layout.fillWidth: true
+                    }
+
+                    // R5 DA-6（SA §5.5 / Owner §20 #44）：Configure/Test force 控件入口
+                    // （确定性构造 naval block / naval 成功+land 失败 / land VICTORY；G7 可达）
+                    Button {
+                        objectName: "testConfigTriggerButton"
+                        text: "⚙️ 测试配置"
+                        flat: true
+                        onClicked: testConfigDialog.open()
+                    }
                 }
 
                 RowLayout {
@@ -851,5 +865,12 @@ Rectangle {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
         }
+    }
+
+    // ── R5 DA-6：Configure/Test force 控件宿主（SA §5.5 / Owner §20 #44）──
+    // 两键独立（land/naval 分离）；空值 = 正常结算；不改战斗消费语义。
+    TestConfigDialog {
+        id: testConfigDialog
+        objectName: "testConfigDialog"
     }
 }

@@ -133,46 +133,81 @@ class TestGaContinueCommand(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(war.status, WarStatus.TRUCE)
 
-    # ---------- human API 层（A2） ----------
+    # ---------- human API 层（A2）→ R5 唯一整包入口 ----------
+    # R5 supersede（Plan §4.2 L4；SA §1.2 SUPERSEDED + §4.10 C-M06，DA-4）：即时 continue_war
+    # 独立执行入口退役。「沿用现有指挥官续战」= pending-peace 卡的 unchecked fallback，由边界
+    # 唯一事务 advance_senate_phase 统一执行（Submit/Vote/Veto/Results 零军事写）。
+    def _submit_package(self, war_drafts):
+        return senate_api.propose_many(self.state, "player1", {"war_drafts": war_drafts})
+
+    def _resolve_and_advance(self):
+        res = senate_api.resolve_senate(self.state)
+        self.assertTrue(res["success"], res.get("message"))
+        adv = senate_api.advance_senate_phase(self.state, "player1")
+        self.assertTrue(adv["success"], adv.get("message"))
+        return adv
+
     def test_continue_war_api_full_flow(self):
-        """A2：continue_war API 全流 + direct action provenance（action_type=continue + N）。"""
+        """A2 → R5：pending-peace 卡 unchecked → Submit 零军事写；边界 fallback 清条约 +
+        TRUCE→ACTIVE + 现任 Commander 保留 + 幸存保留（旧即时 continue_war 语义由边界承担）。"""
         war = self._make_truce_war(war_id="w_api")
-        result = senate_api.continue_war(self.state, "player1", war.id, reinforcement_n=1)
-        self.assertTrue(result["success"])
-        self.assertEqual(result["data"]["war_id"], war.id)
-        self.assertEqual(result["data"]["commander_id"], 2)
-        self.assertEqual(result["data"]["reinforcement_n"], 1)
+        ms = self.state._military_system
+        sub = self._submit_package([{"war_id": war.id, "checked": False, "mode": "command",
+                                     "target_commander_id": 2, "reinforcement_n": 0}])
+        self.assertTrue(sub["success"], sub.get("errors"))
+        # Submit 零军事写：条约/状态/Commander 未变
+        self.assertEqual(war.status, WarStatus.TRUCE)
+        self.assertIsNotNone(war.peace_treaty)
+        self.assertEqual(war.commander_id, 2)
+        adv = self._resolve_and_advance()
+        self.assertTrue(adv.get("success"))
+        # 边界：清条约 + ACTIVE + 现任 commander 保留（禁静默替换，G1-21）+ 幸存保留
+        self.assertIsNone(war.peace_treaty)
         self.assertEqual(war.status, WarStatus.ACTIVE)
-        actions = self.state.get_senate_direct_actions()
-        self.assertEqual(len(actions), 1)
-        self.assertEqual(actions[0]["action_type"], "continue")
-        self.assertEqual(actions[0]["war_id"], war.id)
-        self.assertEqual(actions[0]["commander_id"], 2)
-        self.assertEqual(actions[0]["reinforcement_n"], 1)
-        self.assertEqual(actions[0]["previous_status"], "truce")
-        self.assertEqual(actions[0]["resulting_status"], "active")
+        self.assertEqual(war.commander_id, 2)
+        surviving = ms.get_legions_for_battle(war.id)
+        self.assertEqual(len(surviving), 2)
+        for leg in surviving:
+            self.assertEqual(leg.commander_id, 2)
+        self.assertFalse(self.consul.is_absent)
+        # 边界唯一执行凭证（旧 direct-action provenance 由 receipt 承担）
+        self.assertIsNotNone(self.state.get_war_execution_receipt_for_session(
+            self.state.get_senate_session()))
 
     def test_continue_war_api_permission(self):
-        """A2：非当前玩家 → 拒绝。"""
+        """A2 → R5：身份门 = 执政官权威——无效 actor → SUBMIT_NOT_AUTHORIZED（fail-closed）。"""
         war = self._make_truce_war(war_id="w_perm")
-        self.state._current_player_id = "playerX"
-        result = senate_api.continue_war(self.state, "player1", war.id, reinforcement_n=1)
+        result = senate_api.propose_many(self.state, "playerX", {"war_drafts": [
+            {"war_id": war.id, "checked": True, "mode": "command",
+             "target_commander_id": 2, "reinforcement_n": 1}]})
         self.assertFalse(result["success"])
+        self.assertIn("SUBMIT_NOT_AUTHORIZED",
+                      [e.get("code") for e in (result.get("errors") or [])])
         self.assertEqual(war.status, WarStatus.TRUCE)
 
     def test_continue_war_api_no_valid_commander(self):
-        """A2：无有效 commander → 拒绝（提示可接管）。"""
+        """A2 → R5（A-I14）：commanderless pending-peace 不再强制接管/软锁——边界 fallback 合法续战
+        （Commander 保持 None，无 mandatory 门阻止 advance）。"""
         war = self._make_truce_war(war_id="w_apinc", commander_id=None)
-        result = senate_api.continue_war(self.state, "player1", war.id, reinforcement_n=1)
-        self.assertFalse(result["success"])
+        sub = self._submit_package([{"war_id": war.id, "checked": False, "mode": "command",
+                                     "target_commander_id": None, "reinforcement_n": 0}])
+        self.assertTrue(sub["success"], sub.get("errors"))
         self.assertEqual(war.status, WarStatus.TRUCE)
+        self._resolve_and_advance()
+        self.assertEqual(war.status, WarStatus.ACTIVE)
+        self.assertIsNone(war.commander_id)
+        self.assertTrue(self.state.is_phase_executed("senate"))
 
     def test_continue_war_api_n_out_of_range(self):
-        """A2：N 超出值域 → 拒绝（fail-closed）。"""
+        """A2 → R5（§3.6）：checked command N 超池 → 整包零发布拒绝（LEGION_POOL_EXCEEDED）。"""
         war = self._make_truce_war(war_id="w_apirange")
-        result = senate_api.continue_war(self.state, "player1", war.id, reinforcement_n=999)
+        result = self._submit_package([{"war_id": war.id, "checked": True, "mode": "command",
+                                        "target_commander_id": 2, "reinforcement_n": 999}])
         self.assertFalse(result["success"])
+        self.assertTrue({"LEGION_POOL_EXCEEDED", "REINFORCEMENT_INVALID"} &
+                        {e.get("code") for e in (result.get("errors") or [])})
         self.assertEqual(war.status, WarStatus.TRUCE)
+        self.assertEqual(war.commander_id, 2)
 
 
 if __name__ == "__main__":

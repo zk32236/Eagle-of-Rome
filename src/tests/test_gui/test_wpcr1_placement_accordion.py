@@ -285,7 +285,7 @@ def test_forum_no_stale_hardcoded_war_state():
 class _MockSenateStore(QObject):
     senateViewChanged = Signal()
 
-    def __init__(self, options, current_step="proposal", can_create=None, parent=None):
+    def __init__(self, options, current_step="proposal", can_create=None, parent=None, war_cards=None):
         super().__init__(parent)
         self._options = options
         self._current_step = current_step
@@ -293,6 +293,12 @@ class _MockSenateStore(QObject):
         self._submitted = []
         self.submit_calls = 0
         self.last_proposals = None
+        self._war_cards = war_cards or []
+
+    @Property(list, notify=senateViewChanged)
+    def senateWarCards(self):
+        """R5（SA §5.1，DA-5）：统一 War Card 投影（无则为空）。"""
+        return self._war_cards
 
     @Property(list, notify=senateViewChanged)
     def senateProposalOptions(self):
@@ -437,6 +443,19 @@ def _real_senate_options():
     return options
 
 
+# R5（SA §2.1/§5.1）：统一 War Card 样本（war 控件归 WarProposalCard，非 bill 卡）
+_WAR_CARDS = [{
+    "war_id": "w1", "war_name": "皮洛士战争", "classification": "ongoing",
+    "is_real_war": True, "war_status": "active", "activation_origin": "active_declaration",
+    "activation_turn": 1, "current_commander_id": 1, "current_commander_label": "执政官",
+    "surviving_legion_count": 0, "peace_capability": False, "allowed_modes": ["command"],
+    "commander_candidates": [{"figure_id": 1, "label": "执政官", "eligible_role": "consul"}],
+    "defaults": {"checked": False, "mode": "command",
+                 "target_commander_id": 1, "reinforcement_n": 0},
+    "view_revision": 1,
+}]
+
+
 def _options_with_ranges():
     """WP-C-R1 遗留 fixture 名：改为真实 producer 派生（结构性关闭手工 shape escape，DA-Plan §4）。"""
     return _real_senate_options()
@@ -447,39 +466,29 @@ def _key_set(root):
 
 
 def test_senate_accordion_expansion_and_controls():
-    """T-ACC-1/2/3 + T014-10 + F-3: 展开状态与选中集一致；war/budget 控件可见可用；onSenateViewChanged 不丢展开。"""
+    """T-ACC-1/2/3 + T014-10 + R5（Plan §4.2 L18）：非 War bill 区控件 + War Card 区控件契约。"""
     options = _options_with_ranges()  # 真实 producer 派生（F-1）
-    store = _MockSenateStore(options)
+    store = _MockSenateStore(options, war_cards=_WAR_CARDS)
     _engine, root = _load_qml("SenateStage.qml", store)
     app = _get_app()
 
-    war_options = [o for o in options if o["type"] == "war"]
     budget_options = [o for o in options if o["type"] == "budget"]
-    assert len(war_options) == 1, "recipe must produce exactly 1 war option"
-    assert len(budget_options) == 1, "recipe must produce exactly 1 budget option"
-    lo = war_options[0]["legion_options"]
+    war_options = [o for o in options if o["type"] == "war"]
+    assert len(budget_options) == 1
+    assert len(war_options) == 1
     br = budget_options[0]["budget_range"]
 
     # F-3 parity 增补：root 级元数据存在；params 无重复 range 元数据（producer 契约）
     assert "legion_options" in war_options[0] and "legion_options" not in war_options[0]["params"]
     assert "budget_range" in budget_options[0] and "budget_range" not in budget_options[0]["params"]
 
-    # T-ACC-2: 展开状态 == 选中集（默认 war/budget，真实 producer 派生；land 不在默认选中集）
+    # T-ACC-2（R5）：默认选中集 = 非 War 提案中的 budget；展开状态 == 选中集
     keys = _key_set(root)
-    assert keys == {o["key"] for o in options if o["type"] in ("war", "peace", "budget")}
+    assert keys == {o["key"] for o in options if o["type"] == "budget"}
     expanded = {str(k) for k in _normalize(root.property("expandedBillKeys"))}
     assert expanded == keys
 
-    # T-ACC-1/T014-10: 控件展开可见（仅有权值域者 enabled）
-    combos = [c for c in _all_items(root) if "ComboBox" in c.metaObject().className() and c.property("enabled") is True]
-    assert len(combos) == 1, f"expected exactly 1 enabled legion ComboBox, got {len(combos)} (T015-11)"
-    combo = combos[0]
-    assert combo.isVisible() is True
-    # T015-13: default 选中 = legion_options.default（真实 producer，default=4 ∈ 池）
-    assert str(combo.property("currentText")) == str(lo["default"])
-    # T015-3: ComboBox model == legion_options.allowed（真实 producer 派生，pool=25）
-    assert _normalize(combo.property("model")) == lo["allowed"]
-
+    # T014-3: budget Slider from/to/stepSize/value == budget_range
     sliders = [s for s in _all_items(root)
                if "Slider" in s.metaObject().className()
                and "Groove" not in s.metaObject().className()
@@ -488,47 +497,73 @@ def test_senate_accordion_expansion_and_controls():
                and s.isVisible()]
     assert len(sliders) == 1, f"expected exactly 1 enabled budget Slider, got {len(sliders)}"
     slider = sliders[0]
-    # T014-3: Slider from/to/stepSize/value == budget_range（真实 producer 派生，非硬编码）
     assert slider.property("from") == br["min"]
     assert slider.property("to") == br["max"]
     assert slider.property("stepSize") == br["step"]
     assert slider.property("value") == br["default"]
 
-    # T-ACC-3: onSenateViewChanged 触发后不丢展开状态（选中集非空 → 仅重跑 expandCheckedBills）
+    # T-ACC-3: onSenateViewChanged 触发后不丢展开状态
     store.senateViewChanged.emit()
     app.processEvents()
     expanded2 = {str(k) for k in _normalize(root.property("expandedBillKeys"))}
     assert expanded2 == keys
-    assert combo.isVisible() is True
+    assert slider.isVisible() is True
+
+    # R5：War Card 控件归 WarProposalCard（Commander ComboBox + N SpinBox 静态值域 0…99）
+    QMetaObject.invokeMethod(root, "setWarDraft", Qt.DirectConnection,
+                             Q_ARG("QVariant", "w1"),
+                             Q_ARG("QVariant", {"checked": True, "mode": "command",
+                                                "target_commander_id": 1, "reinforcement_n": 0}))
+    app.processEvents()
+    war_combos = [c for c in _all_items(root)
+                  if "ComboBox" in c.metaObject().className() and c.isVisible()]
+    assert len(war_combos) == 1, "War Card commander ComboBox 恰一个"
+    assert [m["label"] for m in _normalize(war_combos[0].property("model"))] == ["执政官"]
+    spins = [s for s in _all_items(root)
+             if "SpinBox" in s.metaObject().className() and s.isVisible()]
+    assert len(spins) == 1
+    assert spins[0].property("from") == 0 and spins[0].property("to") == 99
 
     # 折叠 → 控件不可见；再展开 → 恢复（accordion 交互保持）
-    QMetaObject.invokeMethod(root, "toggleBillExpanded", Qt.DirectConnection, Q_ARG("QVariant", "war:w1"))
+    bkey = budget_options[0]["key"]
+    QMetaObject.invokeMethod(root, "toggleBillExpanded", Qt.DirectConnection, Q_ARG("QVariant", bkey))
     app.processEvents()
-    assert "war:w1" not in {str(k) for k in _normalize(root.property("expandedBillKeys"))}
-    assert combo.isVisible() is False
-    QMetaObject.invokeMethod(root, "toggleBillExpanded", Qt.DirectConnection, Q_ARG("QVariant", "war:w1"))
+    assert bkey not in {str(k) for k in _normalize(root.property("expandedBillKeys"))}
+    assert slider.isVisible() is False
+    QMetaObject.invokeMethod(root, "toggleBillExpanded", Qt.DirectConnection, Q_ARG("QVariant", bkey))
     app.processEvents()
-    assert "war:w1" in {str(k) for k in _normalize(root.property("expandedBillKeys"))}
-    assert combo.isVisible() is True
+    assert bkey in {str(k) for k in _normalize(root.property("expandedBillKeys"))}
+    assert slider.isVisible() is True
 
 
 def test_senate_no_individual_legion_selector():
-    """T015-11 + F-4: 无个体军团 ID 选择器（仅数量 ComboBox；model == legion_options.allowed）。"""
+    """T015-11 + R5（Plan §4.2 L18）：无个体军团 ID 选择器——war 控件归 War Card：
+    Commander ComboBox 仅列候选人物（非军团 ID）；N 由数量 SpinBox 承担。"""
     options = _options_with_ranges()
-    store = _MockSenateStore(options)
+    store = _MockSenateStore(options, war_cards=_WAR_CARDS)
     _engine, root = _load_qml("SenateStage.qml", store)
-    combos = [c for c in _all_items(root) if "ComboBox" in c.metaObject().className() and c.property("enabled") is True]
-    assert len(combos) == 1, "only one enabled legion-count ComboBox is allowed"
-    lo = [o for o in options if o["type"] == "war"][0]["legion_options"]
+    app = _get_app()
+    QMetaObject.invokeMethod(root, "setWarDraft", Qt.DirectConnection,
+                             Q_ARG("QVariant", "w1"),
+                             Q_ARG("QVariant", {"checked": True, "mode": "command",
+                                                "target_commander_id": 1, "reinforcement_n": 0}))
+    app.processEvents()
+    combos = [c for c in _all_items(root)
+              if "ComboBox" in c.metaObject().className() and c.isVisible()]
+    assert len(combos) == 1, "仅 War Card commander ComboBox"
     model = _normalize(combos[0].property("model"))
-    assert model == lo["allowed"], "model must be legion_options.allowed (count range [1..pool]), not individual legion IDs"
+    assert model and all(isinstance(m, dict) for m in model), "model 为候选人物对象列表"
+    lo = [o for o in options if o["type"] == "war"][0]["legion_options"]
+    assert model != lo["allowed"], "不得出现军团 ID/数量列表模型（个体选择器退役）"
 
 
 def test_senate_unauthorised_viewer_controls_gated():
-    """AU-R1-03a（AC-R1-03）：非执政官 viewer → 三角 MouseArea/军团 ComboBox/预算 Slider 全禁用。"""
+    """AU-R1-03a（AC-R1-03）+ R5（Plan §4.2 L18）：非执政官 viewer → bill 三角 / 预算 Slider /
+    War Card 控件（Commander ComboBox）全禁用。"""
     options = _options_with_ranges()  # 真实 producer 形状
-    store = _MockSenateStore(options, can_create=False)
+    store = _MockSenateStore(options, can_create=False, war_cards=_WAR_CARDS)
     _engine, root = _load_qml("SenateStage.qml", store)
+    app = _get_app()
 
     # 三角 MouseArea（width==18，billCard 表头）——非执政官禁用
     triangles = [i for i in _all_items(root)
@@ -537,10 +572,15 @@ def test_senate_unauthorised_viewer_controls_gated():
     for tri in triangles:
         assert tri.property("enabled") is False, "non-consul viewer: disclosure triangle must be disabled"
 
-    # 军团 ComboBox——非执政官禁用（原 enabled 仅值域存在判定）
+    # R5：bill-card legion ComboBox 退役；War Card commander ComboBox 非执政官禁用
+    QMetaObject.invokeMethod(root, "setWarDraft", Qt.DirectConnection,
+                             Q_ARG("QVariant", "w1"),
+                             Q_ARG("QVariant", {"checked": True, "mode": "command",
+                                                "target_commander_id": 1, "reinforcement_n": 0}))
+    app.processEvents()
     combos = [c for c in _all_items(root) if "ComboBox" in c.metaObject().className() and c.isVisible()]
     assert len(combos) == 1
-    assert combos[0].property("enabled") is False, "non-consul viewer: legion ComboBox must be disabled"
+    assert combos[0].property("enabled") is False, "non-consul viewer: War Card ComboBox must be disabled"
 
     # 预算 Slider——非执政官禁用
     sliders = [s for s in _all_items(root)
@@ -647,18 +687,27 @@ def test_r2_04_slider_real_shape():
 
 
 def test_r2_05_combo_real_shape():
-    """T-R2-05 (AC-015-R2-3/4): 真实 shape 加载 QML：war ComboBox visible + enabled；model == legion_options.allowed；currentIndex 映射 params.legions。"""
+    """T-R2-05 → R5（Plan §4.2 L18）：war 控件归 WarProposalCard——Commander ComboBox
+    model == commander_candidates（人物）；N SpinBox 静态值域 0…99；bill-card legion ComboBox 退役。"""
     options = _real_senate_options()
-    store = _MockSenateStore(options)
+    store = _MockSenateStore(options, war_cards=_WAR_CARDS)
     _engine, root = _load_qml("SenateStage.qml", store)
-    lo = [o for o in options if o["type"] == "war"][0]["legion_options"]
+    app = _get_app()
+    QMetaObject.invokeMethod(root, "setWarDraft", Qt.DirectConnection,
+                             Q_ARG("QVariant", "w1"),
+                             Q_ARG("QVariant", {"checked": True, "mode": "command",
+                                                "target_commander_id": 1, "reinforcement_n": 0}))
+    app.processEvents()
     combos = [c for c in _all_items(root) if "ComboBox" in c.metaObject().className() and c.isVisible()]
     assert len(combos) == 1
     combo = combos[0]
     assert combo.property("visible") is True
     assert combo.property("enabled") is True
-    assert _normalize(combo.property("model")) == lo["allowed"]
-    assert str(combo.property("currentText")) == str(lo["default"])
+    assert [m["label"] for m in _normalize(combo.property("model"))] == ["执政官"]
+    spins = [s for s in _all_items(root)
+             if "SpinBox" in s.metaObject().className() and s.isVisible()]
+    assert len(spins) == 1
+    assert spins[0].property("from") == 0 and spins[0].property("to") == 99
 
 
 def _click_submit(engine, root):
@@ -716,32 +765,31 @@ def test_r2_06_budget_round_trip():
 
 
 def test_r2_07_legion_round_trip():
-    """T-R2-07 (AC-015-R2-5): ComboBox 选 N=5 → setBillParam（与 onActivated 同源 JS）→ 生产提交 JS → payload legions == 5；war_id 不变。"""
+    """T-R2-07 → R5（Plan §4.2 L18）：War Card draft（N=5）→ selectedProposals() → 生产提交
+    payload war_proposal.reinforcement_n == 5；war_id 不变；真实链提交成功。"""
     from src.ui.gui.api_adapter import GuiApiAdapter
     options = _real_senate_options()
-    store = _MockSenateStore(options)
+    store = _MockSenateStore(options, war_cards=_WAR_CARDS)
     _engine, root = _load_qml("SenateStage.qml", store)
     app = _get_app()
-    war_options = [o for o in options if o["type"] == "war"]
-    lo = war_options[0]["legion_options"]
-    assert 5 in lo["allowed"]
-    QMetaObject.invokeMethod(root, "setBillParam", Qt.DirectConnection,
-                             Q_ARG("QVariant", "war:w1"), Q_ARG("QVariant", "legions"), Q_ARG("QVariant", 5))
+    QMetaObject.invokeMethod(root, "setWarDraft", Qt.DirectConnection,
+                             Q_ARG("QVariant", "w1"),
+                             Q_ARG("QVariant", {"checked": True, "mode": "command",
+                                                "target_commander_id": 1, "reinforcement_n": 5}))
     app.processEvents()
     _click_submit(_engine, root)
     captured = store.last_proposals
     assert captured is not None
-    war_row = [r for r in captured if r.get("type") == "war"][0]
-    assert war_row["params"]["legions"] == 5
-    assert war_row["params"]["war_id"] == "w1"
+    war_row = [r for r in captured if r.get("type") == "war_proposal"][0]
+    assert war_row["reinforcement_n"] == 5
+    assert war_row["war_id"] == "w1"
     state = _build_real_senate_state()
     adapter = GuiApiAdapter(state)
     feedback = adapter.submit_senate_proposals("player1", captured)
     assert feedback["success"], feedback
-    proposals = state.get_senate_proposals()
-    by_type = {p["type"]: p for p in proposals}
-    assert by_type["war"]["legions"] == 5
-    assert by_type["war"]["war_id"] == "w1"
+    wp = [p for p in state.get_senate_proposals() if p["type"] == "war_proposal"][0]
+    assert wp["payload"]["reinforcement_n"] == 5
+    assert wp["war_id"] == "w1"
 
 
 if __name__ == "__main__":
