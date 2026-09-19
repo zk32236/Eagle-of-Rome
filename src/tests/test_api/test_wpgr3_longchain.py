@@ -96,7 +96,9 @@ class TestLongChainFC(unittest.TestCase):
         building = [f for f in state.naval_system.get_all_fleets() if f.is_building]
         assert len(building) == 7
         assert all(f._construction_package_id == contract.id for f in building)
-        s3._finish_year_from_population(state, war.id)             # Y2 余段 → Y3
+        # R6（DA-6 B3c-cont）：零提案空包 Submit 需执政官身份（V0 鉴权）。
+        s3._finish_year_from_population(state, war.id,
+                                        consul_figure_id=ctx["target"].id)   # Y2 余段 → Y3
         # Y3：Revenue 付款（C300/cost240/gross60）→ Forum init → maturity 7 ON_MISSION
         rev = s3._mortality_revenue_round(state)
         rows = rev["data"]["data"]["contract_rows"]
@@ -143,7 +145,7 @@ class TestLongChainFC(unittest.TestCase):
         # Y3 余段（Forum advance → Population → Senate）→ Combat
         state.set_current_player(P1)
         s3._forum_resolve_advance(state)
-        s3._population_round(state, 0)
+        s3._population_round(state, ctx["target"].id)   # R6 V0：空包 Submit 需执政官身份
         s3._senate_resolve_advance(state)
         state.set_current_player(P1)
         # 受控骰子（不 force 海战结果）：dice12 + 18 − 20 = 10 → naval VICTORY
@@ -189,7 +191,7 @@ class TestLongChainLC(unittest.TestCase):
 
         # Y3 余段 → Combat（canonical forced VICTORY → RESOLVED；R1 s1 canonical forced 路径）
         s4._forum_resolve_advance(state)
-        s4._population_round(state, 0)
+        s4._population_round(state, ctx["target"].id)   # R6 V0：空包 Submit 需执政官身份
         s4._senate_resolve_advance(state)
         state.set_current_player(P1)
         state.config.testing.force_naval_result = "VICTORY"
@@ -221,7 +223,7 @@ class TestLongChainLC(unittest.TestCase):
         # Y4 Forum → Population：同批 ids DISBANDED 恰一次
         s4._forum_init(state)
         s4._forum_resolve_advance(state)
-        pop = s4._population_round(state, 0)
+        pop = s4._population_round(state, ctx["target"].id)   # R6 V0：空包 Submit 需执政官身份
         disbanded = sorted(pop["disbandment"]["fleets"])
         self.assertEqual(disbanded, fleet_ids)
         for num in fleet_ids:

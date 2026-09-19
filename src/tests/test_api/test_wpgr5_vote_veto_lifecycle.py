@@ -15,6 +15,13 @@ from src.tests.fixtures.wpgr5_fixtures import (
 
 
 class TestVoteVetoLifecycle(unittest.TestCase):
+    """R6 迁移（B-1 类 route→direct）：Vote/Veto 只适用 **Senate 路由**。
+
+    `war_ongoing`（ongoing 真实 War）的 command 模式在 R6 = `consul_direct`（不产提案、
+    不进 Vote/Veto）⇒ 本组统一改用 `war_threat`（active declaration）的 command 模式：
+    route = `senate_vote`，产真 `war_proposal`；未被 supersede 的命题逐项保留。
+    """
+
     def setUp(self):
         self.ctx = build_r5_base()
         self.state = self.ctx["state"]
@@ -22,13 +29,13 @@ class TestVoteVetoLifecycle(unittest.TestCase):
 
     def _submit_one(self, target=None):
         req = submit_request(war_drafts=[
-            command_draft(FIXED["war_ongoing"], target or self.ctx["cmd_a"].id, reinforcement_n=0)])
+            command_draft(FIXED["war_threat"], target or self.ctx["consul_id"], reinforcement_n=0)])
         result = self.ps.submit_proposal_package("player1", req)
         self.assertTrue(result["success"], result.get("errors"))
         return result["data"]["created"][0]["proposal_id"]
 
     def test_one_card_one_proposal(self):
-        """§20 #20：一 checked card = 恰好一个提案。"""
+        """§20 #20：一 checked card = 恰好一个提案（R6：Senate 路由卡）。"""
         pid = self._submit_one()
         props = self.state.get_senate_proposals()
         self.assertEqual(len(props), 1)
@@ -42,7 +49,7 @@ class TestVoteVetoLifecycle(unittest.TestCase):
         r2 = self.ps.submit_proposal_package(
             "player1",
             submit_request(war_drafts=[
-                command_draft(FIXED["war_ongoing"], self.ctx["cmd_b"].id, reinforcement_n=3)]))
+                command_draft(FIXED["war_threat"], self.ctx["cmd_b"].id, reinforcement_n=3)]))
         self.assertFalse(r2["success"])
         snap_after = self.state.get_senate_proposals()[0]["payload"]
         self.assertEqual(snap_before, snap_after)

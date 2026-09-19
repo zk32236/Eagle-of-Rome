@@ -456,8 +456,8 @@ def _run_full_sc04_chain():
     adv = forum_api.advance_forum_phase(state, P1)
     assert adv["success"], adv.get("message")
 
-    # ── Y2 A5 Population（无 consul 需求 → ABSTAIN）──
-    _population_round(state, consul_figure_id=0)
+    # ── Y2 A5 Population（R6：零提案空包 Submit 需执政官身份 → 选 target）──
+    _population_round(state, consul_figure_id=ctx["target"].id)
 
     # ── Y2 A6 Senate（空提案 Path A）→ combat → resolution → advance_year ──
     # WP-G-R4（OD-R4-05/06 supersede，SA v1.7 §2.3b）：零提案先显式空选择写 P

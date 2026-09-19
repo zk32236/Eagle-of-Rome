@@ -213,24 +213,30 @@ def test_ja_joined_run_senate_takeover_nonempty_vote_advance_combat():
     assert war_a.commander_id is None and not consul.is_absent
     assert state.get_senate_direct_actions() == []
     created = sub["data"]["created"]
-    war_pid = next(c["proposal_id"] for c in created if c["type"] == "war_proposal")
     pid = next(c["proposal_id"] for c in created if c["type"] == "land")
+    # R6（DA-6 B3c-cont2）：War **command 模式 = 执政官 direct 决定**（ConsulWarDecision，
+    # 无 proposal_id，不进 Vote/Veto）——不再产 Senate 提案身份。
+    direct = sub["data"]["direct_decisions"]
+    assert len(direct) == 1 and direct[0]["type"] == "consul_war_decision", direct
+    assert direct[0]["war_id"] == war_a.id
+    assert not [c for c in created if c["type"] == "war_proposal"], "war command 不走提案身份"
+    war_direct_id = direct[0]["direct_decision_id"]
     run.record("proposal-submit", phase="senate", war_id=war_a.id,
                proposal_id=pid, actionseq=2)
 
-    # ③ vote（双 HUMAN 派系真实投票）→ veto（populares 保民官）
+    # ③ vote（双 HUMAN 派系真实投票）→ veto（populares 保民官）——仅 land 走 Vote/Veto
     for player in state._turn_order:
         if state.get_player(player).player_type.value == "human":
             state.set_current_player(player)
-            v = senate_api.vote(state, player, [war_pid, pid], [True, True])
+            v = senate_api.vote(state, player, [pid], [True])
             assert v["success"], f"{player}: {v.get('message')}"
     run.record("vote", phase="senate", war_id=war_a.id, proposal_id=pid, actionseq=3)
     state.set_current_player("player2")
     ve = senate_api.veto(state, "player2", [pid])
     assert ve["success"], ve.get("message")
     run.record("veto", phase="senate", war_id=war_a.id, proposal_id=pid, actionseq=4)
-    # War command 进 Vote/Veto 链（可投票）——proposal 集 = war_proposal + land
-    assert sorted(p["id"] for p in state.get_senate_proposals()) == sorted([war_pid, pid])
+    # R6：War command 为 direct 决定（不进 Vote/Veto）——senate 提案集 = land only
+    assert [p["id"] for p in state.get_senate_proposals()] == [pid]
     state.set_current_player(P1)
 
     # ④ resolve（pending-aware M 放行）→ 真实 R → advance 原子部署

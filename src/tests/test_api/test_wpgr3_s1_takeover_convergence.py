@@ -202,14 +202,23 @@ class TestTr02RequiredCannotBeSkipped(unittest.TestCase):
         self.assertTrue(state.is_phase_executed("senate"))
 
     def test_old_result_present_idempotent_noop_then_advance(self):
-        """R5（Plan §4.2 L2 归零）：旧 R 存在 → resolve 幂等 no-op；advance 仍可推进。"""
+        """R5（Plan §4.2 L2 归零）：R 存在 → resolve 幂等 no-op；advance 仍可推进。
+
+        R6（DA-6 B3c-cont2）：finalization 内部化后，幂等重放要求四完成事实**同版**
+        （真实 phase_result + finalization_receipt）；孤立 stale R 不构成完成事实。
+        故以真实 finalization 完成后 resolve 重放（replayed=True）表达同一命题。
+        """
         state, _consul, _war = _build_state()
-        state.senate_proposal_decision_complete = True
-        state.record_phase_result("senate", {
-            "success": True, "message": "stale", "data": {"direct_actions": [], "public_announcement": {}},
-        })
-        resolved = senate_api.resolve_senate(state)
-        self.assertTrue(resolved["success"])
+        sub = _submit(state, [])
+        self.assertTrue(sub["success"], sub.get("errors"))
+        first = _resolve(state)
+        self.assertTrue(first["success"], first.get("message"))
+        self.assertEqual(first["data"]["public_announcement"]["enacted_proposals"], [])
+        self.assertTrue(state.get_phase_result("senate"))
+        # 重入：四事实同版 → 幂等重放（零二次结算 / 原结果返回）
+        replay = _resolve(state)
+        self.assertTrue(replay["success"], replay.get("message"))
+        self.assertTrue(replay["data"]["replayed"], "R6：完成事实同版 → 幂等重放")
         adv = senate_api.advance_senate_phase(state, P1)
         self.assertTrue(adv["success"], adv.get("message"))
         self.assertTrue(state.is_phase_executed("senate"))

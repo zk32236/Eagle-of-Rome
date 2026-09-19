@@ -94,6 +94,16 @@ def _propose_land(state, player_id, amount_C):
     return res["data"]["proposal_id"]
 
 
+def _propose_lands(state, player_id, amounts):
+    """R6（DA-6 B3c-cont2）：每会期唯一整包 Submit——一次 propose_many 提交多个 land 提案，
+    返回 pid 列表（顺序同 amounts）。旧 repeated `propose()` 同会期第二次起被
+    `PACKAGE_ALREADY_SUBMITTED` 拒（每会期唯一整包）。"""
+    specs = [{"type": "land", "params": {"act_type": "sale", "amount_C": a}} for a in amounts]
+    res = senate_api.propose_many(state, player_id, specs)
+    assert res["success"], res.get("message")
+    return [c["proposal_id"] for c in res["data"]["created"]]
+
+
 def _vote_all_humans(state, pids, support=True):
     for pid in state._turn_order:
         if state.get_player(pid).player_type == PlayerType.HUMAN:
@@ -115,8 +125,7 @@ class TestWpFr2SenateIntermediateProjection(unittest.TestCase):
     def test_r2_01_vote_complete_intermediate_rows_available(self):
         """T-R2-01：投票完成（resolve 前）→ 中间 vote_results 每 submitted proposal 一行。"""
         state = _build_state()
-        pid1 = _propose_land(state, "player1", 50)
-        pid2 = _propose_land(state, "player1", 30)
+        pid1, pid2 = _propose_lands(state, "player1", [50, 30])
         state.senate_proposal_decision_complete = True
         _vote_all_humans(state, [pid1, pid2])
         view = senate_api.get_senate_view(state, "player1")
@@ -171,9 +180,7 @@ class TestWpFr2SenateIntermediateProjection(unittest.TestCase):
     def test_r2_04_mixed_pass_fail_candidates_pass_only(self):
         """T-R2-04：混合 PASS/FAIL → veto_candidate_ids == PASS only。"""
         state = _build_state()
-        pid1 = _propose_land(state, "player1", 50)
-        pid2 = _propose_land(state, "player1", 30)
-        pid3 = _propose_land(state, "player1", 20)
+        pid1, pid2, pid3 = _propose_lands(state, "player1", [50, 30, 20])
         state.senate_proposal_decision_complete = True
         _vote(state, "player1", [pid1, pid2, pid3], [True, False, True])
         # pid2：player1 反对（150 oppose）+ player2 支持（80 support）→ 80/230 = 34.8% 未通过；pid1/pid3 通过
@@ -189,8 +196,7 @@ class TestWpFr2SenateIntermediateProjection(unittest.TestCase):
     def test_r2_05_failed_absent_from_veto_candidate_dto(self):
         """T-R2-05：failed 提案 absent from veto_candidate_ids DTO。"""
         state = _build_state()
-        pid1 = _propose_land(state, "player1", 50)
-        pid2 = _propose_land(state, "player1", 30)
+        pid1, pid2 = _propose_lands(state, "player1", [50, 30])
         state.senate_proposal_decision_complete = True
         _vote(state, "player1", [pid1, pid2], [True, False])
         _vote(state, "player2", [pid1, pid2], [True, True])  # pid2 未通过（80/230）
@@ -204,8 +210,7 @@ class TestWpFr2SenateFailClosed(unittest.TestCase):
 
     def _mixed_state(self):
         state = _build_state()
-        pid1 = _propose_land(state, "player1", 50)
-        pid2 = _propose_land(state, "player1", 30)
+        pid1, pid2 = _propose_lands(state, "player1", [50, 30])
         state.senate_proposal_decision_complete = True
         _vote(state, "player1", [pid1, pid2], [True, False])
         _vote(state, "player2", [pid1, pid2], [True, True])  # pid2 failed（80/230）
@@ -229,12 +234,13 @@ class TestWpFr2SenateFailClosed(unittest.TestCase):
         """T-R2-07：zero passed → current_step="results"、无否决候选、流程收敛。
 
         R3-G-01 §1.5 supersession（Plan §4.2 L5，2026-09-05）：预结算 results 投影（无真实
-        senate phase_result）不再可 advance——settlement-pending 契约（can_advance=False +
-        can_resolve_settlement=True）；resolve 后真实 phase_result 落盘 → can_advance=True。
+        senate phase_result）不可 advance。
+        R6（SA §D.1，DA-4 B1 / DA-6 B3c-cont2）：settlement-pending 可见恢复态**正常态退役**
+        （legacy 键恒 False，`can_resolve_settlement` 恒 False；唯一推进 = advance）；
+        resolve（finalize_senate_if_ready）落真实 phase_result → can_advance=True。
         """
         state = _build_state()
-        pid1 = _propose_land(state, "player1", 50)
-        pid2 = _propose_land(state, "player1", 30)
+        pid1, pid2 = _propose_lands(state, "player1", [50, 30])
         state.senate_proposal_decision_complete = True
         # 双方全投反对 → 全 failed
         _vote_all_humans(state, [pid1, pid2], support=False)
@@ -242,9 +248,9 @@ class TestWpFr2SenateFailClosed(unittest.TestCase):
         data = view["data"]
         self.assertEqual(data["current_step"], "results", "zero-passed 跳过 tribune_veto 直接收敛")
         self.assertEqual(data["veto_candidate_ids"], [])
-        # R3 §1.5：settlement-pending（真实 phase_result 未落盘前不可 advance）
-        self.assertIs(data["senate_settlement_pending"], True)
-        self.assertIs(data["can_resolve_settlement"], True)
+        # R6：settlement-pending 正常态退役（legacy 键恒 False）；真实 phase_result 未落盘前不可 advance
+        self.assertIs(data["senate_settlement_pending"], False)
+        self.assertIs(data["can_resolve_settlement"], False)
         self.assertIs(data["can_advance"], False)
         self.assertIs(data["can_veto"], False)
         self.assertIs(data["can_auto_veto"], False)
@@ -279,8 +285,7 @@ class TestWpFr2SenateIdempotency(unittest.TestCase):
     def test_r2_09_refresh_reentry_stable(self):
         """T-R2-09：refresh ×2 / 另一 viewer 进入 → 支持率不变（幂等）。"""
         state = _build_state()
-        pid1 = _propose_land(state, "player1", 50)
-        pid2 = _propose_land(state, "player1", 30)
+        pid1, pid2 = _propose_lands(state, "player1", [50, 30])
         state.senate_proposal_decision_complete = True
         _vote_all_humans(state, [pid1, pid2], support=True)
         v1 = senate_api.get_senate_view(state, "player1")
@@ -293,8 +298,7 @@ class TestWpFr2SenateIdempotency(unittest.TestCase):
     def test_r2_10_refresh_no_ai_vote_reroll(self):
         """T-R2-10：视图刷新不触发 AI 投票重掷（vote_source 注册表无新增 created 决策）。"""
         state = _build_state(with_ai_faction=True)
-        pid1 = _propose_land(state, "player1", 50)
-        pid2 = _propose_land(state, "player1", 30)
+        pid1, pid2 = _propose_lands(state, "player1", [50, 30])
         state.senate_proposal_decision_complete = True
         _vote_all_humans(state, [pid1, pid2], support=True)
         # 首次投影：AI 派系（equites/player3）首次决策并持久化（created once）

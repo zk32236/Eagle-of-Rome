@@ -11,6 +11,7 @@ import logging
 import logging.handlers
 import os
 import threading
+import uuid
 from typing import Dict, List, Optional, Set, Any, Tuple
 from typing import TYPE_CHECKING
 
@@ -33,6 +34,47 @@ if TYPE_CHECKING:
 
 # FC-06: 年度衰减率（staged settlement 规划器与日志共用，保证单一来源）
 ANNUAL_DECAY_RATES = {"veterans": 0.20, "popularity": 0.50}
+
+# ---------------------------------------------------------------------------
+# R6（SA §B.1，DA-2 B1）：政治双账本 schema 身份常量
+# ---------------------------------------------------------------------------
+#: WarCard / PackageRecord DTO 版本（R6 §A.2/§B.1；**不是** combat envelope 版本）
+SENATE_PACKAGE_SCHEMA_VERSION = 2
+#: ConsulWarDecision DTO 版本（R6 §B.1）
+CONSUL_WAR_DECISION_SCHEMA_VERSION = 1
+#: 服务端持有的 direct decision id 类型前缀（opaque；与 Senate proposal 身份空间分离）
+CONSUL_DIRECT_DECISION_ID_PREFIX = "cwd_"
+#: war_items 唯一性索引允许的 authority 取值（R6 §A.1/§B.1：跨两路由共享同一去重面）
+WAR_ITEM_AUTHORITY_SENATE_VOTE = "senate_vote"
+WAR_ITEM_AUTHORITY_CONSUL_DIRECT = "consul_direct"
+_WAR_ITEM_AUTHORITIES = (WAR_ITEM_AUTHORITY_SENATE_VOTE, WAR_ITEM_AUTHORITY_CONSUL_DIRECT)
+#: R6（SA §C.4，DA-3 B6）兼容边界：R6 存档协议版本（与 execution ID 的 protocol_version 同代）。
+SENATE_ARCHIVE_PROTOCOL_VERSION = 2
+#: R5 及更早存档：无 R6 包/上下文 schema，仅有可只读重放的旧身份 receipt。
+LEGACY_SENATE_ARCHIVE_PROTOCOL_VERSION = 1
+
+
+def _empty_senate_package_ledger() -> Dict[str, Any]:
+    """R6（SA §B.1）：`_senate_package_ledger` 的规范空容器（唯一构造点，防 schema 漂移）。
+
+    - requests：**(senate_session_id, actor_id, submit_request_id)** request key → 成功重放记录
+      （复合字符串键；R6 §B.4 / DA-2 B4 收口——**不得**只以 request_id 跨会期/跨身份命中）
+    - war_snapshots：(senate_session_id, war_id) → immutable Senate WarSnapshot（同会期唯一索引）
+    - contexts：submission_context_id → SubmissionContext（**真注册**，见 build_submission_context）
+    - packages：package_id → PackageRecord（R6 新增）
+    - by_session：senate_session_id → package_id（同会期唯一包；R6 新增）
+    - war_items：(senate_session_id, war_id) → {authority, item_ref}（R6 新增；跨路由 War 唯一性）
+    - consul_war_decisions：(senate_session_id, direct_decision_id) → ConsulWarDecision（R6 新增）
+    """
+    return {
+        "requests": {},
+        "war_snapshots": {},
+        "contexts": {},
+        "packages": {},
+        "by_session": {},
+        "war_items": {},
+        "consul_war_decisions": {},
+    }
 
 
 class GameState:
@@ -153,11 +195,10 @@ class GameState:
         # 永不触碰。零部署副作用：锁承诺不部署（R4-17/R4-18）。
         self._takeover_pending: Optional[dict] = None
 
-        # R5（SA §3.7/§3.8，DA-2）：政治账本 package 提交索引（copy-on-write 根）。
-        # requests: submit_request_id → {fingerprint, package_id, created, snapshots, ...}（重放/reuse 门）
-        # war_snapshots: (senate_session_id, war_id) → immutable WarProposalSnapshot（同会期唯一索引）
-        # contexts: submission_context_id → SubmissionContext 持有者
-        self._senate_package_ledger = {"requests": {}, "war_snapshots": {}, "contexts": {}}
+        # R5（SA §3.7/§3.8，DA-2）+ R6（SA §B.1，DA-2 B1）：政治账本 package 提交索引
+        # （copy-on-write 根）。R6 增 packages / by_session / war_items / consul_war_decisions；
+        # 规范空容器见 _empty_senate_package_ledger()。
+        self._senate_package_ledger = _empty_senate_package_ledger()
 
         # R5（SA §4.8，DA-3）：War resolution 执行账本（单一受锁边界事务的 receipt/decision 载体）。
         # receipts: execution_id → WarExecutionReceipt（含 status/input_fingerprint/proposal_refs）
@@ -168,6 +209,18 @@ class GameState:
         self._senate_session_id: Optional[str] = None
         # R5（SA §4.6）：Senate→Combat 单一受锁临界区（runtime，不序列化）
         self._senate_transaction_lock = threading.Lock()
+        # R6（SA §B.3，DA-2 B3）：临界区持有者标记（非重入守卫；runtime，不序列化）
+        self._senate_transaction_owner: Optional[str] = None
+        # R6（SA §C.4，DA-3 B6）兼容边界：存档分类 + legacy R5 只读快照
+        # （fresh 状态 = R6 同版；legacy 归档在 load 段分类后保留只读副本）。
+        self._senate_archive_compat: dict = self.current_senate_archive_compat()
+        self._senate_legacy_archive: Optional[dict] = None
+
+        # R6（SA §D.1.1，DA-4 B1）：政治 finalization 完成事实账本（完成四事实之④）。
+        # receipts: finalization_id(tuple) → SenateFinalizationReceipt（finalization_id +
+        #   内容指纹 + phase_result 摘要）；by_session: senate_session_id → finalization_id
+        #   （同会期唯一 finalization，幂等重放的查找键）。
+        self._senate_finalization_ledger = {"receipts": {}, "by_session": {}}
 
         # 初始化时调用 reset，确保状态一致性
         self.reset()
@@ -177,12 +230,18 @@ class GameState:
         # WP-G-R4: 全新状态 → 清 pending Takeover commitment（仅整局 reset 路径；
         # clear_senate_pending 永不触碰该字段——跨 settlement 存续由本字段保证）
         self._takeover_pending = None
-        # R5（DA-2）：整局 reset 清空政治账本 package 索引
-        self._senate_package_ledger = {"requests": {}, "war_snapshots": {}, "contexts": {}}
+        # R5（DA-2）+ R6（§B.1，DA-2 B1）：整局 reset 清空政治账本 package 索引（全索引同版）
+        self._senate_package_ledger = _empty_senate_package_ledger()
         # R5（DA-3）：整局 reset 清空 War 执行账本 + 会期身份
         self._war_execution_ledger = {"receipts": {}, "by_session": {}, "decisions": {}}
         self._senate_session_id = None
         self._senate_transaction_lock = threading.Lock()
+        self._senate_transaction_owner = None
+        # R6（SA §C.4，DA-3 B6）：整局 reset 复位兼容边界分类（legacy 只读快照不随 reset 保留）
+        self._senate_archive_compat = self.current_senate_archive_compat()
+        self._senate_legacy_archive = None
+        # R6（SA §D.1.1，DA-4 B1）：整局 reset 清空 finalization 完成事实账本
+        self._senate_finalization_ledger = {"receipts": {}, "by_session": {}}
         self._members.clear()
         self._factions.clear()
         self._treasury = 0
@@ -303,7 +362,19 @@ class GameState:
         return True
 
     def clear_senate_pending(self):
-        """清空所有元老院临时数据"""
+        """清空元老院**投票工作集**（R6 §B.1 语义收窄）。
+
+        R6（SA §B.1，DA-2 B1）：本方法只复位本会期的投票工作集（proposals / votes /
+        vote_source / vetoes / proposal_id_counter / decision_complete / 会期级
+        direct_actions 审计），**绝不触碰**以下跨 settlement 存续的事实账本：
+        `_senate_package_ledger`（packages / by_session / war_items /
+        consul_war_decisions / war_snapshots / contexts）与 `_war_execution_ledger`
+        （receipts / by_session / decisions），也不触碰 `_takeover_pending`。
+
+        注：`direct_actions` 是**会期级已执行边界审计**工作集（R5 P-7 在 clear 前快照
+        供 PA 组装）——FROZEN 的 ConsulWarDecision 只进 consul_war_decisions，
+        禁写本列表（见 record_senate_direct_action 的 fail-closed 守卫）。
+        """
         self._senate_pending = {
             "proposals": [],
             "votes": {},
@@ -325,13 +396,34 @@ class GameState:
     def senate_proposal_decision_complete(self, value: bool) -> None:
         self._senate_pending["decision_complete"] = bool(value)
 
-    def record_senate_direct_action(self, action: dict) -> None:
-        """记录一条已直接生效的元老院动作（如战争接管，不进入 vote/veto 链）。"""
-        self._senate_pending["direct_actions"].append(action)
+    def record_senate_direct_action(self, action: dict) -> bool:
+        """记录一条**已执行边界审计**（如 war_resolution / takeover_deploy）。
+
+        R6（SA §B.1，DA-2 B1）：本列表原义 = 已执行边界审计，仅历史/审计使用；
+        **禁存 FROZEN 的 ConsulWarDecision**（那属 `consul_war_decisions` 独立账本）。
+        fail-closed 守卫（零写入 + 返回 False）拒绝：
+          - 携带 FROZEN direct 决策身份（type=consul_war_decision / decision_state /
+            authority=consul_direct / direct_decision_id）；
+          - 以 `proposal_id` / `proposal_ref` 伪装 Senate 提案身份者。
+        """
+        if not isinstance(action, dict):
+            return False
+        if action.get("type") == "consul_war_decision":
+            return False
+        if action.get("decision_state"):
+            return False
+        if action.get("direct_decision_id"):
+            return False
+        if action.get("authority") == WAR_ITEM_AUTHORITY_CONSUL_DIRECT:
+            return False
+        if "proposal_id" in action or "proposal_ref" in action:
+            return False
+        self._senate_pending["direct_actions"].append(copy.deepcopy(action))
+        return True
 
     def get_senate_direct_actions(self) -> list:
-        """返回本会期直接生效动作列表副本。"""
-        return self._senate_pending["direct_actions"].copy()
+        """返回本会期已执行边界审计列表的**深拷贝**（R6 §B.1：外部不得修改底账）。"""
+        return copy.deepcopy(self._senate_pending["direct_actions"])
 
     # ========== WP-G-R4 (SA v1.7 §2.5): T/V pending Takeover 共享持有者访问器 ==========
 
@@ -356,13 +448,42 @@ class GameState:
     # ========== R5（SA §3.7/§3.8，DA-2）：政治账本 package 索引 ==========
 
     def get_senate_package_registry(self) -> dict:
-        """返回 package 提交账本（requests/war_snapshots/contexts）。只读消费。"""
-        return self._senate_package_ledger
+        """返回 package 提交账本（requests/war_snapshots/contexts/packages/by_session/
+        war_items/consul_war_decisions）的**只读深拷贝快照**（R6 §B.1：外部不得修改底账）。
 
-    def register_senate_package(self, request_id: str, record: dict) -> None:
-        """登记一次成功提交（submit_request_id → 指纹/包身份/created/快照）。"""
-        if request_id:
-            self._senate_package_ledger["requests"][request_id] = copy.deepcopy(record)
+        写入必须走 register_* 系列方法。
+        """
+        return copy.deepcopy(self._senate_package_ledger)
+
+    @staticmethod
+    def senate_submit_request_key(session_id: str, actor_id: str, request_id: str) -> str:
+        """R6（SA §B.4，DA-2 B4）：request key = **(session, actor, request_id)** 三元绑定。
+
+        以复合字符串承载（固定分隔符 ``\x1f``），保持 `requests` 索引仍为**字符串键**
+        （JSON 安全、不依赖 tuple-key 往返、不改变序列化外形）；语义上等价于三元组键——
+        同一 `request_id` 在**不同会期或不同 actor** 下**不得**命中同一条重放记录。
+        """
+        return "\x1f".join([str(session_id or ""), str(actor_id or ""), str(request_id or "")])
+
+    def register_senate_package(self, request_key: str, record: dict) -> None:
+        """登记一次成功提交（request key = **(session, actor, request_id)** → 指纹/包身份/created/快照）。
+
+        R6（SA §B.4，DA-2 B4）：键由 `senate_submit_request_key(...)` 生成；**只有成功提交**
+        才绑定（失败编辑沿用同一 request id 不占键）。
+        """
+        if request_key:
+            self._senate_package_ledger["requests"][request_key] = copy.deepcopy(record)
+
+    def get_senate_submit_request(self, session_id: str, actor_id: str,
+                                  request_id: str) -> Optional[dict]:
+        """按 **(session, actor, request_id)** 取回成功重放记录的**深拷贝**（R6 §B.4）。
+
+        跨会期 / 跨 actor 的同名 request_id **不命中**（返回 None）——收口 baseline
+        「只以 request_id 跨会期命中」的身份泄漏面。
+        """
+        key = self.senate_submit_request_key(session_id, actor_id, request_id)
+        record = self._senate_package_ledger["requests"].get(key)
+        return copy.deepcopy(record) if record is not None else None
 
     def register_submitted_war_snapshot(self, senate_session_id: str, war_id: str,
                                         snapshot: dict) -> None:
@@ -370,11 +491,506 @@ class GameState:
         self._senate_package_ledger["war_snapshots"][(senate_session_id, war_id)] = copy.deepcopy(snapshot)
 
     def get_submitted_war_snapshot(self, senate_session_id: str, war_id: str) -> Optional[dict]:
-        return self._senate_package_ledger["war_snapshots"].get((senate_session_id, war_id))
+        """返回 immutable WarProposalSnapshot 的**深拷贝**（R6 §B.1：外部不得修改底账）。"""
+        snapshot = self._senate_package_ledger["war_snapshots"].get((senate_session_id, war_id))
+        return copy.deepcopy(snapshot) if snapshot is not None else None
 
     def register_submission_context(self, context_id: str, context: dict) -> None:
         if context_id:
             self._senate_package_ledger["contexts"][context_id] = copy.deepcopy(context)
+
+    def get_submission_context(self, context_id: str) -> Optional[dict]:
+        """返回 SubmissionContext 的**深拷贝**（R6 §B.1：外部不得改底账）。"""
+        context = self._senate_package_ledger["contexts"].get(context_id)
+        return copy.deepcopy(context) if context is not None else None
+
+    # ========== R6（SA §B.1，DA-2 B1）：双账本 schema —— Consul direct 决策 /
+    # PackageRecord / war_items 跨路由唯一性 / SubmissionContext 真注册 ==========
+
+    @staticmethod
+    def mint_consul_direct_decision_id() -> str:
+        """生成服务端持有的 opaque `direct_decision_id`（带类型前缀）。
+
+        R6（§B.1）：与 Senate proposal 身份空间完全分离——**不借** `proposal_id_counter`、
+        不以负数/可数 proposal_id 伪装。
+        """
+        return f"{CONSUL_DIRECT_DECISION_ID_PREFIX}{uuid.uuid4().hex}"
+
+    def register_consul_war_decision(self, decision: dict) -> bool:
+        """登记一条 FROZEN `ConsulWarDecision`（键 = (senate_session_id, direct_decision_id)）。
+
+        返回 True = 已登记（深拷贝）；False = fail-closed 拒绝且**零写入**。
+        schema 守卫（SA §B.1）：必填 senate_session_id / direct_decision_id；
+        authority 若给出必须 = consul_direct；decision_state 若给出必须 = FROZEN；
+        出现 `proposal_id` / `proposal_ref` → 拒绝（禁伪装 Senate 提案身份）。
+        缺省的 schema 字段（type/authority/decision_state/schema_version）由本方法补齐。
+        """
+        if not isinstance(decision, dict):
+            return False
+        session_id = decision.get("senate_session_id")
+        direct_id = decision.get("direct_decision_id")
+        if not session_id or not isinstance(direct_id, str) or not direct_id:
+            return False
+        if "proposal_id" in decision or "proposal_ref" in decision:
+            return False
+        if decision.get("authority", WAR_ITEM_AUTHORITY_CONSUL_DIRECT) != WAR_ITEM_AUTHORITY_CONSUL_DIRECT:
+            return False
+        if decision.get("decision_state", "FROZEN") != "FROZEN":
+            return False
+        record = copy.deepcopy(decision)
+        record.setdefault("type", "consul_war_decision")
+        record.setdefault("authority", WAR_ITEM_AUTHORITY_CONSUL_DIRECT)
+        record.setdefault("decision_state", "FROZEN")
+        record.setdefault("schema_version", CONSUL_WAR_DECISION_SCHEMA_VERSION)
+        self._senate_package_ledger["consul_war_decisions"][(session_id, direct_id)] = record
+        return True
+
+    def get_consul_war_decisions(self, senate_session_id: str) -> Dict[str, dict]:
+        """返回该会期全部 FROZEN direct 决策的**深拷贝**（{direct_decision_id: decision}）。
+
+        R6（§B.1）：只读消费；外部修改返回值不影响底账。
+        """
+        out: Dict[str, dict] = {}
+        for (session, direct_id), record in self._senate_package_ledger["consul_war_decisions"].items():
+            if session == senate_session_id:
+                out[direct_id] = copy.deepcopy(record)
+        return out
+
+    def register_senate_package_record(self, record: dict) -> bool:
+        """登记 `PackageRecord`（键 = package_id）并写 by_session 同会期唯一映射。
+
+        R6（§B.1/§B.4）：同一 senate_session_id 的第二包 **fail-closed 拒绝**
+        （未提供 request id 的兼容客户端亦受 by_session 约束）。返回 False = 零写入。
+        """
+        if not isinstance(record, dict):
+            return False
+        package_id = record.get("package_id")
+        session_id = record.get("senate_session_id")
+        if not package_id or not session_id:
+            return False
+        existing = self._senate_package_ledger["by_session"].get(session_id)
+        if existing is not None and existing != package_id:
+            return False
+        stored = copy.deepcopy(record)
+        stored.setdefault("schema_version", SENATE_PACKAGE_SCHEMA_VERSION)
+        stored.setdefault("publication_state", "COMMITTED")
+        self._senate_package_ledger["packages"][package_id] = stored
+        self._senate_package_ledger["by_session"][session_id] = package_id
+        return True
+
+    def get_senate_package_record(self, package_id: str) -> Optional[dict]:
+        record = self._senate_package_ledger["packages"].get(package_id)
+        return copy.deepcopy(record) if record is not None else None
+
+    def get_senate_package_id_for_session(self, senate_session_id: str) -> Optional[str]:
+        return self._senate_package_ledger["by_session"].get(senate_session_id)
+
+    def register_senate_war_item(self, senate_session_id: str, war_id: str, authority: str,
+                                 item_ref: dict) -> bool:
+        """登记跨路由 War 唯一性条目：(session, war_id) 只允许一个 authoritative item。
+
+        R6（§B.1）：Senate proposal 与 Consul direct **共享同一去重面**；同键不同
+        item_ref / 不同 authority → fail-closed 拒绝（零写入）；同 item_ref 幂等（True）。
+        """
+        if not senate_session_id or not war_id or authority not in _WAR_ITEM_AUTHORITIES:
+            return False
+        key = (senate_session_id, war_id)
+        entry = self._senate_package_ledger["war_items"].get(key)
+        if entry is not None:
+            return (entry.get("item_ref") == item_ref and entry.get("authority") == authority)
+        self._senate_package_ledger["war_items"][key] = {
+            "authority": authority, "item_ref": copy.deepcopy(item_ref)}
+        return True
+
+    def get_senate_war_items(self, senate_session_id: Optional[str] = None) -> Dict[Tuple[str, str], dict]:
+        """返回跨路由 War 唯一性索引的**深拷贝**（可按会期过滤）。"""
+        return {key: copy.deepcopy(value)
+                for key, value in self._senate_package_ledger["war_items"].items()
+                if senate_session_id is None or key[0] == senate_session_id}
+
+    def _figure_label(self, figure_id: Optional[int]) -> Optional[str]:
+        """冻结用人物显示名（缺失/未知 → None，不猜名字）。"""
+        if figure_id is None:
+            return None
+        figure = self._members.get(figure_id)
+        if figure is None:
+            return None
+        getter = getattr(figure, "get_formal_name", None)
+        if callable(getter):
+            return getter()
+        return getattr(figure, "name", None)
+
+    def build_submission_context(self, *, context_id: str, senate_session_id: str, actor_id: str,
+                                 package_id: str, turn: int, revision: Any,
+                                 war_ids: List[str], commander_candidates: Optional[list] = None,
+                                 claims: Optional[list] = None,
+                                 drafts: Optional[list] = None) -> dict:
+        """冻结一个 SubmissionContext（R6 §B.1）——纯只读深值快照，供 register_submission_context。
+
+        冻结面：全部传入真实 War 的 current Commander / survivor Legion IDs+bindings /
+        Fleet 相关绑定 / status+episode / pending treaty 完整深值 / claims /
+        可宣战 Commander 候选 / 实际可用 Legion IDs / Province Governor 相关事实 /
+        本次 canonical drafts。**与本次选择无关**：无卡、unchecked、空包同样产出完整上下文。
+
+        **不是 reservation**：不扣池、不改任何 live 事实（调用方负责注册）。
+        """
+        ws = self._war_system
+        ms = self._military_system
+        ns = self._naval_system
+
+        wars: Dict[str, dict] = {}
+        for war_id in sorted({str(w) for w in (war_ids or []) if w}):
+            war = ws.get_war_by_id(war_id) if ws else None
+            if war is None:
+                continue
+            legions = sorted((lg for lg in (ms.get_all_legions() if ms else []) if lg.war_id == war.id),
+                             key=lambda lg: lg.number)
+            fleets = sorted((ft for ft in (ns.get_all_fleets() if ns else []) if ft.assigned_war_id == war.id),
+                            key=lambda ft: ft.number)
+            wars[war_id] = {
+                "war_id": war.id,
+                "war_label": war.name,
+                "status": getattr(war.status, "value", war.status),
+                "activation_origin": war.activation_origin,
+                "activation_episode": war.activation_episode,
+                "activation_turn": war.activation_turn,
+                "current_commander_id": war.commander_id,
+                "current_commander_label": self._figure_label(war.commander_id),
+                "commander_assigned_turn": war.commander_assigned_turn,
+                "original_commander_id": war.original_commander_id,
+                "survivor_legion_ids": [lg.number for lg in legions],
+                "legion_bindings": {str(lg.number): lg.commander_id for lg in legions},
+                "legion_numbers_field": list(war.legion_numbers),
+                "fleet_ids": list(war.assigned_fleet_ids),
+                "fleet_bindings": {
+                    str(ft.number): {"status": getattr(ft.status, "value", ft.status),
+                                     "assigned_war_id": ft.assigned_war_id,
+                                     "commander_id": ft.commander_id}
+                    for ft in fleets},
+                "naval_required": bool(war.naval_required),
+                "rebellion_province_id": war.rebellion_province_id,
+                "peace_treaty": copy.deepcopy(war.peace_treaty),
+                "indemnity_due": war.indemnity_due,
+                "truce_end_turn": war.truce_end_turn,
+            }
+
+        provinces = {
+            str(province.province_id): {
+                "province_id": province.province_id,
+                "name": province.name,
+                "governor_id": province.governor_id,
+                "governor_designate_id": province.governor_designate_id,
+                "governor_type": province.governor_type,
+            }
+            for province in sorted(self.get_all_provinces(), key=lambda p: p.province_id)
+        }
+
+        referenced: Set[Any] = set()
+        for row in wars.values():
+            referenced.add(row["current_commander_id"])
+            referenced.add(row["original_commander_id"])
+            referenced.update(row["legion_bindings"].values())
+            referenced.update(binding["commander_id"] for binding in row["fleet_bindings"].values())
+        for row in provinces.values():
+            referenced.add(row["governor_id"])
+            referenced.add(row["governor_designate_id"])
+        for candidate in (commander_candidates or []):
+            if isinstance(candidate, dict):
+                referenced.add(candidate.get("figure_id"))
+        for claim in (claims or []):
+            if isinstance(claim, dict):
+                referenced.add(claim.get("commander_id"))
+        figures: Dict[str, dict] = {}
+        for figure_id in sorted(x for x in referenced if isinstance(x, int)):
+            figure = self._members.get(figure_id)
+            if figure is None:
+                continue
+            figures[str(figure_id)] = {
+                "figure_id": figure_id,
+                "label": self._figure_label(figure_id),
+                "office": getattr(figure, "office", None),
+                "faction_id": getattr(figure, "faction_id", None),
+                "is_absent": bool(getattr(figure, "is_absent", False)),
+                "is_dead": bool(getattr(figure, "is_dead", False)),
+            }
+
+        return {
+            "schema_version": SENATE_PACKAGE_SCHEMA_VERSION,
+            "kind": "submission_context",
+            "context_id": context_id,
+            "senate_session_id": senate_session_id,
+            "actor_id": actor_id,
+            "package_id": package_id,
+            "frozen_at": {"turn": turn, "revision": revision},
+            "war_ids": sorted(wars.keys()),
+            "wars": wars,
+            "available_legion_ids": (sorted(lg.number for lg in ms.get_available_legions())
+                                     if ms else []),
+            "provinces": provinces,
+            "figures": figures,
+            "commander_candidates": copy.deepcopy(list(commander_candidates or [])),
+            "claims": copy.deepcopy(list(claims or [])),
+            "submitted_drafts": copy.deepcopy(list(drafts or [])),
+        }
+
+    def validate_senate_ledger_consistency(self) -> List[str]:
+        """结构一致性自检（R6 §B.1：加载重建后校验）。返回问题列表（空 = 一致）。"""
+        issues: List[str] = []
+        ledger = self._senate_package_ledger
+        for index in ("requests", "war_snapshots", "contexts", "packages", "by_session",
+                      "war_items", "consul_war_decisions"):
+            if index not in ledger or not isinstance(ledger[index], dict):
+                issues.append(f"missing_or_invalid_index:{index}")
+        if issues:
+            return issues
+        for key in ledger["war_snapshots"]:
+            if not (isinstance(key, tuple) and len(key) == 2 and all(key)):
+                issues.append(f"war_snapshot_key_invalid:{key!r}")
+        for key, value in ledger["war_items"].items():
+            if not (isinstance(key, tuple) and len(key) == 2 and all(key)):
+                issues.append(f"war_item_key_invalid:{key!r}")
+            elif value.get("authority") not in _WAR_ITEM_AUTHORITIES:
+                issues.append(f"war_item_authority_invalid:{key!r}")
+        for key, value in ledger["consul_war_decisions"].items():
+            if not (isinstance(key, tuple) and len(key) == 2 and all(key)):
+                issues.append(f"consul_war_decision_key_invalid:{key!r}")
+            elif "proposal_id" in value:
+                issues.append(f"consul_war_decision_has_proposal_id:{key!r}")
+        for session_id, package_id in ledger["by_session"].items():
+            if package_id not in ledger["packages"]:
+                issues.append(f"by_session_dangling:{session_id}")
+        return issues
+
+    # ---- R6（SA §C.4，DA-3 B6）兼容边界：存档分类 / legacy 只读快照 / 受控重开 ----
+
+    @classmethod
+    def current_senate_archive_compat(cls) -> dict:
+        """当前进程内 R6 同版状态的兼容分类（新实例 / reset 后基线）。"""
+        return cls.classify_senate_archive({"_senate_package_ledger": {}})
+
+    @staticmethod
+    def classify_senate_archive(data: Any) -> dict:
+        """R6（SA §C.4，DA-3 B6）：判定存档与 R6 senate 账本的兼容类别（**纯读**）。
+
+        判据（唯一口径，均由存档自身事实导出，不 live 重造、不伪造上下文）：
+        - 出现 `_senate_package_ledger` 键 → **R6 同版**（`r6_same_version`）；
+        - 无该键但 `_war_execution_ledger` 有 receipt/by_session → **legacy R5 已 COMMITTED**
+          （保持旧身份**只读重放**，`legacy_r5_committed_read_only_replay`）；
+        - 无该键、无 receipt、但有 decision → **legacy R5 已提交未执行中途存档**
+          （**明确版本不兼容**，须受控重新开始会期：
+          `legacy_r5_submitted_unexecuted_incompatible`）；
+        - 其余（无 senate 账本活动）→ `legacy_no_senate_activity`。
+
+        返回键：`protocol_version` / `r6_ledger` / `legacy` / `committed_legacy` /
+        `pending_unexecuted` / `requires_controlled_restart` / `compatible` / `reason`。
+        """
+        def _nonempty(value: Any) -> bool:
+            return bool(value) if isinstance(value, (dict, list, tuple, set, str)) else False
+
+        if not isinstance(data, dict):
+            return {
+                "protocol_version": None, "r6_ledger": False, "legacy": True,
+                "committed_legacy": False, "pending_unexecuted": False,
+                "requires_controlled_restart": False, "compatible": False,
+                "reason": "archive_not_a_mapping",
+            }
+        if "_senate_package_ledger" in data:
+            return {
+                "protocol_version": SENATE_ARCHIVE_PROTOCOL_VERSION, "r6_ledger": True,
+                "legacy": False, "committed_legacy": False, "pending_unexecuted": False,
+                "requires_controlled_restart": False, "compatible": True,
+                "reason": "r6_same_version",
+            }
+        wl = data.get("_war_execution_ledger")
+        wl = wl if isinstance(wl, dict) else {}
+        committed = _nonempty(wl.get("receipts")) or _nonempty(wl.get("by_session"))
+        pending = (not committed) and _nonempty(wl.get("decisions"))
+        if committed:
+            reason = "legacy_r5_committed_read_only_replay"
+        elif pending:
+            reason = "legacy_r5_submitted_unexecuted_incompatible"
+        else:
+            reason = "legacy_no_senate_activity"
+        return {
+            "protocol_version": LEGACY_SENATE_ARCHIVE_PROTOCOL_VERSION, "r6_ledger": False,
+            "legacy": True, "committed_legacy": committed, "pending_unexecuted": pending,
+            "requires_controlled_restart": pending, "compatible": False, "reason": reason,
+        }
+
+    def _encode_legacy_ledger(self, raw_ledger: Any) -> dict:
+        """把 legacy R5 执行账本规范为 **JSON-native** 只读快照（复合键 → rows/list）。
+
+        R6（SA §C.4，DA-3 B6）：legacy 快照要随存档往返保留，故同样**不得**保留
+        tuple 键 dict（R-4 同源约束）。旧外形 mapping 与其 rows/list 外形均接受。
+        """
+        ledger = raw_ledger if isinstance(raw_ledger, dict) else {}
+        decisions = ledger.get("decisions")
+        if isinstance(decisions, dict):
+            encoded_decisions = self._encode_composite_rows(
+                decisions, ("senate_session_id", "proposal_id"), "decision")
+        elif isinstance(decisions, list):
+            encoded_decisions = copy.deepcopy(decisions)
+        else:
+            encoded_decisions = []
+        return {
+            "receipts": copy.deepcopy(ledger.get("receipts") or {}),
+            "by_session": copy.deepcopy(ledger.get("by_session") or {}),
+            "decisions": encoded_decisions,
+        }
+
+    def get_senate_archive_compat(self) -> dict:
+        """返回兼容边界分类的**只读深拷贝**（R6 §C.4）。"""
+        return copy.deepcopy(self._senate_archive_compat or {})
+
+    def get_senate_legacy_archive(self) -> Optional[dict]:
+        """返回 legacy R5 旧快照的**只读深拷贝**（无 legacy 数据 → None）。"""
+        if self._senate_legacy_archive is None:
+            return None
+        return copy.deepcopy(self._senate_legacy_archive)
+
+    def begin_controlled_senate_restart(self) -> dict:
+        """R6（SA §C.4，DA-3 B6）：对「已提交未执行的 legacy R5 中途存档」受控重新开始会期。
+
+        - 仅当加载分类 `requires_controlled_restart` 为真时允许；否则 fail-closed 且**零 mutation**；
+        - 旧快照（旧账本 / 待决决定 / 会期身份 / phase_result）保留在 `_senate_legacy_archive`
+          （**只读**深拷贝，随存档往返保留）；
+        - 仅清 `_senate_pending` 工作集 + 未执行的 legacy 决定 + senate phase 标记，
+          **不迁移为 R6 direct**、**不伪造 R6 SubmissionContext / PackageRecord**
+          （`contexts` / `packages` / `war_items` 保持空 = 非静默伪造）。
+        """
+        compat = self._senate_archive_compat or {}
+        if not compat.get("requires_controlled_restart"):
+            return {"success": False, "code": "SENATE_ARCHIVE_RESTART_NOT_REQUIRED",
+                    "requires_controlled_restart": False,
+                    "message": "当前存档无需受控重开（仅 legacy 已提交未执行中途存档适用）"}
+        prior_session = self._senate_session_id
+        self.clear_senate_pending()
+        self._war_execution_ledger = {
+            "receipts": dict(self._war_execution_ledger.get("receipts") or {}),
+            "by_session": dict(self._war_execution_ledger.get("by_session") or {}),
+            "decisions": {},
+        }
+        self._senate_session_id = None
+        self._phase_results.pop("senate", None)
+        self._executed_phases.discard("senate")
+        self._senate_archive_compat = {
+            "protocol_version": SENATE_ARCHIVE_PROTOCOL_VERSION,
+            "r6_ledger": True, "legacy": True, "committed_legacy": False,
+            "pending_unexecuted": False, "requires_controlled_restart": False,
+            "compatible": True, "reason": "legacy_r5_controlled_restart_done",
+            "controlled_restart_done": True, "restarted_from_session": prior_session,
+        }
+        self.log_event(
+            f"Senate 兼容边界：受控重新开始会期（from={prior_session!r}）；旧快照只读保留",
+            level=logging.WARNING,
+            extra={"type": "senate_archive_controlled_restart",
+                   "restarted_from_session": prior_session})
+        return {"success": True, "code": "SENATE_ARCHIVE_CONTROLLED_RESTART",
+                "restarted_from_session": prior_session,
+                "legacy_snapshot_preserved": self._senate_legacy_archive is not None,
+                "r6_context_fabricated": False}
+
+    # ---- 序列化原语（R6 §B.1：复合键 rows/list 编码；不依赖 tuple-key JSON 往返） ----
+
+    @staticmethod
+    def _encode_composite_rows(mapping: dict, key_fields: Tuple[str, ...],
+                               value_field: Optional[str] = None) -> List[dict]:
+        """把复合键 mapping 编码为 rows/list（确定性排序；value_field=None 时整行内联）。"""
+        rows: List[dict] = []
+        for key in sorted(mapping.keys(), key=lambda k: tuple(str(x) for x in k)):
+            row = {field: key[position] for position, field in enumerate(key_fields)}
+            if value_field is None:
+                row.update(copy.deepcopy(mapping[key]))
+            else:
+                row[value_field] = copy.deepcopy(mapping[key])
+            rows.append(row)
+        return rows
+
+    def _encode_senate_package_ledger(self) -> dict:
+        """序列化 package 账本（R6 §B.1）：复合键索引一律 rows/list。"""
+        ledger = self._senate_package_ledger
+        return {
+            "requests": copy.deepcopy(ledger["requests"]),
+            "war_snapshots": self._encode_composite_rows(
+                ledger["war_snapshots"], ("senate_session_id", "war_id"), "snapshot"),
+            "contexts": copy.deepcopy(ledger["contexts"]),
+            "packages": copy.deepcopy(ledger["packages"]),
+            "by_session": copy.deepcopy(ledger["by_session"]),
+            "war_items": self._encode_composite_rows(
+                ledger["war_items"], ("senate_session_id", "war_id")),
+            "consul_war_decisions": self._encode_composite_rows(
+                ledger["consul_war_decisions"], ("senate_session_id", "direct_decision_id"),
+                "decision"),
+        }
+
+    def _encode_war_execution_ledger(self) -> dict:
+        """序列化 War 执行账本（R6 §B.1）：decisions 复合键 rows/list 编码。"""
+        ledger = self._war_execution_ledger
+        return {
+            "receipts": copy.deepcopy(ledger["receipts"]),
+            "by_session": copy.deepcopy(ledger["by_session"]),
+            "decisions": self._encode_composite_rows(
+                ledger["decisions"], ("senate_session_id", "proposal_id"), "decision"),
+        }
+
+    def _encode_senate_finalization_ledger(self) -> dict:
+        """序列化 finalization receipt 账本（R6 §D.1.1，DA-4 B2 / R-B1-1）。
+
+        receipt = 四完成事实之一，必须与 ①②③ 同版进存档；幂等键 tuple 不能作 JSON key，
+        故 receipts 一律 **rows 外形**（每行自带 `finalization_id` / `finalization_id_list`）。
+        """
+        ledger = self._senate_finalization_ledger
+        rows = []
+        for _fid, receipt in (ledger.get("receipts") or {}).items():
+            row = copy.deepcopy(receipt) if isinstance(receipt, dict) else {}
+            if "finalization_id" not in row:
+                row["finalization_id"] = list(_fid) if isinstance(_fid, (tuple, list)) else _fid
+            if "finalization_id_list" not in row:
+                row["finalization_id_list"] = [str(part) for part in (
+                    _fid if isinstance(_fid, (tuple, list)) else (_fid,))]
+            rows.append(row)
+        return {"receipts": rows, "by_session": dict(ledger.get("by_session") or {})}
+
+    def _rebuild_composite_key_map(self, raw: Any, key_fields: Tuple[str, ...],
+                                   value_field: Optional[str], label: str) -> dict:
+        """加载重建复合键索引（R6 §B.1）：接受新 rows/list 外形与旧 mapping 外形。
+
+        结构非法/键维度不符者跳过并记 warning（不崩、不静默编造）；重建后由
+        `validate_senate_ledger_consistency()` 自检。
+        """
+        out: dict = {}
+        if isinstance(raw, dict):  # 旧存档外形（tuple/list/str 键）
+            for key, value in raw.items():
+                parts = tuple(key) if isinstance(key, (tuple, list)) else (key,)
+                if len(parts) != len(key_fields) or any(part is None for part in parts):
+                    self.log_event(f"Senate 账本重建异常[{label}]: 键维度不符 {key!r}",
+                                   level=logging.WARNING,
+                                   extra={"type": "senate_ledger_rebuild_invalid", "label": label})
+                    continue
+                out[parts] = copy.deepcopy(value)
+            return out
+        if raw is None:
+            return out
+        if not isinstance(raw, list):
+            self.log_event(f"Senate 账本重建异常[{label}]: 外形非法 {type(raw).__name__}",
+                           level=logging.WARNING,
+                           extra={"type": "senate_ledger_rebuild_invalid", "label": label})
+            return out
+        for row in raw:
+            if not isinstance(row, dict):
+                self.log_event(f"Senate 账本重建异常[{label}]: 行非 dict", level=logging.WARNING,
+                               extra={"type": "senate_ledger_rebuild_invalid", "label": label})
+                continue
+            key = tuple(row.get(field) for field in key_fields)
+            if any(part is None for part in key):
+                self.log_event(f"Senate 账本重建异常[{label}]: 行缺键 {row!r}", level=logging.WARNING,
+                               extra={"type": "senate_ledger_rebuild_invalid", "label": label})
+                continue
+            if value_field is None:
+                out[key] = {k: copy.deepcopy(v) for k, v in row.items() if k not in key_fields}
+            else:
+                out[key] = copy.deepcopy(row.get(value_field))
+        return out
 
     # ========== R5（SA §4.1/§4.8，DA-3）：War resolution 执行账本（决策 + receipt） ==========
 
@@ -385,16 +1001,124 @@ class GameState:
     def get_senate_session(self) -> Optional[str]:
         return self._senate_session_id
 
+    # ---- R6（SA §B.3，DA-2 B3）：政治发布事务的受锁 / 快照 / 恢复原语 ----
+
+    def acquire_senate_transaction(self, owner: str) -> None:
+        """获取政治临界区锁（复用 `_senate_transaction_lock`；**非重入**）。
+
+        R6（§B.3）：publish / boundary / finalization 三类事务共享同一把
+        `threading.Lock`，**互不嵌套、单次外层持锁**；同一 state 上已有事务持锁时
+        再次进入 → fail-closed 抛错（不静默死锁，不重复 acquire）。
+        """
+        if self._senate_transaction_owner is not None:
+            raise RuntimeError(
+                "senate transaction is non-reentrant "
+                f"(held by {self._senate_transaction_owner!r}, requested by {owner!r})")
+        self._senate_transaction_lock.acquire()
+        self._senate_transaction_owner = owner
+
+    def release_senate_transaction(self, owner: str) -> None:
+        """释放政治临界区锁（owner 标记复位；幂等防护：仅持有者释放）。"""
+        if self._senate_transaction_owner != owner:
+            return
+        self._senate_transaction_owner = None
+        self._senate_transaction_lock.release()
+
+    def snapshot_senate_publication_domains(self) -> dict:
+        """捕获 Submit 发布前 S0（R6 §B.3 快照域）。
+
+        域 = `_senate_pending` 全体 + `_senate_package_ledger` 全体 + `_senate_session_id`。
+        **不复用** `snapshot_war_resolution_domains`（该方法当前**不**捕获
+        `_senate_session_id`；误用会造成会期身份泄漏出事务域）。
+        """
+        return {
+            "senate_pending": copy.deepcopy(self._senate_pending),
+            "senate_package_ledger": copy.deepcopy(self._senate_package_ledger),
+            "senate_session_id": self._senate_session_id,
+        }
+
+    def restore_senate_publication_domains(self, snapshot: dict) -> None:
+        """确定性恢复 S0（R6 §B.3）：整域替换原快照，**不**调用可能再次失败的业务 mutator。"""
+        self._senate_pending = copy.deepcopy(snapshot["senate_pending"])
+        self._senate_package_ledger = copy.deepcopy(snapshot["senate_package_ledger"])
+        self._senate_session_id = snapshot["senate_session_id"]
+
+    # ---- R6（SA §D.1.1，DA-4 B1）：政治 finalization 受锁 / 快照 / 恢复 / 完成事实原语 ----
+
+    def snapshot_senate_finalization_domains(self) -> dict:
+        """捕获 political finalization 前 S0（R6 §D.1.1 完成协议快照域）。
+
+        域 = `_senate_pending` 全体（含 `decision_complete` / `direct_actions`）
+        + `_phase_results` 全体 + `_war_execution_ledger` 全体（final outcome 冻结）
+        + `_senate_finalization_ledger` 全体（receipt）+ 非 War 效果/政治步骤可达写域
+        （`_treasury` / `_treasury_deficit_turns` / 全部 figure `__dict__` / 全部
+        province `__dict__`，覆盖 `assign_governors` 的 `set_governor_designate` 与
+        `is_absent` 写）。
+
+        **不含军事域**（战争容器 / 军团 / 舰队）——依 §D.1.1「军事 hook 不在此事务」：
+        本事务零军事写，回滚面因此**不含**军事域，也**不得**撤销合法政治结果。
+        **不复用** `snapshot_senate_publication_domains`（其域不含 phase/决议/政治步骤写）。
+        """
+        return {
+            "senate_pending": copy.deepcopy(self._senate_pending),
+            "phase_results": copy.deepcopy(self._phase_results),
+            "war_execution_ledger": copy.deepcopy(self._war_execution_ledger),
+            "senate_finalization_ledger": copy.deepcopy(self._senate_finalization_ledger),
+            "treasury": self._treasury,
+            "treasury_deficit_turns": self._treasury_deficit_turns,
+            "figures": {fid: copy.deepcopy(dict(fig.__dict__))
+                        for fid, fig in self._members.items()},
+            "provinces": {pid: copy.deepcopy(dict(prov.__dict__))
+                          for pid, prov in self._provinces.items()},
+        }
+
+    def restore_senate_finalization_domains(self, snapshot: dict) -> None:
+        """确定性恢复 S0（R6 §D.1.1）：整域替换原快照，**不**重跑业务 mutator、
+        **不**从已清空临时集重建结果（先清后写禁令的落地面）。"""
+        self._senate_pending = copy.deepcopy(snapshot["senate_pending"])
+        self._phase_results = copy.deepcopy(snapshot["phase_results"])
+        self._war_execution_ledger = copy.deepcopy(snapshot["war_execution_ledger"])
+        self._senate_finalization_ledger = copy.deepcopy(snapshot["senate_finalization_ledger"])
+        self._treasury = snapshot["treasury"]
+        self._treasury_deficit_turns = snapshot["treasury_deficit_turns"]
+        for fid, figsnap in snapshot["figures"].items():
+            fig = self._members.get(fid)
+            if fig is not None:
+                fig.__dict__.clear()
+                fig.__dict__.update(copy.deepcopy(figsnap))
+        for pid, provsnap in snapshot["provinces"].items():
+            prov = self._provinces.get(pid)
+            if prov is not None:
+                prov.__dict__.clear()
+                prov.__dict__.update(copy.deepcopy(provsnap))
+
+    def record_senate_finalization_receipt(self, receipt: dict) -> None:
+        """登记 finalization receipt（完成四事实之④；与 ①②③ 同一 commit 写入）。"""
+        finalization_id = receipt["finalization_id"]
+        self._senate_finalization_ledger["receipts"][finalization_id] = copy.deepcopy(receipt)
+        self._senate_finalization_ledger["by_session"][receipt["senate_session_id"]] = finalization_id
+
+    def get_senate_finalization_receipt(self, senate_session_id: str) -> Optional[dict]:
+        """按会期身份取 finalization receipt（幂等重放的完成事实查询）。"""
+        fid = self._senate_finalization_ledger["by_session"].get(senate_session_id)
+        if fid is None:
+            return None
+        return self._senate_finalization_ledger["receipts"].get(fid)
+
+    def has_senate_finalization_receipt(self, senate_session_id: str) -> bool:
+        return senate_session_id in self._senate_finalization_ledger["by_session"]
+
     def record_war_decision(self, senate_session_id: str, proposal_id, decision: dict) -> None:
         """冻结一条 WarProposalDecision（final outcome）；Results 清理不销毁。"""
         self._war_execution_ledger["decisions"][(senate_session_id, proposal_id)] = copy.deepcopy(decision)
 
     def get_war_decisions(self) -> dict:
-        """返回全部 War 决策（(session, proposal_id) → decision）。只读消费。"""
-        return self._war_execution_ledger["decisions"]
+        """返回全部 War 决策（(session, proposal_id) → decision）的**只读深拷贝快照**。"""
+        return copy.deepcopy(self._war_execution_ledger["decisions"])
 
     def get_war_execution_ledger(self) -> dict:
-        return self._war_execution_ledger
+        """返回 War 执行账本的**只读深拷贝快照**（R6 §B.1：外部不得修改底账）。"""
+        return copy.deepcopy(self._war_execution_ledger)
 
     def get_war_execution_receipt(self, execution_id: str) -> Optional[dict]:
         return self._war_execution_ledger["receipts"].get(execution_id)
@@ -455,6 +1179,13 @@ class GameState:
                     "indemnity_due": war.indemnity_due,
                     "truce_end_turn": war.truce_end_turn,
                     "legion_numbers": list(war.legion_numbers),
+                    # R6（SA §C.3/§C.5.1，DA-3 B2）：补齐 **实际 helper 可达写域** ——
+                    # 自动层/hook 与 `_apply_peace_effects` 会写 War.assigned_fleet_ids
+                    # （naval recall → `war.remove_fleet`）、`War.legions_assigned` /
+                    # `War.fleets_assigned`（C.5.1 枚举面）；不回滚即部分生效。
+                    "assigned_fleet_ids": list(war.assigned_fleet_ids),
+                    "legions_assigned": war.legions_assigned,
+                    "fleets_assigned": war.fleets_assigned,
                 }
         if ms is not None:
             for legion in ms.get_all_legions():
@@ -504,6 +1235,9 @@ class GameState:
                 war._indemnity_due = wsnap["indemnity_due"]
                 war._truce_end_turn = wsnap["truce_end_turn"]
                 war._legion_numbers[:] = list(wsnap["legion_numbers"])
+                war._assigned_fleet_ids[:] = list(wsnap.get("assigned_fleet_ids", []))
+                war.legions_assigned = wsnap.get("legions_assigned", 0)
+                war.fleets_assigned = wsnap.get("fleets_assigned", 0)
         if ms is not None:
             for number, lsnap in snap["legions"].items():
                 legion = ms.get_legion_by_number(number)
@@ -990,10 +1724,16 @@ class GameState:
                 "direct_actions": [a.copy() for a in self._senate_pending["direct_actions"]],
             },
             "_pending_land_sale_quota": self._pending_land_sale_quota,
-            # R5（SA §5.4，DA-5）：政治账本 + 执行账本 + 会期身份同版序列化（禁止半套恢复）
-            "_senate_package_ledger": copy.deepcopy(self._senate_package_ledger),
-            "_war_execution_ledger": copy.deepcopy(self._war_execution_ledger),
+            # R5（SA §5.4，DA-5）+ R6（§B.1，DA-2 B1）：政治账本 + 执行账本 + 会期身份同版
+            # 序列化（禁止半套恢复）；R6 起复合键索引一律 rows/list 编码，不依赖 tuple-key JSON
+            # 反序列化（见 _encode_senate_package_ledger / _encode_war_execution_ledger）。
+            "_senate_package_ledger": self._encode_senate_package_ledger(),
+            "_war_execution_ledger": self._encode_war_execution_ledger(),
+            # R6（SA §D.1.1，DA-4 B2 / R-B1-1）：finalization receipt（四完成事实之④）同版存档
+            "_senate_finalization_ledger": self._encode_senate_finalization_ledger(),
             "_senate_session_id": self._senate_session_id,
+            # R6（SA §C.4，DA-3 B6）：legacy R5 只读快照（受控重开前保留；无 legacy → None）
+            "_senate_legacy_archive": copy.deepcopy(self._senate_legacy_archive),
         }
         return data
 
@@ -1159,24 +1899,118 @@ class GameState:
         # WP-G-R4: pending Takeover commitment 为 session 级内存 commitment，存档往返不要求
         # 保留（设计 §12 无 Save/Load 迁移）；load 一律置 None 防旧对象残留（无回归 smoke）
         self._takeover_pending = None
-        # R5（DA-2）：load 重建 package 账本（新容器；旧存档缺键 → 空，不残留旧对象）
+        # R6（SA §C.4，DA-3 B6）兼容边界：以**存档自身事实**分类（纯读），legacy 保留只读快照。
+        # 硬约束（B2-PM-3 / B5-PM-2）：**不得静默伪造 R6 上下文** —— 分类不写 contexts/packages。
+        self._senate_archive_compat = self.classify_senate_archive(data)
+        if self._senate_archive_compat.get("r6_ledger"):
+            preserved = data.get("_senate_legacy_archive") if isinstance(data, dict) else None
+            self._senate_legacy_archive = (
+                copy.deepcopy(preserved) if isinstance(preserved, dict) else None)
+        else:
+            raw_pending = data.get("_senate_pending") if isinstance(data, dict) else {}
+            raw_ledger = data.get("_war_execution_ledger") if isinstance(data, dict) else {}
+            raw_results = data.get("_phase_results") if isinstance(data, dict) else {}
+            self._senate_legacy_archive = {
+                "protocol_version": LEGACY_SENATE_ARCHIVE_PROTOCOL_VERSION,
+                "senate_session_id": data.get("_senate_session_id") if isinstance(data, dict) else None,
+                "turn": ((data.get("_turn") or {}).get("turn_number")
+                         if isinstance(data.get("_turn"), dict) else None),
+                "war_execution_ledger": self._encode_legacy_ledger(raw_ledger),
+                "senate_pending": copy.deepcopy(raw_pending if isinstance(raw_pending, dict) else {}),
+                "phase_result_senate": copy.deepcopy(
+                    (raw_results or {}).get("senate") if isinstance(raw_results, dict) else None),
+            }
+            self.log_event(
+                f"Senate 兼容边界：legacy R5 存档（{self._senate_archive_compat['reason']}）；"
+                "旧快照只读保留，不伪造 R6 上下文",
+                level=logging.WARNING,
+                extra={"type": "senate_archive_legacy_detected",
+                       "reason": self._senate_archive_compat["reason"],
+                       "requires_controlled_restart":
+                           self._senate_archive_compat["requires_controlled_restart"]})
+
+        # R5（DA-2）+ R6（§B.1，DA-2 B1）：load 重建 package 账本（全索引同版；旧存档缺键 → 空，
+        # 不残留旧对象）；复合键索引从 rows/list 重建（兼容旧 mapping 外形），重建后自检一致性。
         ledger = data.get("_senate_package_ledger", {}) if isinstance(data, dict) else {}
-        self._senate_package_ledger = {
-            "requests": {k: v for k, v in (ledger.get("requests", {}) or {}).items()},
-            "war_snapshots": {k: v for k, v in (ledger.get("war_snapshots", {}) or {}).items()},
-            "contexts": {k: v for k, v in (ledger.get("contexts", {}) or {}).items()},
-        }
-        # R5（DA-3）：load 重建 War 执行账本（同版根：receipt/decision/phase 一套）；
+        if not isinstance(ledger, dict):
+            ledger = {}
+        self._senate_package_ledger = _empty_senate_package_ledger()
+        self._senate_package_ledger["requests"] = dict(ledger.get("requests", {}) or {})
+        self._senate_package_ledger["contexts"] = dict(ledger.get("contexts", {}) or {})
+        self._senate_package_ledger["packages"] = dict(ledger.get("packages", {}) or {})
+        self._senate_package_ledger["by_session"] = dict(ledger.get("by_session", {}) or {})
+        self._senate_package_ledger["war_snapshots"] = self._rebuild_composite_key_map(
+            ledger.get("war_snapshots", {}), ("senate_session_id", "war_id"),
+            "snapshot", "war_snapshots")
+        self._senate_package_ledger["war_items"] = self._rebuild_composite_key_map(
+            ledger.get("war_items", {}), ("senate_session_id", "war_id"),
+            None, "war_items")
+        self._senate_package_ledger["consul_war_decisions"] = self._rebuild_composite_key_map(
+            ledger.get("consul_war_decisions", {}), ("senate_session_id", "direct_decision_id"),
+            "decision", "consul_war_decisions")
+        # R5（DA-3）+ R6（§B.1）：load 重建 War 执行账本（同版根：receipt/decision/phase 一套）；
         # 旧存档缺键 → 空（不残留旧对象）；runtime 锁恒为全新。
         wl = data.get("_war_execution_ledger", {}) if isinstance(data, dict) else {}
+        if not isinstance(wl, dict):
+            wl = {}
         self._war_execution_ledger = {
             "receipts": dict(wl.get("receipts", {}) or {}),
             "by_session": dict(wl.get("by_session", {}) or {}),
-            "decisions": {tuple(k) if isinstance(k, list) else k: v
-                          for k, v in (wl.get("decisions", {}) or {}).items()},
+            "decisions": self._rebuild_composite_key_map(
+                wl.get("decisions", {}), ("senate_session_id", "proposal_id"),
+                "decision", "war_decisions"),
         }
         self._senate_session_id = data.get("_senate_session_id")
+        # R6（SA §C.4，DA-3 B6）：receipt 身份字段 JSON 规范化复原 —— `commit_revision`
+        # 在线形态 = tuple，经**真实 JSON 存档**后为 list；加载复原为 tuple，保证
+        # 「存读后身份一致」（真实 serializer round-trip 的复原面）。
+        for _receipt in self._war_execution_ledger["receipts"].values():
+            if isinstance(_receipt, dict):
+                _revision = _receipt.get("commit_revision")
+                if isinstance(_revision, list):
+                    _receipt["commit_revision"] = tuple(_revision)
+        # R6（SA §D.1.1，DA-4 B2 / R-B1-1）：load 重建 finalization receipt 账本（receipt = 四
+        # 完成事实之一）。旧存档缺键（legacy 无 receipt）→ 空 → 再查询走**补齐**分支（合法保留）。
+        # 幂等键 tuple 经真实 JSON 存档后为 list：按 receipt 自带 `finalization_id` 复原 tuple，
+        # 并由 rows 重建 `by_session`，保证存读后 `finalization_id` 与指纹**逐字相等**。
+        fl = data.get("_senate_finalization_ledger", {}) if isinstance(data, dict) else {}
+        if not isinstance(fl, dict):
+            fl = {}
+        self._senate_finalization_ledger = {"receipts": {}, "by_session": {}}
+        raw_finalization_receipts = fl.get("receipts", [])
+        if isinstance(raw_finalization_receipts, dict):  # 兼容 mapping 外形
+            raw_finalization_receipts = list(raw_finalization_receipts.values())
+        for _row in (raw_finalization_receipts or []):
+            if not isinstance(_row, dict):
+                continue
+            _fid = _row.get("finalization_id")
+            if isinstance(_fid, list):
+                _fid = tuple(_fid)
+            if _fid is None:
+                _fid_list = _row.get("finalization_id_list")
+                if isinstance(_fid_list, list) and _fid_list:
+                    _fid = tuple(_fid_list)
+            if _fid is None:
+                continue
+            _row["finalization_id"] = _fid
+            self._senate_finalization_ledger["receipts"][_fid] = _row
+            _sess = _row.get("senate_session_id")
+            if _sess is not None:
+                self._senate_finalization_ledger["by_session"][str(_sess)] = _fid
+        for _sess, _fid in dict(fl.get("by_session") or {}).items():
+            if isinstance(_fid, list):
+                _fid = tuple(_fid)
+            if isinstance(_fid, tuple):
+                self._senate_finalization_ledger["by_session"].setdefault(str(_sess), _fid)
         self._senate_transaction_lock = threading.Lock()
+        self._senate_transaction_owner = None
+        # R6（§B.1）：加载重建后自检（不一致不崩，记 warning 交上层处置）
+        _ledger_issues = self.validate_senate_ledger_consistency()
+        if _ledger_issues:
+            self.log_event(f"Senate 账本加载一致性自检异常: {_ledger_issues}",
+                           level=logging.WARNING,
+                           extra={"type": "senate_ledger_consistency_issue",
+                                  "issues": list(_ledger_issues)})
 
         # Phase 2 新增：恢复待售公地配额
         self._pending_land_sale_quota = data.get("_pending_land_sale_quota", 0)
@@ -1278,12 +2112,18 @@ class GameState:
         }
         # WP-G-R4 (SA v1.7 §2.5): T/V 共享持久持有者（与 _senate_pending 兄弟字段）
         instance._takeover_pending = None
-        # R5（DA-2）：测试实例 package 账本
-        instance._senate_package_ledger = {"requests": {}, "war_snapshots": {}, "contexts": {}}
+        # R5（DA-2）+ R6（§B.1，DA-2 B1）：测试实例 package 账本（与 __init__/reset 同 schema）
+        instance._senate_package_ledger = _empty_senate_package_ledger()
         # R5（DA-3）：测试实例 War 执行账本 + 会期身份 + 受锁临界区
         instance._war_execution_ledger = {"receipts": {}, "by_session": {}, "decisions": {}}
         instance._senate_session_id = None
         instance._senate_transaction_lock = threading.Lock()
+        instance._senate_transaction_owner = None
+        # R6（SA §C.4，DA-3 B6）：测试实例兼容边界分类（与 __init__/reset 同 schema）
+        instance._senate_archive_compat = cls.current_senate_archive_compat()
+        instance._senate_legacy_archive = None
+        # R6（SA §D.1.1，DA-4 B1）：测试实例 finalization 完成事实账本（同 schema）
+        instance._senate_finalization_ledger = {"receipts": {}, "by_session": {}}
 
         return instance
 
@@ -2630,6 +3470,8 @@ class WarResolutionTransaction:
     commit → 精确回滚 S0（零部分变更，S0 深值完全保留）。
     """
 
+    _OWNER = "war_resolution"
+
     def __init__(self, state: GameState):
         self.state = state
         self._lock = state._senate_transaction_lock
@@ -2638,7 +3480,9 @@ class WarResolutionTransaction:
         self._committed = False
 
     def __enter__(self) -> "WarResolutionTransaction":
-        self._lock.acquire()
+        # R6（§B.3，DA-2 B3）：改走 state 级非重入守卫（同一 state 上已有
+        # publish/boundary/finalization 事务持锁 → fail-closed 抛错，不静默死锁）。
+        self.state.acquire_senate_transaction(self._OWNER)
         self._acquired = True
         self._snap = self.state.snapshot_war_resolution_domains()
         self._committed = False
@@ -2656,6 +3500,112 @@ class WarResolutionTransaction:
         finally:
             self._snap = None
             if self._acquired:
-                self._lock.release()
+                self.state.release_senate_transaction(self._OWNER)
+                self._acquired = False
+        return False
+
+
+class SenateFinalizationTransaction:
+    """R6（SA §D.1.1，DA-4 B1）政治 finalization 单一受锁原子事务（**非重入**）。
+
+    进入 → 经 `state.acquire_senate_transaction("senate_finalization")` 获取
+    `state._senate_transaction_lock`（非重入：同一 state 已有 publish / boundary /
+    finalization 事务持锁 → fail-closed 抛错）并捕获 S0（
+    `snapshot_senate_finalization_domains`：pending + phase_results + 决议账本 +
+    finalization 账本 + 非 War 效果/政治步骤写域）。
+
+    **锁序硬约束**：本事务与 `SenatePackageTransaction` / `WarResolutionTransaction`
+    三者互不嵌套（同一非重入 `threading.Lock`，嵌套即死锁）；finalization 与 boundary
+    是同一会期状态机的前后两段，串行执行，绝不并发持锁。
+
+    `commit()` = 线性化点（完成四事实已同版写入：phase_result / final outcome 冻结 /
+    pending 清理标记 / receipt）；异常或未 commit → 精确恢复 S0（pending 完整、非 War
+    效果未生效、receipt 未写）。
+    """
+
+    _OWNER = "senate_finalization"
+
+    def __init__(self, state: GameState):
+        self.state = state
+        self._acquired = False
+        self._snap: Optional[dict] = None
+        self._committed = False
+
+    def __enter__(self) -> "SenateFinalizationTransaction":
+        self.state.acquire_senate_transaction(self._OWNER)
+        self._acquired = True
+        try:
+            self._snap = self.state.snapshot_senate_finalization_domains()
+        except Exception:
+            self.state.release_senate_transaction(self._OWNER)
+            self._acquired = False
+            raise
+        self._committed = False
+        return self
+
+    def commit(self) -> None:
+        """线性化点：此后异常不再回滚（完成四事实已同版写入）。"""
+        self._committed = True
+        self._snap = None
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        try:
+            if (exc_type is not None or not self._committed) and self._snap is not None:
+                self.state.restore_senate_finalization_domains(self._snap)
+        finally:
+            self._snap = None
+            if self._acquired:
+                self.state.release_senate_transaction(self._OWNER)
+                self._acquired = False
+        return False
+
+
+class SenatePackageTransaction:
+    """R6（SA §B.3，DA-2 B3）Submit 发布单一受锁原子事务（**非重入**）。
+
+    进入 → 经 `state.acquire_senate_transaction` 获取 `state._senate_transaction_lock`
+    （非重入：同一 state 已有 publish/boundary/finalization 事务持锁则抛错）并捕获 S0
+    （`_senate_pending` 全体 + `_senate_package_ledger` 全体 + `_senate_session_id`）。
+
+    整包发布（prepare → 循环 add/register → 会话/完成标记 → commit 前断言）均在同一
+    非重入临界区内；只有 `commit()` 才是线性化点。异常 / 未 commit → 精确恢复 S0
+    （零部分发布：proposal counter、全部索引、context、session、完成标记全恢复），
+    `__exit__` 无条件释放锁（snapshot 抛错同样释放）。
+    """
+
+    _OWNER = "senate_package_publish"
+
+    def __init__(self, state: GameState):
+        self.state = state
+        self._acquired = False
+        self._snap: Optional[dict] = None
+        self._committed = False
+
+    def __enter__(self) -> "SenatePackageTransaction":
+        self.state.acquire_senate_transaction(self._OWNER)
+        self._acquired = True
+        try:
+            self._snap = self.state.snapshot_senate_publication_domains()
+        except Exception:
+            # snapshot 裁错：尚未写入任何发布事实 → 安全失败且必须释放锁
+            self.state.release_senate_transaction(self._OWNER)
+            self._acquired = False
+            raise
+        self._committed = False
+        return self
+
+    def commit(self) -> None:
+        """线性化点：此后异常不再回滚（政治发布已同版写入）。"""
+        self._committed = True
+        self._snap = None
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        try:
+            if (exc_type is not None or not self._committed) and self._snap is not None:
+                self.state.restore_senate_publication_domains(self._snap)
+        finally:
+            self._snap = None
+            if self._acquired:
+                self.state.release_senate_transaction(self._OWNER)
                 self._acquired = False
         return False

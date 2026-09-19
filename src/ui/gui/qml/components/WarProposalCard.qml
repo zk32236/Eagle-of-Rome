@@ -13,8 +13,12 @@ Rectangle {
     property var card: ({})
     property var draft: ({})
     property var commanderCandidates: []
+    // R6（SA §B.5，DA-2 B5）：卡级结构化错误（由 SenateStage 从
+    // sessionStore.senateSubmitErrorsByWar[war_id] 注入；按 field 定位）。
+    property var cardErrors: []
     property bool peaceCapable: false
     property bool editable: true
+    property bool errorDetailsExpanded: false
 
     signal draftEdited(string warId, var newDraft)
 
@@ -26,6 +30,18 @@ Rectangle {
                                 ? parseInt(draft.reinforcement_n, 10) : 0
     readonly property var currentTarget: (draft && draft.target_commander_id !== undefined)
                                          ? draft.target_commander_id : null
+
+    // R6（SA §A.2）：authority route 唯一来源 = card.authority_by_mode[draft.mode]；
+    // QML 只渲染、零推断（不得据 classification/status/名字/是否有将领推导 route）。
+    readonly property var authorityMap: (card && card.authority_by_mode) ? card.authority_by_mode : ({})
+    readonly property string authority: (authorityMap[mode] !== undefined) ? String(authorityMap[mode]) : ""
+    readonly property bool routeReady: authority === "senate_vote" || authority === "consul_direct"
+
+    function authorityLabel() {
+        if (authority === "senate_vote") return "元老院表决"
+        if (authority === "consul_direct") return "执政官决定 · 待推进执行"
+        return ""
+    }
 
     Layout.fillWidth: true
     implicitHeight: col.implicitHeight + 12
@@ -44,6 +60,10 @@ Rectangle {
     }
 
     function emitDraft(patch) {
+        // R6（SA §A.2）fail-closed：缺 route 的卡禁止提交（不 fallback direct）。
+        if (!cardRoot.routeReady && patch && patch.checked) {
+            return
+        }
         var next = {}
         if (cardRoot.draft) {
             for (var k in cardRoot.draft) {
@@ -63,6 +83,76 @@ Rectangle {
         return -1
     }
 
+    // R6（SA §D.2，DA-4 B4）：指挥官完整身份可读——绑定面（RENDER 归 SO）。
+    // 不猜名字：只取候选 label 或 Core 提供的 current/冻结 label；两者皆无 → 明示不可用。
+    readonly property bool commandSelected: cardRoot.checkedNow && !cardRoot.isPeace
+    readonly property bool identityIsCandidate: cardRoot.candidateIndex() >= 0
+    readonly property string candidateIdentityLabel: {
+        var idx = cardRoot.candidateIndex()
+        if (idx < 0) return ""
+        return cardRoot.labelOf(commanderCandidates[idx])
+    }
+    readonly property string coreIdentityLabel: (card && card.current_commander_label !== undefined
+                                                 && card.current_commander_label !== null)
+                                                ? String(card.current_commander_label) : ""
+    // 提交后只读摘要的完整冻结身份（Core 快照 `target_commander_label`；只读态 = !editable）
+    readonly property string frozenIdentityLabel: (card && card.target_commander_label !== undefined
+                                                   && card.target_commander_label !== null)
+                                                  ? String(card.target_commander_label) : ""
+
+    function labelOf(entry) {
+        if (!entry) return ""
+        if (entry.label !== undefined && entry.label !== null) return String(entry.label)
+        return ""
+    }
+
+    readonly property string identityText: {
+        if (!cardRoot.commandSelected) return ""
+        if (cardRoot.identityIsCandidate && cardRoot.candidateIdentityLabel !== "")
+            return cardRoot.candidateIdentityLabel
+        // 当前 ID 不在候选 → Core current/冻结 label + ID 提示不可选（**不猜名字**）
+        var base = cardRoot.coreIdentityLabel !== "" ? cardRoot.coreIdentityLabel
+                                                     : "（身份不可用，请刷新下拉候选）"
+        var idStr = (cardRoot.currentTarget === null || cardRoot.currentTarget === undefined)
+                    ? "-" : String(cardRoot.currentTarget)
+        return base + "（当前 ID " + idStr + " 不在候选，不可选）"
+    }
+
+    // R6（SA §B.5，DA-2 B5）：卡级错误渲染（code + 按 field 定位 + pool 三值）。
+    function cardErrorText(item) {
+        var code = (item && item.code) ? String(item.code) : ""
+        var field = (item && item.field) ? String(item.field) : ""
+        var msg = (item && item.message) ? String(item.message) : ""
+        var out = code
+        if (field) out += " · " + field
+        if (msg) out += "：" + msg
+        return out
+    }
+    function poolLine(item) {
+        // R6（SA §B.5，DA-4 B5）：pool 三值显示必须读 **Core 权威 details 键**
+        // （`requested_total` / `available_total` / `reduce_by`，见 political_system
+        // LEGION_POOL_EXCEEDED 生产者）；兼容 `requested`/`available` 旧别名。
+        var d = (item && item.details) ? item.details : ({});
+        var requested = (d.requested !== undefined) ? d.requested : d.requested_total
+        var available = (d.available !== undefined) ? d.available : d.available_total
+        if (requested === undefined && available === undefined && d.reduce_by === undefined) return ""
+        return "请求 " + ((requested !== undefined) ? requested : "-")
+             + " / 可用 " + ((available !== undefined) ? available : "-")
+             + " / 需削减 " + ((d.reduce_by !== undefined) ? d.reduce_by : "-")
+    }
+    function errorDetailsText() {
+        var rows = []
+        for (var i = 0; i < cardRoot.cardErrors.length; i++) {
+            var item = cardRoot.cardErrors[i]
+            var code = (item && item.code) ? String(item.code) : ""
+            var det = (item && item.details) ? item.details : ({})
+            var detStr = ""
+            try { detStr = JSON.stringify(det) } catch (e) { detStr = "" }
+            rows.push(code + "  " + detStr)
+        }
+        return rows.join("\n")
+    }
+
     ColumnLayout {
         id: col
         anchors.fill: parent
@@ -75,7 +165,7 @@ Rectangle {
 
             CheckBox {
                 id: checkBox
-                enabled: cardRoot.editable
+                enabled: cardRoot.editable && cardRoot.routeReady
                 checked: cardRoot.checkedNow
                 onToggled: cardRoot.emitDraft({"checked": checked})
             }
@@ -88,6 +178,81 @@ Rectangle {
                 font.bold: true
                 Layout.fillWidth: true
                 elide: Text.ElideRight
+            }
+
+            // R6（SA §A.2）：authority 只读渲染（route 唯一来源 = card.authority_by_mode[mode]）
+            Text {
+                visible: cardRoot.routeReady
+                text: cardRoot.authorityLabel()
+                color: "#6B4E00"
+                font.pixelSize: 11
+                font.bold: true
+            }
+        }
+
+        // R6（SA §A.2）fail-closed：缺 route → 提示数据不可用 + 禁本卡提交（不 fallback direct）
+        Text {
+            Layout.fillWidth: true
+            visible: !cardRoot.routeReady
+            text: "⚠ 路由数据不可用：请刷新后重试（此卡暂不可提交）"
+            color: "#B00020"
+            font.pixelSize: 11
+            wrapMode: Text.Wrap
+        }
+
+        // R6（SA §B.5，DA-2 B5）：卡级 `cardErrors`（按 field 定位）+ pool 三值
+        // （requested / available / reduce_by）+ code 可展开详情可取。
+        ColumnLayout {
+            Layout.fillWidth: true
+            visible: cardRoot.cardErrors.length > 0
+            spacing: 2
+
+            Text {
+                text: "⚠ 此卡错误"
+                color: "#B00020"
+                font.pixelSize: 11
+                font.bold: true
+            }
+
+            Repeater {
+                model: cardRoot.cardErrors
+                delegate: ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 1
+                    Text {
+                        Layout.fillWidth: true
+                        text: cardRoot.cardErrorText(modelData)
+                        color: "#B00020"
+                        font.pixelSize: 11
+                        wrapMode: Text.Wrap
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        visible: cardRoot.poolLine(modelData) !== ""
+                        text: cardRoot.poolLine(modelData)
+                        color: "#8A5A00"
+                        font.pixelSize: 11
+                    }
+                }
+            }
+
+            Text {
+                text: cardRoot.errorDetailsExpanded ? "收起详情 ▲" : "展开详情 ▼"
+                color: "#6B4E00"
+                font.pixelSize: 11
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: cardRoot.errorDetailsExpanded = !cardRoot.errorDetailsExpanded
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: cardRoot.errorDetailsExpanded
+                text: cardRoot.errorDetailsText()
+                color: "#4A3A20"
+                font.pixelSize: 10
+                wrapMode: Text.Wrap
             }
         }
 
@@ -126,6 +291,7 @@ Rectangle {
 
             ComboBox {
                 id: commanderCombo
+                objectName: "warCardCommanderCombo"
                 Layout.fillWidth: true
                 enabled: cardRoot.editable
                 model: cardRoot.commanderCandidates
@@ -133,6 +299,27 @@ Rectangle {
                 valueRole: "figure_id"
                 currentIndex: cardRoot.candidateIndex()
                 onActivated: cardRoot.emitDraft({"target_commander_id": model[currentIndex].figure_id})
+                // R6（SA §D.2，DA-4 B4）：hover/focus tooltip 提供完整 label
+                ToolTip.delay: 250
+                ToolTip.text: cardRoot.identityIsCandidate ? cardRoot.candidateIdentityLabel
+                                                          : cardRoot.identityText
+                ToolTip.visible: commanderCombo.hovered || commanderCombo.activeFocus
+                // R6（SA §D.2，DA-4 B4）：候选 delegate 提供完整 label（避免只选中后才可识别）
+                delegate: ItemDelegate {
+                    id: commanderComboDelegate
+                    width: commanderCombo.width
+                    contentItem: Text {
+                        text: cardRoot.labelOf(modelData)
+                        color: "#2C1E12"
+                        font.pixelSize: 12
+                        // 完整 label（换行、不截断）
+                        wrapMode: Text.Wrap
+                        elide: Text.ElideNone
+                    }
+                    ToolTip.delay: 250
+                    ToolTip.text: cardRoot.labelOf(modelData)
+                    ToolTip.visible: commanderComboDelegate.hovered
+                }
             }
 
             Text {
@@ -151,6 +338,55 @@ Rectangle {
                 editable: true
                 Layout.preferredWidth: 70
                 onValueModified: cardRoot.emitDraft({"reinforcement_n": value})
+            }
+        }
+
+        // R6（SA §D.2，DA-4 B4）：ComboBox 下的**完整身份**（仅 command 已选时可见；
+        // wrap、**不 elide**；绑定当前 candidate label；非候选 ID → Core current/冻结
+        // label + 不可选提示，**不猜名字**）。RENDER/键盘焦点验证归 SO（帧
+        // `r6-war-card-long-commander`〔r〕）。
+        Text {
+            id: commanderIdentity
+            objectName: "warCardCommanderIdentity"
+            Layout.fillWidth: true
+            visible: cardRoot.commandSelected
+            text: cardRoot.identityText
+            color: cardRoot.identityIsCandidate ? "#2C1E12" : "#B00020"
+            font.pixelSize: 11
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+            activeFocusOnTab: true
+            ToolTip.delay: 250
+            ToolTip.text: cardRoot.identityText
+            ToolTip.visible: identityHover.hovered || commanderIdentity.activeFocus
+            MouseArea {
+                id: identityHover
+                anchors.fill: parent
+                hoverEnabled: true
+                acceptedButtons: Qt.NoButton
+            }
+        }
+
+        // R6（SA §D.2，DA-4 B4）：提交后**只读摘要**——完整 frozen
+        // `target_commander_label`（Core 快照；wrap 不 elide；只读态 = !editable）。
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 1
+            visible: !cardRoot.editable && cardRoot.frozenIdentityLabel !== ""
+            Text {
+                text: "已提交指挥官（只读）"
+                color: "#6B4E00"
+                font.pixelSize: 11
+                font.bold: true
+            }
+            Text {
+                objectName: "warCardFrozenCommanderLabel"
+                Layout.fillWidth: true
+                text: cardRoot.frozenIdentityLabel
+                color: "#2C1E12"
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+                elide: Text.ElideNone
             }
         }
     }

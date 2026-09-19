@@ -131,9 +131,13 @@ class TestSenateAPI(unittest.TestCase):
 
         proposals = self.state.get_senate_proposals()
         self.assertEqual(len(proposals), 1)
-        self.assertEqual(proposals[0]["type"], "war")
+        # R6（SA §A.3/§B.2，DA-2 B2）：威胁战 = active declaration ⇒ route=senate_vote 真提案；
+        # canonical War Proposal v2 快照（type=war_proposal / schema_version=2 / 参数嵌套 payload）。
+        self.assertEqual(proposals[0]["type"], "war_proposal")
+        self.assertEqual(proposals[0]["schema_version"], 2)
+        self.assertEqual(proposals[0]["authority"], "senate_vote")
         self.assertEqual(proposals[0]["war_id"], "war1")
-        self.assertEqual(proposals[0]["legions"], 6)
+        self.assertEqual(proposals[0]["payload"]["reinforcement_n"], 6)
 
     def test_propose_not_consul(self):
         # 将当前玩家改为非执政官派系
@@ -235,9 +239,15 @@ class TestSenateAPI(unittest.TestCase):
         self.assertEqual(war.peace_treaty["status"], "pending")
         # proposal 携带深冻结副本（改 War treaty 不影响已提交副本）
         proposal = self.state.get_senate_proposals()[0]
-        self.assertEqual(proposal["treaty"]["status"], "pending")
+        # R6（SA §B.2，DA-2 B2）：Peace 走 canonical War Proposal v2（mode=peace）；深冻结 treaty
+        # 副本位于 payload.treaty_snapshot（无顶层 treaty / 无 live alias）。
+        self.assertEqual(proposal["type"], "war_proposal")
+        self.assertEqual(proposal["schema_version"], 2)
+        self.assertEqual(proposal["mode"], "peace")
+        self.assertEqual(proposal["authority"], "senate_vote")
+        self.assertEqual(proposal["payload"]["treaty_snapshot"]["status"], "pending")
         war.peace_treaty["status"] = "tampered"
-        self.assertEqual(proposal["treaty"]["status"], "pending")
+        self.assertEqual(proposal["payload"]["treaty_snapshot"]["status"], "pending")
 
 class TestGovernorEligibility(unittest.TestCase):
     def setUp(self):
@@ -706,8 +716,11 @@ class TestWP05VParamsPassthrough(unittest.TestCase):
 
         proposals = self.state.get_senate_proposals()
         by_type = {p["type"]: p for p in proposals}
-        self.assertEqual(by_type["war"]["war_id"], "w1")
-        self.assertEqual(by_type["war"]["legions"], 8)
+        # R6（SA §A.3/§B.2）：威胁战（active declaration）→ canonical War Proposal v2
+        self.assertEqual(by_type["war_proposal"]["war_id"], "w1")
+        self.assertEqual(by_type["war_proposal"]["schema_version"], 2)
+        self.assertEqual(by_type["war_proposal"]["authority"], "senate_vote")
+        self.assertEqual(by_type["war_proposal"]["payload"]["reinforcement_n"], 8)
         self.assertEqual(by_type["budget"]["contract_id"], contract.id)
         self.assertEqual(by_type["budget"]["modified_budget"], 120)
         # AU-7：land payload 主字段 amount_C（int）；percent 派生（默认公地 1000 → 300/1000 = 0.3）
@@ -953,7 +966,9 @@ class TestLegionOptionsDerivation(unittest.TestCase):
         result = senate_api.propose(state, "player1", "war", war_id="w1", legions=4)
         self.assertTrue(result["success"])
         proposals = state.get_senate_proposals()
-        self.assertEqual(proposals[0]["legions"], 4)
+        # R6（SA §A.3/§B.2）：war command 经 canonical War Proposal v2 快照（参数嵌套 payload）
+        self.assertEqual(proposals[0]["type"], "war_proposal")
+        self.assertEqual(proposals[0]["payload"]["reinforcement_n"], 4)
 
     def test_legion_options_missing_config_returns_none(self):
         # 防御：config 缺 senate_war_legions → None（不伪造 [2,4,6,8,10]）

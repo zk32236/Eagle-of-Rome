@@ -69,11 +69,20 @@ class TestSenateZeroProposal(unittest.TestCase):
     # ---------------- Path A：执政官 0 提案 ----------------
 
     def test_propose_many_empty_batch_sets_decision_complete(self):
-        """Path A 入口：空批 → success + decision_complete=True + view step=results（0 提案跳过 vote/veto）。"""
+        """Path A 入口：空批 → success + decision_complete=True + view step=results（0 提案跳过 vote/veto）。
+
+        R6（DA-6 B3c-cont2）：显式提交空包 → **真注册 PackageRecord/Context**，消息随整包门面
+        取代（旧「未提交法案」→「已提交整包」）；无「完成结算」步骤。
+        """
         result = senate_api.propose_many(self.state, "player1", [])
         self.assertTrue(result["success"])
-        self.assertIn("未提交法案", result["message"])
+        self.assertEqual(result["message"], "已提交整包")
         self.assertEqual(result["data"]["created"], [])
+        # 真注册 PackageRecord / SubmissionContext（非仅生成 UUID）
+        self.assertTrue(result["data"]["package_id"])
+        self.assertTrue(result["data"]["submission_context_id"])
+        self.assertIsNotNone(self.state.get_senate_package_record(result["data"]["package_id"]))
+        self.assertIsNotNone(self.state.get_submission_context(result["data"]["submission_context_id"]))
         self.assertTrue(self.state.senate_proposal_decision_complete)
 
         view = senate_api.get_senate_view(self.state, "player1")
@@ -115,8 +124,9 @@ class TestSenateZeroProposal(unittest.TestCase):
 
         WP-F R2-01（Task Package §7.4）：零通过提案不进入 tribune_veto——禁止「否决空集」幽灵工作。
         R3-G-01 §1.5 supersession（Plan §4.2 L4，2026-09-05）：预结算 results 投影（无真实
-        senate phase_result）不再可 advance——settlement-pending 契约：can_advance=False +
-        can_resolve_settlement=True；resolve 后真实 phase_result 落盘 → can_advance=True。
+        senate phase_result）不可 advance。
+        R6（DA-6 B3c-cont2）：settlement-pending 可见恢复态**正常态退役**（legacy 键恒 False，
+        `can_resolve_settlement` 恒 False）；resolve 落真实 phase_result → can_advance=True。
         """
         self.state.senate_proposal_decision_complete = True
         pid = self.state.add_senate_proposal({"type": "war", "war_id": "w1", "legions": 4, "consul_id": 1})
@@ -127,9 +137,9 @@ class TestSenateZeroProposal(unittest.TestCase):
         # WP-F R2-01：zero-passed → current_step="results"（跳过 tribune_veto，流程直接收敛）
         self.assertEqual(view["data"]["current_step"], "results")
         self.assertEqual(view["data"]["veto_candidate_ids"], [])
-        # R3 §1.5：预结算 results 无真实 phase_result → settlement_pending（不可 advance，恢复动作可见）
-        self.assertIs(view["data"]["senate_settlement_pending"], True)
-        self.assertIs(view["data"]["can_resolve_settlement"], True)
+        # R6：settlement-pending 正常态退役（legacy 键恒 False）；无真实 phase_result 不可 advance
+        self.assertIs(view["data"]["senate_settlement_pending"], False)
+        self.assertIs(view["data"]["can_resolve_settlement"], False)
         self.assertIs(view["data"]["can_advance"], False)
 
         resolved = senate_api.resolve_senate(self.state)
@@ -203,14 +213,18 @@ class TestSenateZeroProposal(unittest.TestCase):
 
         feedback = store.doSubmitSenateProposals([])
         self.assertTrue(feedback["success"])
-        # AI proposer 已执行（0 提案）+ P=true；无隐式 resolve → settlement-pending 可见
+        # R6（DA-6 B3c-cont2）：AI proposer 已执行（0 提案）+ 空包**真注册**；Submit 后服务端
+        # 自动 finalization（真实 R）→ 无「完成结算」动作位，唯一推进 = 恰一次 advance。
         self.assertEqual(store.senateCurrentStep, "results")
-        self.assertTrue(store.senateSettlementPending)
-        self.assertFalse(store.canAdvanceSenate, "R4：无真实 R 不可推进（显式结算才可）")
-        recovery = store.doResolveSenateSettlement()
-        self.assertTrue(recovery["success"], recovery.get("message"))
+        self.assertFalse(store.senateSettlementPending)
+        self.assertFalse(store.canResolveSenateSettlement)
+        self.assertTrue((feedback["data"].get("finalization") or {}).get("finalized"))
+        self.assertIsNotNone(self.state.get_senate_package_id_for_session(
+            self.state.get_senate_session()))
         self.assertTrue(self.state.get_phase_result("senate"))
-        self.assertTrue(store.canAdvanceSenate)
+        self.assertTrue(store.canAdvanceSenate, "R6：空包自动 finalization → 真实 R 可推进")
+        self.assertTrue(store.doAdvanceSenate()["success"])
+        self.assertTrue(self.state.is_phase_executed("senate"))
 
     def test_session_store_consul_empty_batch_resolve_hook(self):
         """Path A（WP-G-R4 supersede）：执政官空批 → P=true → 显式结算（settlement 恢复入口）→
@@ -222,13 +236,18 @@ class TestSenateZeroProposal(unittest.TestCase):
         self.assertTrue(store.canCreateSenateProposal)
         feedback = store.doSubmitSenateProposals([])
         self.assertTrue(feedback["success"])
-        # 提交空批合法（无死锁）；显式结算后 results 可推进
+        # R6（DA-6 B3c-cont2）：提交空批合法（无死锁）+ 真注册包；自动 finalization（真实 R）
+        # → 无「完成结算」动作位，唯一推进 = 恰一次 advance。
         self.assertEqual(store.senateCurrentStep, "results")
-        self.assertTrue(store.senateSettlementPending)
-        recovery = store.doResolveSenateSettlement()
-        self.assertTrue(recovery["success"], recovery.get("message"))
+        self.assertFalse(store.senateSettlementPending)
+        self.assertFalse(store.canResolveSenateSettlement)
+        self.assertTrue((feedback["data"].get("finalization") or {}).get("finalized"))
+        self.assertIsNotNone(self.state.get_senate_package_id_for_session(
+            self.state.get_senate_session()))
         self.assertTrue(self.state.get_phase_result("senate"))
         self.assertTrue(store.canAdvanceSenate)
+        self.assertTrue(store.doAdvanceSenate()["success"])
+        self.assertTrue(self.state.is_phase_executed("senate"))
 
 
 if __name__ == "__main__":

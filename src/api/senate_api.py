@@ -5,8 +5,11 @@
 """
 
 import copy
+import hashlib
+import json
 import logging
 import random
+import uuid
 from typing import Any, Dict, List, Optional
 
 from src.api import api_response
@@ -19,8 +22,12 @@ from src.core.deciders.tribune_veto_decider import TribuneVetoDecider
 from src.core.entities.contract import ContractType, ContractStatus
 from src.core.entities.figure import Figure
 from src.core.entities.war import WarStatus
-from src.core.game_state import GameState
-from src.core.systems.political_system import PoliticalSystem, _tribune_absent_guard
+from src.core.game_state import GameState, SenateFinalizationTransaction
+from src.core.systems.political_system import (
+    AUTHORITY_SENATE_VOTE,
+    PoliticalSystem,
+    _tribune_absent_guard,
+)
 
 
 def _political_system(state: GameState) -> PoliticalSystem:
@@ -319,6 +326,68 @@ def _submitted_proposal_rows(state: GameState) -> List[Dict[str, Any]]:
     return rows
 
 
+# R6（SA §D.4，DA-4 B3）：Results / PA 三身份文案锚点（QML 只渲染，禁自行推断）。
+# 真 Senate 获批行 =「元老院批准 · 待边界执行」；Consul 冻结 direct 行 =
+# 「执政官决定 · 待推进到战斗阶段执行」；COMMITTED 后由边界 receipt 证明实际已执行。
+SENATE_ENACTED_ROW_LABEL = "元老院批准 · 待边界执行"
+CONSUL_DIRECT_ROW_LABEL = "执政官决定 · 待推进到战斗阶段执行"
+CONSUL_DIRECT_EXECUTED_LABEL = "执政官决定 · 已执行（边界 receipt）"
+
+
+def _consul_direct_decision_rows(state: GameState,
+                                 senate_session_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """D.4：会期 FROZEN `ConsulWarDecision` 只读投影（**整个会期可读**）。
+
+    - 身份 = `item_ref`（冻结 `snapshot_ref`）：刷新 / 离开重入 / SaveLoad 后按同一
+      `item_ref` 重取同一冻结内容。**行内不出现 `proposal_id` 键**（不混用 display row
+      ID 与 proposal_id；direct ID 为带类型前缀 opaque string）。
+    - `execution` 只有边界 receipt（`WarExecutionReceipt.status == COMMITTED`）能翻成
+      `executed`；边界前恒 `awaiting_boundary`（不宣称早部署）。
+    - 排序稳定（`war_id`, `direct_decision_id`）——与账本迭代/存档外形无关。
+    """
+    session_id = senate_session_id or state.get_senate_session()
+    if not session_id:
+        return []
+    receipt = state.get_war_execution_receipt_for_session(session_id) or {}
+    executed = receipt.get("status") == "COMMITTED"
+    rows: List[Dict[str, Any]] = []
+    for direct_id, record in (state.get_consul_war_decisions(session_id) or {}).items():
+        payload = record.get("payload") or {}
+        item_ref = record.get("snapshot_ref") or {
+            "kind": "consul_direct",
+            "senate_session_id": record.get("senate_session_id"),
+            "package_id": record.get("package_id"),
+            "direct_decision_id": direct_id,
+            "schema_version": record.get("schema_version", 1),
+        }
+        rows.append({
+            "identity": "consul_direct_decision",
+            "item_ref": copy.deepcopy(item_ref),
+            "direct_decision_id": direct_id,
+            "type": record.get("type", "consul_war_decision"),
+            "authority": record.get("authority", "consul_direct"),
+            "authority_label": "执政官决定",
+            "decision_state": record.get("decision_state", "FROZEN"),
+            "mode": record.get("mode", "command"),
+            "source": record.get("source"),
+            "war_id": record.get("war_id"),
+            "war_label": record.get("war_label"),
+            "senate_session_id": record.get("senate_session_id"),
+            "package_id": record.get("package_id"),
+            "submission_context_id": record.get("submission_context_id"),
+            "target_commander_id": payload.get("target_commander_id"),
+            "target_commander_label": payload.get("target_commander_label"),
+            "reinforcement_n": payload.get("reinforcement_n", 0),
+            "execution": "executed" if executed else "awaiting_boundary",
+            "execution_label": ("已执行（边界 receipt）" if executed
+                                else "待推进到战斗阶段执行"),
+            "display_label": (CONSUL_DIRECT_EXECUTED_LABEL if executed
+                              else CONSUL_DIRECT_ROW_LABEL),
+        })
+    rows.sort(key=lambda row: (str(row.get("war_id")), str(row.get("direct_decision_id"))))
+    return rows
+
+
 def _seat_share_rows(state: GameState) -> List[Dict[str, Any]]:
     total = sum(faction.get_senate_influence(state) for faction in state.get_active_factions())
     rows = []
@@ -600,7 +669,18 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         # R5（SA §5.1，DA-4）：旧 Takeover/Continue 读模型与 mandatory 门整体退役；
         # can_advance 以真实 phase_result 为权威（禁拿 current_step=="results" 冒充阶段完成）。
         has_real_senate_result = bool(senate_result)
-        senate_settlement_pending = (current_step == "results") and not has_real_senate_result
+        # R6（SA §D.1.1/D.1，DA-4 B1）：settlement 字段**正常态退役**——auto-finalization 已由
+        # 服务端命令流程（`finalize_senate_if_ready`）完成，正常态不再产出「待结算」恢复动作位。
+        # legacy 键保留（兼容读取器）但**恒 False 且不得驱动正常 UI**；真实异常恢复走
+        # `finalization_error` 内部能力位（非正常态「完成结算」按钮）。
+        senate_settlement_pending = False
+        # 异常恢复能力位：只有真实 finalization 失败（无成功 phase_result + 错误标记）才为 True
+        _existing_senate_result = state.get_phase_result("senate")
+        senate_finalization_error = bool(
+            current_phase_id == "senate"
+            and not (isinstance(_existing_senate_result, dict)
+                     and _existing_senate_result.get("success"))
+            and bool(getattr(state, "_last_senate_finalization_error", None)))
         # R5（SA §2.7 A-I14，DA-4）：显式空结束不再受 mandatory Takeover 门阻塞。
         can_finish_empty = (actionable and current_step == "proposal" and viewer_has_consul)
         proposal_selection_disabled_reason = ""
@@ -609,7 +689,8 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         elif not viewer_has_consul:
             proposal_selection_disabled_reason = "您的派系没有在城执政官可提交"
 
-        # R5（SA §5.1，DA-1）：统一 War Card 只读投影（QML 零推导）
+        # R5（SA §5.1，DA-1）：统一 War Card 只读投影（QML 零推导）；R6（SA §A.2）：
+        # 投影只读透传 Core 的 schema_version/authority_by_mode，senate_api 不新写 route。
         war_cards = politics.build_war_card_views({
             "current_turn": state.turn.turn_number if state.turn else None,
         })
@@ -629,6 +710,9 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         senate_result_view = dict(senate_result) if isinstance(senate_result, dict) else {}
         if war_execution:
             senate_result_view["war_execution"] = war_execution
+        # R6（SA §D.4，DA-4 B3）：Consul 冻结 direct 决策只读投影（**整个会期可读**，不依赖
+        # `_senate_pending` 是否已清）；direct-only 结果页据此非空（**不得因无 passed_proposals 清空**）。
+        consul_direct_decisions = _consul_direct_decision_rows(state)
 
         data = {
             "phase_id": "senate",
@@ -658,8 +742,12 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "can_finish_empty": can_finish_empty,
             "proposal_selection_disabled_reason": proposal_selection_disabled_reason,
             # R3-G-01 §1.5：settlement-pending 可见恢复态（DTO 字段 + 恢复动作位）
+            # R6（SA §D.1.1，DA-4 B1）：legacy 键保留但正常态恒 False（不得驱动 UI）
             "senate_settlement_pending": senate_settlement_pending,
             "can_resolve_settlement": senate_settlement_pending,
+            # R6（DA-4 B1）：异常恢复能力位（内部；非正常态动作位）
+            "senate_finalization_error": senate_finalization_error,
+            "can_retry_finalization": senate_finalization_error,
             # AU-R2-2b provenance（AC-R2-11 observability，D-2：authority_reason 为 JSON dict）
             "proposal_control_mode": proposal_control["mode"],
             "veto_control_mode": veto_control["mode"],
@@ -697,6 +785,8 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "war_cards": war_cards,
             "senate_result": senate_result_view,
             "direct_actions": state.get_senate_direct_actions(),
+            # R6（SA §D.4，DA-4 B3）：直选身份面（按 `item_ref` 可重取；行内无 `proposal_id`）
+            "consul_direct_decisions": consul_direct_decisions,
             "public_announcement": result_data.get("public_announcement", {}) if isinstance(result_data, dict) else {},
             # WP-F R1-F-03 / R2-01：透传每提案已算 vote result——优先中间投影（voted_all 后
             # Stage 2 即可读支持率）；非 voted_all / 结算后无 pending 提案时回退 phase_data
@@ -732,21 +822,74 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
 
 
 def propose(state: GameState, player_id: str, proposal_type: str, bypass_turn_check: bool = False, **kwargs) -> dict:
-    """记录元老院提案。"""
+    """R6（SA §A.4）：legacy 单提案入口退役——单项规范化为完整 package 后委托 propose_many。
+
+    兼容签名保留（生产 CLI 不再使用该便捷入口）。``bypass_turn_check`` 仅保留参数位，
+    **不得**跳过 route/claims/事务/授权——统一由 propose_many → submit_proposal_package 校验。
+    一次成功即关闭本会期选择（禁止循环追加）。
+    """
     if not state:
         return api_response(False, "无效的游戏状态")
-    result = _political_system(state).create_proposal(
-        player_id,
-        proposal_type,
-        bypass_turn_check=bypass_turn_check,
-        **kwargs,
-    )
-    return api_response(
-        success=result.get("success", False),
-        message=result.get("message", ""),
-        data=result.get("data", {}),
-        errors=result.get("errors", []),
-    )
+    request = _single_proposal_request(state, player_id, proposal_type, kwargs)
+    if request is None:
+        return api_response(False, f"未知的提案类型: {proposal_type}",
+                            errors=[f"unknown proposal type: {proposal_type}"])
+    result = propose_many(state, player_id, request)
+    # 兼容桥（legacy 单项调用方读 ``data.proposal_id``）：submit 的 ``created`` 已含真 id；
+    # 仅补一个顶层便捷字段，不改任何 route/claims/事务语义（War 身份/字段仍按 R6 快照）。
+    if result.get("success") and isinstance(result.get("data"), dict):
+        data = result["data"]
+        created = data.get("created") or []
+        if "proposal_id" not in data and len(created) == 1:
+            data["proposal_id"] = created[0].get("proposal_id")
+    return result
+
+
+def _consul_for_actor(state: GameState, player_id: str):
+    """actor 所属派系的 eligible Consul（供 legacy war 的显式 target 默认）。"""
+    player = state.get_player(player_id) if player_id else None
+    if not player:
+        return None
+    faction = state.get_faction(player.faction_id)
+    if not faction:
+        return None
+    return _political_system(state)._find_consul_for_faction(faction)
+
+
+def _single_proposal_request(state: GameState, player_id: str, proposal_type: str,
+                             kwargs: dict) -> Optional[Dict[str, Any]]:
+    """R6（SA §A.4）：legacy 单项 → 完整 package envelope（canonical）。
+
+    - ``war``：``legions`` → ``reinforcement_n``；缺 target → Consul 显式 default
+      （不再依赖隐式 Consul 语义）。
+    - ``peace``：丢弃 Commander/N 缓存（仅 mode=peace）。
+    - 其余（budget/land/governor/...）：作为普通 non-War 提案进入同一 package。
+    未知类型 → None（调用方 fail-closed）。
+    """
+    params = dict(kwargs)
+    if proposal_type == "war":
+        target = params.get("target_commander_id")
+        if target is None:
+            consul = _consul_for_actor(state, player_id)
+            target = consul.id if consul is not None else None
+        return {"war_drafts": [{
+            "war_id": params.get("war_id"),
+            "checked": True,
+            "mode": "command",
+            "target_commander_id": target,
+            "reinforcement_n": params.get("reinforcement_n", params.get("legions")),
+        }], "proposals": []}
+    if proposal_type == "peace":
+        return {"war_drafts": [{
+            "war_id": params.get("war_id"),
+            "checked": True,
+            "mode": "peace",
+            "target_commander_id": None,
+            "reinforcement_n": None,
+        }], "proposals": []}
+    if proposal_type in ("war_proposal",):
+        return None
+    return {"war_drafts": [], "proposals": [{"type": proposal_type, "params": params}]}
 
 
 
@@ -765,18 +908,16 @@ def propose_many(state: GameState, player_id: str, proposals: List[Dict[str, Any
     if isinstance(proposals, dict):
         request = dict(proposals)
     else:
-        request = _package_request_from_specs(proposals or [])
+        request = _package_request_from_specs(proposals or [], state, player_id)
 
     # R5（SA §4.8/§5.4，DA-5）：冻结会期身份（execution_id 依赖会期唯一性；存档需持久化）
     turn = state.turn.turn_number if state.turn else 0
     if not request.get("senate_session_id"):
         request["senate_session_id"] = f"turn-{turn}"
 
-    if not request.get("war_drafts") and not request.get("proposals"):
-        # D-09 / SA §3.1：空批 = 合法政治决策「本会期不提交法案」（边界仍处理 pending fallback）
-        state.set_senate_session(request["senate_session_id"])
-        state.senate_proposal_decision_complete = True
-        return api_response(True, "本会期未提交法案", data={"created": []})
+    # R6（SA §B.2 V4，DA-2 B2；收口 DA-2 B1 D-1）：空包**完全走 V0–V4**，不再在 API 侧
+    # 凭空置完成标记——由 Core `submit_proposal_package` 统一鉴权/校验/事务/授权，
+    # 真注册 SubmissionContext/PackageRecord（零 proposed/direct items）。
 
     result = _political_system(state).submit_proposal_package(
         player_id, request, _build_submit_context(state))
@@ -788,8 +929,14 @@ def propose_many(state: GameState, player_id: str, proposals: List[Dict[str, Any
     )
 
 
-def _package_request_from_specs(specs: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """把 API 层 specs 归一为 R5 整包 envelope（war_drafts + 非 War proposals）。"""
+def _package_request_from_specs(specs: List[Dict[str, Any]], state: Optional[GameState] = None,
+                                player_id: Optional[str] = None) -> Dict[str, Any]:
+    """把 API 层 specs 归一为 R6 整包 envelope（canonical war_drafts + 非 War proposals）。
+
+    R6（SA §A.4）：旧 ``war`` / ``peace`` specs 在 API 边界统一翻成 canonical war_drafts
+    （``war`` 的 ``legions`` → ``reinforcement_n``；``peace`` 丢弃 Commander/N 缓存）；
+    未提供 target 的 ``war`` 保留 None（由 Submit fail-closed 报 COMMANDER_REQUIRED，不静默换将）。
+    """
     war_drafts = []
     non_war = []
     for spec in specs or []:
@@ -797,14 +944,34 @@ def _package_request_from_specs(specs: List[Dict[str, Any]]) -> Dict[str, Any]:
             non_war.append(spec)
             continue
         stype = spec.get("type")
+        src = spec.get("params") if isinstance(spec.get("params"), dict) else spec
+        merged = dict(src)
+        for k, v in spec.items():
+            merged.setdefault(k, v)
+        if stype in ("war", "peace"):
+            if stype == "peace":
+                war_drafts.append({
+                    "war_id": merged.get("war_id"), "checked": True, "mode": "peace",
+                    "target_commander_id": None, "reinforcement_n": None,
+                })
+            else:
+                target = merged.get("target_commander_id")
+                if target is None and state is not None:
+                    consul = _consul_for_actor(state, player_id)
+                    target = consul.id if consul is not None else None
+                war_drafts.append({
+                    "war_id": merged.get("war_id"), "checked": True, "mode": "command",
+                    "target_commander_id": target,
+                    "reinforcement_n": merged.get("reinforcement_n", merged.get("legions")),
+                })
+            continue
         if stype == "war_proposal" or "checked" in spec:
-            src = spec.get("params") if isinstance(spec.get("params"), dict) else spec
             war_drafts.append({
-                "war_id": src.get("war_id", spec.get("war_id")),
-                "checked": bool(src.get("checked", spec.get("checked", False))),
-                "mode": src.get("mode", spec.get("mode", "command")),
-                "target_commander_id": src.get("target_commander_id", spec.get("target_commander_id")),
-                "reinforcement_n": src.get("reinforcement_n", spec.get("reinforcement_n")),
+                "war_id": merged.get("war_id"),
+                "checked": bool(merged.get("checked", False)),
+                "mode": merged.get("mode", "command"),
+                "target_commander_id": merged.get("target_commander_id"),
+                "reinforcement_n": merged.get("reinforcement_n"),
             })
         else:
             non_war.append(spec)
@@ -1084,6 +1251,44 @@ def _war_proposal_refs(decisions: List[dict]) -> List[dict]:
     return sorted(refs, key=lambda r: (r["proposal_id"] is None, r["proposal_id"]))
 
 
+def _war_direct_decision_refs(consul_decisions: List[dict]) -> List[dict]:
+    """R6（SA §C.4，DA-3 B1）：receipt 的 `direct_decision_refs`（无 proposal_id）。"""
+    refs = []
+    for d in consul_decisions:
+        refs.append({"direct_decision_id": d.get("direct_decision_id"),
+                     "war_id": d.get("war_id"),
+                     "authority": d.get("authority"),
+                     "decision_state": d.get("decision_state"),
+                     "snapshot_ref": copy.deepcopy(d.get("snapshot_ref") or {})})
+    return sorted(refs, key=lambda r: str(r["direct_decision_id"]))
+
+
+def _frozen_pending_peace_ids(submission_context) -> Optional[List[str]]:
+    """R6（SA §C.1，DA-3 B2）：`PT` = **frozen Context 的真实 pending-peace War**。
+
+    只从冻结 `SubmissionContext` 的 War 深值（`status`/`peace_treaty.status`）派生，
+    **不**读边界当次 live `get_truce_wars_with_pending_treaty()`（消 TOCTOU；Submit 后漂移的
+    新 pending universe 不属于本包冻结面）。
+
+    返回 ``None`` = 不存在冻结上下文（无包/legacy 路径），调用方回退 live。
+    """
+    if not isinstance(submission_context, dict):
+        return None
+    wars = submission_context.get("wars")
+    if not isinstance(wars, dict):
+        return None
+    out: List[str] = []
+    for war_id, row in wars.items():
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("status")) != "truce":
+            continue
+        treaty = row.get("peace_treaty") or {}
+        if isinstance(treaty, dict) and treaty.get("status") == "pending":
+            out.append(str(war_id))
+    return sorted(out)
+
+
 def _execute_war_resolution_boundary(state: GameState, player_id: str) -> dict:
     """SA §4.1/§4.6/§4.8：Senate→Combat 唯一整包边界事务（receipt exactly-once 优先）。
 
@@ -1100,13 +1305,30 @@ def _execute_war_resolution_boundary(state: GameState, player_id: str) -> dict:
 
     decisions = [copy.deepcopy(d) for (s, _pid), d in state.get_war_decisions().items()
                  if s == session_id]
+    # R6（SA §C.1，DA-3 B1）：显式双输入——FROZEN ConsulWarDecision 独立账本（无 proposal_id）。
+    consul_decisions = [copy.deepcopy(d) for _did, d in
+                        state.get_consul_war_decisions(session_id).items()]
+    consul_decisions.sort(key=lambda d: str(d.get("direct_decision_id")))
+    # package 身份从 PackageRecord 读（不得只从第一条 Senate decision 找；direct-only/空包会丢）
+    package_id = state.get_senate_package_id_for_session(session_id)
+    package_record = state.get_senate_package_record(package_id) if package_id else None
+    submission_context = None
+    if isinstance(package_record, dict) and package_record.get("submission_context_id"):
+        submission_context = state.get_submission_context(package_record["submission_context_id"])
     real_wars = politics._real_wars()
-    pending_ids = [w.id for w in ws.get_truce_wars_with_pending_treaty()] if ws else []
+    # R6（SA §C.1，DA-3 B2）：`PT` = frozen Context 的真实 pending-peace War（非边界当次 live）。
+    frozen_pending_ids = _frozen_pending_peace_ids(submission_context)
+    if frozen_pending_ids is not None:
+        pending_ids = frozen_pending_ids
+        pending_source = "frozen_context"
+    else:
+        pending_ids = [w.id for w in ws.get_truce_wars_with_pending_treaty()] if ws else []
+        pending_source = "live_fallback_no_context"
     u0 = sorted(legion.number for legion in ms.get_available_legions()) if ms else []
-    plan = politics.build_war_resolution_plan({
-        "current_turn": turn, "session_id": session_id, "decisions": decisions,
-        "real_wars": real_wars, "available_legion_ids": u0, "pending_war_ids": pending_ids,
-    })
+    plan = politics.build_war_resolution_plan(
+        decisions, consul_decisions, current_turn=turn, session_id=session_id,
+        real_wars=real_wars, available_legion_ids=u0, pending_war_ids=pending_ids,
+        package_id=package_id, submission_context=submission_context)
     execution_id = plan["execution_id"]
     fingerprint = plan["input_fingerprint"]
 
@@ -1122,6 +1344,13 @@ def _execute_war_resolution_boundary(state: GameState, player_id: str) -> dict:
                          "committed": False, "next_phase_id": None, "retryable": False,
                          "failed_stage": "identity", "receipt_status": existing.get("status")}}
 
+    # R6（SA §C.1）：集合合法性 assert（D 仅真实 War command / V command 只能 active / V peace
+    # 只能 pending / 同 War 跨 route 与重复 intent）→ fail-closed 拒绝，不 last-write-wins。
+    if plan.get("input_conflicts"):
+        return {"success": False, "message": "输入完整性失败：执行集合身份冲突",
+                "data": {"code": "WAR_EXECUTION_INPUT_INVALID", "execution_id": execution_id,
+                         "committed": False, "next_phase_id": None, "retryable": False,
+                         "failed_stage": "plan", "offending_refs": plan["input_conflicts"]}}
     if plan.get("duplicate_targets"):
         return {"success": False, "message": "输入完整性失败：Commander target 重复",
                 "data": {"code": "WAR_EXECUTION_INPUT_INVALID", "execution_id": execution_id,
@@ -1138,13 +1367,17 @@ def _execute_war_resolution_boundary(state: GameState, player_id: str) -> dict:
             effects = politics.commit_war_resolution(plan, txn)
             receipt = {
                 "senate_session_id": session_id,
-                "package_id": next((d.get("snapshot_ref", {}).get("package_id") for d in decisions
-                                    if d.get("snapshot_ref", {}).get("package_id")), None),
+                "package_id": package_id or next((
+                    d.get("snapshot_ref", {}).get("package_id") for d in decisions
+                    if d.get("snapshot_ref", {}).get("package_id")), None),
                 "execution_id": execution_id,
+                "protocol_version": plan.get("protocol_version"),
                 "status": "COMMITTED",
                 "proposal_refs": _war_proposal_refs(decisions),
+                "direct_decision_refs": _war_direct_decision_refs(consul_decisions),
                 "input_fingerprint": fingerprint,
                 "pending_fallback_war_ids": list(plan["pending_fallback_set"]),
+                "pt_source": pending_source,
                 "effect_summary": {k: (list(v) if isinstance(v, list) else v) for k, v in effects.items()},
                 "commit_revision": (turn, session_id),
             }
@@ -1246,6 +1479,266 @@ def veto(state: GameState, player_id: str, proposal_ids: List[int]) -> dict:
     )
 
 
+# ==================== R6（SA §D.1.1，DA-4 B1）：政治 finalization 完成协议 ====================
+
+#: 完成协议版本（幂等键第三元；协议语义变更必须递增）。
+SENATE_FINALIZATION_PROTOCOL_VERSION = 2
+
+
+class _FinalizationStageError(RuntimeError):
+    """finalization 中段失败（`stage` = 故障点；`retryable` 供调用方语义判定）。"""
+
+    def __init__(self, stage: str, message: str, retryable: bool = True):
+        super().__init__(message)
+        self.stage = stage
+        self.retryable = retryable
+
+
+def senate_finalization_id(state: GameState) -> tuple:
+    """幂等键：`(session_id, senate_session_id, protocol_version=2)`（SA §D.1.1）。"""
+    senate_session_id = state.get_senate_session()
+    if not senate_session_id:
+        turn = state.turn.turn_number if state.turn else 0
+        senate_session_id = f"turn-{turn}"
+    session_id = getattr(state, "session_id", None) or senate_session_id
+    return (session_id, senate_session_id, SENATE_FINALIZATION_PROTOCOL_VERSION)
+
+
+def _finalization_fingerprint(source: dict) -> str:
+    """内容指纹：确定性序列化（sort_keys）+ SHA256——**不重读当前部署态重算**。"""
+    payload = json.dumps(source, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _pending_cleared(state: GameState) -> bool:
+    """完成事实③：`_senate_pending` 临时集清理标记（提案/决策完成标记/直接动作全清）。"""
+    return (len(state.get_senate_proposals()) == 0
+            and not state.senate_proposal_decision_complete
+            and len(state.get_senate_direct_actions()) == 0)
+
+
+def completion_facts(state: GameState, senate_session_id: str) -> Dict[str, Any]:
+    """读四完成事实（缺一即未完成；**顶层 `result.success` 不足以关闭窗口**）。"""
+    phase_result = state.get_phase_result("senate")
+    data = phase_result.get("data", {}) if isinstance(phase_result, dict) else {}
+    # ②「final outcome 已冻结」= 冻结步骤已同版落存（含合法 0 条：零 War 提案会期）。
+    # 不以 decisions 账本非空为判据（零提案/direct-only 合法路径无 War 决策）。
+    frozen = isinstance(data, dict) and "frozen_war_decisions" in data
+    return {
+        "phase_result": bool(isinstance(phase_result, dict) and phase_result.get("success")),
+        "final_outcome_frozen": bool(frozen),
+        "pending_cleared": _pending_cleared(state),
+        "receipt": state.has_senate_finalization_receipt(senate_session_id),
+    }
+
+
+def _build_finalization_receipt(state: GameState, finalization_id: tuple,
+                               phase_result: dict) -> dict:
+    """组装 finalization receipt（幂等键 + 内容指纹）——全 JSON 安全标量（B6 tuple 教训）。"""
+    data = dict(phase_result.get("data", {}) or {})
+    return {
+        "finalization_id": tuple(finalization_id),
+        "finalization_id_list": [str(part) for part in finalization_id],
+        "session_id": str(finalization_id[0]),
+        "senate_session_id": str(finalization_id[1]),
+        "protocol_version": int(finalization_id[2]),
+        "phase_id": "senate",
+        "phase_result_success": bool(phase_result.get("success")),
+        "content_fingerprint": _finalization_fingerprint(data),
+        "governor_assignment_count": len(data.get("governor_assignments") or []),
+        "retained_effect_intent_count": len(data.get("retained_effect_intents") or []),
+    }
+
+
+def _build_public_announcement(state: GameState, passed_snapshot: List[dict],
+                               direct_actions: List[dict]) -> dict:
+    """PA（public_announcement）组装 —— 纯读纯函数（幂等；供 PA 故障点注入测试）。
+
+    D.4：`enacted_proposals` 仅 final enacted 真 Senate items（D-06：rejected/vetoed 不进公示）；
+    每行带三身份字段（`identity` / `authority` / `authority_label` / `execution` / `display_label`）——
+    真 Senate 获批行 =「元老院批准 · 待边界执行」；`consul_direct_decisions` = 冻结执政官战争决定
+    （`execution=awaiting_boundary`，不宣称已执行）；Peace 行仅登记 `pending_boundary_effects`
+    （含 `peace_recall`）——**未执行不得写「已召回」**；legacy `direct_actions` = 已执行审计。
+    """
+    enacted = []
+    for p in (passed_snapshot or []):
+        mode = p.get("mode")
+        row = {
+            "identity": "senate_proposal",
+            "proposal_id": p.get("id"),
+            "type": p.get("type"),
+            "authority": p.get("authority") or AUTHORITY_SENATE_VOTE,
+            "authority_label": "元老院批准",
+            "execution": "awaiting_boundary",
+            "execution_label": "待边界执行",
+            "display_label": SENATE_ENACTED_ROW_LABEL,
+            "pending_boundary_effects": ["peace_recall"] if mode == "peace" else [],
+            "title": _proposal_label(state, p) + (
+                "（获批 · 待边界执行）" if p.get("type") == "war_proposal" else ""),
+            "key_parameters": _announcement_key_params(p),
+        }
+        enacted.append(row)
+    return {
+        "enacted_proposals": enacted,
+        # R6（SA §D.4，DA-4 B3）：冻结 Consul direct 行（整个会期可读；与 legacy 审计表分身份）
+        "consul_direct_decisions": _consul_direct_decision_rows(state),
+        "direct_actions": direct_actions,
+    }
+
+
+def finalize_senate_if_ready(state: GameState,
+                             vote_decider: Optional[SenateVoteDecider] = None) -> dict:
+    """服务端命令流程调用的**唯一**政治 finalization 入口（API / CLI / GUI 三入口共用）。
+
+    **不在 GET DTO 路径隐式写**：仅由 Submit 成功后的命令流程（零 Senate / vote 完成且零
+    veto 候选 / veto 完成三入口）与 `resolve_senate` 兼容别名调用。
+
+    完成四事实必须**同版一致**（缺一即未完成）：
+    ① 真实 `phase_result(senate){success:true}`；② final outcome 冻结；
+    ③ `_senate_pending` 清理标记；④ receipt（`finalization_id` + 内容指纹）。
+
+    **clear 位置硬约束**：`clear_senate_pending` 位于「非 War 效果已执行 + final outcome
+    已冻结 + 结果已暂存」**之后**、receipt 写齐**之前**，且同一事务 commit 内；
+    禁「先 clear 再补写」/「从已清空临时集重建结果」。
+    """
+    if not state:
+        return api_response(False, "无效的游戏状态")
+    finalization_id = senate_finalization_id(state)
+    senate_session_id = finalization_id[1]
+    existing_result = state.get_phase_result("senate")
+    existing_receipt = state.get_senate_finalization_receipt(senate_session_id)
+
+    # —— 幂等重放：四事实已同版 → 按 finalization_id 返回**原** phase_result/PA/direct 摘要，
+    # 零再次执行非 War 效果、零重复 Governor、零重复征召。
+    if existing_result and existing_receipt:
+        data = dict(existing_result.get("data", {}) or {})
+        data["finalization_id"] = [str(part) for part in finalization_id]
+        data["finalization_receipt"] = existing_receipt
+        data["replayed"] = True
+        return api_response(True, "元老院 finalization 已完成（幂等重放）", data=data)
+
+    # 显式空选择守卫（仅对**首次** finalization 生效）——逐字保留 R4-09：零提案且未显式提交
+    # 空批 → 拒绝，禁隐式 resolve。部分完成态（①已在、④缺）不适用本守卫（pending 已清）。
+    if (not existing_result
+            and not state.get_senate_proposals()
+            and not state.senate_proposal_decision_complete):
+        return api_response(
+            False,
+            "提案选择未完成：请先显式提交空批或完成提案后再结算",
+            data={"proposal_selection_not_complete": True,
+                  "settlement_guard": "proposal_selection_not_complete"},
+        )
+
+    stage = "political_resolve"
+    try:
+        with SenateFinalizationTransaction(state) as txn:
+            # —— 部分事实（①已写、④未齐；如 record_phase_result 后响应丢失）→ **补齐**而非重跑：
+            # ① ② 已在（非 War 效果 + final outcome 冻结先于落存），只需补 ③ ④。
+            if existing_result and not existing_receipt:
+                stage = "clear_pending"
+                if not _pending_cleared(state):
+                    state.clear_senate_pending()
+                stage = "receipt"
+                receipt = _build_finalization_receipt(state, finalization_id, existing_result)
+                state.record_senate_finalization_receipt(receipt)
+                facts = completion_facts(state, senate_session_id)
+                if not all(facts.values()):
+                    raise _FinalizationStageError("receipt", f"四完成事实未同版: {facts}")
+                txn.commit()
+                data = dict(existing_result.get("data", {}) or {})
+                data["finalization_id"] = [str(part) for part in finalization_id]
+                data["finalization_receipt"] = receipt
+                data["recovered"] = True
+                data["completion_facts"] = facts
+                state._last_senate_finalization_error = None
+                return api_response(True, "元老院 finalization 已补齐（幂等恢复）", data=data)
+
+            # —— 完整重跑（S0 起，单一受锁临界区；任何中段失败 → 精确回滚 S0）——
+            stage = "political_resolve"
+            result = _political_system(state).resolve_senate(vote_decider)
+            if not result.get("success"):
+                raise _FinalizationStageError(
+                    "political_resolve", str(result.get("message")), retryable=False)
+            phase_data = dict(result.get("data", {}) or {})
+            # 军事 hook（Fleet / 起义）只登记 intent（C.5.1：零军事写，应用在边界事务）
+            phase_data["retained_effect_intents"] = \
+                _political_system(state)._retained_effect_intents()
+            phase_data["fleet_assignments"] = []
+            phase_data["rebellion_commander_assignments"] = []
+            # Governor（政治步骤，C.5.3 claim-aware；仍在 finalization 内）
+            # ②final outcome 冻结（含合法 0 条）与军事 intent 登记（C.5.1：零军事写）
+            frozen_decisions = [
+                d for (sess, _pid), d in state.get_war_decisions().items()
+                if str(sess) == str(senate_session_id)
+            ]
+            phase_data["frozen_war_decisions"] = frozen_decisions
+            stage = "governor"
+            phase_data["governor_assignments"] = assign_governors(state)
+            # PA / direct 摘要组装（纯读，幂等）
+            stage = "public_announcement"
+            phase_data["direct_actions"] = result.get("data", {}).get("direct_actions", [])
+            phase_data["public_announcement"] = _build_public_announcement(
+                state,
+                result.get("data", {}).get("passed_proposals_snapshot", []) or [],
+                phase_data["direct_actions"],
+            )
+            # ①结果已暂存（真实 success:true 才落存；失败路径从不持久化 phase_result 冒充成功）
+            stage = "record_phase_result"
+            stored = {"success": True, "message": result.get("message", ""), "data": phase_data}
+            state.record_phase_result("senate", stored)
+            if not completion_facts(state, senate_session_id)["final_outcome_frozen"]:
+                raise _FinalizationStageError(
+                    "record_phase_result", "完成事实②（final outcome 冻结）未落地")
+            # ③ pending 清理标记（非 War 效果 + 冻结 + 暂存**之后**、receipt **之前**）
+            stage = "clear_pending"
+            state.clear_senate_pending()
+            if not _pending_cleared(state):
+                raise _FinalizationStageError("clear_pending", "完成事实③（pending 清理标记）未落地")
+            # ④ receipt 写齐（commit 前最后一步）
+            stage = "receipt"
+            receipt = _build_finalization_receipt(state, finalization_id, stored)
+            state.record_senate_finalization_receipt(receipt)
+            facts = completion_facts(state, senate_session_id)
+            if not all(facts.values()):
+                raise _FinalizationStageError("receipt", f"四完成事实未同版: {facts}")
+            txn.commit()
+            data = dict(phase_data)
+            data["finalization_id"] = [str(part) for part in finalization_id]
+            data["finalization_receipt"] = receipt
+            data["completion_facts"] = facts
+            state._last_senate_finalization_error = None
+            return api_response(True, result.get("message", ""), data=data,
+                                errors=result.get("errors", []))
+    except Exception as exc:  # noqa: BLE001 —— 失败必须结构化登记 + S0 回滚（禁谎报成功）
+        stage = getattr(exc, "stage", stage)
+        retryable = getattr(exc, "retryable", True)
+        diagnostic_id = uuid.uuid4().hex[:12]
+        state.log_event(
+            f"元老院 finalization 失败[{stage}]: {exc}",
+            level=logging.ERROR,
+            extra={"type": "senate_finalization_error", "stage": stage,
+                   "diagnostic_id": diagnostic_id, "retryable": retryable},
+        )
+        # 异常恢复能力位（内部）：仅真实失败时置位；成功路径复位为 None
+        state._last_senate_finalization_error = {
+            "stage": stage, "retryable": retryable, "diagnostic_id": diagnostic_id}
+        return api_response(
+            False,
+            f"元老院 finalization 失败（stage={stage}，可重试={retryable}）",
+            data={
+                "finalization_error": {
+                    "stage": stage,
+                    "retryable": retryable,
+                    "diagnostic_id": diagnostic_id,
+                    "finalization_id": [str(part) for part in finalization_id],
+                },
+                "finalization_id": [str(part) for part in finalization_id],
+                "completion_facts": completion_facts(state, senate_session_id),
+                "can_advance": False,
+            },
+        )
+
+
 def resolve_senate(
     state: GameState,
     vote_decider: Optional[SenateVoteDecider] = None,
@@ -1263,118 +1756,10 @@ def resolve_senate(
     """
     if not state:
         return api_response(False, "无效的游戏状态")
-    # R5（SA §2.7 A-I14 / §4.10 C-M09）：mandatory Takeover 门已拆除——commanderless/
-    # legionless 真实 War 是合法状态，不得阻止 Senate settle/advance（军事后果由边界事务承担）；
-    # takeover_required 只读态与 _resolve_takeover_required 生产者已在 DA-4 退役。
-    existing_result = state.get_phase_result("senate")
-    if existing_result:
-        # §1.5 幂等 no-op：已存在成功 phase_result → 不重复结算、不二次安排副作用
-        return api_response(
-            True,
-            "元老院结果已记录（幂等 no-op）",
-            data=existing_result.get("data", {}) if isinstance(existing_result, dict) else {},
-        )
-    # WP-G-R4 (SA v1.7 §2.3/§2.3b)：显式空选择守卫——零 proposals、P=false、R 不存在时
-    # 必须先显式提交空批（propose_many([]) → P=true）关闭选择，禁隐式 resolve（R4-09：
-    # Takeover-only Submit 不触发隐式 resolve_senate(0)；空批合法决策 = 显式 finish）。
-    if not state.get_senate_proposals() and not state.senate_proposal_decision_complete:
-        return api_response(
-            False,
-            "提案选择未完成：请先显式提交空批或完成提案后再结算",
-            data={
-                "proposal_selection_not_complete": True,
-                "settlement_guard": "proposal_selection_not_complete",
-            },
-        )
-    result = _political_system(state).resolve_senate(vote_decider)
-
-    # Add DBUG logging for land proposal resolution results
-    passed_snapshot = result.get("data", {}).get("passed_proposals_snapshot", [])
-    for prop in passed_snapshot:
-        if prop.get("type") == "land":
-            prop_id = prop.get("id")
-            act_type = prop.get("act_type")
-            state.log_event(
-                f"Land proposal {prop_id}: resolution=passed",
-                level=logging.DEBUG,
-                extra={
-                    "proposal_id": prop_id,
-                    "act_type": act_type,
-                    "resolution": "passed",
-                },
-            )
-    rejected_snapshot = result.get("data", {}).get("rejected_proposals_snapshot", [])
-    for prop in rejected_snapshot:
-        if prop.get("type") == "land":
-            prop_id = prop.get("id")
-            act_type = prop.get("act_type")
-            state.log_event(
-                f"Land proposal {prop_id}: resolution=rejected",
-                level=logging.DEBUG,
-                extra={
-                    "proposal_id": prop_id,
-                    "act_type": act_type,
-                    "resolution": "rejected",
-                },
-            )
-
-    # Phase result data — start with core resolve result, then extend with
-    # post-settlement operations so both CLI and GUI paths execute them.
-    phase_data = result.get("data", {}) or {}
-
-    # S4: Fleet assignment — assign available fleets to active naval wars
-    fleet_result = assign_fleets_to_active_wars(state)
-    fleet_data = fleet_result.get("data") or {}
-    if fleet_result.get("success"):
-        assigned_fleets = fleet_data.get("assigned", [])
-        if assigned_fleets:
-            state.log_event(
-                f"resolve_senate: assigned fleets to {len(assigned_fleets)} wars",
-                level=logging.INFO,
-                extra={"assigned_fleets": assigned_fleets},
-            )
-    phase_data["fleet_assignments"] = fleet_data.get("assigned", [])
-
-    # S4: Governor assignment — appoint governors to vacant provinces
-    governor_results = assign_governors(state)
-    phase_data["governor_assignments"] = governor_results
-
-    # S4: Rebellion commander assignment — appoint commanders to active rebellions
-    ws = state.get_war_system()
-    if ws:
-        commander_results = ws.assign_rebellion_commanders()
-        phase_data["rebellion_commander_assignments"] = commander_results
-
-    # WP-D AU-5/AU-6: direct_actions + public_announcement 组装（公示随 phase_result 持久化，
-    # get_senate_view 经 result_data 回读）。enacted_proposals 仅 final enacted（D-06：rejected/vetoed 不进公示）。
-    phase_data["direct_actions"] = result.get("data", {}).get("direct_actions", [])
-    phase_data["public_announcement"] = {
-        "enacted_proposals": [
-            {
-                "proposal_id": p.get("id"),
-                "type": p.get("type"),
-                "title": _proposal_label(state, p) + ("（获批 · 待边界执行）" if p.get("type") == "war_proposal" else ""),
-                "key_parameters": _announcement_key_params(p),
-            }
-            for p in (result.get("data", {}).get("passed_proposals_snapshot", []) or [])
-        ],
-        "direct_actions": phase_data["direct_actions"],
-    }
-
-    # Record phase result immediately — before any callback (e.g. _on_refresh)
-    # can read it. This eliminates the stale-state window where QML binding
-    # sees no senate result during adapter.resolve_senate().
-    state.record_phase_result("senate", {
-        "success": result.get("success", False),
-        "message": result.get("message", ""),
-        "data": phase_data,
-    })
-    return api_response(
-        success=result.get("success", False),
-        message=result.get("message", ""),
-        data=phase_data,
-        errors=result.get("errors", []),
-    )
+    # R6（SA §D.1.1，DA-4 B1）：本函数退役为 `finalize_senate_if_ready` 的兼容别名——三入口
+    # （API / CLI / GUI）共用同一服务端完成协议（空选择守卫 / 幂等重放 / 受锁事务 /
+    # 四完成事实同版）。旧前置幂等 no-op 与守卫整体迁入后者，此处零重复判定。
+    return finalize_senate_if_ready(state, vote_decider)
 
 
 # ==================== 兼容辅助函数 ====================
@@ -1406,6 +1791,11 @@ def is_governor_position_occupied(state: GameState, figure_id: int) -> bool:
 def assign_fleets_to_active_wars(state: GameState) -> dict:
     """
     为需要海战且尚无舰队的活跃战争指派可用舰队（补漏函数）。
+
+    R6（SA §C.5.1/C.5.2，DA-3 B3）：本函数的**自动层调用点已收口**到
+    `PoliticalSystem.commit_war_resolution` 的 retained automatic effects 层（边界事务内）；
+    本函数保留为既有业务规则载体（Fleet 挑配 / 动力需求 / 可用舰队语义逐字不变），
+    `phase_senate.py` CLI 第二调用退役属 DA-3 B4（C.5.2）。
     """
     if not state:
         return api_response(False, "无效的游戏状态")
@@ -1495,7 +1885,38 @@ def assign_fleets_to_active_wars(state: GameState) -> dict:
     return api_response(True, message, data={"assigned": assigned_details})
 
 
-def assign_governors(state: GameState) -> list[dict]:
+def _frozen_commander_claim_ids(state: GameState) -> set:
+    """R6（SA §C.5.3 / §D.1.2，DA-3 B5）：本包**冻结 claims 的 Commander 身份集**。
+
+    读取当前会期的 `PackageRecord` → `SubmissionContext.claims`（与 Submit 校验 V3 同一冻结
+    快照），作为最终结算内自动 `assign_governors` 的**硬排除输入** —— 排除「本包将被冻结
+    direct/Peace 任命为 Commander」的人物，防止自动任命制造同一 figure 的
+    Governor×Commander 双角色（及其自身制造的永久 CONTEXT_CHANGED / 重试环）。
+
+    - 无包 / 无 context（legacy 直调）→ **空集**（不静默改变既有语义）；
+    - 只作**排除**，不新增候选、不改 Governor/Commander 业务规则（C.5.3 禁项）。
+    """
+    if not state:
+        return set()
+    session_id = state.get_senate_session()
+    if not session_id:
+        return set()
+    package_id = state.get_senate_package_id_for_session(session_id)
+    if not package_id:
+        return set()
+    record = state.get_senate_package_record(package_id) or {}
+    context_id = record.get("submission_context_id")
+    if not context_id:
+        return set()
+    context = state.get_submission_context(context_id) or {}
+    excluded: set = set()
+    for claim in (context.get("claims") or []):
+        if isinstance(claim, dict) and claim.get("commander_id") is not None:
+            excluded.add(claim["commander_id"])
+    return excluded
+
+
+def assign_governors(state: GameState, excluded_commander_ids=None) -> list[dict]:
     """总督候选人筛选与分配。
 
     分析所有行省 → 筛选候选人 → 分配总督职位。
@@ -1506,11 +1927,23 @@ def assign_governors(state: GameState) -> list[dict]:
     - 按候选人资格/忠诚度条件筛选
     - 分配最佳候选人
     - 更新 Province 实体 governor_designate_id 字段
+
+    R6（SA §C.5.3 / §D.1.2，DA-3 B5 — **claim-aware**）：`excluded_commander_ids` = 本包冻结
+    claims 的 Commander 身份集；命中的候选人从候选池**硬排除**（正常 business 语义不动：无候选
+    即不分配、空位合法）。**禁**提前置军事 absent / 跳过 Governor 步骤 / 撤回已发布 direct /
+    忽略 cross-role / 强制重提 —— 本函数的解法仅「候选排除 + 空位合法」。
+    **缺省 `None`** = 自动取本包冻结 claims（`_frozen_commander_claim_ids`；无包/legacy → 空集，
+    行为与 baseline 逐字一致）；显式传入（含空集）→ 以传入值为准。
     """
     if not state:
         return []
 
     import datetime
+
+    if excluded_commander_ids is None:
+        excluded = _frozen_commander_claim_ids(state)
+    else:
+        excluded = set(excluded_commander_ids)
 
     # 获取所有已征服的行省（排除意大利行省 ID 0）
     all_provinces = [p for p in state.get_all_provinces() if p.conquered and p.province_id != 0]
@@ -1524,6 +1957,9 @@ def assign_governors(state: GameState) -> list[dict]:
         cand_list = []
         for fig in state.get_living_members():
             if fig.is_absent:
+                continue
+            if fig.id in excluded:
+                # R6（SA §C.5.3）：冻结 claims 的 Commander 硬排除（防 Governor×Commander 双角色）
                 continue
             if fig.office is not None and not fig.office.startswith("ex-"):
                 continue

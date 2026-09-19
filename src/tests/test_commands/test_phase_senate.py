@@ -894,11 +894,13 @@ class TestSenateEdgeCases(unittest.TestCase):
     # ==================== 无元老在场 ====================
     def test_no_senators_present(self):
         """测试所有元老缺席（影响力为0）时，所有提案不通过"""
-        # 将所有元老设置为缺席
+        # 所有有影响力的元老缺席（影响力归零）
         self.senator1.is_absent = True
         self.senator2.is_absent = True
-        # 执政官出征，不计影响力
-        self.consul.is_absent = True
+        # R6（SA §A.4 / WP-D AU-R2-2c）：提案人资格 fail-closed —— 执政官缺席则本会期无
+        # eligible proposer（无可提案 / 无可结算），命题「全体影响力为 0 ⇒ 所有提案不通过」
+        # 将不可达。为保留原命题，令执政官在场且影响力显式归零（对投票的效果与缺席等价）。
+        self.consul.influence = 0
 
         # 创建宣战提案
         war = self._create_threat_war()
@@ -1076,7 +1078,7 @@ class TestManualTakeover(unittest.TestCase):
             if member.office == "consul":
                 member.office = None
 
-        mock_input.side_effect = ["next", "propose B01 3", "next"]
+        mock_input.side_effect = ["next", "next", "next"]
 
         cmd = SenateCommand(self.state)
         cmd._auto_mode = False
@@ -1085,7 +1087,12 @@ class TestManualTakeover(unittest.TestCase):
             result = cmd.execute([])
             output = out.getvalue()
             error = err.getvalue()
-        self.assertTrue(result)
+        # R6（SA §D.1.1，DA-4 B1）：finalization 需授权 proposer（consul）；无 eligible consul ⇒
+        # 空选择提交被 fail-closed 拒绝 ⇒ 阶段不完成（execute 返回 False，不 mark executed）。
+        # 原「阶段完成」断言依 legacy 无鉴权收尾，已随 R6 退役；本测试保留原命题
+        # 「当前玩家无执政官 ⇒ 无法提案 + 零 commander mutation」。
+        self.assertFalse(result)
+        self.assertFalse(self.state.is_phase_executed("senate"))
         self.assertIn("没有执政官，无法进行提案", output + error)
         war = self.state.get_war_system().get_war_by_id("foreign_war")
         self.assertIsNone(war.commander_id)
@@ -1114,9 +1121,44 @@ class TestManualTakeover(unittest.TestCase):
         for ptype, _params in proposals_map.values():
             self.assertNotEqual(ptype, "takeover")
 
+    def test_handle_step_5_second_call_zero_independent_military_write(self):
+        """N23（运行期面 · DA-6 B1c 本批补）：`_handle_step_5` **第二调用**零独立军事写。
+
+        R6（SA §C.5.2/D.1.1，DA-3 B4 / P-B4-5）：CLI 仅消费服务端 `finalize_senate_if_ready`；
+        军事效果（Fleet / 起义）唯一 owner = Senate→Combat 边界事务，绝不由 CLI 直接触发。
+        本测试在运行期触发 `_handle_step_5` 两次，断言两次调用之间军事投影逐字不变，
+        且阶段结果幂等（不重复 finalize / 不重复军事子步）。
+        """
+        self.war.commander_id = 2  # valid commander（消除 commanderless → takeover_required）
+
+        def _mil(state):
+            ws = state.get_war_system()
+            ms = state.get_military_system()
+            ns = state.naval_system
+            return (
+                tuple(sorted((w.id, getattr(w.status, "value", w.status), w.commander_id)
+                             for w in ws.get_all_wars())),
+                tuple(sorted(lg.number for lg in ms.get_available_legions())) if ms else (),
+                tuple(sorted(fl.number for fl in ns.get_available_fleets())) if ns else (),
+                tuple(sorted((w.id, tuple(getattr(w, "assigned_fleet_ids", []) or []))
+                             for w in ws.get_all_wars())),
+            )
+
+        cmd = SenateCommand(self.state)
+        cmd._auto_mode = False
+        cmd._handle_step_5()
+        after_first = _mil(self.state)
+        phase_after_first = self.state.get_phase_result("senate")
+        # 第二调用：幂等（不得新增任何独立军事写，也不得改写阶段结果）
+        cmd._handle_step_5()
+        self.assertEqual(_mil(self.state), after_first,
+                         "_handle_step_5 第二调用不得产生任何独立军事写")
+        self.assertEqual(self.state.get_phase_result("senate"), phase_after_first,
+                         "_handle_step_5 第二调用不得改写阶段结果（幂等）")
+
     @patch('builtins.input')
     def test_manual_war_declaration_with_naval_no_fleet(self, mock_input):
-        """测试需要海战但无舰队时，宣战失败"""
+        """测试需要海战但无舰队时（R6 迁移：宣战不再由 CLI 前置舰队门阻断）。"""
         # 创建需要海战的战争，并加入威胁列表
         war = War(
             id="naval_war",
@@ -1131,8 +1173,11 @@ class TestManualTakeover(unittest.TestCase):
         # 模拟无可用舰队
         self.state.naval_system.get_available_fleets = MagicMock(return_value=[])
 
-        # 模拟用户输入：步骤0 next，步骤1 propose B01 6
-        mock_input.side_effect = ["next", "propose B01 6", "next", "next"]
+        # 模拟用户输入（R6 CLI：proposal 阶段一次整包提交）
+        # R6（SA §A.4）：War 草案按 war_id 排序编号（foreign_war=B01 / naval_war=B02）；
+        # 本测试提案目标 = 海战战争（B02）。步骤：提案阶段 propose B02 6 → next 提交整包；
+        # 表决阶段（human 弃权输入后投支持）→ 公示阶段 next。
+        mock_input.side_effect = ["next", "propose B02 1 6", "next", "", "vote B01", "next"]
 
         cmd = SenateCommand(self.state)
         cmd._auto_mode = False
@@ -1142,11 +1187,15 @@ class TestManualTakeover(unittest.TestCase):
             output = out.getvalue()
             error = err.getvalue()
 
-        self.assertIn("战争需要海战，但当前无可用舰队，无法宣战。请先建造舰队。", output + error)
+        self.assertIn("✅ 已加入整包草稿：海战战争 [作战]", output + error)
 
-        # 验证战争未被激活（仍然在威胁列表）
-        self.assertIn(war, self.state._war_system._threats)
-        self.assertNotIn(war, self.state._war_system._active_wars)
+        # R6（SA §A.4/§C.5.1，DA-3/DA-4）：宪政旧「宣战即由 CLI 前置舰队门阻断」路径退位；
+        # 提交整包后军事效果只在唯一边界事务落地。无可用舰队 ⇒ 边界自动层零舰队指派
+        # （fleet_assign deferred，RESIDUAL_POOL_EXHAUSTED），海军就绪由战斗阶段
+        # NAVAL_NOT_READY 守卫（AC-24/25）。保留原命题「无舰队 ⇒ 零舰队绑定」。
+        self.assertNotIn(war, self.state._war_system._threats)
+        self.assertIn(war, self.state._war_system._active_wars)
+        self.assertEqual(list(getattr(war, "assigned_fleet_ids", []) or []), [])
 
     @patch('builtins.input')
     def test_manual_war_declaration_with_naval_has_fleet(self, mock_input):
@@ -1172,7 +1221,7 @@ class TestManualTakeover(unittest.TestCase):
         mock_fleet = MagicMock()
         self.state.naval_system.get_available_fleets = MagicMock(return_value=[mock_fleet])
 
-        mock_input.side_effect = ["next", "propose B01 6", "next", "", "vote B01", "next"]
+        mock_input.side_effect = ["next", "propose B02 1 6", "next", "", "vote B01", "next"]
 
         cmd = SenateCommand(self.state)
         cmd._auto_mode = False
@@ -1185,7 +1234,7 @@ class TestManualTakeover(unittest.TestCase):
             output = buf.getvalue()
 
         self.assertTrue(result)
-        self.assertIn("✅ 对 海战战争 宣战，申请征召 6 个军团", output)
+        self.assertIn("✅ 已加入整包草稿：海战战争 [作战]", output)
         self.assertNotIn(war, self.state._war_system._threats)
         self.assertIn(war, self.state._war_system._active_wars)
 

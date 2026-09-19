@@ -12,22 +12,12 @@ from src.core.systems.naval_system import NavalSystem  # 在文件顶部添加�
 import tempfile
 import logging
 from src.core.entities.entities import GameTurn
-import src.core.game_state
-importlib.reload(src.core.game_state)
-
-
-
-
-# 获取项目根目录和 game_state.py 的绝对路径
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
-game_state_path = os.path.join(project_root, 'src', 'core', 'game_state.py')
-
-# 动态导入 game_state 模块，避免触发 __init__.py 中的其他导入
-spec = importlib.util.spec_from_file_location("game_state", game_state_path)
-game_state_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(game_state_module)
-GameState = game_state_module.GameState
+# DA-6 B3c（2026-09-19）测具面修复 —— 类身份唯一化：
+# 原先的模块级 `importlib.reload(src.core.game_state)` + `spec_from_file_location` 动态 exec
+# 会在同进程内产生**多份** `GameState` / `WarResolutionTransaction` 类对象（类身份分裂），
+# 使其他测试文件（`test_api/test_wpgr6_boundary.py` 故障注入）的 `mock.patch` 目标失配
+# （B 类全量红）。改为直接引用 `sys.modules` 中的唯一类。
+from src.core.game_state import GameState  # noqa: E402
 
 
 class TestGameStateMultiInstance(unittest.TestCase):

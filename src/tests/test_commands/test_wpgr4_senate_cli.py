@@ -72,25 +72,32 @@ class TestT16SenateCli(unittest.TestCase):
         self.assertIsNone(state.get_takeover_pending())
 
     def test_t16_resolve_failure_does_not_execute(self):
-        """resolve 注入失败（无真实 R）→ 部署失败不 mark executed/不 return True。"""
+        """resolve 注入失败（无真实 R）→ 部署失败不 mark executed/不 return True。
+
+        R6（DA-6 B3c-cont2）：CLI 唯一 finalization 入口 = `senate_api.finalize_senate_if_ready`
+        （`resolve_senate` 已退役为其兼容别名，patch 别名不再拦截）；旧 `takeover` 子命令退役，
+        human 经「卡 unchecked → next 空结束 → finalize → advance」合法收敛。
+        """
         state, ctx = self._human_state()
         war_a = ctx["war_a"]
-        with mock.patch("builtins.input", side_effect=["next", "takeover pyrrhic_war 1",
-                                                      "next", "next"]), \
-             mock.patch.object(senate_api, "resolve_senate",
-                               return_value={"success": False, "message": "injected resolve failure",
-                                             "data": {}, "errors": ["injected"]}):
+        injected = {"success": False, "message": "injected resolve failure",
+                    "data": {}, "errors": ["injected"]}
+        with mock.patch("builtins.input", side_effect=["next", "next", "next"]), \
+             mock.patch.object(senate_api, "finalize_senate_if_ready",
+                               return_value=injected):
             cmd = SenateCommand(state)
             result = cmd.execute([])
         self.assertFalse(result)
         self.assertFalse(state.is_phase_executed("senate"))
         self.assertIsNone(war_a.commander_id, "部署未发生")
-        # 可重试：解除注入后重跑成功
-        with mock.patch("builtins.input", side_effect=["next", "next", "next"]):
-            cmd2 = SenateCommand(state)
-            result2 = cmd2.execute([])
-        self.assertTrue(result2, "重试成功路径")
-        self.assertTrue(state.is_phase_executed("senate"))
+        # 可重试（R6）：包已发布不撤销；解除注入后，同一会期经服务端唯一 finalization
+        # 入口 `finalize_senate_if_ready` 补齐（可重试/退出窄路径）→ 边界 advance 推进成功。
+        recovered = senate_api.finalize_senate_if_ready(state)
+        self.assertTrue(recovered["success"], recovered.get("message"))
+        self.assertTrue(state.get_phase_result("senate"))
+        adv = senate_api.advance_senate_phase(state, F.P1)
+        self.assertTrue(adv["success"], adv.get("message"))
+        self.assertTrue(state.is_phase_executed("senate"), "重试成功路径")
 
     def test_t16_ai_canonical_tail_p_true_preserved(self):
         """AI canonical auto_submit_proposals 尾部 P=true 语义保留（AI 空批可推进）。"""

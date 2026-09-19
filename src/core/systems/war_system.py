@@ -1286,6 +1286,16 @@ class WarSystem:
         - 征召新军团实体
         - 指派至对应战区
         - 更新军团实体状态（commander、deployment 等）
+
+        R6（SA §C.5.1 可达写集合枚举，DA-3 B4 / G3 P2-1）：本 helper 的可达写集合 =
+        `military.recruit_multiple(n)`（同池征召/扣费级副作用）、
+        `military.assign_to_war(numbers, war_id, commander_id)`（单位归属）、
+        `war.add_legion_number(num)`；读 = `war_system.get_active_wars()` /
+        `military.get_legions_for_battle / get_available_legions()` /
+        `state.config["testing.min_legions" | "testing.max_legions"]`。
+        **不在** R6 冻结层 / 自动层契约面（自动层业务 = `assign_rebellion_commanders` /
+        `assign_fleets_to_active_wars`，调用点唯一 = `commit_war_resolution`）；静态负测
+        证明其零生产调用者（唯一旧调用者 `phase_senate._execute_war_declaration` 已退役为 shim）。
         """
         ms = self.state.get_military_system()
         if not ms:

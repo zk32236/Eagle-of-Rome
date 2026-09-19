@@ -210,8 +210,15 @@ def _population_round(state, consul_figure_id, rival_vote_figure_id=0):
 
 def _senate_resolve_advance(state):
     """resolve_senate（确定性 approve）→ advance_senate_phase。
-    WP-G-R4（OD-R4-05/06 supersede，SA v1.7 §2.3b）：零提案先显式空选择写 P。"""
-    if not state.get_senate_proposals() and not state.senate_proposal_decision_complete:
+    WP-G-R4（OD-R4-05/06 supersede，SA v1.7 §2.3b）：零提案先显式空选择写 P。
+    WP-G-R6（DA-6 B3c 迁移）：**每会期唯一整包 Submit** —— 本会期已有 package 记录时
+    不得二次提交（否则 PACKAGE_ALREADY_SUBMITTED）；仅在真·零提案且本会期未提交时补空包。
+    WP-G-R6（DA-6 B3c-cont / G1 裁定 (b)）：判据用**本年会话 id**（`turn-{turn}`，
+    即 `propose_many` 实际采用的身份，senate_api.py:916）——粘滞的 `get_senate_session()`
+    在跨年度（Y2/Y3）仍返回上一年会期，会误判“已有包”而漏空包 Submit。产品零改动。"""
+    cur_session = f"turn-{state.turn.turn_number if state.turn else 0}"
+    if (not state.get_senate_proposals() and not state.senate_proposal_decision_complete
+            and state.get_senate_package_id_for_session(cur_session) is None):
         fin = senate_api.propose_many(state, P1, [])
         assert fin["success"], fin.get("message")
     resolved = senate_api.resolve_senate(state, vote_decider=DeterministicApproveDecider())
@@ -352,7 +359,7 @@ class TestS3FourAuthorities(unittest.TestCase):
         contract = year1_approved_contract(state, ctx, modified_budget=350)
         assert contract._original_budget == 280, contract._original_budget  # 7×trireme40
         resolved = _award_block(state, ctx, contract, amount=300, construction_cost=240)
-        _finish_year_from_population(state, war.id)
+        _finish_year_from_population(state, war.id, consul_figure_id=ctx["target"].id)
         return state, ctx, contract, resolved
 
     def test_t07_four_authorities_chain_and_roundtrip(self):
@@ -435,9 +442,10 @@ class TestS3FourAuthorities(unittest.TestCase):
         self.assertEqual(contract.annual_income, 150)  # C//N
         self.assertEqual(contract.annual_cost, 120)    # D//N
 
-        # Y2 余段（award 后）：Population（ABSTAIN）→ Senate（0 提案）→ Combat（无成舰
+        # Y2 余段（award 后）：Population（执政官=target）→ Senate（0 提案）→ Combat（无成舰
         # auto-DEFEAT 确定性）→ advance_year → Y3
-        _finish_year_from_population(state, war.id)
+        # R6（DA-6 B3c-cont）：零提案空包 Submit 需**执政官**身份（V0 鉴权）——居民会选 target 任职。
+        _finish_year_from_population(state, war.id, consul_figure_id=ctx["target"].id)
 
         # Y3 Revenue（remaining=2 → 常规年付 C//N、D//N）
         rev1 = _mortality_revenue_round(state)
@@ -449,7 +457,7 @@ class TestS3FourAuthorities(unittest.TestCase):
         # Y3 余段：Forum init + resolve → advance → Population/Senate/Combat → advance_year
         _forum_init(state)
         _forum_resolve_advance(state)
-        _finish_year_from_population(state, war.id)
+        _finish_year_from_population(state, war.id, consul_figure_id=ctx["target"].id)
 
         # Y4 Revenue（remaining=1 → 末期 payment=C-total_spent；cost=D-(N-1)*annual）
         rev2 = _mortality_revenue_round(state)

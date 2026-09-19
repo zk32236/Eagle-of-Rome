@@ -6,6 +6,15 @@ DATA 断言（权威已算结果透出，禁重算）：
 - T-F05  refresh（get_senate_view ×2）/ re-entry（再 resolve）数字不变；AI 票 reused 0 新决策
 - T-F06  展示路径（get_senate_view）不触发 calculate_vote_result（monkeypatch 计数，AC-F03-6）
 - T-F08  底层政府结果（governor/rebellion/fleet/public_announcement）不受 R1 改动影响
+
+R6 迁移（SA §A.4/§B.4，DA-2 B2；WP-G-R6 DA-6 B1e）：legacy 单提案入口
+``senate_api.propose`` **一次成功即关闭本会期选择**（`by_session` 同会期唯一 ⇒ 同会期二次
+调用返回结构化 `PACKAGE_ALREADY_SUBMITTED`，不得循环追加）。故同会期多笔非 War（土地）
+提案改经**唯一整包门面** `senate_api.propose_many` 一次提交（0…N），全部原命题逐条保留：
+
+- vote_results 6 字段/提案、透传与持久化一致（T-F04）
+- refresh ×2 / re-entry 数字不变 + 结算后重复 resolve 零重掷（T-F05）
+- 展示路径零 `calculate_vote_result` 重入（T-F06）
 """
 import os
 import sys
@@ -101,9 +110,33 @@ class _CountingVoteDecider:
 
 
 def _propose_land(state, player_id, amount_C):
-    res = senate_api.propose(state, player_id, "land", act_type="sale", amount_C=amount_C)
-    assert res["success"], res.get("message")
-    return res["data"]["proposal_id"]
+    """R6（SA §A.4/§B.4）：单笔土地提案经唯一整包门面 `propose_many` 一次提交。"""
+    res = senate_api.propose_many(state, player_id, [
+        {"type": "land", "params": {"act_type": "sale", "amount_C": amount_C}}])
+    assert res["success"], res.get("errors") or res.get("message")
+    return res["data"]["created"][0]["proposal_id"]
+
+
+def _propose_lands(state, player_id, amounts):
+    """R6（SA §A.4/§B.4，DA-2 B2）：同会期唯一整包提交，返回 `created` 顺序的 proposal_id。
+
+    多笔非 War（土地）提案必须以**一次** `propose_many` 整包提交（0…N）；legacy 单提案
+    入口 `senate_api.propose` 的**二次**调用即 B-3 失效面——本 helper 显式登记该结构化拒绝
+    （`PACKAGE_ALREADY_SUBMITTED`），不静默追加、不改会期唯一性语义。
+    """
+    specs = [{"type": "land", "params": {"act_type": "sale", "amount_C": amount}}
+             for amount in amounts]
+    res = senate_api.propose_many(state, player_id, specs)
+    assert res["success"], res.get("errors") or res.get("message")
+    created = res["data"]["created"]
+    assert [c["type"] for c in created] == ["land"] * len(amounts), created
+    proposal_ids = [c["proposal_id"] for c in created]
+    # B-3 失效面显式登记：同会期 legacy 单提案入口二次提交 ⇒ PACKAGE_ALREADY_SUBMITTED
+    retry = senate_api.propose(state, player_id, "land", act_type="sale", amount_C=1)
+    assert retry["success"] is False
+    assert "PACKAGE_ALREADY_SUBMITTED" in [e.get("code") for e in retry["errors"]], retry
+    assert len(state.get_senate_proposals()) == len(amounts)
+    return proposal_ids
 
 
 def _vote_all_humans(state, pids, support=True):
@@ -117,9 +150,7 @@ def _vote_all_humans(state, pids, support=True):
 def test_tf04_vote_result_dto_full_chain():
     """T-F04（AC-F03-1/2/3）：vote_results 6 字段/提案；透传 + 持久化一致。"""
     state = _build_state()
-    pid1 = _propose_land(state, "player1", 50)
-    pid2 = _propose_land(state, "player1", 30)
-    pid3 = _propose_land(state, "player1", 20)
+    pid1, pid2, pid3 = _propose_lands(state, "player1", [50, 30, 20])
     _vote_all_humans(state, [pid1, pid2, pid3])
     state._current_player_id = "player2"
     assert senate_api.veto(state, "player2", [pid3])["success"]
@@ -151,8 +182,7 @@ def test_tf04_vote_result_dto_full_chain():
 def test_tf05_refresh_and_reentry_stable():
     """T-F05（AC-F03-4/5）：refresh ×2 / re-entry 数字不变；AI 票 reused 0 新决策。"""
     state = _build_state(with_ai_faction=True)
-    pid1 = _propose_land(state, "player1", 50)
-    pid2 = _propose_land(state, "player1", 30)
+    pid1, pid2 = _propose_lands(state, "player1", [50, 30])
     _vote_all_humans(state, [pid1, pid2])
 
     decider1 = _CountingVoteDecider(decision=True)
@@ -190,8 +220,7 @@ def test_tf06_display_path_no_decider_reentry():
     from src.core.systems.political_system import PoliticalSystem
 
     state = _build_state(with_ai_faction=True)
-    pid1 = _propose_land(state, "player1", 50)
-    pid2 = _propose_land(state, "player1", 30)
+    pid1, pid2 = _propose_lands(state, "player1", [50, 30])
     _vote_all_humans(state, [pid1, pid2])
     resolved = senate_api.resolve_senate(state)
     assert resolved["success"]

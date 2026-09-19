@@ -144,19 +144,27 @@ class TestFR1HumanConsulFullChain(unittest.TestCase):
         contract = state.create_contract(ContractType.PUBLIC_WORKS, province_id=1, base_cost=100, current_turn=1)
         contract.status = ContractStatus.PENDING
 
-        # 配置阶段（authoritative 参数）
-        war_result = senate_api.propose(state, "player1", "war", war_id="w1", legions=4)
-        self.assertTrue(war_result["success"], war_result.get("message"))
-        pid_war = war_result["data"]["proposal_id"]
-        land_result = senate_api.propose(state, "player1", "land", act_type="sale", amount_C=50)
-        self.assertTrue(land_result["success"], land_result.get("message"))
-        pid_land = land_result["data"]["proposal_id"]
-        budget_result = senate_api.propose(state, "player1", "budget", contract_id=contract.id, modified_budget=120)
-        self.assertTrue(budget_result["success"], budget_result.get("message"))
-        pid_budget = budget_result["data"]["proposal_id"]
+        # 配置阶段（authoritative 参数）——R6（SA §A.4/§B.4，DA-2 B2）：legacy 单提案入口
+        # 退役（一次成功即关会期 ⇒ 本会期第二次 propose 返回 PACKAGE_ALREADY_SUBMITTED）；
+        # 同会期多提案必须经唯一整包门面 propose_many 一次提交（0…N），本测试借此保留
+        # 原「多提案端到端（提交→投票→否决→resolve→公示）」命题，不做任何删减。
+        package = senate_api.propose_many(state, "player1", [
+            {"type": "war", "params": {"war_id": "w1", "legions": 4}},
+            {"type": "land", "params": {"act_type": "sale", "amount_C": 50}},
+            {"type": "budget", "params": {"contract_id": contract.id, "modified_budget": 120}},
+        ])
+        self.assertTrue(package["success"], package.get("message"))
+        created = {c["type"]: c["proposal_id"] for c in package["data"]["created"]}
+        pid_war = created["war_proposal"]
+        pid_land = created["land"]
+        pid_budget = created["budget"]
 
         proposals = {p["id"]: p for p in state.get_senate_proposals()}
-        self.assertEqual(proposals[pid_war]["legions"], 4)
+        # R6：威胁战 → canonical War Proposal v2（type=war_proposal / 参数嵌套 payload）
+        self.assertEqual(proposals[pid_war]["type"], "war_proposal")
+        self.assertEqual(proposals[pid_war]["schema_version"], 2)
+        self.assertEqual(proposals[pid_war]["authority"], "senate_vote")
+        self.assertEqual(proposals[pid_war]["payload"]["reinforcement_n"], 4)
         self.assertEqual(proposals[pid_land]["amount_C"], 50)
         self.assertEqual(proposals[pid_land]["percent"], 50 / 1000)
         self.assertEqual(proposals[pid_budget]["modified_budget"], 120)
@@ -188,7 +196,7 @@ class TestFR1HumanConsulFullChain(unittest.TestCase):
         self.assertEqual(enacted_by_id[pid_budget]["key_parameters"]["modified_budget"], 120)
         # 连续性：rejected snapshot 保留权威参数（label 同源）
         war_snapshot = [p for p in data["rejected_proposals_snapshot"] if p["id"] == pid_war][0]
-        self.assertEqual(war_snapshot["legions"], 4)
+        self.assertEqual(war_snapshot["payload"]["reinforcement_n"], 4)
 
 
 # ---------------------------------------------------------------------------
@@ -199,8 +207,16 @@ class TestFR1VoteStability(unittest.TestCase):
     def _setup(self):
         state = _build_r1_state()
         _add_threat_war(state)
-        pid1 = senate_api.propose(state, "player1", "war", war_id="w1", legions=4)["data"]["proposal_id"]
-        pid2 = senate_api.propose(state, "player1", "land", act_type="sale", amount_C=50)["data"]["proposal_id"]
+        # R6（SA §A.4/§B.4，DA-2 B2）：legacy 单提案入口退役（一次成功即关会期）；
+        # 同会期两提案必须经唯一整包门面 propose_many 一次提交（保留原「2 提案投票稳定性」命题）。
+        package = senate_api.propose_many(state, "player1", [
+            {"type": "war", "params": {"war_id": "w1", "legions": 4}},
+            {"type": "land", "params": {"act_type": "sale", "amount_C": 50}},
+        ])
+        assert package["success"], package.get("message")
+        created = {c["type"]: c["proposal_id"] for c in package["data"]["created"]}
+        pid1 = created["war_proposal"]
+        pid2 = created["land"]
         # human 票（player1 权威）
         senate_api.vote(state, "player1", [pid1, pid2], [True, True])
         return state, pid1, pid2

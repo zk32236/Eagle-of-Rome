@@ -43,7 +43,8 @@ class GuiSessionStore(QObject):
     feedbackRaised = Signal(str, str)  # type, message
     handoffRequired = Signal(str)  # next_player_id
     populationVoteSubmittingChanged = Signal()
-    testConfigChanged = Signal()  # R5 DA-6：force 控件（§20 #44）读写通知
+    senateSubmitErrorsChanged = Signal()  # R6 DA-2 B5：Submit 结构化错误 + 草稿保留面
+    senateFinalizationWarningChanged = Signal()  # R6 DA-4 B2：自动 finalization 失败 warning
 
     def __init__(self, state: GameState, parent=None):
         super().__init__(parent)
@@ -76,9 +77,19 @@ class GuiSessionStore(QObject):
         self._forum_ai_processed = False
         self._last_reset_turn: int = 0
         self._faction_style_map: Dict[str, Any] = {}
-        # R5 DA-6：Configure/Test force 控件只读投影（testing.force_battle_result /
-        # testing.force_naval_result；空 = 正常结算）
-        self._test_config: Dict[str, Any] = {}
+        # R6（SA §B.5，DA-2 B5）：Submit 结构化错误 + 草稿保留
+        # - _senate_submit_errors：规范排序的 error_items（Adapter formatter 输出）
+        # - _senate_submit_errors_by_war：war_id → items（卡级 cardErrors 定位）
+        # - _senate_submit_errors_by_scope：scope key（package / war:<id>）→ items
+        # - _senate_drafts：**(session + war_id)** → draft 深值（checked/mode/target/N
+        #   + 另一模式缓存）；失败/refresh **不**重建、不取消 checkbox、不 clamp、不换将
+        self._senate_submit_errors: List[Dict[str, Any]] = []
+        self._senate_submit_errors_by_war: Dict[str, List[Dict[str, Any]]] = {}
+        self._senate_submit_errors_by_scope: Dict[str, List[Dict[str, Any]]] = {}
+        self._senate_drafts: Dict[str, Dict[str, Any]] = {}
+        self._senate_draft_session_id: str = ""
+        # R6（SA §D.1，DA-4 B2）：自动 finalization 失败 warning 文本（Submit 回包携带）
+        self._senate_finalization_warning: str = ""
 
     # -----------------------------------------------------------------------
     # 初始化
@@ -95,7 +106,6 @@ class GuiSessionStore(QObject):
         self._refresh_forum_view()
         self._refresh_combat_view()
         self._refresh_resolution_view()
-        self._refresh_test_config()
 
     # -----------------------------------------------------------------------
     # QML 可访问属性
@@ -384,18 +394,41 @@ class GuiSessionStore(QObject):
 
     @Property(bool, notify=senateViewChanged)
     def senateSettlementPending(self) -> bool:
-        """R3-G-01 §1.5：settlement-pending 可见恢复态（DTO 透传，Store 零推断）。"""
-        return self._senate_view.get("senate_settlement_pending", False)
+        """R6（SA §D.1，DA-4 B2）：settlement-pending 可见恢复态**正常态退役**。
+
+        finalization 已由服务端命令流程（Submit 零 Senate / vote 完成零 veto 候选 / veto
+        完成）自动完成；DTO legacy 键正常态恒 False。本属性**恒 False**，不再驱动正常 UI。
+        """
+        return False
 
     @Property(bool, notify=senateViewChanged)
     def canResolveSenateSettlement(self) -> bool:
-        """R3-G-01 §1.5：唯一恢复动作可见位（= settlement-pending；结算-only）。"""
-        return self._senate_view.get("can_resolve_settlement", False)
+        """R6（SA §D.1，DA-4 B2）：正常态「完成结算」动作位**退役**（恒 False）。
+
+        唯一正常推进 = `doAdvanceSenate`；内部异常恢复走 `canRetrySenateFinalization`
+        能力位（非玩家正常动作位）。
+        """
+        return False
 
     @Property(bool, notify=senateViewChanged)
     def senateCanFinishEmpty(self) -> bool:
-        """R5：显式空结束能力（零提案关闭选择需先提交 []）。"""
+        """R5/R6：显式空结束能力（零提案关闭选择需先提交 []）。"""
         return self._senate_view.get("can_finish_proposal_selection", False)
+
+    @Property(bool, notify=senateViewChanged)
+    def senateFinalizationError(self) -> bool:
+        """R6（SA §D.1，DA-4 B2）：内部 finalization 异常恢复能力位（非正常态动作位）。"""
+        return self._senate_view.get("senate_finalization_error", False)
+
+    @Property(bool, notify=senateViewChanged)
+    def canRetrySenateFinalization(self) -> bool:
+        """R6（SA §D.1，DA-4 B2）：仅**真实** finalization 失败时 True（内部恢复通道）。"""
+        return self._senate_view.get("can_retry_finalization", False)
+
+    @Property(str, notify=senateFinalizationWarningChanged)
+    def senateFinalizationWarning(self) -> str:
+        """R6（SA §D.1，DA-4 B2）：Submit 后自动 finalization 失败的可见 warning（空 = 无）。"""
+        return self._senate_finalization_warning
 
     @Property(list, notify=senateViewChanged)
     def senateWarCards(self) -> List[Dict[str, Any]]:
@@ -406,6 +439,68 @@ class GuiSessionStore(QObject):
     def senateWarExecution(self) -> Dict[str, Any]:
         """R5（SA §5.1/§5.3）：WarExecutionReceipt 只读摘要（不得据 receipt 重新执行）。"""
         return self._senate_view.get("senate_result", {}).get("war_execution", {})
+
+    # -----------------------------------------------------------------------
+    # R6（SA §B.5，DA-2 B5）：Submit 结构化错误 + 草稿保留（GUI session 面）
+    # -----------------------------------------------------------------------
+    @Property(list, notify=senateSubmitErrorsChanged)
+    def senateSubmitErrors(self) -> List[Dict[str, Any]]:
+        """最后一次失败 Submit 的规范排序 error_items（成功 / 未提交 = []）。"""
+        return self._senate_submit_errors
+
+    @Property(dict, notify=senateSubmitErrorsChanged)
+    def senateSubmitErrorsByWar(self) -> Dict[str, List[Dict[str, Any]]]:
+        """war_id → error_items：卡级 `cardErrors`（按 field 显示）。"""
+        return self._senate_submit_errors_by_war
+
+    @Property(dict, notify=senateSubmitErrorsChanged)
+    def senateSubmitErrorsByScope(self) -> Dict[str, List[Dict[str, Any]]]:
+        """scope key（`package` / `war:<id>`）→ error_items（包级横幅 + 相关卡关联）。"""
+        return self._senate_submit_errors_by_scope
+
+    @Property(bool, notify=senateSubmitErrorsChanged)
+    def hasSenateSubmitErrors(self) -> bool:
+        return bool(self._senate_submit_errors)
+
+    @Property(str, notify=senateSubmitErrorsChanged)
+    def senateSubmitErrorBanner(self) -> str:
+        """包级全局失败横幅文本（含 code + 可操作 message）。"""
+        if not self._senate_submit_errors:
+            return ""
+        parts = []
+        for item in self._senate_submit_errors:
+            code = str(item.get("code") or "")
+            msg = str(item.get("message") or "")
+            parts.append(f"{code}: {msg}" if msg else code)
+        return "提交失败 —— " + "；".join(parts)
+
+    def senate_draft_key(self, war_id) -> str:
+        """draft 保留键 = **(session + war_id)**（GUI session 隔离，满足 §B.5）。"""
+        session = self._senate_draft_session_id or self._viewer_id or ""
+        return f"{session}\x1f{war_id}"
+
+    @Slot(str, "QVariant", result=dict)
+    def doUpdateSenateDraft(self, war_id, draft) -> dict:
+        """记录某 War 的本地草稿（QML 编辑事件）。失败路径不得调用本槽重置草稿。"""
+        wid = str(war_id or "")
+        if not wid:
+            return {"ok": False}
+        payload = self._variant_to_python(draft)
+        if not isinstance(payload, dict):
+            return {"ok": False}
+        self._senate_drafts[self.senate_draft_key(wid)] = dict(payload)
+        return {"ok": True, "war_id": wid}
+
+    @Slot(str, result=dict)
+    def senateDraftFor(self, war_id) -> dict:
+        """取回该 War 已保留的草稿（无 = {}）——QML 重入 / 刷新后仍可恢复 dirty draft。"""
+        return dict(self._senate_drafts.get(self.senate_draft_key(war_id), {}))
+
+    @Slot(result=dict)
+    def senateDrafts(self) -> dict:
+        """当前 session 下全部保留草稿（键含 session+war_id）——普通 dict 快照。"""
+        return {k: dict(v) for k, v in self._senate_drafts.items()}
+
 
     @Property(dict, notify=senateViewChanged)
     def senateResult(self) -> Dict[str, Any]:
@@ -432,34 +527,6 @@ class GuiSessionStore(QObject):
     def senateVetoCandidateIds(self) -> List[int]:
         """WP-F R2-01：权威 passed-only 否决候选 id 集，只读透传 DTO（空集 = 无否决候选）。"""
         return self._senate_view.get("veto_candidate_ids", [])
-
-    # -----------------------------------------------------------------------
-    # Configure/Test force 控件（R5 DA-6，SA §5.5 / Owner §20 #44）
-    # -----------------------------------------------------------------------
-    @Property(dict, notify=testConfigChanged)
-    def testConfigView(self) -> Dict[str, Any]:
-        """force 控件只读投影（两键当前值 + 各自选项；QML 零推导）。"""
-        return self._test_config
-
-    @Property(str, notify=testConfigChanged)
-    def forceBattleResult(self) -> str:
-        """Land/CRT 强制结果（空 = 正常结算）；与 forceNavalResult 独立。"""
-        return self._test_config.get("force_battle_result", "")
-
-    @Property(str, notify=testConfigChanged)
-    def forceNavalResult(self) -> str:
-        """Naval 强制结果（空 = 正常结算）；与 forceBattleResult 独立。"""
-        return self._test_config.get("force_naval_result", "")
-
-    @Property(list, notify=testConfigChanged)
-    def forceBattleResultOptions(self) -> List[str]:
-        """Land 控件选项（none + 现五词归一结果）。"""
-        return self._test_config.get("land_options", [])
-
-    @Property(list, notify=testConfigChanged)
-    def forceNavalResultOptions(self) -> List[str]:
-        """Naval 控件选项（none + 现五词归一结果）；与 land 选项独立。"""
-        return self._test_config.get("naval_options", [])
 
     # -----------------------------------------------------------------------
     # 收入阶段属性
@@ -1376,6 +1443,83 @@ class GuiSessionStore(QObject):
             return value.toPython()
         return value
 
+    def _auto_finalize_after_submit(self, feedback: dict) -> None:
+        """R6（SA §D.1，DA-4 B2）：Submit 零 Senate（空包 / direct-only）→ 委托服务端唯一
+        finalization 完成协议自动结算。
+
+        成功：正常态直接进入 RESULTS_READY（`can_advance`=True，唯一推进 = doAdvanceSenate）。
+        失败（FINALIZATION_ERROR）：已发布包**不撤销**（`submitted/success` 保持 True），
+        附 `finalization_error` + warning，UI 不允许重发包；仅内部恢复通道重试。
+        """
+        finalization = self._adapter.resolve_senate()
+        data = feedback.get("data")
+        if not isinstance(data, dict):
+            data = {}
+        feedback["data"] = data
+        data["submitted"] = True
+        finalization_data = finalization.get("data") or {}
+        if finalization.get("success"):
+            data["finalization"] = {
+                "finalized": True,
+                "finalization_id": finalization_data.get("finalization_id"),
+                "completion_facts": finalization_data.get("completion_facts"),
+                "replayed": bool(finalization_data.get("replayed")),
+                "current_step": "results",
+            }
+            self._senate_finalization_warning = ""
+        else:
+            data["finalization"] = {
+                "finalized": False,
+                "finalization_id": finalization_data.get("finalization_id"),
+                "current_step": "finalization_error",
+            }
+            error = finalization_data.get("finalization_error") or {}
+            data["finalization_error"] = error
+            data["warnings"] = list(data.get("warnings") or []) + [{
+                "code": "FINALIZATION_ERROR",
+                "message": finalization.get("message", ""),
+            }]
+            self._senate_finalization_warning = (
+                "元老院 finalization 未完成（stage={stage}）：提案包已发布，"
+                "请勿重复提交，稍后自动重试。").format(stage=error.get("stage", "?"))
+        self._refresh_snapshot()
+        self._refresh_senate_view()
+        self.senateFinalizationWarningChanged.emit()
+
+    def _apply_senate_submit_feedback(self, feedback: dict) -> None:
+        """R6（SA §B.5，DA-2 B5）：把 Submit 反馈映射到 Store 结构化错误面。
+
+        - 失败：`error_items` / `errors_by_scope` 来自 Adapter formatter（若无则就地
+          归一）；由 `scope=war_id` 与 package 的 `details.claims/requests` 建
+          `senateSubmitErrorsByWar` 相关卡关联。**不清除草稿**。
+        - 成功：清空错误面；草稿在确认 package refs 后才切冻结只读（QML 侧）。
+        """
+        if feedback.get("success"):
+            self._senate_submit_errors = []
+            self._senate_submit_errors_by_war = {}
+            self._senate_submit_errors_by_scope = {}
+            self.senateSubmitErrorsChanged.emit()
+            return
+        error_items = feedback.get("error_items") or []
+        errors_by_scope = feedback.get("errors_by_scope") or {}
+        if not error_items:
+            normalized = GuiApiAdapter.normalize_error_feedback(
+                feedback.get("errors") or [], feedback.get("message") or "提交失败")
+            error_items = normalized["error_items"]
+            errors_by_scope = normalized["errors_by_scope"]
+        self._senate_submit_errors = list(error_items)
+        self._senate_submit_errors_by_scope = {k: list(v) for k, v in errors_by_scope.items()}
+        by_war: Dict[str, List[Dict[str, Any]]] = {}
+        for item in error_items:
+            scope = str(item.get("scope") or "")
+            if scope and scope != "package":
+                by_war.setdefault(scope, []).append(item)
+        for key, items in errors_by_scope.items():
+            if key.startswith("war:"):
+                by_war.setdefault(key[len("war:"):], []).extend(items)
+        self._senate_submit_errors_by_war = by_war
+        self.senateSubmitErrorsChanged.emit()
+
     @Slot("QVariant", result=dict)
     def doSubmitSenateProposals(self, proposals) -> dict:
         """WP-D AU-1/AU-3：提案提交路由（执政官 → propose_many 0…N；非执政官 → AI proposer 0…N）。
@@ -1385,6 +1529,7 @@ class GuiSessionStore(QObject):
         """
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
+        self._senate_finalization_warning = ""
         payload = self._variant_to_python(proposals)
         selected = []
         for item in payload or []:
@@ -1398,16 +1543,35 @@ class GuiSessionStore(QObject):
             # 不新增 api_adapter 方法——api_adapter.py 不在 WP-D 冻结面，见偏离 D-8）
             from src.api import senate_api
             feedback = self._adapter.call(senate_api.auto_submit_proposals, self._state)
+
+        # R6（SA §B.5，DA-2 B5）：**结构化错误单一显示路径 + draft 保留**。
+        # 失败路径：不重建 defaults、不取消 checkbox、不 clamp、不换将（不调 _refresh_*
+        # 重建视图）；下面先缓存本次逐 War 草稿（键 = session+war_id）。
+        self._senate_draft_session_id = (self._senate_view.get("senate_session_id")
+                                         or self._senate_draft_session_id or self._viewer_id)
+        for _row in selected:
+            if _row.get("war_id") is not None:
+                self._senate_drafts[self.senate_draft_key(_row["war_id"])] = dict(_row)
+        self._apply_senate_submit_feedback(feedback)
         self._raise_feedback(feedback)
         if feedback.get("success"):
             self._refresh_snapshot()
             self._refresh_senate_view()
-            created = (feedback.get("data") or {}).get("created") or (feedback.get("data") or {}).get("proposals") or []
-            # WP-G-R4（SA v1.7 §2.5，OD-R4-05/06 supersede R3 P2-01 Path A 自动空结算）：
-            # 空批提交只写 P（proposal_selection 完成）；不再隐式 resolve_senate(0)——
-            # 结算由显式入口（doResolveSenateSettlement 完成结算按钮）触发，Takeover-only
-            # Submit 不得误触发零提案自动结算（R4-09）。
-            _ = created
+            # 成功且确认 package refs（`_refresh_senate_view` 后 DTO 已含 submitted）
+            # 才切冻结只读：清空 dirty draft 缓存与错误面。
+            self._senate_drafts = {}
+            created = ((feedback.get("data") or {}).get("created")
+                       or (feedback.get("data") or {}).get("proposals") or [])
+            # R6（SA §D.1，DA-4 B2，supersede R4-09）：Submit 发布成功且 **Senate count == 0**
+            # （显式空包 / direct-only）→ 委托服务端唯一完成协议 `finalize_senate_if_ready`
+            # **自动执行一次内部政治 finalization**（真实非空成功 phase_result / PA / direct
+            # 摘要；无 Vote/Veto、无「完成结算」按钮）。GUI 不再自持第二结算判断；
+            # 唯一正常推进 = `doAdvanceSenate`。
+            # 失败**不撤销已发布包**：仍 `submitted:true` + `success:true` + `finalization_error`
+            # warning（状态落 FINALIZATION_ERROR、`can_advance=false`），UI 不允许重发包
+            # （再提交由服务端 `PACKAGE_ALREADY_SUBMITTED` 拦截），仅可内部恢复重试。
+            if not created:
+                self._auto_finalize_after_submit(feedback)
         self.senateViewChanged.emit()
         return feedback
 
@@ -1517,26 +1681,27 @@ class GuiSessionStore(QObject):
 
     @Slot(result=dict)
     def doResolveSenateSettlement(self) -> dict:
-        """R3-G-01 §1.5：settlement-pending 唯一恢复入口（结算-only，零 takeover mutation 重放）。
+        """R6（SA §D.1，DA-4 B2）：正常态「完成结算」动作**退役**——仅内部异常恢复通道。
 
-        Takeover canonical mutation 已成功（provenance/direct action/decision_complete 已持久）
-        但随后空结算失败/未收敛（senate_settlement_pending=True、can_advance=False）时，经本
-        Slot 只重试结算：adapter.resolve_senate → senate_api.resolve_senate 既有结算-only 路径。
-        War side effects（Commander binding/recruitment/treasury/Fleet-Legion bindings）已在首次
-        takeover_war 恰一次落盘，恢复时只读权威 direct action 与 decision flag，绝不重放。
-        DTO 前置：can_resolve_settlement==True（settlement-pending 定义下无 submitted proposals
-        且 required=False）；不满足 → 结构化拒绝，不做 business mutation。
+        正常态 finalization 由服务端命令流程（Submit 零 Senate / vote 完成且零 veto 候选 /
+        veto 完成）自动完成；**正常推进唯一入口 = `doAdvanceSenate`**，正常 UI 无「完成结算」
+        动作位（`canResolveSenateSettlement` 恒 False）。
+
+        本 Slot 仅在**真实 finalization 失败**（DTO `can_retry_finalization == True`，状态落
+        FINALIZATION_ERROR、`can_advance == False`）时作为内部重试通道：adapter.resolve_senate
+        → 服务端唯一 finalization 完成协议（四完成事实同版；已发布包不撤销、不重放非 War 效果）。
+        其余调用一律结构化拒绝，零 business mutation。
         """
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
-        if not self._senate_view.get("can_resolve_settlement", False):
+        if not self._senate_view.get("can_retry_finalization", False):
             feedback = self._feedback(
                 False,
-                "当前没有待结算的元老院空结算（settlement-pending）",
+                "正常态无「完成结算」动作：finalization 已由服务端自动完成，请使用推进按钮",
                 "error",
                 data={
                     "can_resolve_settlement": False,
-                    "senate_settlement_pending": self._senate_view.get("senate_settlement_pending", False),
+                    "can_retry_finalization": False,
                 },
             )
             self._raise_feedback(feedback)
@@ -1544,9 +1709,8 @@ class GuiSessionStore(QObject):
             return feedback
         feedback = self._adapter.resolve_senate()
         self._raise_feedback(feedback)
-        if feedback.get("success"):
-            self._refresh_snapshot()
-            self._refresh_senate_view()
+        self._refresh_snapshot()
+        self._refresh_senate_view()
         self.senateViewChanged.emit()
         return feedback
 
@@ -1631,27 +1795,6 @@ class GuiSessionStore(QObject):
         self._raise_feedback(feedback)
         return feedback
 
-    # -----------------------------------------------------------------------
-    # Configure/Test force 控件写 Slot（R5 DA-6，SA §5.5 / Owner §20 #44）
-    # -----------------------------------------------------------------------
-    @Slot(str, result=dict)
-    def doSetForceBattleResult(self, value: str) -> dict:
-        """设置 Land/CRT 强制结果（空 = 正常结算）；**不动** naval 键。"""
-        feedback = self._adapter.set_force_battle_result(self._viewer_id, value)
-        if feedback.get("success"):
-            self._refresh_test_config()
-        self._raise_feedback(feedback)
-        return feedback
-
-    @Slot(str, result=dict)
-    def doSetForceNavalResult(self, value: str) -> dict:
-        """设置 Naval 强制结果（空 = 正常结算）；**不动** land 键。"""
-        feedback = self._adapter.set_force_naval_result(self._viewer_id, value)
-        if feedback.get("success"):
-            self._refresh_test_config()
-        self._raise_feedback(feedback)
-        return feedback
-
     @Slot(result=dict)
     def refreshSnapshot(self) -> dict:
         """Refresh the shell snapshot from authoritative API DTO."""
@@ -1663,7 +1806,6 @@ class GuiSessionStore(QObject):
         self._refresh_forum_view()
         self._refresh_combat_view()
         self._refresh_resolution_view()
-        self._refresh_test_config()
         feedback = self._feedback(True, gui_text("feedback.snapshot.refreshed"), "success")
         self._raise_feedback(feedback)
         return feedback
@@ -1705,7 +1847,6 @@ class GuiSessionStore(QObject):
         self._refresh_forum_view()
         self._refresh_combat_view()
         self._refresh_resolution_view()
-        self._refresh_test_config()
         # Auto-settlement trigger: resolution phase, not yet resolved, not currently resolving
         if (self._selected_phase_id == "resolution"
                 and not self._resolution_view.get("resolved", False)
@@ -1754,11 +1895,6 @@ class GuiSessionStore(QObject):
     def _refresh_resolution_view(self):
         self._resolution_view = self._adapter.get_resolution_view(self._viewer_id)
         self.resolutionViewChanged.emit()
-
-    def _refresh_test_config(self):
-        """R5 DA-6：force 控件只读投影刷新（两键独立；空值 = 正常结算）。"""
-        self._test_config = self._adapter.get_test_config(self._viewer_id)
-        self.testConfigChanged.emit()
 
     def _executeResolution(self):
         """自动结算：进入 resolution 阶段时触发，防重复。"""

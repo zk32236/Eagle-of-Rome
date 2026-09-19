@@ -1,6 +1,12 @@
 # src/api/test_config_api.py
 """WP-G-R5 DA-6（SA-Design §5.5 / Owner §20 #44）— Configure/Test force 控件 API 入口。
 
+**INTERNAL（R6 / SA-Design v1.1 §D.5 / AC-22）**：本模块是**内部 fixture/test 接缝**
+（接缝 S2），**没有任何生产 consumer**——`src/ui/gui/session_store.py` /
+`src/ui/gui/api_adapter.py` / `src/ui/gui/qml/**` **零引用**（R6 DA-5 B1 已退场生产 TestConfig
+链）。它**不是**玩家可达入口，**不得**为它新建 GUI/Store/Adapter/CLI 替代入口（R6-R14 /
+R6-ODR-06）。唯一合法消费者 = 测试/fixture（`src/tests/**`）。
+
 暴露**两个独立**的确定性战斗结果控件读写：
 - `Force Land Result  → testing.force_battle_result`（Land/CRT override）
 - `Force Naval Result → testing.force_naval_result`（Naval override）

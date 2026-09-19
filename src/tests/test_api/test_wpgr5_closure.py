@@ -37,18 +37,35 @@ def _preserve_global_rng():
 
 
 def test_b_ac02_publish_fault_injection_zero_publish():
-    """B-AC02：PUBLISH 阶段故障注入 → SUBMIT_PUBLISH_FAILED + 零发布 + 保 draft。"""
+    """B-AC02：PUBLISH 阶段故障注入 → SUBMIT_PUBLISH_FAILED + 零发布 + 保 draft。
+
+    R6 迁移（B-1 类 route→direct）：War command 分双路由 —— 断言面迁到 R6 双账本：
+    (1) Senate 路由（threat 主动宣战）注入 `add_senate_proposal` 故障；
+    (2) direct 路由（ongoing War）注入 `register_consul_war_decision` 故障。
+    两路均须整包零发布（Proposal 集与 direct 账本均零写）。
+    """
     b = build_r5_base()
     state = b["state"]
     ps = PoliticalSystem(state)
+    # (1) Senate 路由：真 Senate 提案发布故障
     with mock.patch.object(GameState, "add_senate_proposal", side_effect=RuntimeError("injected")):
         result = ps.submit_proposal_package(
             FIXED["player"],
-            submit_request(war_drafts=[command_draft(FIXED["war_ongoing"], b["cmd_a"].id, 0)]))
+            submit_request(war_drafts=[command_draft(FIXED["war_threat"], b["consul_id"], 0)]))
     assert result["success"] is False
     assert "SUBMIT_PUBLISH_FAILED" in error_codes(result)
     assert state.get_senate_proposals() == []
     assert result["data"]["draft_preserved"] is True
+    # (2) direct 路由：FROZEN ConsulWarDecision 登记故障 → 同样整包零发布
+    with mock.patch.object(GameState, "register_consul_war_decision", return_value=False):
+        result2 = ps.submit_proposal_package(
+            FIXED["player"],
+            submit_request(war_drafts=[command_draft(FIXED["war_ongoing"], b["cmd_a"].id, 0)]))
+    assert result2["success"] is False
+    assert "SUBMIT_PUBLISH_FAILED" in error_codes(result2)
+    assert state.get_senate_proposals() == []
+    assert not state.get_consul_war_decisions("S1")
+    assert result2["data"]["draft_preserved"] is True
 
 
 def test_b_ac04_candidate_eligibility_four_roles():

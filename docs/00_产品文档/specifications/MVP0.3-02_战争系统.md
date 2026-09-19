@@ -410,6 +410,44 @@ ACTIVE（no valid commander）──T15（Takeover P2）──▶ ACTIVE（新 C
 > - **dual stage**：一次 ATTACK 内 Naval 成功后自动 Land；未执行 stage 无数值统计（v2
 >   envelope omitted keys，R4-05）；Land terminal 清海权不覆盖 Naval 阶段快照。
 
+## WP-G-R6 同步注记（2026-09-19；append-only，目标锚点 §2.5/§2.6/§2.8/§2.10/§3.2）
+
+> **权威**：External Development Advisor《WP-G-R6 平局后战争状态最终结论》（Option C = ACCEPT / NO CHANGE，
+> 2026-09-18）+ Owner 2026-09-19 确认（不改设计、不重跑任何门）。**GAME_RULE_CHANGE = NO**（仅语义显式化）。
+
+**A. 平局语义的正式定义**
+- `DRAW / STALEMATE` 后的 `TRUCE + pending treaty` **不是「和约已生效」**，其正式语义为
+  **临时军事冻结（Provisional Battlefield Ceasefire / Pending Political Settlement）**：
+  战斗层面已停手，政治层面尚未结算。
+- 正式 Peace / Truce 仅在元老院完成 `Peace Proposal → Vote → Tribune Veto → ENACTED`
+  并经既有 `Senate → Combat` 原子边界执行后才成立。
+
+**B. pending 期间的驻留与资源约束（不提前释放）**
+- Commander **继续留在前线**（保持 absent，不返回罗马）；
+- Legion **继续绑定原 War**（不召回、不进入解散生命周期）；
+- Fleet **继续绑定原 War**（不得自动解散）；
+- Legion / Fleet **维护费照常支付**（在 Revenue 阶段正常结算）；
+- **不产生正式停战到期时间**（`truce_end_turn` 仅在批准时写入）；
+- **不产生赔款**（pending 不触发 indemnity 结算）；
+- War **不进入 RESOLVED**。
+
+**C. 政治处置与失败路径**
+- Peace ENACTED → `TRUCE + approved`（temporary truce，见 §2.8/§2.10）：指挥官返回罗马、Legion/Fleet 释放、`truce_end_turn` 写入；War 保持 TRUCE，**不等于战争终结**。
+- Peace 被否决 / 未表决 / Takeover / Continue → **清 pending treaty ⇒ `TRUCE → ACTIVE`**，
+  军队与指挥官绑定保持不变，**下一回合正常进入 Combat**（不因上一回合平局而跳过战斗）。
+
+**D. 全局计数约束**
+- 进行中战争数 `ongoing_war_count = len(ACTIVE) + len(TRUCE)` ⇒ **pending TRUCE 仍计入战争数失败条件**，不构成逃离战争压力的手段。
+
+**E. 跨阶段消费者不变量（21 项已核查 PASS）**
+- Combat / Resolution / Game-over 计数 / Advance Year（仅 approved 可触发 truce 到期）/ Mortality /
+  Revenue（维护费与赔款）/ Forum（War Threat、Fleet Replacement 暂停）/ Population（不解散、Commander 转换）/
+  Senate（War universe、pending 发现、拒绝/未表决恢复）/ Senate→Combat 边界 / Save-Load —— 均以本节 A–D 为准。
+
+**F. 相邻缺陷（另行跟踪，非本语义）**
+- 非战斗场景（如 Mortality）中前线指挥官死亡时，`war.commander_id` 未随死亡解绑 ⇒ 潜在 stale 绑定。
+  该问题**与本状态机语义无关**，另行登记处置，不得据以重开 Peace 状态机。
+
 ## 9. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
@@ -422,6 +460,7 @@ ACTIVE（no valid commander）──T15（Takeover P2）──▶ ACTIVE（新 C
 | v1.5 | 2026-08-31 | DA Sub-Agent (WP-G GC) | 海军门语义同步（G1-09/16/R-05/R-06）：§2.3 海战前置句补完整状态机——STALEMATE/DEFEAT/DISASTER 阻断陆战（legacy CLI 同步）、TRIUMPH/VICTORY 获控后同场陆战、已获控跳过海战；制海权持久至战争正式结束（sea_control_acquired 权威字段，替代 _sea_control_ratio；GameState 存档接线 = GD） |
 | v1.7 | 2026-09-09 | DA Sub-Agent (WP-G-R4 B3) | R4 同步（FROZEN v1.7 §2/§3/§4/§5）：Takeover 决策/承诺与物理部署分离（O5）；互斥/单 commitment/pending-aware M；§2.3 readiness 前置（NAVAL_NOT_READY 非 DEFEAT、就绪后可重试）；§2.7 resolve_war 显式 combat_result 载体 + legacy unknown 中性事件；dual-stage v2 envelope（未执行无统计/海权 stage 快照）——GAME_RULE_CHANGE=NO |
 | v1.6 | 2026-09-01 | DA Sub-Agent (WP-G G3C) | Treaty Lifecycle 修正（Owner Correction 2026-09-01 / DC-TREATY-LIFECYCLE-CORRECTION-01）：**approved = TEMPORARY TRUCE（撤销 v1.3 的 approved=RESOLVED）**——War 保持 TRUCE + truce_end_turn + Commander 返回 + Legion/Fleet 释放 + Revenue 最后维护 + Population DISBANDED；到期 → THREAT（threat_level=1，禁直接 ACTIVE / 旧绑定恢复，Sea Control 保持）→ 自动升级 → ACTIVE；TRIUMPH/VICTORY = RESOLVED 独立；ODR-CAND-01 修复 = enqueue-then-clear（_legions_to_disband 双入残留消除） |
+| v1.8 | 2026-09-19 | DA Sub-Agent (WP-G-R6) | 平局语义显式化同步（Advisor 最终结论 Option C = ACCEPT / Owner 2026-09-19 确认）：新增「WP-G-R6 同步注记」——`TRUCE + pending` 正式定义为临时军事冻结；pending 期间军团/舰队/指挥官驻留 + 维护费照付 + 不产生到期与赔款；Peace 未获批 ⇒ `TRUCE → ACTIVE` 且下一回合正常开战；`ongoing_war_count = ACTIVE + TRUCE`（计入失败条件）；跨阶段消费者不变量 A–F。GAME_RULE_CHANGE=NO（仅文档显式化） |
 
 ---
 

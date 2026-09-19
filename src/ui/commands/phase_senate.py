@@ -64,6 +64,8 @@ class SenateCommand(Command):
         self._passed_contracts = []
         self._passed_land_acts = []
         self._peace_proposals = []
+        # R6（SA §A.4）：会话本地整包草稿（编辑阶段累积；Proposal 阶段一次 propose_many）
+        self._package_drafts = []
 
     def execute(self, args: List[str]) -> bool:
         # 原有前置检查（是否已执行、是否先执行人口阶段等）保持不变
@@ -90,6 +92,7 @@ class SenateCommand(Command):
         self._passed_contracts = []
         self._passed_land_acts = []
         self._peace_proposals = []
+        self._package_drafts = []
 
         # 将游戏状态中的当前玩家设置为元老院阶段的第一个玩家（通常是执政官所属玩家）
         if self._players:
@@ -338,9 +341,12 @@ class SenateCommand(Command):
                     parts = cmd_input.split()
                     cmd = parts[0].lower()
                     if cmd in ("next", "n"):
-                        # 玩家结束提案，直接进入下一步（无需转换）
-                        self._handle_next([])
-                        break
+                        # R6（SA §A.4）：Proposal 阶段一次 propose_many（0…N）；
+                        # 失败停留编辑且保留 draft，成功后进入下一步。
+                        if self._submit_local_package():
+                            self._handle_next([])
+                            break
+                        continue
                     elif cmd == "propose":
                         self._handle_propose(parts[1:])
                     else:
@@ -663,7 +669,10 @@ class SenateCommand(Command):
                 return
             print("   （显式空选择：本会期不提交法案——提案选择完成）")
 
-        result = senate_api.resolve_senate(
+        # R6（SA §D.1.1，DA-4 B1／承接 DA-3 P-B4-5）：CLI 与 GUI/API 同入口——直接调用服务端
+        # 唯一 finalization 完成协议 `finalize_senate_if_ready`（`resolve_senate` 已退役为其
+        # 兼容别名，二者等价）；CLI 不再自持第二结算路径。
+        result = senate_api.finalize_senate_if_ready(
             self.state,
             vote_decider=self.vote_decider,
         )
@@ -673,29 +682,13 @@ class SenateCommand(Command):
             if result["message"]:
                 print(result["message"])
 
-            fleet_result = senate_api.assign_fleets_to_active_wars(self.state)
-            if fleet_result["success"] and fleet_result["message"]:
-                print(fleet_result["message"])
-
-            # S1: 总督任命
-            governor_results = senate_api.assign_governors(self.state)
-            if governor_results:
-                print("\n\t====================== 行省总督任命 ====================")
-                for r in governor_results:
-                    print(f"      ✅ 任命 {r['name']} 为行省总督 (province={r['province_id']})")
-                print()
-            else:
-                print("\n\t====================== 行省总督任命 ====================")
-                print("      无行省需要任命总督\n")
-
-            # S2: 起义指挥官指派
-            ws = self.state.get_war_system()
-            if ws:
-                commander_results = ws.assign_rebellion_commanders()
-                for r in commander_results:
-                    print(f"      ✅ 任命 {r['name']} 为起义指挥官 (rebellion={r['rebellion_id']})")
-                if commander_results:
-                    print()
+            # R6（SA §C.5.2，DA-3 B4）：CLI 第二调用退役——删除 `_handle_step_5` 内
+            # Fleet / Governor / Rebellion 三个 hook 的**直接调用**（含其打印分支）。
+            # 政治 finalization（含 Governor 政治步骤 + 只读 `retained_effect_intents` 登记）
+            # 已由 `senate_api.resolve_senate` 服务端完成；军事效果（Fleet / 起义）的唯一
+            # 调用点 = 边界事务自动层（`PoliticalSystem.commit_war_resolution`）。CLI 仅消费
+            # `resolve_senate` / 服务端 `finalize_senate_if_ready`，与 GUI/AI 同源，
+            # 无第二军事执行者。
         else:
             # WP-G-R4（§2.3b）：resolve 被 guard/M/phase/权限拒绝 → 失败不推进
             print(f"❌ 结算失败: {result['message']}", flush=True)
@@ -743,30 +736,27 @@ class SenateCommand(Command):
         data = result["data"]
         print("\n   📜 可选法案：")
 
-        # 获取战争系统，用于后续过滤
-        ws = self.state.get_war_system()
-
         # 构建提案映射并分配 ID
         proposals_map = {}
         idx = 1
 
-        # 战争威胁
-        for war in data.get("war_threats", []):
-            # 确保 war 状态为 THREAT
-            war_obj = ws.get_war_by_id(war["war_id"]) if ws else None
-            if war_obj and war_obj.peace_treaty and war_obj.peace_treaty.get('status') == 'pending':
-                continue
-            proposals_map[f"B{idx:02d}"] = ("war", {"war_id": war["war_id"]})
-            print(f"       B{idx:02d} {war['name']}（威胁等级 {war['threat_level']}）")
-            idx += 1
-
-        # 停战草案
-        for peace in data.get("pending_peace_treaties", []):
-            war_obj = ws.get_war_by_id(peace["war_id"]) if ws else None
-            if war_obj and war_obj.status == WarStatus.TRUCE and war_obj.peace_treaty and war_obj.peace_treaty.get(
-                    'status') == 'pending':
-                proposals_map[f"B{idx:02d}"] = ("peace", {"war_id": peace["war_id"]})
-                print(f"       B{idx:02d} {peace['name']}（赔款 {peace['indemnity']}）")
+        # R6（SA §A.4）：War 草案统一消费同一 WarCardView（含真实 command / pending peace）；
+        # route 唯一来源 = card.authority_by_mode（缺 route 不列出，不 fallback）。
+        from src.core.systems.political_system import PoliticalSystem
+        current_turn = self.state.turn.turn_number if self.state.turn else None
+        cards = PoliticalSystem(self.state).build_war_card_views({"current_turn": current_turn})
+        for card in cards:
+            routes = card.get("authority_by_mode") or {}
+            for mode in (card.get("allowed_modes") or []):
+                authority = routes.get(mode)
+                if authority not in ("senate_vote", "consul_direct"):
+                    continue
+                key = f"B{idx:02d}"
+                proposals_map[key] = ("war", {"war_id": card.get("war_id"), "mode": mode,
+                                              "card": card})
+                route_label = "元老院表决" if authority == "senate_vote" else "执政官决定"
+                mode_label = "停战" if mode == "peace" else "作战"
+                print(f"       {key} {card.get('war_name')}（{mode_label} · {route_label}）")
                 idx += 1
 
         # 行省空缺（proconsul）
@@ -801,20 +791,27 @@ class SenateCommand(Command):
         self._proposals_map = proposals_map
 
         print("\n🔧 本阶段可操作（CONSUL）：")
-        print("   1. propose <法案ID> [参数] → 提出提案")
-        print("      示例: ")
-        print("            propose B01 6     (宣战，6个军团)")
-        print("            propose B02 80    (工程或包税权合同预算，80塔兰特)")
-        print("            propose B03       (和约，提交停战协议，无参数)")
-        print("            propose B04 1     (总督，提名候选人ID)")
-        print("            propose B05 0.05  (公地出售，5%国家公地)")
-        print("            propose B06 0.06  (分地法案，6%国家公地)")
-        # R5（SA §5.2，DA-4）：CLI 入口与 Human/AI 同源——统一经 propose_many（Package Submit），
-        # 推进统一经 advance_senate_phase（唯一 owner）；旧接管/取消子命令已退役。
-        print("   2. next/n → 进入元老院表决环节（零提案 = 显式空选择结束提案）")
+        print("   1. propose <草案ID> [参数] → 加入整包草稿（不发布；可多次编辑）")
+        print("      示例:")
+        print("            propose B01 2 6   (War 草案：target Commander=2，N=6)")
+        print("            propose B02 80    (预算草案 80 塔兰特)")
+        print("            propose B03       (停战草案，无参数)")
+        print("            propose B04 1     (总督草案：候选人ID)")
+        print("            propose B05 50    (土地草案：50 C)")
+        # R6（SA §A.4）：CLI 入口与 Human/AI 同源——编辑本地整包草稿，一次 propose_many（0…N），
+        # 推进统一经 advance_senate_phase（唯一 owner）；legacy 单提案入口不再是生产 CLI 路径。
+        print("   2. next/n → 一次提交整包（propose_many 0…N）并进入元老院表决环节")
 
     def _handle_propose(self, args: List[str]):
-        """处理 propose 命令，格式：propose <提案ID> [参数]"""
+        """R6（SA §A.4）：编辑会话本地整包草稿（不发布）。
+
+        格式：``propose <草案ID> [参数]``
+          - War 草案（统一 War Card）：``propose B01 [target_id] [N]``
+          - 非 War 草案：``propose B0x [参数]``（governor/budget/land）
+
+        发布统一在 Proposal 阶段 ``next/n`` 一次 ``propose_many``（0…N）；失败停留编辑
+        且保留草稿。legacy 单提案入口（senate_api.propose）不再是生产 CLI 路径。
+        """
         if len(args) < 1:
             print("❌ 用法: propose <法案ID> [参数]", flush=True)
             return
@@ -825,101 +822,164 @@ class SenateCommand(Command):
             return
 
         proposal_type, base_params = self._proposals_map[proposal_id]
-        kwargs = base_params.copy()
-
-        existing_proposals = self.state.get_senate_proposals()
-        for prop in existing_proposals:
-            if prop["type"] == proposal_type:
-                if proposal_type == "budget" and prop.get("contract_id") == kwargs.get("contract_id"):
-                    print(f"❌ 合同 {kwargs.get('contract_id')} 已有待表决提案，请勿重复提交")
-                    return
-                elif proposal_type == "war" and prop.get("war_id") == kwargs.get("war_id"):
-                    print(f"❌ 战争 {kwargs.get('war_id')} 已有宣战提案")
-                    return
-                elif proposal_type == "peace" and prop.get("war_id") == kwargs.get("war_id"):
-                    print(f"❌ 战争 {kwargs.get('war_id')} 已有停战草案提案")
-                    return
-                elif proposal_type == "governor" and prop.get("province_id") == kwargs.get("province_id"):
-                    print(f"❌ 行省 {kwargs.get('province_id')} 已有总督任命提案")
-                    return
-
-        # 根据提案类型补充额外参数
         if proposal_type == "war":
-            if len(args) < 2:
-                print("❌ 宣战提案需要指定军团数量", flush=True)
-                return
-            try:
-                legions = int(args[1])
-            except ValueError:
-                print("❌ 军团数量必须是数字", flush=True)
-                return
-            kwargs["legions"] = legions
+            self._stage_war_draft(base_params, args[1:])
+            return
+        kwargs, ok = self._parse_non_war_params(proposal_type, base_params, args[1:])
+        if not ok:
+            return
+        self._stage_non_war_draft(proposal_type, kwargs)
 
-            # 检查战争是否需要海战，若需要则验证舰队可用性
-            war_id = kwargs["war_id"]
-            ws = self.state.get_war_system()
-            war = ws.get_war_by_id(war_id) if ws else None
-            if not war:
-                print("❌ 战争不存在", flush=True)
-                return
-            if war.naval_required:
-                naval_system = self.state.naval_system
-                if not naval_system or not naval_system.get_available_fleets():
-                    print("❌ 战争需要海战，但当前无可用舰队，无法宣战。请先建造舰队。", flush=True)
+    def _stage_war_draft(self, card_params: dict, extra_args: List[str]):
+        """R6（SA §A.4）：把一张 War Card 的（mode + target + N）加入会话本地整包草稿。
+
+        一个 (session_id, war_id) 最多一个 authoritative item，command/peace 互斥——
+        同 war 再次 propose 覆盖旧草案；绝不在发布后再换将。缺 route 不 fallback
+        （fail-closed，不入草稿）。
+        """
+        card = card_params.get("card") or {}
+        mode = card_params.get("mode", "command")
+        war_id = card_params.get("war_id")
+        authority = (card.get("authority_by_mode") or {}).get(mode)
+        if authority not in ("senate_vote", "consul_direct"):
+            print("❌ 该 War Card 缺可用路由（请刷新后重试），不入草稿", flush=True)
+            return
+        defaults = card.get("defaults") or {}
+        target = defaults.get("target_commander_id")
+        n = defaults.get("reinforcement_n")
+        remaining = list(extra_args or [])
+        if mode == "peace":
+            target, n = None, None  # 停战：丢弃 Commander/N 缓存
+        else:
+            if remaining:
+                try:
+                    target = int(remaining[0])
+                    remaining = remaining[1:]
+                except ValueError:
+                    print("❌ target Commander ID 必须是整数", flush=True)
                     return
-
-        elif proposal_type == "peace":
-            # 停战不需要额外参数
-            pass
-
-        elif proposal_type == "governor":
-            if len(args) < 2:
-                print("❌ 总督任命需要指定候选人ID", flush=True)
+            if remaining:
+                try:
+                    n = int(remaining[0])
+                except ValueError:
+                    print("❌ 军团数量必须是整数", flush=True)
+                    return
+            if target is None:
+                print("❌ 缺 target Commander（无 DTO default 可用），请显式指定", flush=True)
                 return
+        self._package_drafts = [
+            d for d in self._package_drafts
+            if not (d.get("type") == "war_proposal" and d.get("war_id") == war_id)
+        ]
+        self._package_drafts.append({
+            "type": "war_proposal", "war_id": war_id, "checked": True, "mode": mode,
+            "target_commander_id": target, "reinforcement_n": n,
+        })
+        mode_label = "停战" if mode == "peace" else "作战"
+        detail = "" if mode == "peace" else f"（Commander={target}，N={n}）"
+        print(f"✅ 已加入整包草稿：{card.get('war_name')} [{mode_label}]{detail}", flush=True)
+        self._print_package_drafts()
+
+    def _parse_non_war_params(self, proposal_type: str, base_params: dict, extra_args: List[str]):
+        """解析非 War 草案参数（返回 (kwargs, ok)）；不发布。"""
+        kwargs = dict(base_params)
+        args = list(extra_args or [])
+        if proposal_type == "governor":
+            if not args:
+                print("❌ 总督任命需要指定候选人ID", flush=True)
+                return kwargs, False
             try:
-                candidate_id = int(args[1])
+                kwargs["candidate_id"] = int(args[0])
             except ValueError:
                 print("❌ 候选人ID必须是数字", flush=True)
-                return
-            kwargs["candidate_id"] = candidate_id
-
+                return kwargs, False
         elif proposal_type == "budget":
-            # 预算合同可选的修改预算
-            if len(args) >= 2:
+            if args:
                 try:
-                    modified_budget = int(args[1])
-                    kwargs["modified_budget"] = modified_budget
+                    kwargs["modified_budget"] = int(args[0])
                 except ValueError:
                     print("❌ 修改预算必须是数字，请使用纯数字（如 80）", flush=True)
-                    return  # 参数错误，不提交提案
-
+                    return kwargs, False
         elif proposal_type == "land":
-            if len(args) < 2:
-                print("❌ 土地法案需要指定百分比（如 0.05 表示 5%）", flush=True)
-                return
+            if not args:
+                print("❌ 土地法案需要指定数量（C）", flush=True)
+                return kwargs, False
             try:
-                percent = float(args[1])  # 直接使用小数，不再除以100
+                raw = float(args[0])
             except ValueError:
-                print("❌ 百分比必须是数字", flush=True)
-                return
-            kwargs["percent"] = percent
+                print("❌ 土地数量必须是数字", flush=True)
+                return kwargs, False
+            # R6（SA §A.4）：旧 percent 输入在 CLI 归一为既有 amount_C（不扩大公地规则）。
+            national = self.state.get_national_public_land()
+            amount_C = int(round(raw * national)) if 0 < raw < 1 else int(raw)
+            kwargs.pop("percent", None)
+            kwargs["amount_C"] = amount_C
+        return kwargs, True
 
-        # 获取当前玩家
-        if hasattr(self, "_current_consul_player_id") and self._current_consul_player_id:
-            player_id = self._current_consul_player_id
-        else:
-            player_id = self._get_current_player_id()
-            if not player_id:
-                print("❌ 无法获取当前玩家", flush=True)
-                return
+    def _draft_identity(self, draft: dict):
+        t = draft.get("type")
+        params = draft.get("params") or {}
+        if t == "war_proposal":
+            return (t, draft.get("war_id"), draft.get("mode"))
+        if t == "budget":
+            return (t, params.get("contract_id"))
+        if t == "governor":
+            return (t, params.get("province_id"))
+        if t == "land":
+            return (t, params.get("act_type"))
+        return (t, params.get("contract_id") or params.get("province_id") or params.get("act_type"))
 
-        # 调用 API（使用模块级 senate_api 导入）
-        result = senate_api.propose(self.state, player_id, proposal_type, bypass_turn_check=True, **kwargs)
-        if result["success"]:
-            description = self._generate_proposal_description(proposal_type, kwargs)
-            print(f"✅ {description}")
-        else:
-            print(f"❌ {result['message']}", flush=True)
+    def _stage_non_war_draft(self, proposal_type: str, kwargs: dict):
+        """R6（SA §A.4）：把非 War 草案加入会话本地整包草稿（同 identity 覆盖，不发布）。"""
+        new_draft = {"type": proposal_type, "params": dict(kwargs)}
+        identity = self._draft_identity(new_draft)
+        self._package_drafts = [
+            d for d in self._package_drafts if self._draft_identity(d) != identity
+        ]
+        self._package_drafts.append(new_draft)
+        print(f"✅ 已加入整包草稿：{self._generate_proposal_description(proposal_type, kwargs)}",
+              flush=True)
+        self._print_package_drafts()
+
+    def _print_package_drafts(self):
+        if not self._package_drafts:
+            print("   （整包草稿为空——next 将提交空选择）", flush=True)
+            return
+        print(f"   📦 当前整包草稿（{len(self._package_drafts)} 项）：", flush=True)
+        for draft in self._package_drafts:
+            print(f"      · {self._describe_draft(draft)}", flush=True)
+
+    def _describe_draft(self, draft: dict) -> str:
+        t = draft.get("type")
+        if t == "war_proposal":
+            ws = self.state.get_war_system()
+            war = ws.get_war_by_id(draft.get("war_id")) if ws else None
+            name = war.name if war else draft.get("war_id")
+            mode_label = "停战" if draft.get("mode") == "peace" else "作战"
+            return (f"{name} [{mode_label}] Commander={draft.get('target_commander_id')} "
+                    f"N={draft.get('reinforcement_n')}")
+        return self._generate_proposal_description(t, draft.get("params") or {})
+
+    def _submit_local_package(self) -> bool:
+        """R6（SA §A.4）：一次 propose_many 提交整包（0…N）。
+
+        失败 → 返回 False（停留编辑、保留草稿）；成功 → 关闭本会期选择。
+        """
+        from src.api import senate_api
+        if self.state.senate_proposal_decision_complete:
+            return True
+        player_id = self._proposal_player_id()
+        if not player_id:
+            print("❌ 无法获取当前玩家", flush=True)
+            return False
+        result = senate_api.propose_many(self.state, player_id, list(self._package_drafts))
+        if result.get("success"):
+            created = (result.get("data") or {}).get("created") or []
+            print(f"✅ 已提交整包（{len(self._package_drafts)} 项草案；{len(created)} 项已发布）",
+                  flush=True)
+            return True
+        print(f"❌ 整包提交失败: {result.get('message')}（草稿保留，可继续编辑或重试）", flush=True)
+        return False
 
     # R5（SA §5.2 C-M08，DA-4）：CLI 旧接管/取消子命令及处理器已退役——
     # Human/AI/CLI 三入口统一经 Package Submit（propose_many）；无第二 mutation owner。
@@ -1196,36 +1256,18 @@ class SenateCommand(Command):
         return PoliticalSystem(self.state)._find_any_eligible_tribune()
 
     def _execute_war_declaration(self, war: "War", consul_id: int, legions: int):
-        """实际执行宣战：激活战争、征召军团、指派指挥官"""
-        ws = self.state.get_war_system()
-        if not ws:
-            print(f"      ⚠️ 战争系统不可用，无法执行宣战")
-            return
-        success = ws.activate_war(war.id, consul_id, legions)
-        if not success:
-            print(f"      ⚠️ 激活战争失败")
-            return
+        """[DA-3 B4 / DA-Plan R-1 退役 shim] — **死代码**（静态负测证明零调用者）。
 
-        war.commander_id = consul_id
-
-        consul = self.state.get_member(consul_id)
-        if not consul:
-            return
-
-        # S4: 自动征召军团并指派
-        ws = self.state.get_war_system()
-        if ws:
-            recruit_results = ws.auto_recruit_and_assign()
-            if recruit_results:
-                for r in recruit_results:
-                    print(f"      ✅ 征召并指派 {r['legion_name']} 至战区 (theater={r['assigned_to']})")
-            else:
-                print(f"      ℹ️ 无需额外征召军团")
-        else:
-            print(f"      ⚠️ 战争系统不可用，无法征召军团")
-        new_presiding = self.state.get_presiding_officer()
-        if new_presiding:
-            print(f"      元老院新主持人：{new_presiding.name}（官职 {new_presiding.office}）")
+        原 S4 单提案 CLI 宣战路径（激活战争 + `ws.auto_recruit_and_assign()` 征召）已随
+        R6 整包发布 + 唯一边界事务退役；保留签名以维持兼容面，返回**无副作用失败 shim**
+        （不激活战争、不征召、不改 commander、不改主持人）。统一语义 =
+        `LEGACY_WAR_EXECUTION_RETIRED`。
+        """
+        return {
+            "success": False,
+            "code": "LEGACY_WAR_EXECUTION_RETIRED",
+            "message": "use package and advance",
+        }
 
     # _process_land_proposals and _get_land_act_description have been removed.
     # Land proposals are now handled entirely through senate_api.auto_submit_proposals()

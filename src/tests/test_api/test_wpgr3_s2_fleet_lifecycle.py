@@ -183,9 +183,34 @@ def _population_votes_and_resolve(state):
     return resolved["data"]
 
 
+def _ensure_eligible_consul(state, player_id="player_opt"):
+    """R6（DA-6 B3c-cont2）：V0 空包 Submit 需 actor 派系有**在职执政官**
+    （`_is_eligible_consul` = office==consul 且非 dead 且非 absent）。
+    fixture 唯一 consul（战时 commander）is_absent=True ⇒ 不构成在职；此处补一名值班执政官。"""
+    from src.core.systems.political_system import PoliticalSystem
+    player = state.get_player(player_id)
+    faction = state.get_faction(player.faction_id)
+    if PoliticalSystem(state)._find_consul_for_faction(faction) is not None:
+        return
+    fid = 900
+    consul = state.get_member(fid)
+    if consul is None:
+        consul = Figure(id=fid, name="值班执政官", faction_id=faction.id, age=55)
+        state.add_member(consul)
+        faction.member_ids.append(fid)
+    consul.faction_id = faction.id
+    consul.office = "consul"
+    consul.is_absent = False
+    consul.is_dead = False
+
+
 def _senate_resolve_advance(state):
-    """resolve_senate → advance（WP-G-R4 supersede：零提案先显式空选择写 P）。"""
-    if not state.get_senate_proposals() and not state.senate_proposal_decision_complete:
+    """resolve_senate → advance（WP-G-R4 supersede：零提案先显式空选择写 P）。
+    WP-G-R6（DA-6 B3c-cont2）：本年会话判据（`turn-{turn}`）+ 补在职执政官（V0 鉴权）。"""
+    _ensure_eligible_consul(state)
+    cur_session = f"turn-{state.turn.turn_number if state.turn else 0}"
+    if (not state.get_senate_proposals() and not state.senate_proposal_decision_complete
+            and state.get_senate_package_id_for_session(cur_session) is None):
         fin = senate_api.propose_many(state, "player_opt", [])
         assert fin["success"], fin.get("message")
     resolved = senate_api.resolve_senate(state)

@@ -444,11 +444,13 @@ def _real_senate_options():
 
 
 # R5（SA §2.1/§5.1）：统一 War Card 样本（war 控件归 WarProposalCard，非 bill 卡）
+# R6（SA §A.2）：补 schema_version + authority_by_mode（DTO 新增字段；ongoing→command=consul_direct）
 _WAR_CARDS = [{
     "war_id": "w1", "war_name": "皮洛士战争", "classification": "ongoing",
     "is_real_war": True, "war_status": "active", "activation_origin": "active_declaration",
     "activation_turn": 1, "current_commander_id": 1, "current_commander_label": "执政官",
     "surviving_legion_count": 0, "peace_capability": False, "allowed_modes": ["command"],
+    "schema_version": 2, "authority_by_mode": {"command": "consul_direct"},
     "commander_candidates": [{"figure_id": 1, "label": "执政官", "eligible_role": "consul"}],
     "defaults": {"checked": False, "mode": "command",
                  "target_commander_id": 1, "reinforcement_n": 0},

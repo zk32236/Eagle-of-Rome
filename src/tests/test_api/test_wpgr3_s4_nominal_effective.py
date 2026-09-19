@@ -169,8 +169,15 @@ def _population_round(state, consul_figure_id, rival_vote_figure_id=0):
 
 def _senate_resolve_advance(state):
     """resolve_senate（确定性 approve）→ advance_senate_phase。
-    WP-G-R4（OD-R4-05/06 supersede，SA v1.7 §2.3b）：零提案先显式空选择写 P。"""
-    if not state.get_senate_proposals() and not state.senate_proposal_decision_complete:
+    WP-G-R4（OD-R4-05/06 supersede，SA v1.7 §2.3b）：零提案先显式空选择写 P。
+    WP-G-R6（DA-6 B3c 迁移）：**每会期唯一整包 Submit** —— 本会期已有 package 记录时
+    不得二次提交（否则 PACKAGE_ALREADY_SUBMITTED）；仅在真·零提案且本会期未提交时补空包。
+    WP-G-R6（DA-6 B3c-cont / G1 裁定 (b)）：判据用**本年会话 id**（`turn-{turn}`，
+    即 `propose_many` 实际采用的身份，senate_api.py:916）——粘滞的 `get_senate_session()`
+    在跨年度（Y2/Y3）仍返回上一年会期，会误判“已有包”而漏空包 Submit。产品零改动。"""
+    cur_session = f"turn-{state.turn.turn_number if state.turn else 0}"
+    if (not state.get_senate_proposals() and not state.senate_proposal_decision_complete
+            and state.get_senate_package_id_for_session(cur_session) is None):
         fin = senate_api.propose_many(state, P1, [])
         assert fin["success"], fin.get("message")
     resolved = senate_api.resolve_senate(state, vote_decider=DeterministicApproveDecider())
@@ -221,11 +228,12 @@ def _forum_resolve_advance(state):
     return resolved
 
 
-def _finish_year_from_population(state, war_id):
+def _finish_year_from_population(state, war_id, consul_figure_id=0):
+    # R6（DA-6 B3c-cont）：零提案空包 Submit 需**执政官**身份（V0 鉴权）——居民会选 consul_figure_id 任职。
     if not state.is_phase_executed("forum"):
         adv_forum = forum_api.advance_forum_phase(state, P1)
         assert adv_forum["success"], f"advance_forum_phase failed: {adv_forum.get('message')}"
-    _population_round(state, consul_figure_id=0)
+    _population_round(state, consul_figure_id=consul_figure_id)
     _senate_resolve_advance(state)
     _combat_naval_gate_year(state, war_id)
 
@@ -273,11 +281,11 @@ def _award_building(state, ctx, contract, amount, construction_cost):
     return resolved
 
 
-def _mature_assign(state, war):
+def _mature_assign(state, war, consul_figure_id=0):
     """Y2 余段完成 + Y3 M/R + Forum init → 成熟 + auto-assign → ON_MISSION。
 
     返回 (fleets, contract)。"""
-    _finish_year_from_population(state, war.id)
+    _finish_year_from_population(state, war.id, consul_figure_id=consul_figure_id)
     _mortality_revenue_round(state)
     g1 = _forum_init(state)
     fleets = [f for f in state.naval_system.get_all_fleets() if f._target_war_id == war.id]
@@ -295,7 +303,7 @@ def _canonical_mature(state=None, ctx=None, amount=300, construction_cost=240,
     _award_building(state, ctx, contract, amount=amount, construction_cost=construction_cost)
     building = [f for f in state.naval_system.get_all_fleets() if f.is_building]
     assert len(building) == 7, f"7 BUILDING expected, got {len(building)}"
-    fleets = _mature_assign(state, war)
+    fleets = _mature_assign(state, war, consul_figure_id=ctx["target"].id)
     assert all(f.status == FleetStatus.ON_MISSION for f in fleets), [f.status for f in fleets]
     return state, ctx, contract, fleets
 

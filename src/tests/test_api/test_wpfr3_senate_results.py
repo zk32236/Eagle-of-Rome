@@ -78,6 +78,15 @@ def _propose_land(state, player_id, amount_C):
     return res["data"]["proposal_id"]
 
 
+def _propose_lands(state, player_id, amounts):
+    """R6（DA-6 B3c-cont2）：每会期唯一整包 Submit——一次 propose_many 提交多个 land 提案，
+    返回 pid 列表（顺序同 amounts）。旧 repeated `propose()` 同会期第二次起被整包门面拒。"""
+    specs = [{"type": "land", "params": {"act_type": "sale", "amount_C": a}} for a in amounts]
+    res = senate_api.propose_many(state, player_id, specs)
+    assert res["success"], res.get("message")
+    return [c["proposal_id"] for c in res["data"]["created"]]
+
+
 def _vote(state, player_id, pids, votes):
     state._current_player_id = player_id
     res = senate_api.vote(state, player_id, pids, votes)
@@ -87,9 +96,7 @@ def _vote(state, player_id, pids, votes):
 def test_tr3_01_resolve_senate_classification_snapshots():
     """T-R3-01：vetoed/failed 快照不相交、并集 == rejected 快照；新增键（id list）对称。"""
     state = _build_state()
-    pid_pass = _propose_land(state, "player1", 50)
-    pid_fail = _propose_land(state, "player1", 30)
-    pid_veto = _propose_land(state, "player1", 20)
+    pid_pass, pid_fail, pid_veto = _propose_lands(state, "player1", [50, 30, 20])
     # 投票：pid_pass/pid_veto 双支持（230 → passed），pid_fail player1 反对（80/230 → failed）
     _vote(state, "player1", [pid_pass, pid_fail, pid_veto], [True, False, True])
     _vote(state, "player2", [pid_pass, pid_fail, pid_veto], [True, True, True])
@@ -125,9 +132,7 @@ def test_tr3_01_resolve_senate_classification_snapshots():
 def test_tr3_02_get_senate_view_result_labels():
     """T-R3-02：get_senate_view 结果态标签三分（passed/vetoed/rejected）+ veto_candidate_ids 空。"""
     state = _build_state()
-    pid_pass = _propose_land(state, "player1", 50)
-    pid_fail = _propose_land(state, "player1", 30)
-    pid_veto = _propose_land(state, "player1", 20)
+    pid_pass, pid_fail, pid_veto = _propose_lands(state, "player1", [50, 30, 20])
     _vote(state, "player1", [pid_pass, pid_fail, pid_veto], [True, False, True])
     _vote(state, "player2", [pid_pass, pid_fail, pid_veto], [True, True, True])
     state.record_senate_veto(pid_veto)
@@ -172,9 +177,7 @@ def test_tr3_03_legacy_save_degradation():
 def test_tr3_04_zero_veto_failed_scenario():
     """T-R3-04：零否决 + failed 场景（G7 实机镜像）——vetoed 快照空，failed 快照 == failed。"""
     state = _build_state()
-    pid_war = _propose_land(state, "player1", 50)
-    pid_build = _propose_land(state, "player1", 40)
-    pid_land = _propose_land(state, "player1", 30)
+    pid_war, pid_build, pid_land = _propose_lands(state, "player1", [50, 40, 30])
     # 宣战/建造双支持（passed），卖地双反对（0% failed）；无真实 veto
     _vote(state, "player1", [pid_war, pid_build, pid_land], [True, True, False])
     _vote(state, "player2", [pid_war, pid_build, pid_land], [True, True, False])

@@ -79,15 +79,21 @@ def test_create_all_supported_proposal_types(state):
     contract = state.create_contract(ContractType.TAX_FARMING, province_id=10, base_cost=100, current_turn=5)
     contract.status = ContractStatus.PENDING
 
-    assert politics.create_proposal("player1", "war", war_id="war1", legions=6)["success"]
-    assert politics.create_proposal("player1", "peace", war_id="peace1")["success"]
+    # R6（SA §A.4，DA-2 B2）：legacy War/Peace 写入门封闭——`create_proposal` 对
+    # war/peace fail-closed 拒绝（零写入）；War/Peace 只能经 propose_many 统一 package 提交。
+    war_legacy = politics.create_proposal("player1", "war", war_id="war1", legions=6)
+    assert not war_legacy["success"]
+    assert war_legacy["data"]["code"] == "LEGACY_WAR_PROPOSAL_RETIRED"
+    peace_legacy = politics.create_proposal("player1", "peace", war_id="peace1")
+    assert not peace_legacy["success"]
+    assert peace_legacy["data"]["code"] == "LEGACY_WAR_PROPOSAL_RETIRED"
     assert politics.create_proposal("player1", "governor", province_id=10, candidate_id=4)["success"]
     assert politics.create_proposal("player1", "budget", contract_id=contract.id)["success"]
     # AU-7：land 主输入改 amount_C（int）；percent 派生（默认公地 1000 → 50/1000 = 0.05）
     assert politics.create_proposal("player1", "land", act_type="sale", amount_C=50)["success"]
 
     proposals = state.get_senate_proposals()
-    assert [proposal["type"] for proposal in proposals] == ["war", "peace", "governor", "budget", "land"]
+    assert [proposal["type"] for proposal in proposals] == ["governor", "budget", "land"]
     assert proposals[-1]["amount_C"] == 50
     assert proposals[-1]["percent"] == 0.05
 

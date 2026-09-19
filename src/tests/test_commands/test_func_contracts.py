@@ -578,15 +578,20 @@ class TestContractFixes:
             contracts.append(contract)
 
         # 模拟自动提案生成（需要 budget_decider 和调用 _auto_generate_proposals）
-        # 我们手动调用 senate_api.propose 并传入 modified_budget 来模拟随机加成
+        # R6（DA-6 B3c-cont2）：每会期唯一整包 Submit——一次 propose_many 提交全部 budget 提案
+        # （旧循环内 repeated propose 自第二次起被整包门面拒）。
         margins = []
+        specs = []
         for contract in contracts:
             # 模拟随机加成
             r = 0.05 + 0.15 * (contract.id % 10) / 10  # 简单模拟随机
             modified_budget = int(contract.base_cost * (1 + r))
             margins.append(modified_budget)
-            result = senate_api.propose(state, "player1", "budget", contract_id=contract.id, modified_budget=modified_budget)
-            assert result["success"]
+            specs.append({"type": "budget",
+                          "params": {"contract_id": contract.id,
+                                     "modified_budget": modified_budget}})
+        result = senate_api.propose_many(state, "player1", specs)
+        assert result["success"], result.get("message")
 
         # 验证所有提案的 modified_budget 都在合理范围内（100~120）
         proposals = state.get_senate_proposals()

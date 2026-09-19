@@ -219,6 +219,29 @@ Rectangle {
         return parts.join("\uff1b")
     }
 
+    // ---- R6 §D.4（DA-4 B3）：Consul 冻结 direct 决定（三身份之一；待边界执行） ----
+    function _consulDirectRows() {
+        return (sessionStore.senatePublicAnnouncement || {}).consul_direct_decisions || []
+    }
+
+    function _consulDirectLabel() {
+        var rows = root._consulDirectRows()
+        if (rows.length === 0) return ""
+        return rows[0].display_label || rows[0].authority_label || ""
+    }
+
+    function _consulDirectText() {
+        var rows = root._consulDirectRows()
+        if (rows.length === 0) return "\u65e0"
+        var parts = []
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i]
+            var n = (r.reinforcement_n === undefined || r.reinforcement_n === null) ? 0 : r.reinforcement_n
+            parts.push((r.war_label || r.war_id) + " \u00b7 " + (r.target_commander_label || r.target_commander_id) + " \u00b7 N=" + n)
+        }
+        return parts.join("\uff1b")
+    }
+
     function tribuneActionText() {
         if (sessionStore.canManuallySelectSenateVeto) return "\u786e\u8ba4\u5426\u51b3 \u2192 \u516c\u793a\u7ed3\u679c"
         return "AI\u5224\u5b9a\u5426\u51b3 \u2192 \u516c\u793a\u7ed3\u679c"
@@ -362,11 +385,17 @@ Rectangle {
         for (var i = 0; i < cards.length; i++) {
             var d = root.warDraftFor(cards[i].war_id)
             if (!d || !d.checked) continue
+            var m = d.mode || "command"
+            // R6（SA §A.2）fail-closed：route 仅读 card.authority_by_mode[mode]；
+            // 缺 route 的卡不提交（禁止 fallback direct）。
+            var routes = cards[i].authority_by_mode || {}
+            var authority = routes[m]
+            if (authority !== "senate_vote" && authority !== "consul_direct") continue
             rows.push({
                 "type": "war_proposal",
                 "war_id": cards[i].war_id,
                 "checked": true,
-                "mode": d.mode || "command",
+                "mode": m,
                 "target_commander_id": d.target_commander_id,
                 "reinforcement_n": d.reinforcement_n
             })
@@ -383,9 +412,6 @@ Rectangle {
             out.push(options[i])
         }
         return out
-    }
-    function settlementBannerText() {
-        return "⚖️ 元老院结算未完成：提案选择已结束，等待完成结算。"
     }
 
     function selectedProposals() {
@@ -582,9 +608,23 @@ Rectangle {
                     font.pixelSize: 12
                     font.bold: true
                     Layout.fillWidth: true
+                    // R6（SA §D.2，DA-4 B5 R-B4-1）：PA 只读摘要**保完整可读**——
+                    // 不再 maximumLineCount/elide 截断超长身份（wrap 自然换行）。
                     wrapMode: Text.Wrap
-                    maximumLineCount: 3
-                    elide: Text.ElideRight
+                }
+
+                // R6 §D.4（DA-4 B3）：⚡ 执政官决定 · 待推进到战斗阶段执行
+                // （冻结 direct 决定：direct-only 时结果页据此非空，不因无 passed_proposals 被清空）
+                Text {
+                    visible: root._consulDirectRows().length > 0
+                    text: "\uD83C\uDFDB " + root._consulDirectLabel() + "\uff1a" + root._consulDirectText()
+                    color: "#9A2D0A"
+                    font.pixelSize: 12
+                    font.bold: true
+                    Layout.fillWidth: true
+                    // R6（SA §D.2，DA-4 B5 R-B4-1）：冻结 direct 行含完整 target_commander_label，
+                    // 不 elide（保完整身份可读）。
+                    wrapMode: Text.Wrap
                 }
 
                 // WP-D AU-6: ⚡ 直接生效（Direct Actions —— 依法直接生效，不经过 vote/veto）
@@ -595,9 +635,8 @@ Rectangle {
                     font.pixelSize: 12
                     font.bold: true
                     Layout.fillWidth: true
+                    // R6（SA §D.2，DA-4 B5 R-B4-1）：direct action 行含 commander_name，不 elide。
                     wrapMode: Text.Wrap
-                    maximumLineCount: 3
-                    elide: Text.ElideRight
                 }
 
                 // S4: Governor assignment results
@@ -609,8 +648,6 @@ Rectangle {
                     font.bold: true
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
-                    maximumLineCount: 3
-                    elide: Text.ElideRight
                 }
 
                 // S4: Rebellion commander assignment results
@@ -622,8 +659,6 @@ Rectangle {
                     font.bold: true
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
-                    maximumLineCount: 3
-                    elide: Text.ElideRight
                 }
 
                 // S4: Fleet assignment results
@@ -635,57 +670,73 @@ Rectangle {
                     font.bold: true
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
-                    maximumLineCount: 3
-                    elide: Text.ElideRight
                 }
                 }
             }
         }
 
-        // R3-G-01（SA-Design-WP-G-R3 v1.2 §1.5，FROZEN）：settlement-pending 恢复动作（条件、只反馈）。
-        // takeover canonical mutation 已成功但空结算失败/未收敛 → DTO senate_settlement_pending/
-        // can_resolve_settlement 为 true 时暴露唯一结算入口（结算-only，零 takeover 重放）。
-        // 不加本地完成 authority——业务收敛在 senate_api/Store（R3-02）。
+        // R6（SA §B.5，DA-2 B5）：**包级全局失败横幅**（结构化错误单一显示路径）。
+        // code + message 可见；失败后草稿保留（checkbox/mode/target/N 不变）。
         Rectangle {
-            visible: sessionStore.senateSettlementPending && sessionStore.canResolveSenateSettlement
+            visible: sessionStore.hasSenateSubmitErrors
             Layout.fillWidth: true
-            Layout.preferredHeight: 52
-            Layout.minimumHeight: 46
-            Layout.maximumHeight: 60
+            Layout.preferredHeight: Math.max(46, bannerCol.implicitHeight + 16)
             radius: 6
-            color: "#FDF3E0"
-            border.color: "#E6A542"
+            color: "#FCE8E6"
+            border.color: "#B00020"
             border.width: 1
-            RowLayout {
+            ColumnLayout {
+                id: bannerCol
                 anchors.fill: parent
                 anchors.margins: 8
-                spacing: 8
+                spacing: 4
                 Text {
-                    text: root.settlementBannerText()
-                    color: "#9A2D0A"
+                    text: "提交失败（未发布任何提案）"
+                    color: "#B00020"
+                    font.pixelSize: 12
+                    font.bold: true
+                    Layout.fillWidth: true
+                }
+                Text {
+                    text: sessionStore.senateSubmitErrorBanner
+                    color: "#7A1A00"
                     font.pixelSize: 11
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
                 }
-                Rectangle {
-                    Layout.preferredWidth: 92
-                    Layout.preferredHeight: 26
-                    radius: 4
-                    enabled: sessionStore.canResolveSenateSettlement
-                    opacity: enabled ? 1.0 : 0.45
-                    color: "#D9AA52"
-                    Text {
-                        anchors.centerIn: parent
-                        text: "\u5b8c\u6210\u7ed3\u7b97"
-                        color: "#2C1E12"
-                        font.pixelSize: 11
-                        font.bold: true
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        enabled: parent.enabled
-                        onClicked: sessionStore.doResolveSenateSettlement()
-                    }
+            }
+        }
+
+        // R6（SA §D.1，DA-4 B2）：正常态「完成结算」横幅/按钮**已移除**——settlement 正常态
+        // 动作退役（finalization 由服务端命令流程自动完成）；唯一正常推进 = ContextPanel 的
+        // advance 按钮（doAdvanceSenate）。
+        // 保留：真实 finalization 失败时的可见 warning（已发布包不撤销、不允许重发包）。
+        Rectangle {
+            visible: sessionStore.senateFinalizationWarning !== ""
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.max(46, finalizationWarningCol.implicitHeight + 16)
+            radius: 6
+            color: "#FDF3E0"
+            border.color: "#E6A542"
+            border.width: 1
+            ColumnLayout {
+                id: finalizationWarningCol
+                anchors.fill: parent
+                anchors.margins: 8
+                spacing: 4
+                Text {
+                    text: "结算异常（提案包已发布）"
+                    color: "#9A2D0A"
+                    font.pixelSize: 12
+                    font.bold: true
+                    Layout.fillWidth: true
+                }
+                Text {
+                    text: sessionStore.senateFinalizationWarning
+                    color: "#7A1A00"
+                    font.pixelSize: 11
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
                 }
             }
         }
@@ -732,6 +783,9 @@ Rectangle {
                             commanderCandidates: modelData.commander_candidates || []
                             peaceCapable: (modelData.allowed_modes || []).indexOf("peace") >= 0
                             editable: sessionStore.canCreateSenateProposal
+                            // R6（SA §B.5，DA-2 B5）：卡级错误（按 scope=war_id / package
+                            // details.claims|requests 关联注入）。
+                            cardErrors: (sessionStore.senateSubmitErrorsByWar || {})[modelData.war_id] || []
                             onDraftEdited: function(warId, newDraft) { root.setWarDraft(warId, newDraft) }
                         }
                     }

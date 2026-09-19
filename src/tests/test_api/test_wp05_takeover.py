@@ -8,6 +8,13 @@ R5 supersede（Plan §4.2 L1；SA §1.2 SUPERSEDED + §3.8；DA-2/DA-4）：旧�
 
 保留反例：无效 actor / 无执政官 → SUBMIT_NOT_AUTHORIZED；非法 target → COMMANDER_* 拒绝；
 Submit 零部署；重入不重复发布；边界前 R 公示不含军事 direct_actions。
+
+R6 迁移（SA §A.1/§A.3，DA-1/DA-2/DA-3；WP-G-R6 DA-6 B1e）：ACTIVE/ongoing 真实 War 的
+`command` 草案 route = `consul_direct`（不再产 Senate 提案）——本文件 3 条原「War command 经
+整包进 proposal 链 / R 公示 war_proposal」断言迁到 **R6 direct 面**：`created` ∅ +
+`consul_direct_decisions` 恰一条 FROZEN（无 `proposal_id`，不入 Vote/Veto）+ 公示 direct 行
+`awaiting_boundary` + 边界 receipt 恰一次（exactly-once）。**原命题逐条保留**：直连不绕过元老院
+＝ direct 决定不可投票/否决且执行仅经唯一边界；边界恰好一次。
 """
 import os
 import unittest
@@ -142,8 +149,9 @@ class TestWP05Takeover(unittest.TestCase):
         self.assertIsNone(war.commander_id)
 
     def test_wp05_takeover_execute(self):
-        """AC-04/05 → R5：commanderless ACTIVE 卡 command 草案 → Submit 零部署 → resolve
-        （R 公示 war_proposal「获批 · 待边界执行」，D ∅）→ 边界原子部署 + receipt 恰一次。"""
+        """AC-04/05 → R6：commanderless ACTIVE 卡 command 草案 ⇒ Submit 只冻结 direct 决策
+        （零部署 / 零 Senate 提案）→ resolve 收敛真实 R（PA 公示 direct 行 `awaiting_boundary`，
+        零 enacted_proposals）→ 边界原子部署 + receipt 恰一次。"""
         war = self._add_active_war()
 
         view_before = senate_api.get_senate_view(self.state, "player1")
@@ -155,18 +163,32 @@ class TestWP05Takeover(unittest.TestCase):
 
         result = self._submit_command(war, self.consul.id, n=1)
         self.assertTrue(result["success"], result.get("errors"))
-        # Submit 零部署（R5：旧「Submit 锁 T」由提案冻结承担）
+        # R6 双账本：ongoing command ⇒ 无 Senate 提案（created ∅），direct 决策恰一条 FROZEN
+        self.assertEqual(result["data"]["created"], [], "ongoing command ⇒ 无 Senate 提案")
+        self.assertEqual(self.state.get_senate_proposals(), [])
+        # Submit 零部署（R6：冻结 direct 决策承担；执行唯一 owner = 边界）
         self.assertIsNone(war.commander_id)
         self.assertFalse(war.legion_numbers)
         self.assertFalse(self.consul.is_absent)
         self.assertIs(self.state.senate_proposal_decision_complete, True)
+        rec = list(self.state.get_consul_war_decisions(
+            self.state.get_senate_session()).values())[0]
+        self.assertEqual(rec["authority"], "consul_direct")
+        self.assertEqual(rec["decision_state"], "FROZEN")
+        self.assertEqual(rec["payload"]["target_commander_id"], self.consul.id)
+        self.assertEqual(rec["payload"]["reinforcement_n"], 1)
+        row = next(r for r in senate_api.get_senate_view(self.state, "player1")["data"]
+                   ["consul_direct_decisions"] if r["war_id"] == war.id)
+        self.assertEqual(row["execution"], "awaiting_boundary", "边界前不宣称早执行")
 
         resolved = senate_api.resolve_senate(self.state, vote_decider=_PassVoteDecider())
         self.assertTrue(resolved["success"], resolved.get("message"))
         ann = resolved["data"]["public_announcement"]
-        self.assertEqual(len(ann["enacted_proposals"]), 1)
-        self.assertIn("待边界执行", ann["enacted_proposals"][0]["title"])
+        self.assertEqual(ann["enacted_proposals"], [], "direct 决定不入 Senate 公示（零真提案）")
         self.assertEqual(ann["direct_actions"], [], "边界前 R 公示不含军事 direct_actions")
+        self.assertEqual(len(ann["consul_direct_decisions"]), 1)
+        self.assertEqual(ann["consul_direct_decisions"][0]["war_id"], war.id)
+        self.assertEqual(ann["consul_direct_decisions"][0]["execution"], "awaiting_boundary")
 
         adv = senate_api.advance_senate_phase(self.state, "player1")
         self.assertTrue(adv["success"], adv.get("message"))
@@ -181,20 +203,44 @@ class TestWP05Takeover(unittest.TestCase):
         view_after = senate_api.get_senate_view(self.state, "player1")
         self.assertTrue(view_after["success"])
         self.assertEqual(len(view_after["data"]["direct_actions"]), 1)
+        # 同一 `item_ref` 在边界 receipt 后翻成 executed（身份一致，刷新可重取）
+        row_after = next(r for r in view_after["data"]["consul_direct_decisions"]
+                         if r["war_id"] == war.id)
+        self.assertEqual(row_after["item_ref"], row["item_ref"])
+        self.assertEqual(row_after["execution"], "executed")
 
     def test_wp05_takeover_direct_not_proposal(self):
-        """AC-01 → R5：无独立接管直连——checked command 必须经整包进入 proposal 链
-        （可投票/可 veto），不再绕过元老院。"""
+        """AC-04 → R6（SA §A.1/§A.3，DA-1/DA-2/DA-3）：ACTIVE commanderless 真实 War + command
+        ⇒ authority=`consul_direct`——**不再产生 Senate 提案**（不进 Vote/Veto 集），只冻结一条
+        `ConsulWarDecision`。原命题「不绕过元老院」以 R6 新语义表达：direct 决定 **无
+        proposal_id**、不可投票/否决，且执行仅经唯一 Senate→Combat 边界（无旁路军事写）。"""
         war = self._add_active_war()
         proposals_before = len(self.state.get_senate_proposals())
         vetoes_before = len(self.state.get_senate_vetoes_copy())
 
         result = self._submit_command(war, self.consul.id, n=0)
         self.assertTrue(result["success"], result.get("errors"))
+        # R6 双账本：Senate 提案账本零增长（created ∅），direct 账本恰一条 FROZEN
+        self.assertEqual(result["data"]["created"], [])
         props = self.state.get_senate_proposals()
-        self.assertEqual(len(props), proposals_before + 1)
-        self.assertEqual(props[-1]["type"], "war_proposal")
+        self.assertEqual(len(props), proposals_before)
+        decisions = self.state.get_consul_war_decisions(self.state.get_senate_session())
+        self.assertEqual(len(decisions), 1)
+        rec = list(decisions.values())[0]
+        self.assertEqual(rec["authority"], "consul_direct")
+        self.assertEqual(rec["decision_state"], "FROZEN")
+        self.assertEqual(rec["war_id"], war.id)
+        self.assertNotIn("proposal_id", rec, "direct 决定无 proposal_id（身份空间独立）")
         self.assertEqual(len(self.state.get_senate_vetoes_copy()), vetoes_before)
+        # 元老院面：direct 决定不在提案/候选集，且不可投票（unknown/direct ID 整次拒绝，零票账写入）
+        view = senate_api.get_senate_view(self.state, "player1")
+        self.assertTrue(view["success"])
+        self.assertEqual(view["data"]["submitted_proposals"], [])
+        self.assertNotIn(rec["direct_decision_id"], view["data"]["veto_candidate_ids"])
+        self.assertIsNone(war.commander_id, "Submit 零部署（执行仅边界）")
+        blocked = senate_api.vote(self.state, "player1", [rec["direct_decision_id"]], [True])
+        self.assertFalse(blocked["success"], "direct 决定不得进入元老院投票集合")
+        self.assertEqual(blocked["data"]["recorded"], 0)
 
         # 保留反例：spec 无 takeover 语义
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -220,20 +266,33 @@ class TestWP05Takeover(unittest.TestCase):
         self.assertEqual(list(war.legion_numbers), legions_after_first)
 
     def test_wp05_takeover_resolve_announcement_direct_action(self):
-        """WP-D AU-5/AU-6 场景 I → R5：整包 command → resolve（war_proposal 进 R 公示，D ∅）
-        → 边界 advance 部署恰一次（receipt 唯一载体）。"""
+        """WP-D AU-5/AU-6 场景 I → R6：整包 command ⇒ 冻结 direct 决策（零 Senate 提案）
+        → resolve（PA 以 `consul_direct_decisions` 公示一行 `awaiting_boundary`，
+        `enacted_proposals` ∅，D ∅）→ 边界 advance 部署恰一次（receipt 唯一载体）。"""
         war = self._add_active_war()
 
         result = self._submit_command(war, self.consul.id, n=1)
         self.assertTrue(result["success"], result.get("errors"))
-        self.assertEqual(len(self.state.get_senate_proposals()), 1)
+        self.assertEqual(result["data"]["created"], [])
+        self.assertEqual(len(self.state.get_senate_proposals()), 0)
         self.assertEqual(len(self.state.get_senate_vetoes_copy()), 0)
+        self.assertEqual(len(self.state.get_consul_war_decisions(
+            self.state.get_senate_session())), 1)
 
         resolved = senate_api.resolve_senate(self.state, vote_decider=_PassVoteDecider())
         self.assertTrue(resolved["success"])
         announcement = resolved["data"]["public_announcement"]
-        self.assertEqual(len(announcement["enacted_proposals"]), 1)
+        self.assertEqual(announcement["enacted_proposals"], [])
         self.assertEqual(announcement["direct_actions"], [], "边界 D 不回溯 R 公示快照")
+        direct_rows = announcement["consul_direct_decisions"]
+        self.assertEqual(len(direct_rows), 1)
+        self.assertEqual(direct_rows[0]["identity"], "consul_direct_decision")
+        self.assertEqual(direct_rows[0]["authority"], "consul_direct")
+        self.assertEqual(direct_rows[0]["war_id"], war.id)
+        self.assertEqual(direct_rows[0]["target_commander_id"], self.consul.id)
+        self.assertEqual(direct_rows[0]["reinforcement_n"], 1)
+        self.assertEqual(direct_rows[0]["execution"], "awaiting_boundary")
+        self.assertNotIn("proposal_id", direct_rows[0], "direct 行不混用 proposal_id")
 
         adv = senate_api.advance_senate_phase(self.state, "player1")
         self.assertTrue(adv["success"], adv.get("message"))

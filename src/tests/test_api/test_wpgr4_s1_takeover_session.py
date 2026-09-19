@@ -151,13 +151,27 @@ class TestT02SubmitNeverDeploysOrSettles(unittest.TestCase):
         self.assertEqual(calls["commit"], 0, "Submit 不得触发部署事务")
         self.assertIsNone(war_a.commander_id)
         self.assertFalse(consul.is_absent)
-        props = state.get_senate_proposals()
-        self.assertEqual(len(props), 1)
-        self.assertEqual(props[0]["type"], "war_proposal")
+        self.assertEqual(state.get_senate_direct_actions(), [], "Submit 不写边界记录")
+        # R6（SA §A.1/§A.3，DA-2 B1）：ongoing command ⇒ route=`consul_direct`
+        # ⇒ Senate 账本空 + 恰一条 FROZEN direct 决策（Submit 只冻结、不早部署/不结算）。
+        self.assertEqual(state.get_senate_proposals(), [])
+        self.assertEqual((s.get("data") or {}).get("created"), [])
+        session = state.get_senate_session()
+        decisions = state.get_consul_war_decisions(session)
+        self.assertEqual(len(decisions), 1, "direct 决策恰一条（冻结）")
+        rec = list(decisions.values())[0]
+        self.assertEqual(rec["authority"], "consul_direct")
+        self.assertEqual(rec["decision_state"], "FROZEN")
+        self.assertEqual(rec["war_id"], war_a.id)
+        self.assertEqual(rec["payload"]["target_commander_id"], consul.id)
+        self.assertEqual(rec["payload"]["reinforcement_n"], 2)
+        # 边界前恒 awaiting_boundary（不宣称早部署）+ 阶段未结算/未推进
+        row = next(r for r in _view(state)["consul_direct_decisions"] if r["war_id"] == war_a.id)
+        self.assertEqual(row["execution"], "awaiting_boundary",
+                         "Submit 后边界未执行（零部署）")
         self.assertFalse(state.get_phase_result("senate"))
         self.assertFalse(state.is_phase_executed("senate"))
-        self.assertEqual(_view(state)["current_step"], "senate_vote",
-                         "提案已发布 → 进入表决步（未部署/未结算）")
+        self.assertFalse(_view(state)["can_advance"], "未结算 ⇒ 不可推进")
 
     def test_t02_whole_package_failure_zero_write(self):
         """同一 Commander 被两张卡 claim → COMMANDER_CLAIM_DUPLICATE → 整包零发布；
@@ -168,12 +182,22 @@ class TestT02SubmitNeverDeploysOrSettles(unittest.TestCase):
         s = _submit(state, [_command(war_a, consul.id, 0), _command(war_b, consul.id, 0)])
         self.assertFalse(s["success"], "同人双 claim → 整包拒绝")
         self.assertIn("COMMANDER_CLAIM_DUPLICATE", _codes(s))
-        self.assertEqual(state.get_senate_proposals(), [], "失败零发布")
+        self.assertEqual(state.get_senate_proposals(), [], "失败零发布（Senate 账本空）")
         self.assertFalse(state.senate_proposal_decision_complete)
-        # 可重试：单卡合法包成功
+        # R6 双账本：失败零发布 ⇒ direct 账本亦零写
+        self.assertEqual(state.get_consul_war_decisions(state.get_senate_session()), {},
+                         "失败零发布（direct 账本空）")
+        # 可重试：单卡合法包成功（ongoing command ⇒ direct，无 Senate 提案）
         s2 = _submit(state, [_command(war_a, consul.id, 0)])
         self.assertTrue(s2["success"], s2.get("errors"))
-        self.assertEqual(len(state.get_senate_proposals()), 1)
+        self.assertEqual(state.get_senate_proposals(), [], "ongoing command ⇒ 无 Senate 提案")
+        self.assertEqual((s2.get("data") or {}).get("created"), [])
+        decisions = state.get_consul_war_decisions(state.get_senate_session())
+        self.assertEqual(len(decisions), 1, "重试成功 ⇒ direct 决策恰一条")
+        rec = list(decisions.values())[0]
+        self.assertEqual(rec["war_id"], war_a.id)
+        self.assertEqual(rec["authority"], "consul_direct")
+        self.assertEqual(rec["decision_state"], "FROZEN")
 
     def test_t02_ai_single_commitment_no_direct_mutation(self):
         """AI parity → R5：旧 AI 直连接管入口退役；AI 路径经唯一整包入口、零边界 mutation。"""

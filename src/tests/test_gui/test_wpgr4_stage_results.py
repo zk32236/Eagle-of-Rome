@@ -29,31 +29,43 @@ class TestE03StoreTakeoverDeferredDeployment(unittest.TestCase):
         return state, store
 
     def _submit_command(self, state, store, war, consul, n=1):
+        """R6（SA §A.1，DA-2 B1）：`command` 模式 checked 卡 ⇒ route=`consul_direct`（Submit 零部署）。
+
+        返回 Submit feedback（R6 无双账本中的 Senate `proposal_id`——ongoing/pending-peace
+        的 command 不再产 Senate 提案，冻结为 `consul_direct_decisions`）。
+        """
         fb = store.doSubmitSenateProposals([
             {"war_id": war.id, "checked": True, "mode": "command",
              "target_commander_id": consul.id, "reinforcement_n": n}])
         assert fb["success"], fb.get("message")
-        pid = state.get_senate_proposals()[0]["id"]
-        return pid
+        return fb
 
     def test_store_submit_locks_zero_deploy_then_settlement_then_advance_exactly_once(self):
-        from src.api import senate_api
         ctx = F.build_fix01()
         state, store = self._store(ctx)
         war_a, consul = ctx["war_a"], ctx["consul"]
 
-        pid = self._submit_command(state, store, war_a, consul, n=1)
+        fb = self._submit_command(state, store, war_a, consul, n=1)
         # Submit：零部署
         self.assertIsNone(war_a.commander_id)
         self.assertFalse(consul.is_absent)
-        self.assertFalse(store.canAdvanceSenate, "无真实 R → 不可推进")
-
-        # 人类票（唯一派系）→ store veto 入口 → 真实 R
-        vote = senate_api.vote(state, P1, [pid], [True])
-        self.assertTrue(vote["success"], vote.get("message"))
-        resolved = store.doSubmitSenateVetoes([])
-        self.assertTrue(resolved["success"], resolved.get("message"))
-        self.assertTrue(state.get_phase_result("senate"))
+        self.assertEqual(state.get_senate_direct_actions(), [], "Submit 不写边界记录")
+        # R6（SA §A.1/§A.3，DA-2 B1）：ongoing command ⇒ direct —— Senate 账本空 +
+        # 恰一条 FROZEN `ConsulWarDecision`（Submit 只冻结、不早部署）。
+        self.assertEqual(fb["data"]["created"], [])
+        self.assertEqual(state.get_senate_proposals(), [])
+        session = state.get_senate_session()
+        decisions = state.get_consul_war_decisions(session)
+        self.assertEqual(len(decisions), 1, "Submit 冻结恰一条 direct 决策")
+        rec = list(decisions.values())[0]
+        self.assertEqual(rec["authority"], "consul_direct")
+        self.assertEqual(rec["decision_state"], "FROZEN")
+        self.assertEqual(rec["war_id"], war_a.id)
+        self.assertEqual(rec["payload"]["target_commander_id"], consul.id)
+        self.assertEqual(rec["payload"]["reinforcement_n"], 1)
+        # R6（SA §D.1/§D.1.1，DA-4 B1/B2）：Submit 零 Senate ⇒ 服务端唯一 finalization
+        # **自动完成**（替代旧「Vote/Veto 链驱动 settlement」的路由前置）→ 真实 R，可推进。
+        self.assertTrue(state.get_phase_result("senate"), "自动 finalization 产真实 R")
         self.assertTrue(store.canAdvanceSenate)
 
         # 显式 advance → 原子部署恰一次
@@ -71,15 +83,16 @@ class TestE03StoreTakeoverDeferredDeployment(unittest.TestCase):
                               if a.get("kind") == "war_resolution"]), 1)
 
     def test_store_refresh_reentry_no_duplicate(self):
-        """refresh（new Store 重建同态）/重入不重复部署。"""
-        from src.api import senate_api
+        """refresh（new Store 重建同态）/重入不重复部署（R6 direct 决策面）。"""
         ctx = F.build_fix01()
         state, store = self._store(ctx)
         war_a, consul = ctx["war_a"], ctx["consul"]
-        pid = self._submit_command(state, store, war_a, consul, n=1)
-        senate_api.vote(state, P1, [pid], [True])
-        store.doSubmitSenateVetoes([])
+        self._submit_command(state, store, war_a, consul, n=1)
         store.doAdvanceSenate()
+
+        session = state.get_senate_session()
+        frozen_before = state.get_consul_war_decisions(session)
+        self.assertEqual(len(frozen_before), 1)
 
         # new Store 重建同一完成态（无重复部署）
         store2 = GuiSessionStore(state)
@@ -89,10 +102,14 @@ class TestE03StoreTakeoverDeferredDeployment(unittest.TestCase):
         das = [a for a in state.get_senate_direct_actions() if a.get("kind") == "war_resolution"]
         self.assertEqual(len(das), 1)
         self.assertEqual(len(war_a.legion_numbers), 1)
+        # R6（SA §D.4，DA-4 B3）：冻结 direct 决策跨 refresh/reentry 内容逐字不变
+        self.assertEqual(state.get_consul_war_decisions(session), frozen_before,
+                         "refresh/reentry 不得改写冻结 direct 决策")
         store2.doAdvanceSenate()
         self.assertEqual(len([a for a in state.get_senate_direct_actions()
                               if a.get("kind") == "war_resolution"]), 1)
         self.assertEqual(len(war_a.legion_numbers), 1)
+        self.assertEqual(state.get_consul_war_decisions(session), frozen_before)
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +293,9 @@ class TestE11T14StoreDualStageCards(unittest.TestCase):
         war_b.commander_id = 203
         state.get_war_system()._active_wars.append(war_b)
         F.recruit_legions_for_war(state, war_b, 203, count=2)
-        state.config.testing.force_battle_result = "VICTORY"
+        # R6-DA5B4-PM-03（DA-5 B2/B4 规范）：force 控件改走 S2 内部 test API，不直写 config 属性
+        from src.api import test_config_api
+        assert test_config_api.set_test_config(state, P1, "force_battle_result", "victory")["success"]
         fb2 = _store_attack(state, store, war_b)
         self.assertTrue(fb2["success"], fb2.get("message"))
         self.assertEqual(war_b.status.value, "resolved")

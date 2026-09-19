@@ -21,6 +21,9 @@ class GuiApiAdapter:
     - 失败后不污染 Core 状态
     """
 
+    LEGACY_ERROR_CODE = "LEGACY_ERROR"
+    UNKNOWN_ERROR_CODE = "UNKNOWN_ERROR"
+
     def __init__(self, state: GameState, refresh_callback: Optional[Callable] = None):
         self._state = state
         self._refresh_callback = refresh_callback
@@ -41,6 +44,9 @@ class GuiApiAdapter:
             "feedback_message": str,
         }
         """
+        refresh_error: str = ""
+        error_items: List[Dict[str, Any]] = []
+        errors_by_scope: Dict[str, List[Dict[str, Any]]] = {}
         try:
             result = api_func(*args, **kwargs)
             if not isinstance(result, dict):
@@ -58,19 +64,18 @@ class GuiApiAdapter:
                 feedback_message = message or "操作成功"
             else:
                 feedback_type = "error"
-                feedback_message = message or "操作失败"
-                if errors:
-                    feedback_message += f" [{'; '.join(errors)}]"
+                # R6（SA §B.5，DA-2 B5）：**唯一** structured error formatter。
+                # 替换 baseline `'; '.join(errors)`（= N3 崩溃点：errors 为 list[dict]
+                # 时 join 抛 TypeError）。dict / legacy str / 未知类型三态一律安全。
+                normalized = self.normalize_error_feedback(errors, message or "操作失败")
+                feedback_message = normalized["feedback_message"]
+                error_items = normalized["error_items"]
+                errors_by_scope = normalized["errors_by_scope"]
 
             feedback = self._build_feedback(
-                success, message, errors, feedback_type, feedback_message, data
+                success, message, errors, feedback_type, feedback_message, data,
+                error_items=error_items, errors_by_scope=errors_by_scope,
             )
-
-            # 成功后触发快照刷新
-            if success and self._refresh_callback:
-                self._refresh_callback()
-
-            return feedback
 
         except Exception as e:
             logger.exception(f"API call exception: {api_func.__name__}")
@@ -78,6 +83,126 @@ class GuiApiAdapter:
             return self._build_feedback(
                 False, f"API exception: {e}", [traceback_str], "error"
             )
+
+        # R6（SA §B.3，DA-2 B5）：**Adapter API 调用异常与 refresh 异常分离捕获**。
+        # baseline 把 refresh 放在同一 try 内 → refresh 异常被伪报为「API 失败」。
+        # 提交后 refresh / PA 格式化失败**不反转**已成功的 API 结果，只降级 warning。
+        if success and self._refresh_callback:
+            try:
+                self._refresh_callback()
+            except Exception as e:  # pragma: no cover - defensive
+                logger.exception("API refresh callback exception")
+                refresh_error = str(e)
+                feedback["refresh_error"] = refresh_error
+                feedback["feedback_type"] = "warning"
+                feedback["feedback_message"] = (
+                    (feedback.get("feedback_message") or "") + f"（刷新失败：{e}）"
+                )
+
+        return feedback
+
+    # -----------------------------------------------------------------------
+    # R6（SA §B.5，DA-2 B5）：**唯一** structured error formatter
+    # -----------------------------------------------------------------------
+    @classmethod
+    def normalize_error_feedback(cls, errors, base_message: str = "") -> Dict[str, Any]:
+        """将 Core `_error` 结构化错误（或 legacy 字符串）归一为 GUI 可消费反馈。
+
+        权威 machine schema = Core `{code, scope, field, details, message}`
+        （`political_system._error`）。本方法为 GUI 侧**唯一**显示路径（QML 不再各写
+        dict formatter）。
+
+        - **dict**：保留五字段与 `details` 原值；`message` 缺失 → `code` + 安全 fallback；
+          **绝不** stringify dict 代替可用反馈。
+        - **legacy str**：安全包装为 `{code: LEGACY_ERROR, scope: "package", field: None,
+          details: {raw: text}, message: text}`；raw 原文保留用于兼容。
+        - **未知类型**：受限 fallback（`UNKNOWN_ERROR`），**不抛 TypeError**。
+
+        输出：`error_items`（规范排序 `(code, str(scope), str(field))` 的 dict 列表）/\
+`feedback_message`（可读摘要）/ `errors_by_scope`（`scope → items`；`scope=package`
+        的 item 若 `details.claims` / `details.requests` 含 `war_id` → 另建 `war:<id>`
+        桶 = 相关卡关联；`scope=war_id` 直接定位该卡）。`package` 桶始终存在。
+        """
+        if isinstance(errors, (list, tuple)):
+            raw_items = list(errors)
+        elif errors:
+            raw_items = [errors]
+        else:
+            raw_items = []
+
+        items: List[Dict[str, Any]] = [cls._normalize_one_error(raw) for raw in raw_items]
+        items.sort(key=lambda e: (str(e.get("code", "")), str(e.get("scope", "")),
+                                  str(e.get("field", ""))))
+
+        by_scope: Dict[str, List[Dict[str, Any]]] = {"package": []}
+        for item in items:
+            scope_key = str(item.get("scope") or "package")
+            by_scope.setdefault(scope_key, []).append(item)
+            if scope_key == "package":
+                for war_id in cls._related_war_ids(item):
+                    bucket = by_scope.setdefault(f"war:{war_id}", [])
+                    if item not in bucket:
+                        bucket.append(item)
+
+        summary_parts: List[str] = []
+        for item in items:
+            prefix = str(item.get("code") or cls.UNKNOWN_ERROR_CODE)
+            field = item.get("field")
+            if field:
+                prefix += f"·{field}"
+            message = item.get("message") or ""
+            summary_parts.append(f"{prefix}: {message}" if message else prefix)
+        summary = "; ".join(summary_parts)
+
+        if base_message:
+            feedback_message = f"{base_message} [{summary}]" if summary else base_message
+        else:
+            feedback_message = summary or "操作失败"
+
+        return {"error_items": items, "feedback_message": feedback_message,
+                "errors_by_scope": by_scope}
+
+    @classmethod
+    def _normalize_one_error(cls, raw) -> Dict[str, Any]:
+        """单条错误归一（dict / str / 未知类型三态；永不抛 TypeError）。"""
+        if isinstance(raw, dict):
+            code = raw.get("code") or cls.UNKNOWN_ERROR_CODE
+            scope = raw.get("scope") or "package"
+            field = raw.get("field")
+            details = raw.get("details")
+            if not isinstance(details, dict):
+                details = {} if details is None else {"value": details}
+            message = raw.get("message") or ""
+            if not message:
+                message = str(code) + (f"（{field}）" if field else "")
+            return {"code": str(code), "scope": str(scope), "field": field,
+                    "details": details, "message": str(message)}
+        if isinstance(raw, str):
+            return {"code": cls.LEGACY_ERROR_CODE, "scope": "package", "field": None,
+                    "details": {"raw": raw}, "message": raw}
+        text = "" if raw is None else str(raw)
+        return {"code": cls.UNKNOWN_ERROR_CODE, "scope": "package", "field": None,
+                "details": {"raw": text}, "message": text or cls.UNKNOWN_ERROR_CODE}
+
+    @staticmethod
+    def _related_war_ids(item: Dict[str, Any]) -> List[str]:
+        """从 package scope item 的 `details.claims` / `details.requests` 抽取 war_id。"""
+        out: List[str] = []
+        details = item.get("details") or {}
+        for key in ("claims", "requests"):
+            rows = details.get(key)
+            if not isinstance(rows, (list, tuple)):
+                continue
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                war_id = row.get("war_id")
+                if war_id is None:
+                    continue
+                text = str(war_id)
+                if text not in out:
+                    out.append(text)
+        return out
 
     # -----------------------------------------------------------------------
     # 人口阶段专用 API
@@ -282,35 +407,6 @@ class GuiApiAdapter:
     # 统一经 submit_senate_proposals（propose_many）；无旁路直接部署入口。
 
     # -----------------------------------------------------------------------
-    # Configure/Test force 控件（R5 DA-6，SA §5.5 / Owner §20 #44）
-    # -----------------------------------------------------------------------
-    # 两键独立读写（testing.force_battle_result / testing.force_naval_result）；空值 =
-    # 正常结算。写路径 = in-memory 测试/配置面（不落盘；committed 默认 "" 不入提交面）。
-    def get_test_config(self, viewer_id: str = "") -> Dict[str, Any]:
-        from src.api import test_config_api
-        result = test_config_api.get_test_config(self._state, viewer_id or None)
-        if result.get("success"):
-            return result.get("data", {})
-        logger.error(f"Test config read failed: {result.get('message')}")
-        return {}
-
-    def set_force_battle_result(self, player_id: str, value: str) -> Dict[str, Any]:
-        """Land/CRT 强制结果控件写 Slot（空 = 正常结算；不动 naval 键）。"""
-        from src.api import test_config_api
-        return self.call(
-            test_config_api.set_test_config,
-            self._state, player_id, test_config_api.FORCE_LAND_FIELD, value,
-        )
-
-    def set_force_naval_result(self, player_id: str, value: str) -> Dict[str, Any]:
-        """Naval 强制结果控件写 Slot（空 = 正常结算；不动 land 键）。"""
-        from src.api import test_config_api
-        return self.call(
-            test_config_api.set_test_config,
-            self._state, player_id, test_config_api.FORCE_NAVAL_FIELD, value,
-        )
-
-    # -----------------------------------------------------------------------
     # Combat stage API
     # -----------------------------------------------------------------------
     def get_combat_view(self, viewer_id: str) -> Dict[str, Any]:
@@ -390,6 +486,8 @@ class GuiApiAdapter:
         feedback_type: str,
         feedback_message: str = "",
         data: Any = None,
+        error_items: Optional[List[Dict[str, Any]]] = None,
+        errors_by_scope: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> Dict[str, Any]:
         return {
             "success": success,
@@ -398,4 +496,7 @@ class GuiApiAdapter:
             "errors": errors,
             "feedback_type": feedback_type,
             "feedback_message": feedback_message or message,
+            # R6（SA §B.5，DA-2 B5）：structured error 唯一显示路径（QML 零 formatter）。
+            "error_items": error_items or [],
+            "errors_by_scope": errors_by_scope or {},
         }

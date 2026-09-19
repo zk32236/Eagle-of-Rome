@@ -6,6 +6,7 @@
 import copy
 import unittest
 
+from src.api import senate_api
 from src.core.systems.political_system import PoliticalSystem
 
 from src.tests.fixtures.wpgr5_fixtures import (
@@ -39,14 +40,37 @@ class TestPackageSubmitBasics(unittest.TestCase):
         )
 
     def test_n_zero_ok(self):
-        """§20 #6 / §3.6：N=0 合法（同现任 Commander no-op）。"""
+        """§20 #6 / §3.6：N=0 合法（同现任 Commander no-op）。
+
+        R6 迁移（B-1 类 route→direct）：`war_ongoing`（ongoing 真实 War）的 command 模式
+        ⇒ `consul_direct`（不再产 Senate 提案）。断言面迁到 R6 双账本 + 唯一边界：
+        `created=[]` / `consul_war_decisions` 恰 1（FROZEN、N=0）；边界落地 = 原将保留（no-op）、零增兵。
+        """
         req = submit_request(war_drafts=[
             command_draft(FIXED["war_ongoing"], self.ctx["cmd_a"].id, reinforcement_n=0)])
         result = self.ps.submit_proposal_package("player1", req)
         self.assertTrue(result["success"], result.get("errors"))
+        # ① 双账本：Senate 提案集不得混入 direct；direct 决策恰 1（FROZEN、N=0）
         props = self.state.get_senate_proposals()
-        self.assertEqual(len(props), 1)
-        self.assertEqual(props[0]["payload"]["reinforcement_n"], 0)
+        self.assertEqual(len(props), 0)
+        self.assertEqual(result["data"]["created"], [])
+        decisions = self.state.get_consul_war_decisions("S1")
+        self.assertEqual(len(decisions), 1)
+        rec = list(decisions.values())[0]
+        self.assertEqual(rec["authority"], "consul_direct")
+        self.assertEqual(rec["decision_state"], "FROZEN")
+        self.assertEqual(rec["war_id"], FIXED["war_ongoing"])
+        self.assertEqual(rec["payload"]["target_commander_id"], self.ctx["cmd_a"].id)
+        self.assertEqual(rec["payload"]["reinforcement_n"], 0)
+        # ② 唯一边界落地：N=0 同现任 = no-op（原将保留、零增兵）
+        res = senate_api.resolve_senate(self.state)
+        self.assertTrue(res["success"], res.get("message"))
+        pool_before = len(self.state.get_military_system().get_available_legions())
+        adv = senate_api.advance_senate_phase(self.state, "player1")
+        self.assertTrue(adv["success"], adv.get("message"))
+        self.assertEqual(self.ctx["war_ongoing"].commander_id, self.ctx["cmd_a"].id)
+        self.assertEqual(len(self.state.get_military_system().get_available_legions()),
+                         pool_before)
 
     def test_reinforcement_invalid(self):
         """§3.6：负/浮点/bool N → REINFORCEMENT_INVALID。"""

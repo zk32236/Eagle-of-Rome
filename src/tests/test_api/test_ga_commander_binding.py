@@ -6,6 +6,15 @@
 - Continue 后绑定收敛现有 Commander
 - P2（commanderless ACTIVE）接管同样收敛
 - pre-GD 状态内一致性（Q 件 I：不依赖 save/load）
+
+R6（SA-Design v1.1 §C.6 / §C.2；DA-3 B4 退役 + DA-6 B1a 迁移）：
+三孤儿 `execute_war_takeover_deploy` / `execute_war_takeover_direct` /
+`execute_war_continue_direct` 已**退役为无副作用 shim**，统一返回 **dict**
+`{success:False, code:LEGACY_WAR_EXECUTION_RETIRED, message:"use package and advance"}`
+（PM 裁定 P-B4-4 = 保持 dict）。本文件旧「直调孤儿 → 三绑定收敛」语义命题
+**迁移到新 direct 路由**（合规 Submit 冻结 `ConsulWarDecision` + 唯一边界消费
+`senate_api.advance_senate_phase`）；孤儿直调侧只断言退役码 + **零 mutation**
+（`snapshot_war_resolution_domains()` 深值相等）。**用例未删、未改名、难度未降。**
 """
 import unittest
 from unittest.mock import MagicMock
@@ -19,12 +28,15 @@ from src.core.systems.war_system import WarSystem
 from src.core.systems.military_system import MilitarySystem
 from src.core.systems.naval_system import NavalSystem
 from src.core.systems.political_system import PoliticalSystem
+from src.api import senate_api
 
 
 class TestGaCommanderBinding(unittest.TestCase):
     def setUp(self):
         self.state = GameState.create_for_testing({})
         self.state.turn = GameTurn(turn_number=1, year=-264)
+        for ph in ["mortality", "revenue", "forum", "population"]:
+            self.state.mark_phase_executed(ph)
         self.state._treasury = 500
         self.state._war_system = WarSystem(self.state)
         self.state._military_system = MilitarySystem(self.state)
@@ -42,6 +54,34 @@ class TestGaCommanderBinding(unittest.TestCase):
         self.old_cmd.is_absent = True
         self.state.add_member(self.old_cmd)
         self.faction.member_ids.append(2)
+        self.state._players = {
+            "player1": MagicMock(player_id="player1", faction_id="optimates", player_type="human"),
+        }
+        self.state._current_player_id = "player1"
+
+    # ---------- R6（DA-6 B1a）迁移 helper ----------
+
+    def _assert_retired_zero_mutation(self, call):
+        """孤儿退役 shim：dict {success/code/message} + 零 mutation（快照深值相等）。"""
+        before = self.state.snapshot_war_resolution_domains()
+        result = call()
+        after = self.state.snapshot_war_resolution_domains()
+        self.assertIsInstance(result, dict)
+        self.assertFalse(result["success"])
+        self.assertEqual(result["code"], PoliticalSystem.LEGACY_WAR_EXECUTION_RETIRED)
+        self.assertEqual(result["message"], "use package and advance")
+        self.assertEqual(before, after, "退役 shim 必须零 mutation")
+        return result
+
+    def _submit_package(self, drafts):
+        return senate_api.propose_many(self.state, "player1", {"war_drafts": drafts})
+
+    def _resolve_and_advance(self):
+        res = senate_api.resolve_senate(self.state)
+        self.assertTrue(res["success"], res.get("message"))
+        adv = senate_api.advance_senate_phase(self.state, "player1")
+        self.assertTrue(adv["success"], adv.get("message"))
+        return adv
 
     def _assert_single_authority(self, war):
         """H 件 §3 不变式：所有 assigned Legion/Fleet 绑定 == war.commander_id。"""
@@ -74,10 +114,23 @@ class TestGaCommanderBinding(unittest.TestCase):
         return war
 
     def test_takeover_converges_war_legion_fleet(self):
-        """S19/S21：Takeover 后 War/Legion/Fleet 全收敛新 Consul（含幸存 Fleet rebind）。"""
+        """S19/S21：新 direct 路由（checked command → consul_direct → 唯一边界）接管后
+        War/Legion/Fleet 全收敛新 Consul（含幸存 Fleet rebind）；孤儿直调侧 = 退役码 + 零 mutation。"""
         war = self._make_war_with_assets()
-        ok = PoliticalSystem(self.state).execute_war_takeover_direct(war, self.consul, reinforcement_n=1)
-        self.assertTrue(ok)
+        # ① 孤儿直调已退役：统一退役码 + 零 mutation（三绑定不收敛）
+        self._assert_retired_zero_mutation(
+            lambda: PoliticalSystem(self.state).execute_war_takeover_direct(
+                war, self.consul, reinforcement_n=1))
+        self.assertEqual(war.commander_id, 2)
+        # ② 新 direct 路由：Submit 冻结零军事写 → 唯一边界消费接管
+        sub = self._submit_package([{"war_id": war.id, "checked": True, "mode": "command",
+                                     "target_commander_id": self.consul.id, "reinforcement_n": 1}])
+        self.assertTrue(sub["success"], sub.get("errors"))
+        self.assertEqual(war.commander_id, 2, "Submit 零部署：Commander 未变")
+        self.assertEqual(
+            len(self.state.get_consul_war_decisions(self.state.get_senate_session())), 1,
+            "checked command 冻结为唯一 ConsulWarDecision")
+        self._resolve_and_advance()
         self.assertEqual(war.commander_id, self.consul.id)
         self._assert_single_authority(war)
         # 新征召军团也绑定新 Commander
@@ -94,7 +147,7 @@ class TestGaCommanderBinding(unittest.TestCase):
         self._assert_single_authority(war)
 
     def test_p2_takeover_converges(self):
-        """P2（commanderless ACTIVE）：接管后三绑定收敛。"""
+        """P2（commanderless ACTIVE）：新 direct 路由接管后三绑定收敛；孤儿直调侧 = 退役码 + 零 mutation。"""
         war = War(id="w_p2", name="P2 War", war_type=WarType.FOREIGN, strength=5, naval_required=False)
         war.status = WarStatus.ACTIVE
         war.commander_id = None
@@ -104,14 +157,33 @@ class TestGaCommanderBinding(unittest.TestCase):
             ok, _ = ms.recruit_legion(num)
             assert ok
         ms.assign_to_war([5, 6], war.id, 2)  # 幸存者 commander 暂指旧值（H 件 §3 例外）
-        ok = PoliticalSystem(self.state).execute_war_takeover_direct(war, self.consul, reinforcement_n=1)
-        self.assertTrue(ok)
+        # ① 孤儿直调已退役：零 mutation（commander 仍 None，旧绑定未收敛）
+        self._assert_retired_zero_mutation(
+            lambda: PoliticalSystem(self.state).execute_war_takeover_direct(
+                war, self.consul, reinforcement_n=1))
+        self.assertIsNone(war.commander_id)
+        # ② 新 direct 路由：ACTIVE 换将/接管经唯一边界收敛
+        sub = self._submit_package([{"war_id": war.id, "checked": True, "mode": "command",
+                                     "target_commander_id": self.consul.id, "reinforcement_n": 1}])
+        self.assertTrue(sub["success"], sub.get("errors"))
+        self._resolve_and_advance()
+        self.assertEqual(war.commander_id, self.consul.id)
         self._assert_single_authority(war)
 
     def test_pre_gd_invariant_holds_after_mutation(self):
-        """Q 件 I（pre-GD）：mutation 后状态内一致性（不依赖 save/load）。"""
+        """Q 件 I（pre-GD）：mutation 后状态内一致性（不依赖 save/load）；
+        孤儿直调侧 = 退役码 + 零 mutation（状态一致性亦成立）。"""
         war = self._make_war_with_assets(war_id="w_inv")
-        PoliticalSystem(self.state).execute_war_takeover_direct(war, self.consul, reinforcement_n=2)
+        # ① 孤儿直调已退役：零 mutation 后状态内一致性（无 split-brain）
+        self._assert_retired_zero_mutation(
+            lambda: PoliticalSystem(self.state).execute_war_takeover_direct(
+                war, self.consul, reinforcement_n=2))
+        self._assert_single_authority(war)
+        # ② 新 direct 路由 mutation 后一致性
+        sub = self._submit_package([{"war_id": war.id, "checked": True, "mode": "command",
+                                     "target_commander_id": self.consul.id, "reinforcement_n": 2}])
+        self.assertTrue(sub["success"], sub.get("errors"))
+        self._resolve_and_advance()
         self._assert_single_authority(war)
         # 独立复核：三处读取同一 id
         self.assertEqual(war.commander_id, self.consul.id)

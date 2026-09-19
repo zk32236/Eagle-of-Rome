@@ -185,15 +185,18 @@ class TestSenateAnnouncement(unittest.TestCase):
     def test_scenario_j_takeover_plus_ordinary(self):
         """J → R5：混合公示——enacted 提案在 R 公示（持久化）；边界 mutation 在 R 后独立记录
         （不混入 R 公示快照）。"""
-        self.state.senate_proposal_decision_complete = True
-        pid = self._add_proposal({"type": "land", "act_type": "distribution", "amount_C": 200, "percent": 0.2})
-
         war = War(id="war_takeover_j", name="接管测试战争J", war_type=WarType.FOREIGN, strength=5, naval_required=False)
         war.status = WarStatus.ACTIVE
         self.state.get_war_system()._active_wars.append(war)
-        # unchecked 卡（不部署）：决策完成
-        sub = senate_api.propose_many(self.state, "player1", [])
-        self.assertTrue(sub["success"])
+        # R6（DA-6 B3c-cont2）：唯一整包 Submit 建立会期——land 提案在包内（不再手工注入 + 同会期二次提交）；
+        # war 为 commanderless ACTIVE（边界接管），本包不含 war 卡（零 direct）。
+        sub = senate_api.propose_many(self.state, "player1", [
+            {"type": "land", "params": {"act_type": "distribution", "amount_C": 200, "percent": 0.2}},
+        ])
+        self.assertTrue(sub["success"], sub.get("errors"))
+        pid = next(c["proposal_id"] for c in sub["data"]["created"] if c["type"] == "land")
+        self.state.record_senate_vote("player1", pid, True)
+        self.state.record_senate_vote("player2", pid, True)
 
         resolved = senate_api.resolve_senate(self.state)
         self.assertTrue(resolved["success"])
