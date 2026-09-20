@@ -31,6 +31,28 @@ Rectangle {
     readonly property var currentTarget: (draft && draft.target_commander_id !== undefined)
                                          ? draft.target_commander_id : null
 
+    // R7（SA §B.4，DA-R7 B3）：卡级 error 态 + 字段/控件高亮（canonical error 色）。
+    // 卡集合由 SenateStage 从 Core 权威 senateSubmitErrorsByWar 注入（details.claims/
+    // requests 关联）；此处仅回答「同一张已证实出错的卡上，红框落在哪个 widget」——
+    // 展示路由，非校验推导（**不**建 UI-only duplicate-claims 推断模型）。
+    readonly property bool hasError: cardRoot.cardErrors.length > 0
+    function fieldError(field) {
+        for (var i = 0; i < cardRoot.cardErrors.length; i++) {
+            if (String(cardRoot.cardErrors[i].field || "") === field) return true
+        }
+        return false
+    }
+    function codeError(code) {
+        for (var i = 0; i < cardRoot.cardErrors.length; i++) {
+            if (String(cardRoot.cardErrors[i].code || "") === code) return true
+        }
+        return false
+    }
+    // N 字段：field 权威直指（reinforcement_n）或池超限 code（池超限属 N 输入相关）
+    readonly property bool nFieldError: cardRoot.fieldError("reinforcement_n") || cardRoot.codeError("LEGION_POOL_EXCEEDED")
+    // Commander 字段：包级 duplicate（field=None）→ 由 code 决定高亮哪个控件（展示路由）
+    readonly property bool commanderFieldError: cardRoot.codeError("COMMANDER_CLAIM_DUPLICATE")
+
     // R6（SA §A.2）：authority route 唯一来源 = card.authority_by_mode[draft.mode]；
     // QML 只渲染、零推断（不得据 classification/status/名字/是否有将领推导 route）。
     readonly property var authorityMap: (card && card.authority_by_mode) ? card.authority_by_mode : ({})
@@ -47,8 +69,9 @@ Rectangle {
     implicitHeight: col.implicitHeight + 12
     radius: 4
     color: "#FFF6E6"
-    border.color: isPeace ? "#7FA05A" : "#E0B56C"
-    border.width: 1
+    // R7（SA §B.4，DA-R7 B3）：错误态 → canonical error 色红框（优先于 peace/candidate 色）
+    border.color: cardRoot.hasError ? theme.statusError : (isPeace ? "#7FA05A" : "#E0B56C")
+    border.width: cardRoot.hasError ? 2 : 1
 
     function classificationLabel() {
         var c = cardRoot.card ? cardRoot.card.classification : ""
@@ -195,64 +218,88 @@ Rectangle {
             Layout.fillWidth: true
             visible: !cardRoot.routeReady
             text: "⚠ 路由数据不可用：请刷新后重试（此卡暂不可提交）"
-            color: "#B00020"
+            color: theme.statusError
             font.pixelSize: 11
             wrapMode: Text.Wrap
         }
 
         // R6（SA §B.5，DA-2 B5）：卡级 `cardErrors`（按 field 定位）+ pool 三值
         // （requested / available / reduce_by）+ code 可展开详情可取。
-        ColumnLayout {
+        // R7（SA §B.3.3，DA-R7 B2）：**bounded**（maxHeight ≤120 + clip + 内滚）
+        // —— 长文不撑高卡片；既有内容语义（code 定位 / pool 三值 / 可展开 details）保留。
+        Rectangle {
+            objectName: "warCardErrorBlock"
             Layout.fillWidth: true
             visible: cardRoot.cardErrors.length > 0
-            spacing: 2
+            Layout.maximumHeight: 120
+            Layout.preferredHeight: Math.min(120, cardErrInner.implicitHeight + 8)
+            clip: true
+            color: Qt.rgba(theme.statusError.r, theme.statusError.g, theme.statusError.b, 0.06)
+            radius: 3
+            ScrollView {
+                anchors.fill: parent
+                clip: true
+                contentWidth: availableWidth
+                ColumnLayout {
+                    id: cardErrInner
+                    width: parent.width
+                    spacing: 2
 
-            Text {
-                text: "⚠ 此卡错误"
-                color: "#B00020"
-                font.pixelSize: 11
-                font.bold: true
-            }
-
-            Repeater {
-                model: cardRoot.cardErrors
-                delegate: ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 1
                     Text {
                         Layout.fillWidth: true
-                        text: cardRoot.cardErrorText(modelData)
-                        color: "#B00020"
+                        text: "⚠ 此卡错误"
+                        color: theme.statusError
                         font.pixelSize: 11
+                        font.bold: true
+                    }
+
+                    Repeater {
+                        model: cardRoot.cardErrors
+                        delegate: ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 1
+                            Text {
+                                Layout.fillWidth: true
+                                text: cardRoot.cardErrorText(modelData)
+                                color: theme.statusError
+                                font.pixelSize: 11
+                                wrapMode: Text.Wrap
+                                elide: Text.ElideRight
+                                maximumLineCount: 2
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                visible: cardRoot.poolLine(modelData) !== ""
+                                text: cardRoot.poolLine(modelData)
+                                color: "#8A5A00"
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                                maximumLineCount: 1
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: cardRoot.errorDetailsExpanded ? "收起详情 ▲" : "展开详情 ▼"
+                        color: "#6B4E00"
+                        font.pixelSize: 11
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: cardRoot.errorDetailsExpanded = !cardRoot.errorDetailsExpanded
+                        }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: cardRoot.errorDetailsExpanded
+                        text: cardRoot.errorDetailsText()
+                        color: "#4A3A20"
+                        font.pixelSize: 10
                         wrapMode: Text.Wrap
-                    }
-                    Text {
-                        Layout.fillWidth: true
-                        visible: cardRoot.poolLine(modelData) !== ""
-                        text: cardRoot.poolLine(modelData)
-                        color: "#8A5A00"
-                        font.pixelSize: 11
+                        elide: Text.ElideRight
+                        maximumLineCount: 4
                     }
                 }
-            }
-
-            Text {
-                text: cardRoot.errorDetailsExpanded ? "收起详情 ▲" : "展开详情 ▼"
-                color: "#6B4E00"
-                font.pixelSize: 11
-                MouseArea {
-                    anchors.fill: parent
-                    onClicked: cardRoot.errorDetailsExpanded = !cardRoot.errorDetailsExpanded
-                }
-            }
-
-            Text {
-                Layout.fillWidth: true
-                visible: cardRoot.errorDetailsExpanded
-                text: cardRoot.errorDetailsText()
-                color: "#4A3A20"
-                font.pixelSize: 10
-                wrapMode: Text.Wrap
             }
         }
 
@@ -289,36 +336,48 @@ Rectangle {
                 Layout.preferredWidth: 52
             }
 
-            ComboBox {
-                id: commanderCombo
-                objectName: "warCardCommanderCombo"
+            // R7（SA §B.4，DA-R7 B3）：Commander 字段 error 态——wrapper 承载红框
+            // （不改 ComboBox 主题）；duplicate-Commander → 全部涉事卡此字段高亮。
+            Rectangle {
+                objectName: "warCardCommanderField"
                 Layout.fillWidth: true
-                enabled: cardRoot.editable
-                model: cardRoot.commanderCandidates
-                textRole: "label"
-                valueRole: "figure_id"
-                currentIndex: cardRoot.candidateIndex()
-                onActivated: cardRoot.emitDraft({"target_commander_id": model[currentIndex].figure_id})
-                // R6（SA §D.2，DA-4 B4）：hover/focus tooltip 提供完整 label
-                ToolTip.delay: 250
-                ToolTip.text: cardRoot.identityIsCandidate ? cardRoot.candidateIdentityLabel
-                                                          : cardRoot.identityText
-                ToolTip.visible: commanderCombo.hovered || commanderCombo.activeFocus
-                // R6（SA §D.2，DA-4 B4）：候选 delegate 提供完整 label（避免只选中后才可识别）
-                delegate: ItemDelegate {
-                    id: commanderComboDelegate
-                    width: commanderCombo.width
-                    contentItem: Text {
-                        text: cardRoot.labelOf(modelData)
-                        color: "#2C1E12"
-                        font.pixelSize: 12
-                        // 完整 label（换行、不截断）
-                        wrapMode: Text.Wrap
-                        elide: Text.ElideNone
-                    }
+                implicitHeight: commanderCombo.implicitHeight + 4
+                color: "transparent"
+                radius: 3
+                border.color: cardRoot.commanderFieldError ? theme.statusError : "transparent"
+                border.width: cardRoot.commanderFieldError ? 2 : 0
+                ComboBox {
+                    id: commanderCombo
+                    objectName: "warCardCommanderCombo"
+                    anchors.fill: parent
+                    anchors.margins: 2
+                    enabled: cardRoot.editable
+                    model: cardRoot.commanderCandidates
+                    textRole: "label"
+                    valueRole: "figure_id"
+                    currentIndex: cardRoot.candidateIndex()
+                    onActivated: cardRoot.emitDraft({"target_commander_id": model[currentIndex].figure_id})
+                    // R6（SA §D.2，DA-4 B4）：hover/focus tooltip 提供完整 label
                     ToolTip.delay: 250
-                    ToolTip.text: cardRoot.labelOf(modelData)
-                    ToolTip.visible: commanderComboDelegate.hovered
+                    ToolTip.text: cardRoot.identityIsCandidate ? cardRoot.candidateIdentityLabel
+                                                              : cardRoot.identityText
+                    ToolTip.visible: commanderCombo.hovered || commanderCombo.activeFocus
+                    // R6（SA §D.2，DA-4 B4）：候选 delegate 提供完整 label（避免只选中后才可识别）
+                    delegate: ItemDelegate {
+                        id: commanderComboDelegate
+                        width: commanderCombo.width
+                        contentItem: Text {
+                            text: cardRoot.labelOf(modelData)
+                            color: "#2C1E12"
+                            font.pixelSize: 12
+                            // 完整 label（换行、不截断）
+                            wrapMode: Text.Wrap
+                            elide: Text.ElideNone
+                        }
+                        ToolTip.delay: 250
+                        ToolTip.text: cardRoot.labelOf(modelData)
+                        ToolTip.visible: commanderComboDelegate.hovered
+                    }
                 }
             }
 
@@ -328,16 +387,27 @@ Rectangle {
                 font.pixelSize: 11
             }
 
-            SpinBox {
-                id: nBox
-                enabled: cardRoot.editable
-                // 静态 UI 值域（0…99）——非池推导上限；N 的真实约束由 Core Submit 校验（A-I18）
-                from: 0
-                to: 99
-                value: cardRoot.nNow
-                editable: true
-                Layout.preferredWidth: 70
-                onValueModified: cardRoot.emitDraft({"reinforcement_n": value})
+            // R7（SA §B.4，DA-R7 B3）：N 字段 error 态——wrapper 承载红框（不改 SpinBox 主题）
+            Rectangle {
+                objectName: "warCardNField"
+                implicitWidth: 70 + 4
+                implicitHeight: nBox.implicitHeight + 4
+                color: "transparent"
+                radius: 3
+                border.color: cardRoot.nFieldError ? theme.statusError : "transparent"
+                border.width: cardRoot.nFieldError ? 2 : 0
+                SpinBox {
+                    id: nBox
+                    anchors.fill: parent
+                    anchors.margins: 2
+                    enabled: cardRoot.editable
+                    // 静态 UI 值域（0…99）——非池推导上限；N 的真实约束由 Core Submit 校验（A-I18）
+                    from: 0
+                    to: 99
+                    value: cardRoot.nNow
+                    editable: true
+                    onValueModified: cardRoot.emitDraft({"reinforcement_n": value})
+                }
             }
         }
 
@@ -351,7 +421,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: cardRoot.commandSelected
             text: cardRoot.identityText
-            color: cardRoot.identityIsCandidate ? "#2C1E12" : "#B00020"
+            color: cardRoot.identityIsCandidate ? "#2C1E12" : theme.statusError
             font.pixelSize: 11
             wrapMode: Text.Wrap
             elide: Text.ElideNone

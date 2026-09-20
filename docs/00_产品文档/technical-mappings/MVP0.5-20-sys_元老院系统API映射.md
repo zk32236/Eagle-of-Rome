@@ -200,6 +200,25 @@ can_trigger_ai_proposer / can_auto_veto  严格 mode=="AI"（D-3：NONE → 双 
   - **唯一触发点（C1，偏离 D-1 采纳）**：`auto_submit_proposals` 尾部（senate_api.py，GUI session_store:1265 / CLI phase_senate:1025 双入口共享同一活跃函数）——**严禁放回 resolve_senate**；auto_player_processor.py 为死代码（全仓零调用方）不选为触发点。CLI auto 模式经同入口继承 AI 接管（D-4 语义不回归）。
   - **provenance（C4）**：`record_senate_direct_action` payload 扩展为 10 字段——既有 6 字段（action_type/war_id/war_name/commander_id/commander_name/legions）+ `action:"takeover"`、`trigger_source:"human_explicit"|"ai_auto"`、`previous_status`、`resulting_status`（= war.status 执行前后值，takeover 不改 status → 均为 "active"，D-3 最小解释）；`get_senate_view` / `get_senate_direct_actions` 按 dict 透传不变 → 既有消费者零破坏。
 
+### 5.7.1 WP-G-R7 同步注记（2026-09-20；append-only）
+
+> **权威**：SA-Design-WP-G-R7-2026-09-20 §A/§B + R7 任务包 §6/§7/§13。**GAME_RULE_CHANGE = NO**（纯展示层闭合，零规则变更）。
+
+**A. Direct Action 提交后的会期连续可见性（R7-A）**
+- Submit 成功（direct-only 或混合包）→ 冻结 direct 决策按**稳定身份 `item_ref`** 保留**只读、会期连续可见**：
+  - Store 新增只读 Property `session_store.senateConsulDirectDecisions`（顶层 DTO `consul_direct_decisions` 透传）；
+  - `SenateStage.qml` 新增 step 无关只读区 `frozenDirectSection`（`senateFrozenDirectRow`，bounded ≤168，无输入控件 ⇒ 不可再 Submit）；
+  - 呈现身份 = War label / Commander label / N（+ `authority_label` / `display_label`）；行内**无 `proposal_id`** ⇒ 不进 Vote / Veto 候选；
+  - `awaiting_boundary → executed` **仅**由 `Senate→Combat` 边界 receipt（COMMITTED）驱动，Submit→边界之间**零军事 mutation**。
+- 与 PA 结果面板同 producer（`_consul_direct_decision_rows`）⇒ Results/PA 同一身份（四跳 trace：draft.war_id → submit.war_id → view.item_ref → PA.item_ref）。
+- **R7 不新增 Save/Load 范围**，不削弱既有重入身份。
+
+**B. 提交校验失败恢复 UX（R7-B）**
+- 失败 → **bounded** 呈现：固定 28px 单行状态条（`senateValidationStrip`）+ bounded `Dialog`（`senateValidationDialog`，modal / ESC / Close，内 `ScrollView`）——属 Overlay 层，**不 resize 主布局**；finalization warning 同规格 bounded（`senateFinalizationWarningStrip`）。
+- 精确高亮：`invalid N` → 该卡 + N 字段（`warCardNField`）；`duplicate Commander` → 全部涉事卡 + Commander 字段（`warCardCommanderField`）；卡级块 bounded ≤120（`warCardErrorBlock`）。
+- 错误色 = canonical `theme.statusError`（= 设计系统 `#C45151`）；不引第二套红。
+- **草稿深值保留**（checked / mode / target Commander / N 逐字段相等，失败不 rebuild）；**零部分发布**（零 Senate 提案 + 零 direct 决策，Core 原子门未触）；就地改值 → 受影响卡红框清除（逐卡 ack，**不声明有效/通过**）→ 原地 Resubmit 成功，**无需**阶段/游戏重启或离开重入。
+
 ### 5.9 WP-F R2-01 Senate 中间投影 + Passed-Only 收敛（2026-08-30，v1.8）
 
 > 冻结语义来源：WP-F-R2 Task Package v1.0（§5~§8）+ SA Design（02-sa-design/WP-F-R2/SA-Design-WP-F-R2-V4Pro.md §4~§7）+ G4 DA-Plan（D-1~D-4）。GAME_RULE_CHANGE = NO（阈值/权重/AI 投票/Tribune 权威全部不变）。
@@ -226,6 +245,7 @@ can_trigger_ai_proposer / can_auto_veto  严格 mode=="AI"（D-3：NONE → 双 
 ## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.9 | 2026-09-20 | DA Sub-Agent (WP-G-R7) | Direct Action 提交后连续可见性 + 校验失败恢复 UX 同步（R7-A/R7-B）：新增「§5.7.1 WP-G-R7 同步注记」——冻结 direct 决策按 `item_ref` 会期连续只读可见（进 Results/PA 同身份 / 不进 Vote-Veto / 边界前零军事 mutation / awaiting→executed 仅 receipt）；校验失败 = bounded dialog + 精确卡/N/Commander 高亮 + 草稿保留 + 零发布 + 就地重提。GAME_RULE_CHANGE=NO（纯展示层） |
 | v1.8 | 2026-08-30 | GUI-BETA-R1 WP-F-R2（R2-01）：①中间 vote_results 投影（`_build_vote_results_and_candidates`，voted_all 后，Stage 2 支持率即时可读，首次决策非重入）②`veto_candidate_ids` 权威 passed-only 候选集（DTO + `senateVetoCandidateIds` + QML 映射）③`record_veto` fail-closed 四条件 + `rejected_ids` + 全拒 success=False ④zero-passed 收敛（current_step=results + store 自动 resolve，D-2）；见 §5.9 |
 | v1.6 | 2026-08-23 | GUI-BETA-R1 WP-E（Slice 11 PU-04）：土地法案 sale → quota + total 双写入（political_system.py:510 `set_turn_land_sale_total` 并行）与 Forum resolve 消费关系（quota=remaining 消费、total 本年度稳定展示）；**REVIEWED-NO-CHANGE**：rejected/vetoed 展示段（senate rejected_proposals_snapshot 已有事件身份，仅验证不改）+ SenateStage.qml 相关段落（见实施报告 §7） |
 | v1.5 | 2026-08-23 | GUI-BETA-R1 WP-D-R2（Senate Authority Consolidation）: ①单一 authority resolver（resolve_proposal_control/resolve_veto_control，{mode,actor,authority_reason} HUMAN\|AI\|NONE + 三收敛 helper，退役 ≥10 处内联 duplicate）；②apply_auto_tribune_vetoes 人类 guard（viewer_player_id + fail-closed，decider 零构造零调用 + tribune_veto_human_guard 日志）；③can_select_proposal 三重 guard（R2-A-2）；④resolve_population_slice 尾部幂等 begin_population_phase（archive→convert→resolve 全序，R2-A-1）；⑤HUMAN vs AI 路由边界（store 读 veto_control_mode 不信任 cached can_auto_veto；can_trigger_ai/can_auto_veto 严格 mode==AI，D-3）+ provenance 5 字段（mode×2/actor×2/authority_reason dict） |

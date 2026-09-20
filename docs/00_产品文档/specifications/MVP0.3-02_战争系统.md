@@ -448,6 +448,14 @@ ACTIVE（no valid commander）──T15（Takeover P2）──▶ ACTIVE（新 C
 - 非战斗场景（如 Mortality）中前线指挥官死亡时，`war.commander_id` 未随死亡解绑 ⇒ 潜在 stale 绑定。
   该问题**与本状态机语义无关**，另行登记处置，不得据以重开 Peace 状态机。
 
+## WP-G-R7 同步注记（2026-09-20；append-only）
+
+> **权威**：SA-Design-WP-G-R7-2026-09-20 + R7 任务包 §6/§7。**GAME_RULE_CHANGE = NO**（纯展示层闭合）。
+> 详细落点见 `technical-mappings/MVP0.5-20-sys_元老院系统API映射.md` §5.7.1。
+
+- **提交后 direct 可见性（R7-A）**：Consul Direct Action（Passive / Existing / Ongoing War 的 command/takeover/continue）Submit 后以**冻结只读**身份（`item_ref`）在会期连续可见——进 Results/PA 同一身份；**不进** Vote/Veto；Submit→边界之间**零军事 mutation**；`awaiting_boundary→executed` **仅**由 `Senate→Combat` 边界 receipt 驱动。R6 §3.2 时序与 §3.3 整包原子性**不变**。
+- **校验失败恢复（R7-B）**：非法 N / 重复 Commander 等整包失败 = bounded dialog + 精确卡/字段高亮 + 草稿深值保留 + 零部分发布 + 就地改值重提（无重启）。**不改变**战争规则 / 权威矩阵 / 原子性。
+
 ## 9. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
@@ -460,6 +468,7 @@ ACTIVE（no valid commander）──T15（Takeover P2）──▶ ACTIVE（新 C
 | v1.5 | 2026-08-31 | DA Sub-Agent (WP-G GC) | 海军门语义同步（G1-09/16/R-05/R-06）：§2.3 海战前置句补完整状态机——STALEMATE/DEFEAT/DISASTER 阻断陆战（legacy CLI 同步）、TRIUMPH/VICTORY 获控后同场陆战、已获控跳过海战；制海权持久至战争正式结束（sea_control_acquired 权威字段，替代 _sea_control_ratio；GameState 存档接线 = GD） |
 | v1.7 | 2026-09-09 | DA Sub-Agent (WP-G-R4 B3) | R4 同步（FROZEN v1.7 §2/§3/§4/§5）：Takeover 决策/承诺与物理部署分离（O5）；互斥/单 commitment/pending-aware M；§2.3 readiness 前置（NAVAL_NOT_READY 非 DEFEAT、就绪后可重试）；§2.7 resolve_war 显式 combat_result 载体 + legacy unknown 中性事件；dual-stage v2 envelope（未执行无统计/海权 stage 快照）——GAME_RULE_CHANGE=NO |
 | v1.6 | 2026-09-01 | DA Sub-Agent (WP-G G3C) | Treaty Lifecycle 修正（Owner Correction 2026-09-01 / DC-TREATY-LIFECYCLE-CORRECTION-01）：**approved = TEMPORARY TRUCE（撤销 v1.3 的 approved=RESOLVED）**——War 保持 TRUCE + truce_end_turn + Commander 返回 + Legion/Fleet 释放 + Revenue 最后维护 + Population DISBANDED；到期 → THREAT（threat_level=1，禁直接 ACTIVE / 旧绑定恢复，Sea Control 保持）→ 自动升级 → ACTIVE；TRIUMPH/VICTORY = RESOLVED 独立；ODR-CAND-01 修复 = enqueue-then-clear（_legions_to_disband 双入残留消除） |
+| v1.9 | 2026-09-20 | DA Sub-Agent (WP-G-R7) | Direct Action 提交后连续可见性 + 校验失败恢复 UX（R7-A/R7-B）：新增「WP-G-R7 同步注记」（引 MVP0.5-20 §5.7.1）——冻结 direct 决策按 `item_ref` 会期连续只读可见 / 不进 Vote-Veto / 边界前零军事 mutation；校验失败 = bounded dialog + 精确卡/N/Commander 高亮 + 草稿保留 + 零发布 + 就地重提。GAME_RULE_CHANGE=NO（纯展示层） |
 | v1.8 | 2026-09-19 | DA Sub-Agent (WP-G-R6) | 平局语义显式化同步（Advisor 最终结论 Option C = ACCEPT / Owner 2026-09-19 确认）：新增「WP-G-R6 同步注记」——`TRUCE + pending` 正式定义为临时军事冻结；pending 期间军团/舰队/指挥官驻留 + 维护费照付 + 不产生到期与赔款；Peace 未获批 ⇒ `TRUCE → ACTIVE` 且下一回合正常开战；`ongoing_war_count = ACTIVE + TRUCE`（计入失败条件）；跨阶段消费者不变量 A–F。GAME_RULE_CHANGE=NO（仅文档显式化） |
 
 ---

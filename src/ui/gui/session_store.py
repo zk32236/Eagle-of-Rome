@@ -440,6 +440,13 @@ class GuiSessionStore(QObject):
         """R5（SA §5.1/§5.3）：WarExecutionReceipt 只读摘要（不得据 receipt 重新执行）。"""
         return self._senate_view.get("senate_result", {}).get("war_execution", {})
 
+    @Property(list, notify=senateViewChanged)
+    def senateConsulDirectDecisions(self) -> List[Dict[str, Any]]:
+        """R7（SA §A.4，DA-R7 B1）：Consul 冻结 direct 决策只读投影（整个会期可读）。
+        顶层 DTO 透传（senate_api.get_senate_view → data.consul_direct_decisions）。
+        只读；零生命周期推导；行内无 proposal_id（不进 Vote/Veto）。"""
+        return self._senate_view.get("consul_direct_decisions", [])
+
     # -----------------------------------------------------------------------
     # R6（SA §B.5，DA-2 B5）：Submit 结构化错误 + 草稿保留（GUI session 面）
     # -----------------------------------------------------------------------
