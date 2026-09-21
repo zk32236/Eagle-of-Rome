@@ -136,7 +136,14 @@ Rectangle {
         anchors.rightMargin: 14  // gap C->D
         anchors.bottom: bottomQueryBar.top
         anchors.bottomMargin: 14
-        compactActionSlot: sessionStore.selectedPhaseId === "population" || sessionStore.selectedPhaseId === "forum"
+        // R8（SA §4.1 `U_S` 唯一化，FC-UI-06，AC-06；G2-delta-3/4）：Senate 相位不预留空
+        // StageActionSlot（46→0，走既有 compactActionSlot 机制）；折叠后 Content→Action 槽间隔随
+        // 不可见项消除（10→0）；另有 absorbBottomPadding 让渡 StageDesktop 底内边距 18。
+        // 仅 Senate 相位受影响；population/forum 既有行为不变。
+        compactActionSlot: sessionStore.selectedPhaseId === "population"
+                           || sessionStore.selectedPhaseId === "forum"
+                           || sessionStore.selectedPhaseId === "senate"
+        absorbBottomPadding: sessionStore.selectedPhaseId === "senate"
 
         // ---- StageHeaderSlot: phase badge, title, and description ----
         Rectangle {

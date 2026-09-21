@@ -1,6 +1,7 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
+import QtQuick.Window 2.15
 
 import "../components"
 import "../i18n"
@@ -228,19 +229,27 @@ Rectangle {
     }
 
     function _consulDirectLabel() {
+        // R8（SA §5.2 C-04，D-R8-02）：结果 direct 行身份词 = 人话「执政官决定」
+        // （step 退出后允许）；**禁**透传 producer 技术串。
         var rows = root._consulDirectRows()
         if (rows.length === 0) return ""
-        return rows[0].display_label || rows[0].authority_label || ""
+        return "执政官决定"
+    }
+
+    function _consulDirectStatus() {
+        // R8（SA §5.2 C-05/C-06，FC-UI-03）：结果 direct 行执行状态（边界前「待战斗阶段执行」）。
+        var rows = root._consulDirectRows()
+        if (rows.length === 0) return ""
+        return root.consulExecutionStatus(rows[0])
     }
 
     function _consulDirectText() {
+        // R8（SA §5.2 C-04）：结果 direct 行人话决策摘要（身份取冻结快照，不猜 subtype）。
         var rows = root._consulDirectRows()
         if (rows.length === 0) return "\u65e0"
         var parts = []
         for (var i = 0; i < rows.length; i++) {
-            var r = rows[i]
-            var n = (r.reinforcement_n === undefined || r.reinforcement_n === null) ? 0 : r.reinforcement_n
-            parts.push((r.war_label || r.war_id) + " \u00b7 " + (r.target_commander_label || r.target_commander_id) + " \u00b7 N=" + n)
+            parts.push(root.consulDecisionSummary(rows[i]))
         }
         return parts.join("\uff1b")
     }
@@ -251,6 +260,23 @@ Rectangle {
         var n = (row.reinforcement_n === undefined || row.reinforcement_n === null) ? 0 : row.reinforcement_n
         return (row.war_label || row.war_id) + " · " + (row.target_commander_label || row.target_commander_id)
              + " · N=" + n
+    }
+    // R8（SA §5.2 C-04，D-R8-02）：冻结/结果 direct 行人话决策摘要——身份取冻结 ledger
+    // 快照（war_label / target_commander_label / reinforcement_n）；**不**从 live state
+    // 猜接管/继续 subtype、不重建身份；仅 step 退出后由 copy 门呈现。
+    function consulDecisionSummary(row) {
+        row = row || ({})
+        var n = (row.reinforcement_n === undefined || row.reinforcement_n === null) ? 0 : row.reinforcement_n
+        return "执政官决定：" + (row.war_label || row.war_id)
+             + "，由 " + (row.target_commander_label || row.target_commander_id) + " 指挥"
+             + "，增援 " + n + " 个军团"
+    }
+    // R8（SA §5.2 C-05/C-06，FC-UI-03，D-R8-03）：执行状态人话——仅 execution=="executed"
+    // （receipt COMMITTED）显示「已执行」；边界前「待战斗阶段执行（尚未执行）」。
+    // UI 只读 execution、不推断；**禁**透传 producer 技术 receipt 文案。
+    function consulExecutionStatus(row) {
+        row = row || ({})
+        return (row.execution === "executed") ? "已执行" : "待战斗阶段执行（尚未执行）"
     }
 
     // ---- R7（SA §B.2，DA-R7 B2）：bounded 错误呈现 helper 体（G3 P2-2 落地）。
@@ -305,10 +331,6 @@ Rectangle {
         if (!item) return ""
         return (item.field !== undefined && item.field !== null) ? String(item.field) : ""
     }
-    function _errScope(item) {
-        if (!item) return ""
-        return (item.scope !== undefined && item.scope !== null) ? String(item.scope) : ""
-    }
     function _errMessage(item) {
         if (!item) return ""
         return (item.message !== undefined && item.message !== null) ? String(item.message) : ""
@@ -321,53 +343,98 @@ Rectangle {
         if (warCount > 0) s += "，涉及 " + warCount + " 张战卡"
         return s + "。请修正后重新提交（尚未校验）。"
     }
-    // 单行详情：code · field：message
-    function senateErrorDetailLine(item) {
-        var code = root._errCode(item)
-        var field = root._errField(item)
-        var msg = root._errMessage(item)
-        var out = code
-        if (field) out += " · " + field
-        if (msg) out += "：" + msg
-        return out.length > 0 ? out : "（无 code）"
+    // R8（SA §5.3，FC-UI-04）：结算 warning 不直显 finalization/stage 技术串（人话呈现）。
+    function senateFinalizationWarningText() {
+        if (sessionStore.senateFinalizationWarning === "") return ""
+        return "元老院结算未完成：提案包已发布（不撤销、不允许重发包），请稍后自动重试。"
     }
-    // 受影响 War / commander 身份清单（只读展示；取 Core 权威 details，零判定）。
+    // R8（SA §5.3，FC-UI-04，D-R8-04）：诊断**人话映射**——code 作内部查表键，玩家面
+    // 直出「发生什么 + 如何修复」，**禁** machine code / field token / opaque ID。
+    function senateErrorHumanMessage(item) {
+        var code = root._errCode(item)
+        if (code === "REINFORCEMENT_INVALID") return "增援军团数量不符合要求，请修改数量。"
+        if (code === "LEGION_POOL_EXCEEDED") {
+            var d = (item && item.details) ? item.details : {}
+            var advice = "增援请求超过可用军团，请减少增援军团数量"
+            if (d.requested_total !== undefined && d.available_total !== undefined) {
+                advice += "（请求 " + d.requested_total + " / 可用 " + d.available_total
+                if (d.reduce_by !== undefined) advice += " → 请减少 " + d.reduce_by
+                advice += "）"
+            }
+            return advice + "。"
+        }
+        if (code === "COMMANDER_CLAIM_DUPLICATE") return "同一指挥官不能同时指挥这些战争，请为涉事战争选择不同指挥官。"
+        if (code === "COMMANDER_TARGET_INVALID") return "所选指挥官不可用，请重新选择指挥官。"
+        if (code === "COMMANDER_INELIGIBLE") return "所选人物不符合指挥官资格，请另行选择。"
+        if (code === "PACKAGE_ALREADY_SUBMITTED") return "本会期已提交，请查看已提交内容。"
+        return "配置未能提交，请检查标记字段后重试。"
+    }
+    // R8（SA §5.3）：涉事战争人话名称（label 优先；缺失 → 明示不可用，**不回退 raw ID、不猜名字**）。
+    function senateWarLanguageName(warId) {
+        var cards = sessionStore.senateWarCards || []
+        for (var i = 0; i < cards.length; i++) {
+            if (String(cards[i].war_id) === String(warId)) {
+                var nm = cards[i].war_name
+                if (nm !== undefined && nm !== null && String(nm) !== "") return String(nm)
+            }
+        }
+        return "战争名称暂不可用"
+    }
+    // R8（SA §5.3）：涉事指挥官人话名称（候选/冻结 label 优先；缺失 → 明示不可用，不露 opaque ID）。
+    function senateCommanderDisplayName(cmdId) {
+        var cards = sessionStore.senateWarCards || []
+        for (var i = 0; i < cards.length; i++) {
+            var c = cards[i]
+            if (c.current_commander_label && String(c.current_commander_id) === String(cmdId)) return String(c.current_commander_label)
+            if (c.target_commander_label && String(c.target_commander_id) === String(cmdId)) return String(c.target_commander_label)
+            var cands = c.commander_candidates || []
+            for (var j = 0; j < cands.length; j++) {
+                if (String(cands[j].figure_id) === String(cmdId)) {
+                    var lbl = cands[j].label
+                    if (lbl !== undefined && lbl !== null && String(lbl) !== "") return String(lbl)
+                }
+            }
+        }
+        return "指挥官身份暂不可用"
+    }
+    // 单行详情：人话（发生什么 + 如何修复）；**不**透出 machine code / field token。
+    function senateErrorDetailLine(item) {
+        return root.senateErrorHumanMessage(item)
+    }
+    // 受影响对象人话清单（只读展示；取 Core 权威 details；用 label，不用 opaque ID）。
     function senateErrorDetailExtra(item) {
         var d = (item && item.details) ? item.details : {}
         var parts = []
         var claims = d.claims || []
         for (var i = 0; i < claims.length; i++) {
             var c = claims[i]
-            var line = "claim: war=" + ((c.war_id !== undefined && c.war_id !== null) ? c.war_id : "?")
-            if (c.commander_id !== undefined && c.commander_id !== null) line += " commander=" + c.commander_id
-            if (c.commander_label !== undefined && c.commander_label !== null) line += "（" + c.commander_label + "）"
+            if (c.war_id === undefined || c.war_id === null) continue
+            var line = "涉事战争：" + root.senateWarLanguageName(c.war_id)
+            if (c.commander_id !== undefined && c.commander_id !== null) {
+                line += " · 指挥官：" + root.senateCommanderDisplayName(c.commander_id)
+            }
             parts.push(line)
         }
         var requests = d.requests || []
         for (var j = 0; j < requests.length; j++) {
             var r = requests[j]
-            var rline = "request: war=" + ((r.war_id !== undefined && r.war_id !== null) ? r.war_id : "?")
-            if (r.reinforcement_n !== undefined && r.reinforcement_n !== null) rline += " N=" + r.reinforcement_n
+            if (r.war_id === undefined || r.war_id === null) continue
+            var rline = "涉事战争：" + root.senateWarLanguageName(r.war_id)
+            if (r.reinforcement_n !== undefined && r.reinforcement_n !== null) {
+                rline += "（请求增援 " + r.reinforcement_n + " 个军团）"
+            }
             parts.push(rline)
         }
-        return parts.join("；")
-    }
-    // 机器详情：code / scope / field / details 的 JSON（可滚动区展示）。
-    function senateErrorMachineJson() {
-        var items = sessionStore.senateSubmitErrors || []
-        var rows = []
-        for (var i = 0; i < items.length; i++) {
-            var it = items[i]
-            rows.push({
-                "code": root._errCode(it),
-                "scope": root._errScope(it),
-                "field": root._errField(it),
-                "details": (it && it.details) ? it.details : {}
-            })
+        var out = []
+        for (var k = 0; k < parts.length; k++) {
+            if (out.indexOf(parts[k]) < 0) out.push(parts[k])
         }
-        var out = ""
-        try { out = JSON.stringify(rows) } catch (e) { out = "[]" }
-        return out
+        return out.join("；")
+    }
+    // R8（SA §5.3 / D-R8-04，FC-UI-04）：machine JSON 渲染**已退役**——不再进玩家面。
+    // 保留函数签名（R7 契约）但不再产出 raw JSON（无调用点）；诊断留 Store / 运行日志。
+    function senateErrorMachineJson() {
+        return ""
     }
 
     function tribuneActionText() {
@@ -666,21 +733,132 @@ Rectangle {
         }
     }
 
+    // R8（SA §4.1 **L-D v1.3**，FC-UI-05，AC-05；G2-delta-2，Owner 2026-09-21 Q2）——Dialog 专用
+    // envelope（**非** L-5/L-7）。唯一位置基准 W = 游戏窗口当前 client rect（= Window.contentItem
+    // rect；**禁用**最大尺寸 / 声明父项 width·height(rect) / 上一次打开的尺寸·位置 / 屏幕 rect）；
+    // 尺寸**内容自适应**（短内容小框、无大留白）；高度上限 Dh ≤ round(0.40×W.h)（±2px），超限正文内滚；
+    // 以 W 居中（谓词①②）；可见标题条**可拖动**且拖动中**实时夹取**于 W 内；每次 open **复位居中**
+    // （不记忆位置）；产品级 **WIN_MIN=1280×720**（Owner 2026-09-21 11:59 确认）⇒ 删除旧「极小窗
+    // 兜底 / 阻塞」分支（predicate 简化）。
+    // 隐藏测量镜像（**声明式、零副作用**）：单行 intrinsic 宽 / 换行后自然高。
+    // 用真实 Text 排版测量（按实际 font），**不写回自身属性** → 无 binding loop。
+    Column {
+        id: ldWidthMirror
+        visible: false
+        Text { text: "战争配置无法提交"; font.pixelSize: 13; font.bold: true; wrapMode: Text.NoWrap }
+        Text { text: root.senateErrorSummaryText(); font.pixelSize: 12; wrapMode: Text.NoWrap }
+        Repeater {
+            model: sessionStore.senateSubmitErrors || []
+            delegate: Column {
+                Text { text: root.senateErrorDetailLine(modelData); font.pixelSize: 11; wrapMode: Text.NoWrap }
+                Text { text: root.senateErrorDetailExtra(modelData); font.pixelSize: 10; wrapMode: Text.NoWrap }
+            }
+        }
+    }
+    Column {
+        id: ldHeightMirror
+        visible: false
+        width: Math.max(1, senateValidationDialog._dw - 2 * root.ldDialogPadding)
+        spacing: 4
+        Text {
+            width: parent.width
+            text: root.senateErrorSummaryText()
+            font.pixelSize: 12
+            wrapMode: Text.Wrap
+        }
+        Repeater {
+            model: sessionStore.senateSubmitErrors || []
+            delegate: Column {
+                width: ldHeightMirror.width
+                spacing: 1
+                Text {
+                    width: parent.width
+                    text: root.senateErrorDetailLine(modelData)
+                    font.pixelSize: 11
+                    wrapMode: Text.Wrap
+                }
+                Text {
+                    width: parent.width
+                    visible: text !== ""
+                    text: root.senateErrorDetailExtra(modelData)
+                    font.pixelSize: 10
+                    wrapMode: Text.Wrap
+                }
+            }
+        }
+    }
+    // L-D v1.3 冻结常量（SA §4.1）
+    readonly property int ldWmin: 320
+    readonly property int ldDialogPadding: 12
+    readonly property int ldHhead: 40
+    readonly property int ldHfoot: 40
+    readonly property int ldChrome: 116              // Hhead40 + Hfoot40 + 2×padding12 + 2×gap6
+    readonly property int ldWinMinW: 1280            // WIN_MIN（Owner 2026-09-21 11:59 确认）
+    readonly property int ldWinMinH: 720
+    // W = 游戏窗口当前 client rect（client 尺寸；无窗口时回退 root 尺寸）。
+    function ldWindowW() {
+        var w = (root.Window && root.Window.width !== undefined) ? root.Window.width : 0
+        if (!w || w <= 0) w = (root.width > 0 ? root.width : 1440)
+        return w
+    }
+    function ldWindowH() {
+        var h = (root.Window && root.Window.height !== undefined) ? root.Window.height : 0
+        if (!h || h <= 0) h = (root.height > 0 ? root.height : 900)
+        return h
+    }
+    // Wmax=min(round(0.50×W.w), W.w−32)；Hmax=round(0.40×W.h)
+    function ldMaxW() { return Math.min(Math.round(0.50 * root.ldWindowW()), root.ldWindowW() - 32) }
+    function ldMaxH() { return Math.round(0.40 * root.ldWindowH()) }
+    // Wnat = 最宽单行内容 intrinsic 宽 + 2×padding。
+    function ldNaturalWidth() {
+        return Math.ceil(ldWidthMirror.implicitWidth) + 2 * root.ldDialogPadding
+    }
+    // HbodyNat = 正文（换行后）自然高。
+    function ldBodyNaturalHeight() {
+        return Math.ceil(ldHeightMirror.implicitHeight)
+    }
+    // 拖动夹取（谓词②：拖动后四边仍落 W 内）。
+    function ldClampX(v) { return Math.max(0, Math.min(v, root.ldWindowW() - senateValidationDialog.width)) }
+    function ldClampY(v) { return Math.max(0, Math.min(v, root.ldWindowH() - senateValidationDialog.height)) }
+
     // R7（SA §B.2，DA-R7 B2）：**bounded 错误详情 Dialog**——modal + ESC + Close，
-    // 内 ScrollView（长/多错可滚、有界）；属 Popup/Overlay 层，**不参与**根
-    // ColumnLayout 布局 ⇒ 永不 resize 主布局（R7-AC-08/10/15）。
+    // 属 Popup/Overlay 层，**不参与**根 ColumnLayout 布局 ⇒ 永不 resize 主布局（R7-AC-08/10/15）。
     Dialog {
         id: senateValidationDialog
         objectName: "senateValidationDialog"
+        // L-D v1.3：parent 锚到窗口顶层 Overlay.overlay（W 坐标空间原点 = 窗口 client 左上角）。
+        parent: Overlay.overlay
         modal: true
         focus: true
         dim: true
-        width: Math.min(root.width - 80, 640)
-        height: Math.min(root.height - 120, 440)
-        x: Math.max(0, (root.width - width) / 2)
-        y: Math.max(0, (root.height - height) / 2)
         closePolicy: Popup.CloseOnEscape
         padding: 12
+        // 尺寸（内容自适应）：宽 Dw=clamp(Wnat, 320, min(round(0.50×W.w), W.w−32))；
+        // 高 Dh=min(Hchrome + HbodyNat, round(0.40×W.h))（短内容小框；超限正文内滚）。
+        readonly property int _dw: Math.max(root.ldWmin, Math.min(Math.ceil(root.ldNaturalWidth()), root.ldMaxW()))
+        readonly property int _hbodyCap: Math.max(12, root.ldMaxH() - root.ldChrome)
+        readonly property int _hbodyNat: Math.max(12, root.ldBodyNaturalHeight())
+        readonly property int _hbody: Math.max(12, Math.min(_hbodyNat, _hbodyCap))
+        // 拖动状态：只改 (x,y)，不改 Dw/Dh、body contentY、内容或五框 scene rect。
+        property bool _dragging: false
+        property real _dragX: 0
+        property real _dragY: 0
+        property real _dragStartX: 0
+        property real _dragStartY: 0
+        width: _dw
+        height: root.ldChrome + _hbody
+        // 居中定位：未拖动时以 W 居中（每次 open 复位）；拖动中改用夹取后的 (x,y)。
+        x: _dragging ? _dragX : Math.round((root.ldWindowW() - width) / 2)
+        y: _dragging ? _dragY : Math.round((root.ldWindowH() - height) / 2)
+        // 拖动入口：标题条指针拖动 → 仅改 (x,y)（实时夹取于 W 内）。
+        function applyDrag(dx, dy) {
+            _dragX = root.ldClampX(_dragStartX + dx)
+            _dragY = root.ldClampY(_dragStartY + dy)
+            _dragging = true
+        }
+        function resetDialogPosition() { _dragging = false }
+        onOpened: resetDialogPosition()
+        onClosed: resetDialogPosition()
         background: Rectangle {
             color: theme.ivoryDesk
             radius: 8
@@ -689,28 +867,79 @@ Rectangle {
         }
         contentItem: ColumnLayout {
             spacing: 6
-            Text {
-                text: "提交失败（未发布任何提案）"
-                color: theme.statusError
-                font.pixelSize: 13
-                font.bold: true
+            // R8（SA §4.1 L-D v1.3，C-07）：固定 header 40——**可见拖动条**（grip + SizeAll 光标）
+            // + 短标题「战争配置无法提交」；多行摘要 / 全部对象 / 修正建议进入下方唯一 body
+            // ScrollView（禁 variable summary 侵占 footer）。
+            Item {
+                id: ldDialogHeaderBar
                 Layout.fillWidth: true
-            }
-            Text {
-                text: root.senateErrorSummaryText()
-                color: theme.textDark
-                font.pixelSize: 12
-                wrapMode: Text.Wrap
-                Layout.fillWidth: true
+                Layout.preferredHeight: 40
+                Rectangle {
+                    id: ldDialogGrip
+                    objectName: "senateDialogGrip"
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 14
+                    height: 18
+                    radius: 3
+                    color: "transparent"
+                    Column {
+                        anchors.centerIn: parent
+                        spacing: 3
+                        Repeater {
+                            model: 3
+                            delegate: Rectangle { width: 10; height: 2; radius: 1; color: theme.statusError }
+                        }
+                    }
+                }
+                Text {
+                    objectName: "senateDialogHeader"
+                    anchors.left: ldDialogGrip.right
+                    anchors.leftMargin: 6
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "战争配置无法提交"
+                    color: theme.statusError
+                    font.pixelSize: 13
+                    font.bold: true
+                    wrapMode: Text.NoWrap
+                    elide: Text.ElideRight
+                }
+                HoverHandler { cursorShape: Qt.SizeAllCursor }
+                DragHandler {
+                    id: ldDialogDragHandler
+                    target: null
+                    onActiveChanged: {
+                        if (active) {
+                            senateValidationDialog._dragStartX = senateValidationDialog.x
+                            senateValidationDialog._dragStartY = senateValidationDialog.y
+                            senateValidationDialog._dragX = senateValidationDialog.x
+                            senateValidationDialog._dragY = senateValidationDialog.y
+                        }
+                    }
+                    onTranslationChanged: {
+                        if (active) senateValidationDialog.applyDrag(translation.x, translation.y)
+                    }
+                }
             }
             ScrollView {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
                 contentWidth: availableWidth
+                // L-D v1.3：仅垂直 AsNeeded（仅 HbodyNat>HbodyCap 时显滑块）；水平 AlwaysOff。
+                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                 ColumnLayout {
                     width: parent.width
                     spacing: 4
+                    Text {
+                        text: root.senateErrorSummaryText()
+                        color: theme.textDark
+                        font.pixelSize: 12
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
                     Repeater {
                         model: sessionStore.senateSubmitErrors || []
                         delegate: ColumnLayout {
@@ -734,44 +963,231 @@ Rectangle {
                             }
                         }
                     }
-                    Text {
-                        text: "机器详情："
-                        color: theme.textSecondary
-                        font.pixelSize: 10
-                    }
-                    Text {
-                        text: root.senateErrorMachineJson()
-                        color: theme.textMuted
-                        font.pixelSize: 10
-                        Layout.fillWidth: true
-                        wrapMode: Text.Wrap
-                    }
                 }
             }
-            ActionButton {
-                text: "关闭（可继续修改后重新提交）"
-                onTriggered: senateValidationDialog.close()
+            // 固定 footer 40（Close 控件 ≥34 可 hit-test；ESC 与 Close 两种事件均关闭）。
+            Item {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 40
+                ActionButton {
+                    anchors.fill: parent
+                    anchors.margins: 3
+                    text: "关闭（可继续修改后重新提交）"
+                    onTriggered: senateValidationDialog.close()
+                }
             }
         }
     }
 
-    ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: 14
-        spacing: 10
+    // =========================================================================
+    // R8（SA §4.1 L-1…L-9，FC-UI-06/07，AC-06/07）——**五框模型**布局（SLICE-R8-03 refit2 / design v1.6）
+    //   #1 = GameShell Senate step bar（Region C InstructionSlot，保真不改）
+    //   #2 = 本文件公示框（议事/表决合并单框，正文 5L + 独立滑块）senateAnnouncementBox
+    //   #3–5 = 三个子环节框（占满余量、各自内滚、footer 固定不入滚动）
+    // 唯一高度算法（U_S = Senate content surface = root viewport，SA §4.1 v1.6 唯一化；
+    //   U_S 底缘 = Region C 外框底缘，shell 让渡 18px 底内边距；L 正文行高；Lt 标题行高）：
+    //   Hnotice = 20 + Lt + 6 + 5L；rowW = U_S.w − 28；Hrow = U_S.h − 28 − Hnotice − 10
+    //   公示 x=y=14 w=rowW h=Hnotice；row x=14 y=14+Hnotice+10 w=rowW h=Hrow
+    //   （row.bottom = U_S.h − δ_in，δ_in = 14 ⇒ PF-1；scene Δ = E.top − row.bottom ≤ Δ_frozen = 28 ⇒ PF-2）
+    //   panel 内 topMargin44 / left·right·bottom10，footer34 gap7 ⇒ Hbody = Hrow − 95 ≥ 4L
+    //   **禁** 360/460 clamp、独立 132/78 结果框、外层兜底滚动、Qt 自动压缩、按内容改高。
+    // =========================================================================
+    FontMetrics {
+        id: senateBodyMetrics
+        font.family: theme.fontFamily
+        font.pixelSize: theme.bodySize
+    }
+    FontMetrics {
+        id: senateTitleMetrics
+        font.family: theme.fontFamily
+        font.pixelSize: 13
+        font.bold: true
+    }
+    readonly property int lBody: Math.max(1, Math.ceil(senateBodyMetrics.lineSpacing))
+    readonly property int lTitle: Math.max(1, Math.ceil(senateTitleMetrics.lineSpacing))
+    readonly property int hNotice: 20 + lTitle + 6 + 5 * lBody
+    readonly property int rowW: Math.max(1, Math.round(root.width) - 28)
+    readonly property int hRow: Math.max(0, Math.round(root.height) - 28 - hNotice - 10)
+    readonly property int noticeBodyH: Math.max(1, 5 * lBody)
+    property string _lastAnnouncementStep: ""
 
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 92
-            color: "#FFF7E9"
-            border.color: "#D9AF63"
-            border.width: 1
-            radius: 6
+    // #2 公示框（议事/表决合并单框）：固定标题「元老院议事」+ 正文 viewport 恰 5L + 独立 AsNeeded 滑块；
+    // 正文首部依次 validation→finalization→议事内容→results 内容（L-6）；滑块出现/消失不改框几何（L-7）。
+    Rectangle {
+        id: senateAnnouncementBox
+        objectName: "senateAnnouncementBox"
+        x: 14
+        y: 14
+        width: root.rowW
+        height: root.hNotice
+        color: "#FFF7E9"
+        border.color: "#D9AF63"
+        border.width: 1
+        radius: 6
+        clip: true
+
+        // 固定标题（title 区 Lt）
+        Text {
+            id: announcementTitle
+            objectName: "senateAnnouncementTitle"
+            x: 10
+            y: 10
+            width: parent.width - 20
+            height: root.lTitle
+            text: "🏛 元老院议事"
+            color: "#2C1E12"
+            font.pixelSize: 13
+            font.bold: true
+            wrapMode: Text.NoWrap
+            elide: Text.ElideRight
+            verticalAlignment: Text.AlignVCenter
+            lineHeightMode: Text.FixedHeight
+            lineHeight: root.lTitle
+        }
+
+        // header 右侧保留位：短「结算异常」状态位 + 「错误详情」入口（仅 errors 时启用）；隐藏时保留同几何。
+        Row {
+            objectName: "senateAnnouncementHeaderSlots"
+            anchors.right: parent.right
+            anchors.rightMargin: 10
+            anchors.verticalCenter: announcementTitle.verticalCenter
+            spacing: 10
+            Text {
+                objectName: "senateAnnouncementFinalizationBadge"
+                visible: sessionStore.senateFinalizationWarning !== ""
+                text: "结算异常"
+                color: "#9A2D0A"
+                font.pixelSize: 11
+                font.bold: true
+            }
+            Text {
+                objectName: "senateAnnouncementErrorEntry"
+                visible: sessionStore.hasSenateSubmitErrors
+                text: "错误详情 ›"
+                color: theme.statusError
+                font.pixelSize: 11
+                font.bold: true
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: senateValidationDialog.open()
+                }
+            }
+        }
+
+        // 正文 viewport 恰 5L（±1）；独立垂直 AsNeeded / 水平 AlwaysOff；滑块出现/消失不改框几何。
+        ScrollView {
+            id: senateAnnouncementBody
+            objectName: "senateAnnouncementBody"
+            x: 10
+            y: 10 + root.lTitle + 6
+            width: parent.width - 20
+            height: root.noticeBodyH
+            clip: true
+            contentWidth: availableWidth
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
             ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 5
-                Text { text: "🏛 元老院议事"; color: "#2C1E12"; font.pixelSize: 13; font.bold: true }
+                width: parent.width
+                spacing: 6
+
+                // ① 包级校验失败摘要（28px 单行；保留 R7 bounded 语义；移至 #2 正文首部 - L-6）。
+                Rectangle {
+                    objectName: "senateValidationStrip"
+                    visible: sessionStore.hasSenateSubmitErrors
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 28
+                    Layout.minimumHeight: 28
+                    Layout.maximumHeight: 28
+                    radius: 6
+                    color: Qt.rgba(theme.statusError.r, theme.statusError.g, theme.statusError.b, 0.08)
+                    border.color: theme.statusError
+                    border.width: 1
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 8
+                        anchors.rightMargin: 8
+                        spacing: 8
+                        Text {
+                            text: "提交失败（未发布任何提案）"
+                            color: theme.statusError
+                            font.pixelSize: 11
+                            font.bold: true
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+                        Text {
+                            text: root.senateErrorStripText()
+                            color: theme.statusError
+                            font.pixelSize: 11
+                            Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignVCenter
+                            wrapMode: Text.NoWrap
+                            elide: Text.ElideRight
+                            maximumLineCount: 1
+                        }
+                        Text {
+                            text: "重开详情 ›"
+                            color: theme.statusError
+                            font.pixelSize: 11
+                            font.bold: true
+                            Layout.alignment: Qt.AlignVCenter
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: senateValidationDialog.open()
+                            }
+                        }
+                    }
+                }
+
+                // ② 结算异常摘要（28px 单行；保留 R7 bounded 语义 + ToolTip 全文可达；移至 #2 正文首部 - L-6）。
+                Rectangle {
+                    objectName: "senateFinalizationWarningStrip"
+                    visible: sessionStore.senateFinalizationWarning !== ""
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 28
+                    Layout.minimumHeight: 28
+                    Layout.maximumHeight: 28
+                    radius: 6
+                    color: "#FDF3E0"
+                    border.color: "#E6A542"
+                    border.width: 1
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 8
+                        anchors.rightMargin: 8
+                        spacing: 8
+                        Text {
+                            text: "结算异常（提案包已发布 · 不撤销 / 不允许重发包）"
+                            color: "#9A2D0A"
+                            font.pixelSize: 11
+                            font.bold: true
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+                        Text {
+                            text: root.senateFinalizationWarningText()
+                            color: "#7A1A00"
+                            font.pixelSize: 11
+                            Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignVCenter
+                            wrapMode: Text.NoWrap
+                            elide: Text.ElideRight
+                            maximumLineCount: 1
+                            ToolTip.delay: 250
+                            ToolTip.visible: finalizationWarnHover.containsMouse
+                            ToolTip.text: root.senateFinalizationWarningText()
+                            MouseArea {
+                                id: finalizationWarnHover
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                acceptedButtons: Qt.NoButton
+                            }
+                        }
+                    }
+                }
+
+                // ③ 议事内容（主持行 / 席位行，完整 wrap）
                 Text {
                     text: root.presidingLine()
                     textFormat: Text.RichText
@@ -779,239 +1195,138 @@ Rectangle {
                     font.pixelSize: 12
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
+                    lineHeightMode: Text.FixedHeight
+                    lineHeight: root.lBody
                 }
-                Text { text: root.seatLineRich(); textFormat: Text.RichText; color: "#9A2D0A"; font.pixelSize: 12; font.bold: true; Layout.fillWidth: true; wrapMode: Text.Wrap }
-            }
-        }
+                Text { text: root.seatLineRich(); textFormat: Text.RichText; color: "#9A2D0A"; font.pixelSize: 12; font.bold: true; Layout.fillWidth: true; wrapMode: Text.Wrap; lineHeightMode: Text.FixedHeight; lineHeight: root.lBody }
 
-        Rectangle {
-            visible: sessionStore.senateCurrentStep === "results"
-            Layout.fillWidth: true
-            Layout.preferredHeight: 150
-            Layout.minimumHeight: 110
-            Layout.maximumHeight: 200
-            color: "#FFF7E9"
-            border.color: "#D9AF63"
-            border.width: 1
-            radius: 6
-            clip: true
-
-            ScrollView {
-                anchors.fill: parent
-                anchors.margins: 4
-                clip: true
-                contentWidth: availableWidth
+                // ④ results 内容（step==results 时于同一 body 追加；不替换主持/席位、不重复造第二框 - L-5）
                 ColumnLayout {
-                    width: parent.width
+                    Layout.fillWidth: true
                     spacing: 6
-                Text {
-                    visible: root.vetoedResultRows().length > 0
-                    text: "\u26d4 \u4fdd\u6c11\u5b98\u5426\u51b3 " + root.vetoedResultRows().length + " \u9879\uff1a" + root.vetoedResultText()
-                    color: "#B3261E"
-                    font.pixelSize: 12
-                    font.bold: true
-                    Layout.fillWidth: true
-                    wrapMode: Text.Wrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
-                }
-
-                // WP-F R3：未通过（只计 failed，rejectedResultRows 语义自然转为 failed）
-                Text {
-                    visible: root.rejectedResultRows().length > 0
-                    text: "\u26d4 \u672a\u901a\u8fc7 " + root.rejectedResultRows().length + " \u9879\uff1a" + root.rejectedResultText()
-                    color: "#8A6D3B"
-                    font.pixelSize: 12
-                    font.bold: true
-                    Layout.fillWidth: true
-                    wrapMode: Text.Wrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
-                }
-
-                // WP-D AU-6: ✅ 最终通过（Public Announcement —— 仅 final enacted，D-06 rejected 不进公示）
-                Text {
-                    visible: ((sessionStore.senatePublicAnnouncement || {}).enacted_proposals || []).length > 0
-                    text: "\u2705 \u6700\u7ec8\u901a\u8fc7\uff1a" + root._announcementEnactedText()
-                    color: "#2E7D32"
-                    font.pixelSize: 12
-                    font.bold: true
-                    Layout.fillWidth: true
-                    // R6（SA §D.2，DA-4 B5 R-B4-1）：PA 只读摘要**保完整可读**——
-                    // 不再 maximumLineCount/elide 截断超长身份（wrap 自然换行）。
-                    wrapMode: Text.Wrap
-                }
-
-                // R6 §D.4（DA-4 B3）：⚡ 执政官决定 · 待推进到战斗阶段执行
-                // （冻结 direct 决定：direct-only 时结果页据此非空，不因无 passed_proposals 被清空）
-                Text {
-                    visible: root._consulDirectRows().length > 0
-                    text: "\uD83C\uDFDB " + root._consulDirectLabel() + "\uff1a" + root._consulDirectText()
-                    color: "#9A2D0A"
-                    font.pixelSize: 12
-                    font.bold: true
-                    Layout.fillWidth: true
-                    // R6（SA §D.2，DA-4 B5 R-B4-1）：冻结 direct 行含完整 target_commander_label，
-                    // 不 elide（保完整身份可读）。
-                    wrapMode: Text.Wrap
-                }
-
-                // WP-D AU-6: ⚡ 直接生效（Direct Actions —— 依法直接生效，不经过 vote/veto）
-                Text {
-                    visible: ((sessionStore.senatePublicAnnouncement || {}).direct_actions || []).length > 0
-                    text: "\u26a1 \u76f4\u63a5\u751f\u6548\uff1a" + root._directActionText()
-                    color: "#9A2D0A"
-                    font.pixelSize: 12
-                    font.bold: true
-                    Layout.fillWidth: true
-                    // R6（SA §D.2，DA-4 B5 R-B4-1）：direct action 行含 commander_name，不 elide。
-                    wrapMode: Text.Wrap
-                }
-
-                // S4: Governor assignment results
-                Text {
-                    visible: (sessionStore.senateResult.governor_assignments || []).length > 0
-                    text: "\u2022 \u884c\u7701\u603b\u7763\u4efb\u547d\uff1a" + root._governorSummary()
-                    color: "#2C1E12"
-                    font.pixelSize: 11
-                    font.bold: true
-                    Layout.fillWidth: true
-                    wrapMode: Text.Wrap
-                }
-
-                // S4: Rebellion commander assignment results
-                Text {
-                    visible: (sessionStore.senateResult.rebellion_commander_assignments || []).length > 0
-                    text: "\u2022 \u8d77\u4e49\u6307\u6325\u5b98\u4efb\u547d\uff1a" + root._commanderSummary()
-                    color: "#2C1E12"
-                    font.pixelSize: 11
-                    font.bold: true
-                    Layout.fillWidth: true
-                    wrapMode: Text.Wrap
-                }
-
-                // S4: Fleet assignment results
-                Text {
-                    visible: (sessionStore.senateResult.fleet_assignments || []).length > 0
-                    text: "\u2022 \u8230\u961f\u6307\u6d3e\uff1a" + root._fleetSummary()
-                    color: "#2C1E12"
-                    font.pixelSize: 11
-                    font.bold: true
-                    Layout.fillWidth: true
-                    wrapMode: Text.Wrap
-                }
-                }
-            }
-        }
-
-        // R7（SA §B.3.1，DA-R7 B2）：包级失败 → **固定 28px 单行状态条**（bounded：取代原
-        // 无界横幅，永不撑大主布局）。详情走 bounded Dialog（senateValidationDialog）；
-        // 失败后草稿保留不变；「重开」按钮可随时重开详情（错误态不因关闭而清除）。
-        Rectangle {
-            objectName: "senateValidationStrip"
-            visible: sessionStore.hasSenateSubmitErrors
-            Layout.fillWidth: true
-            Layout.preferredHeight: 28
-            Layout.minimumHeight: 28
-            Layout.maximumHeight: 28
-            radius: 6
-            color: Qt.rgba(theme.statusError.r, theme.statusError.g, theme.statusError.b, 0.08)
-            border.color: theme.statusError
-            border.width: 1
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 8
-                anchors.rightMargin: 8
-                spacing: 8
-                Text {
-                    text: "提交失败（未发布任何提案）"
-                    color: theme.statusError
-                    font.pixelSize: 11
-                    font.bold: true
-                    Layout.alignment: Qt.AlignVCenter
-                }
-                Text {
-                    text: root.senateErrorStripText()
-                    color: theme.statusError
-                    font.pixelSize: 11
-                    Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignVCenter
-                    wrapMode: Text.NoWrap
-                    elide: Text.ElideRight
-                    maximumLineCount: 1
-                }
-                Text {
-                    text: "重开详情 ›"
-                    color: theme.statusError
-                    font.pixelSize: 11
-                    font.bold: true
-                    Layout.alignment: Qt.AlignVCenter
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: senateValidationDialog.open()
+                    visible: sessionStore.senateCurrentStep === "results"
+                    Text {
+                        visible: root.vetoedResultRows().length > 0
+                        text: "\u26d4 \u4fdd\u6c11\u5b98\u5426\u51b3 " + root.vetoedResultRows().length + " \u9879\uff1a" + root.vetoedResultText()
+                        color: "#B3261E"
+                        font.pixelSize: 12
+                        font.bold: true
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                        lineHeightMode: Text.FixedHeight
+                        lineHeight: root.lBody
+                    }
+                    Text {
+                        visible: root.rejectedResultRows().length > 0
+                        text: "\u26d4 \u672a\u901a\u8fc7 " + root.rejectedResultRows().length + " \u9879\uff1a" + root.rejectedResultText()
+                        color: "#8A6D3B"
+                        font.pixelSize: 12
+                        font.bold: true
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                        lineHeightMode: Text.FixedHeight
+                        lineHeight: root.lBody
+                    }
+                    Text {
+                        visible: ((sessionStore.senatePublicAnnouncement || {}).enacted_proposals || []).length > 0
+                        text: "\u2705 \u6700\u7ec8\u901a\u8fc7\uff1a" + root._announcementEnactedText()
+                        color: "#2E7D32"
+                        font.pixelSize: 12
+                        font.bold: true
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        lineHeightMode: Text.FixedHeight
+                        lineHeight: root.lBody
+                    }
+                    Text {
+                        visible: root._consulDirectRows().length > 0
+                        text: "\uD83C\uDFDB " + root._consulDirectLabel() + "\uff1a" + root._consulDirectText()
+                              + "\uff1b" + root._consulDirectStatus()
+                        color: "#9A2D0A"
+                        font.pixelSize: 12
+                        font.bold: true
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        lineHeightMode: Text.FixedHeight
+                        lineHeight: root.lBody
+                    }
+                    Text {
+                        visible: ((sessionStore.senatePublicAnnouncement || {}).direct_actions || []).length > 0
+                        text: "\u26a1 \u76f4\u63a5\u751f\u6548\uff1a" + root._directActionText()
+                        color: "#9A2D0A"
+                        font.pixelSize: 12
+                        font.bold: true
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        lineHeightMode: Text.FixedHeight
+                        lineHeight: root.lBody
+                    }
+                    Text {
+                        visible: (sessionStore.senateResult.governor_assignments || []).length > 0
+                        text: "\u2022 \u884c\u7701\u603b\u7763\u4efb\u547d\uff1a" + root._governorSummary()
+                        color: "#2C1E12"
+                        font.pixelSize: 11
+                        font.bold: true
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        lineHeightMode: Text.FixedHeight
+                        lineHeight: root.lBody
+                    }
+                    Text {
+                        visible: (sessionStore.senateResult.rebellion_commander_assignments || []).length > 0
+                        text: "\u2022 \u8d77\u4e49\u6307\u6325\u5b98\u4efb\u547d\uff1a" + root._commanderSummary()
+                        color: "#2C1E12"
+                        font.pixelSize: 11
+                        font.bold: true
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        lineHeightMode: Text.FixedHeight
+                        lineHeight: root.lBody
+                    }
+                    Text {
+                        visible: (sessionStore.senateResult.fleet_assignments || []).length > 0
+                        text: "\u2022 \u8230\u961f\u6307\u6d3e\uff1a" + root._fleetSummary()
+                        color: "#2C1E12"
+                        font.pixelSize: 11
+                        font.bold: true
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        lineHeightMode: Text.FixedHeight
+                        lineHeight: root.lBody
                     }
                 }
             }
         }
+    }
 
-        // R6（SA §D.1，DA-4 B2）：正常态「完成结算」横幅/按钮**已移除**——settlement 正常态
-        // 动作退役（finalization 由服务端命令流程自动完成）；唯一正常推进 = ContextPanel 的
-        // advance 按钮（doAdvanceSenate）。
-        // 保留：真实 finalization 失败时的可见 warning（已发布包不撤销、不允许重发包）。
-        // R7（SA §B.3.2，DA-R7 B2）：同型无界 → **同规格 bounded 状态条**（固定 28 高 /
-        // 单行 elide；同一缺陷类 / 同一文件 / 最小 bound）。语义文本保留；全文经
-        // ToolTip 可达（键鼠恢复路径），不撑大主布局。
-        Rectangle {
-            objectName: "senateFinalizationWarningStrip"
-            visible: sessionStore.senateFinalizationWarning !== ""
-            Layout.fillWidth: true
-            Layout.preferredHeight: 28
-            Layout.minimumHeight: 28
-            Layout.maximumHeight: 28
-            radius: 6
-            color: "#FDF3E0"
-            border.color: "#E6A542"
-            border.width: 1
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 8
-                anchors.rightMargin: 8
-                spacing: 8
-                Text {
-                    text: "结算异常（提案包已发布 · 不撤销 / 不允许重发包）"
-                    color: "#9A2D0A"
-                    font.pixelSize: 11
-                    font.bold: true
-                    Layout.alignment: Qt.AlignVCenter
-                }
-                Text {
-                    text: sessionStore.senateFinalizationWarning
-                    color: "#7A1A00"
-                    font.pixelSize: 11
-                    Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignVCenter
-                    wrapMode: Text.NoWrap
-                    elide: Text.ElideRight
-                    maximumLineCount: 1
-                    ToolTip.delay: 250
-                    ToolTip.visible: finalizationWarnHover.containsMouse
-                    ToolTip.text: sessionStore.senateFinalizationWarning
-                    MouseArea {
-                        id: finalizationWarnHover
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        acceptedButtons: Qt.NoButton
-                    }
-                }
+    // #2 正文在 step 改变 / 新错误首次出现时复位到顶部（呈现初始化；非证据替代）。
+    Connections {
+        target: sessionStore
+        function onSenateViewChanged() {
+            if (sessionStore.senateCurrentStep !== root._lastAnnouncementStep) {
+                root._lastAnnouncementStep = sessionStore.senateCurrentStep
+                if (senateAnnouncementBody && senateAnnouncementBody.contentItem)
+                    senateAnnouncementBody.contentItem.contentY = 0
             }
         }
+    }
 
+
+
+        // R8（SA §4.1 L-1/L-2，FC-UI-06，AC-06）：#3–5 三子环节框——占满 ContentSlot 余量
+        // （rowW × Hrow，唯一算法见上），各自独立内滚，footer 固定不入滚动；min=preferred=max=Hrow，
+        // **禁** fillHeight 自由竞争 / 禁由 step·内容·results 决定 / 无 360·460 clamp / 无外层兜底。
         RowLayout {
-            Layout.fillWidth: true
-            Layout.preferredHeight: sessionStore.senateCurrentStep === "results" ? 200 : 460
-            Layout.minimumHeight: sessionStore.senateCurrentStep === "results" ? 170 : 460
-            Layout.maximumHeight: sessionStore.senateCurrentStep === "results" ? 240 : 460
+            id: threePanelRow
+            objectName: "senateThreePanelRow"
+            x: 14
+            y: 14 + root.hNotice + 10
+            width: root.rowW
+            height: root.hRow
             spacing: 12
 
             SenateWorkPanel {
@@ -1023,10 +1338,27 @@ Rectangle {
                 Layout.fillHeight: true
 
                 ColumnLayout {
+                    // R8（SA §4.1 L-3/L-7，FC-UI-06/07，AC-06/07）：Panel1 body 为单栏；topMargin 44 /
+                    // 左右+下 10（内列高 = Hrow − 54）。footer 提交按钮固定在 body 外。
                     anchors.fill: parent
                     anchors.margins: 10
                     anchors.topMargin: 44
                     spacing: 7
+
+                    // R8（SA §4.1 L-3/L-7，FC-UI-07）：**主 body ScrollView** 统一 scroll ownership——
+                    // 包住 说明 + War Card Repeater + frozen direct 区 + nonWar/submitted 列；
+                    // 旧只包 nonWar 的局部 ScrollView 已移除（War/frozen 随之纳入主 body）。
+                    // 可读 viewport = Hrow − 95（= body 高 Hrow−54 − footer34 − spacing7）≥ 265。
+                    ScrollView {
+                        id: panel1BodyScroll
+                        objectName: "senatePanel1BodyScroll"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+                        contentWidth: availableWidth
+                        ColumnLayout {
+                            width: parent.width
+                            spacing: 7
                     Text {
                         text: sessionStore.senateCurrentStep === "proposal" ? "勾选执政官本轮提交元老院的法案。" : "已提交法案，等待元老院表决。"
                         color: theme.textSecondary
@@ -1069,7 +1401,11 @@ Rectangle {
                         visible: root.frozenDirectRows().length > 0
                         spacing: 4
                         Text {
-                            text: "🏛 冻结中的执政官决定（只读 · 待 Senate→Combat 边界执行）"
+                            // R8（SA §5.2 C-04，FC-UI-01，PM P2-2）：**copy 门**——仅标题/文案随
+                            // proposalStepDone 切换；frozen 区可见性谓词（上方 visible）逐字不变。
+                            text: root.proposalStepDone
+                                  ? "🏛 执政官决定（只读 · 待 Senate→Combat 边界执行）"
+                                  : "🏛 战争法案配置（只读）"
                             color: theme.textSecondary
                             font.pixelSize: 11
                             font.bold: true
@@ -1101,7 +1437,8 @@ Rectangle {
                                             anchors.margins: 6
                                             spacing: 2
                                             Text {
-                                                text: "⚡ " + (modelData.display_label || modelData.authority_label || "执政官决定")
+                                                // R8（SA §5.2 C-04）：人话决策摘要（禁透传 producer 技术串）。
+                                                text: "⚡ " + root.consulDecisionSummary(modelData)
                                                 color: "#9A2D0A"
                                                 font.pixelSize: 12
                                                 font.bold: true
@@ -1118,15 +1455,11 @@ Rectangle {
                                                 elide: Text.ElideNone
                                             }
                                             Text {
-                                                visible: modelData.execution === "executed"
-                                                text: "状态：" + (modelData.execution_label || "已执行（边界 receipt）")
-                                                color: theme.statusSuccess
+                                                // R8（SA §5.2 C-05/C-06，FC-UI-03）：状态人话（C-06 不透传 receipt 技术串）。
+                                                text: "状态：" + root.consulExecutionStatus(modelData)
+                                                color: modelData.execution === "executed"
+                                                       ? theme.statusSuccess : theme.textSecondary
                                                 font.pixelSize: 11
-                                            }
-                                            Text {
-                                                text: "item_ref: " + JSON.stringify(modelData.item_ref || {})
-                                                color: theme.textMuted
-                                                font.pixelSize: 10
                                                 Layout.fillWidth: true
                                                 wrapMode: Text.Wrap
                                             }
@@ -1136,16 +1469,12 @@ Rectangle {
                             }
                         }
                     }
-                    ScrollView {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        clip: true
-                        contentWidth: availableWidth
-                        ColumnLayout {
-                            width: parent.width
-                            spacing: 6
-                            Repeater {
-                                model: sessionStore.senateCurrentStep === "proposal" ? root.nonWarProposalOptions() : (sessionStore.senateSubmittedProposals || [])
+                    // R8（SA §4.1 L-3）：nonWar/submitted 列并入 Panel1 主 body（旧只包 nonWar 的局部 ScrollView 移除）。
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: 6
+                        Repeater {
+                            model: sessionStore.senateCurrentStep === "proposal" ? root.nonWarProposalOptions() : (sessionStore.senateSubmittedProposals || [])
                                 delegate: Rectangle {
                                     id: billCard
                                     Layout.fillWidth: true
@@ -1367,10 +1696,11 @@ Rectangle {
                                 }
                             }
                         }
+                        }
                     }
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 26
+                        Layout.preferredHeight: 34
                         radius: 4
                         // WP-D AU-3/AU-1：移除 selectedProposalKeys.length>0（空批合法）；
                         // AI 分支（canTriggerAIProposer）按钮同样可点（frozen §11 Scenario B，见偏离 D-7）
@@ -1401,7 +1731,7 @@ Rectangle {
                     anchors.margins: 10
                     anchors.topMargin: 44
                     spacing: 7
-                    Text { text: "勾选同意（多选），未勾选 = 否决。所有派系执行完毕后进入否决环节。"; color: theme.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                    // R8（SA §4.1 L-3）：说明文本移入 body 内滚内容（计入 contentHeight）；footer 固定 body 外。
                     ScrollView {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
@@ -1410,6 +1740,7 @@ Rectangle {
                         ColumnLayout {
                             width: parent.width
                             spacing: 6
+                            Text { text: "勾选同意（多选），未勾选 = 否决。所有派系执行完毕后进入否决环节。"; color: theme.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.Wrap }
                             Repeater {
                                 model: sessionStore.senateSubmittedProposals || []
                                 delegate: ColumnLayout {
@@ -1429,13 +1760,18 @@ Rectangle {
                             }
                         }
                     }
-                    ActionButton {
-                        text: root.senateVoteButtonText()
-                        enabled: sessionStore.canSubmitSenateVote
-                        onTriggered: sessionStore.doSubmitSenateVotes()
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 34
+                        ActionButton {
+                            anchors.fill: parent
+                            text: root.senateVoteButtonText()
+                            enabled: sessionStore.canSubmitSenateVote
+                            onTriggered: sessionStore.doSubmitSenateVotes()
+                        }
                     }
                 }
-                LockedOverlay { anchors.fill: parent; visible: sessionStore.senateCurrentStep === "proposal"; text: "⏳ 等待执政官提交法案" }
+                LockedOverlay { anchors.fill: parent; anchors.margins: 10; anchors.topMargin: 44; visible: sessionStore.senateCurrentStep === "proposal"; text: "⏳ 等待执政官提交法案" }
             }
 
             SenateWorkPanel {
@@ -1450,7 +1786,6 @@ Rectangle {
                     anchors.margins: 10
                     anchors.topMargin: 44
                     spacing: 7
-                    Text { text: "\u901a\u8fc7\u6cd5\u6848\u5217\u8868\u3002\u4fdd\u6c11\u5b98\u52fe\u9009\u5426\u51b3\uff08\u591a\u9009\uff09\uff0c\u672a\u52fe\u9009 = \u540c\u610f\u3002"; color: theme.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.Wrap }
                     ScrollView {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
@@ -1459,6 +1794,7 @@ Rectangle {
                         ColumnLayout {
                             width: parent.width
                             spacing: 6
+                            Text { text: "\u901a\u8fc7\u6cd5\u6848\u5217\u8868\u3002\u4fdd\u6c11\u5b98\u52fe\u9009\u5426\u51b3\uff08\u591a\u9009\uff09\uff0c\u672a\u52fe\u9009 = \u540c\u610f\u3002"; color: theme.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.Wrap }
                             Repeater {
                                 model: root.stageThreeRows()
                                 delegate: Rectangle {
@@ -1517,16 +1853,20 @@ Rectangle {
                             }
                         }
                     }
-                    ActionButton {
-                        text: root.tribuneActionText()
-                        enabled: sessionStore.canSubmitSenateVeto
-                        onTriggered: sessionStore.doSubmitSenateVetoes(root.selectedVetoProposalIds)
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 34
+                        ActionButton {
+                            anchors.fill: parent
+                            text: root.tribuneActionText()
+                            enabled: sessionStore.canSubmitSenateVeto
+                            onTriggered: sessionStore.doSubmitSenateVetoes(root.selectedVetoProposalIds)
+                        }
                     }
                 }
-                LockedOverlay { anchors.fill: parent; visible: sessionStore.senateCurrentStep !== "tribune_veto" && sessionStore.senateCurrentStep !== "results"; text: "⏳ 等待元老院表决完成" }
+                LockedOverlay { anchors.fill: parent; anchors.margins: 10; anchors.topMargin: 44; visible: sessionStore.senateCurrentStep !== "tribune_veto" && sessionStore.senateCurrentStep !== "results"; text: "⏳ 等待元老院表决完成" }
             }
         }
-    }
 
     component StageStep: Row {
         property bool done: false

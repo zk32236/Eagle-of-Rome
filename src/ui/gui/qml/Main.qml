@@ -13,6 +13,10 @@ Window {
     visible: true
     width: 1440
     height: 900
+    // R8（SA §4.1 L-D v1.3 / §13，G2-delta-2）：产品级最小窗口 WIN_MIN = 1280×720
+    // （Owner 2026-09-21 11:59 确认）；弹窗几何在 [WIN_MIN, ∞) 内夹取，窗口不可缩到此值以下。
+    minimumWidth: 1280
+    minimumHeight: 720
     title: "Eagle of Rome"
     color: "#14110D"
 

@@ -18,7 +18,6 @@ Rectangle {
     property var cardErrors: []
     property bool peaceCapable: false
     property bool editable: true
-    property bool errorDetailsExpanded: false
 
     signal draftEdited(string warId, var newDraft)
 
@@ -60,8 +59,10 @@ Rectangle {
     readonly property bool routeReady: authority === "senate_vote" || authority === "consul_direct"
 
     function authorityLabel() {
+        // R8（SA §5.2 C-01/C-02，D-R8-01）：proposal 期路由文案——**禁**含「决定」；
+        // direct 路由 = 身份词（不提前呈现决定词）。
         if (authority === "senate_vote") return "元老院表决"
-        if (authority === "consul_direct") return "执政官决定 · 待推进执行"
+        if (authority === "consul_direct") return "执政官直接行动"
         return ""
     }
 
@@ -79,7 +80,7 @@ Rectangle {
         if (c === "passive_declaration") return "新爆发战争"
         if (c === "pending_peace") return "停战待决战争"
         if (c === "ongoing") return "进行中战争"
-        return c || ""
+        return "战争信息待更新"
     }
 
     function emitDraft(patch) {
@@ -133,23 +134,25 @@ Rectangle {
         if (!cardRoot.commandSelected) return ""
         if (cardRoot.identityIsCandidate && cardRoot.candidateIdentityLabel !== "")
             return cardRoot.candidateIdentityLabel
-        // 当前 ID 不在候选 → Core current/冻结 label + ID 提示不可选（**不猜名字**）
+        // R8（SA §5.3，FC-UI-04）：非候选 → Core current/冻结 label + **人话**不可选提示
+        // （**不**露 raw ID、不猜名字）。
         var base = cardRoot.coreIdentityLabel !== "" ? cardRoot.coreIdentityLabel
-                                                     : "（身份不可用，请刷新下拉候选）"
-        var idStr = (cardRoot.currentTarget === null || cardRoot.currentTarget === undefined)
-                    ? "-" : String(cardRoot.currentTarget)
-        return base + "（当前 ID " + idStr + " 不在候选，不可选）"
+                                                     : "指挥官身份暂不可用"
+        return base + "（当前指挥官不在候选，不可选，请刷新候选名单）"
     }
 
     // R6（SA §B.5，DA-2 B5）：卡级错误渲染（code + 按 field 定位 + pool 三值）。
     function cardErrorText(item) {
+        // R8（SA §5.3，FC-UI-04，D-R8-04）：卡级错误人话化——code 作内部查表键，
+        // **禁** machine code / field token（诊断留 Store / 日志）。
         var code = (item && item.code) ? String(item.code) : ""
-        var field = (item && item.field) ? String(item.field) : ""
-        var msg = (item && item.message) ? String(item.message) : ""
-        var out = code
-        if (field) out += " · " + field
-        if (msg) out += "：" + msg
-        return out
+        if (code === "REINFORCEMENT_INVALID") return "增援军团数量不符合要求，请修改数量。"
+        if (code === "LEGION_POOL_EXCEEDED") return "增援请求超过可用军团，请减少增援军团数量。"
+        if (code === "COMMANDER_CLAIM_DUPLICATE") return "同一指挥官不能同时指挥这些战争，请为涉事战争选择不同指挥官。"
+        if (code === "COMMANDER_TARGET_INVALID") return "所选指挥官不可用，请重新选择指挥官。"
+        if (code === "COMMANDER_INELIGIBLE") return "所选人物不符合指挥官资格，请另行选择。"
+        if (code === "PACKAGE_ALREADY_SUBMITTED") return "本会期已提交，请查看已提交内容。"
+        return "此项配置不符合要求，请检查后修改。"
     }
     function poolLine(item) {
         // R6（SA §B.5，DA-4 B5）：pool 三值显示必须读 **Core 权威 details 键**
@@ -162,18 +165,6 @@ Rectangle {
         return "请求 " + ((requested !== undefined) ? requested : "-")
              + " / 可用 " + ((available !== undefined) ? available : "-")
              + " / 需削减 " + ((d.reduce_by !== undefined) ? d.reduce_by : "-")
-    }
-    function errorDetailsText() {
-        var rows = []
-        for (var i = 0; i < cardRoot.cardErrors.length; i++) {
-            var item = cardRoot.cardErrors[i]
-            var code = (item && item.code) ? String(item.code) : ""
-            var det = (item && item.details) ? item.details : ({})
-            var detStr = ""
-            try { detStr = JSON.stringify(det) } catch (e) { detStr = "" }
-            rows.push(code + "  " + detStr)
-        }
-        return rows.join("\n")
     }
 
     ColumnLayout {
@@ -224,7 +215,7 @@ Rectangle {
         }
 
         // R6（SA §B.5，DA-2 B5）：卡级 `cardErrors`（按 field 定位）+ pool 三值
-        // （requested / available / reduce_by）+ code 可展开详情可取。
+        // （requested / available / reduce_by）+ 人话错误消息（R8：去 machine 展开面）。
         // R7（SA §B.3.3，DA-R7 B2）：**bounded**（maxHeight ≤120 + clip + 内滚）
         // —— 长文不撑高卡片；既有内容语义（code 定位 / pool 三值 / 可展开 details）保留。
         Rectangle {
@@ -277,27 +268,6 @@ Rectangle {
                                 maximumLineCount: 1
                             }
                         }
-                    }
-
-                    Text {
-                        text: cardRoot.errorDetailsExpanded ? "收起详情 ▲" : "展开详情 ▼"
-                        color: "#6B4E00"
-                        font.pixelSize: 11
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: cardRoot.errorDetailsExpanded = !cardRoot.errorDetailsExpanded
-                        }
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        visible: cardRoot.errorDetailsExpanded
-                        text: cardRoot.errorDetailsText()
-                        color: "#4A3A20"
-                        font.pixelSize: 10
-                        wrapMode: Text.Wrap
-                        elide: Text.ElideRight
-                        maximumLineCount: 4
                     }
                 }
             }

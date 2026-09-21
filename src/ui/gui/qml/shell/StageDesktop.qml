@@ -27,6 +27,12 @@ Rectangle {
 
     property bool compactActionSlot: false
 
+    // R8（SA §4.1 `U_S` 唯一化，FC-UI-06，AC-06；G2-delta-3/4，SLICE-R8-03 refit2 / design v1.6）：
+    // Senate 相位将 ColumnLayout 底内边距 18「让渡」给内容面（U_S），使 U_S 底缘 = Region C
+    // 外框底缘（`anchors.bottomMargin` 18→0）；其它相位（含 population/forum）保持 18 不变。
+    // 仅 Senate 相位由 GameShell 置 true。
+    property bool absorbBottomPadding: false
+
     // Desktop background gradient
     Rectangle {
         anchors.fill: parent
@@ -53,7 +59,7 @@ Rectangle {
         anchors.topMargin: 10
         anchors.leftMargin: 10
         anchors.rightMargin: 10
-        anchors.bottomMargin: 18
+        anchors.bottomMargin: root.absorbBottomPadding ? 0 : 18
         spacing: 10
 
         // ---- Slot 1: StageHeaderSlot — phase badge, title, description ----

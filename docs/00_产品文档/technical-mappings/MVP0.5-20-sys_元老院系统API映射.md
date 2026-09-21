@@ -219,6 +219,32 @@ can_trigger_ai_proposer / can_auto_veto  严格 mode=="AI"（D-3：NONE → 双 
 - 错误色 = canonical `theme.statusError`（= 设计系统 `#C45151`）；不引第二套红。
 - **草稿深值保留**（checked / mode / target Commander / N 逐字段相等，失败不 rebuild）；**零部分发布**（零 Senate 提案 + 零 direct 决策，Core 原子门未触）；就地改值 → 受影响卡红框清除（逐卡 ack，**不声明有效/通过**）→ 原地 Resubmit 成功，**无需**阶段/游戏重启或离开重入。
 
+### 5.7.2 WP-G-R8 同步注记（2026-09-20；append-only）
+
+> **权威**：SA-Design-WP-G-R8-2026-09-20（DESIGN FROZEN `9d8f7bdb…`）§4.1/§4.2/§5.2/§5.3 + R8 任务包。**GAME_RULE_CHANGE = NO**（纯展示层闭合）。
+
+**A. 生命周期文案时点（R8-AC-01/02/03）**
+- 提案期（`senateCurrentStep=="proposal"`）= 配置语义：路由文案「元老院表决」/「执政官直接行动」（**不含「决定」**）；`WarProposalCard.authorityLabel()`。
+- Proposal Step Exit 后（`proposalStepDone`）frozen / 结果 direct 行呈现「执政官决定：<War>，由 <Commander> 指挥，增援 <N> 个军团」（`consulDecisionSummary`），身份取冻结 ledger 快照（`war_label`/`target_commander_label`/`reinforcement_n`）；frozen 区可见性谓词（`frozenDirectRows().length>0`）不变，仅标题随 step 切换。
+- 执行状态 `consulExecutionStatus`：边界前「待战斗阶段执行（尚未执行）」；`execution=="executed"`（receipt COMMITTED）才「已执行」；UI 只读、不推断、不透传 producer `execution_label`。
+- 数据面不变：`display_label`/`execution_label` 仍在 Store DTO 行内（诊断留 Store/日志）；UI 仅不再渲染。
+
+**B. 诊断边界（R8-AC-04/05/08）**
+- 玩家面零 raw diagnostic：移除 Dialog「机器详情」+ raw JSON 渲染、frozen 行 `item_ref` JSON、卡级展开 JSON（`errorDetailsText`/`errorDetailsExpanded`）；helper `senateErrorDetailLine`→人话、`senateErrorDetailExtra`→label 对象清单；label fallback 人话（「战争名称暂不可用」/「指挥官身份暂不可用」/「战争信息待更新」）。
+- Store 只读薄封装 `_raise_senate_feedback`：Senate submit/advance/vote/veto/recovery 旁路 toast 人话化；原 `feedback` 返回 / 错误对象 / 日志 / 非 Senate 面不变。
+- `senateErrorMachineJson()` 保留空实现（`return ""`）以兼容 R7 契约 `test_wpgr7_validation_ux::test_error_helpers_implemented`；**退役提议走 Test Amendment Route**（未获裁定前不删）。
+
+**C. 布局不变量（R8-AC-06/07）**
+- `SenateStage` 三面板行唯一高度算法：`Hrow=min(460, max(MIN_PANEL_ROW_H=360, U.h−28))`，`Layout.minimumHeight=preferredHeight=maximumHeight=Hrow`（禁 fillHeight 余量分配；step/内容/results 无关；旧 results `460→200` 条件高度删除）；同 `U` 跨 proposal/vote/veto/results 高差 ≤1px。
+- Panel1 主 body 统一 scroll ownership：`senatePanel1BodyScroll`（`ScrollView`）覆盖 说明 + War Card Repeater + frozen direct 区 + nonWar/submitted 列；旧只包 nonWar 的局部 `ScrollView` 移除；真实可读 viewport = `Hrow−95 ≥ 265`；footer 提交按钮固定在 body 外（34）。
+- 结果/PA 独立区 `senateResultsArea`：min=preferred=max=**132**（padding10 + 固定标题28 + gap6 + 结果滚动 78），绝不扣减 Hrow。
+- 外层兜底 `senateOuterScroll`（U inset14 outer viewport）：余量 R<0 时可滚达整块面板/结果区；不承担 `panel.clip` 裁剪。
+- Dialog 专用 envelope（L-D）：usable rect = window client rect inset16；`Dw=min(640, W.w−32)`、`Dh=min(440, W.h−32)`、居中；固定 header40/footer40、可滚正文；ESC + Close 双关闭；属 Overlay 层，不位移背景面板行。
+
+**D. direct 不可表决（延续 R7/R8-AC-09）**：direct 决策行持续只读、不进 Vote/Veto 候选（`veto_candidate_ids` 永不含 direct）。
+
+**GAME_RULE_CHANGE=NO**（纯展示层）。
+
 ### 5.9 WP-F R2-01 Senate 中间投影 + Passed-Only 收敛（2026-08-30，v1.8）
 
 > 冻结语义来源：WP-F-R2 Task Package v1.0（§5~§8）+ SA Design（02-sa-design/WP-F-R2/SA-Design-WP-F-R2-V4Pro.md §4~§7）+ G4 DA-Plan（D-1~D-4）。GAME_RULE_CHANGE = NO（阈值/权重/AI 投票/Tribune 权威全部不变）。
@@ -245,6 +271,7 @@ can_trigger_ai_proposer / can_auto_veto  严格 mode=="AI"（D-3：NONE → 双 
 ## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v2.0 | 2026-09-20 | DA Sub-Agent (WP-G-R8) | R8 同步：新增「§5.7.2 WP-G-R8 同步注记」——生命周期文案时点（配置→决定）/ 执行边界 / 诊断零 raw / 三面板几何不变量（`Hrow=min(460,max(360,U.h−28))`）/ Panel1 主 body scroll ownership / 结果区 bounded 132 / Dialog L-D envelope；`senateErrorMachineJson()` 保留空实现（Test Amendment Route）。GAME_RULE_CHANGE=NO（纯展示层） |
 | v1.9 | 2026-09-20 | DA Sub-Agent (WP-G-R7) | Direct Action 提交后连续可见性 + 校验失败恢复 UX 同步（R7-A/R7-B）：新增「§5.7.1 WP-G-R7 同步注记」——冻结 direct 决策按 `item_ref` 会期连续只读可见（进 Results/PA 同身份 / 不进 Vote-Veto / 边界前零军事 mutation / awaiting→executed 仅 receipt）；校验失败 = bounded dialog + 精确卡/N/Commander 高亮 + 草稿保留 + 零发布 + 就地重提。GAME_RULE_CHANGE=NO（纯展示层） |
 | v1.8 | 2026-08-30 | GUI-BETA-R1 WP-F-R2（R2-01）：①中间 vote_results 投影（`_build_vote_results_and_candidates`，voted_all 后，Stage 2 支持率即时可读，首次决策非重入）②`veto_candidate_ids` 权威 passed-only 候选集（DTO + `senateVetoCandidateIds` + QML 映射）③`record_veto` fail-closed 四条件 + `rejected_ids` + 全拒 success=False ④zero-passed 收敛（current_step=results + store 自动 resolve，D-2）；见 §5.9 |
 | v1.6 | 2026-08-23 | GUI-BETA-R1 WP-E（Slice 11 PU-04）：土地法案 sale → quota + total 双写入（political_system.py:510 `set_turn_land_sale_total` 并行）与 Forum resolve 消费关系（quota=remaining 消费、total 本年度稳定展示）；**REVIEWED-NO-CHANGE**：rejected/vetoed 展示段（senate rejected_proposals_snapshot 已有事件身份，仅验证不改）+ SenateStage.qml 相关段落（见实施报告 §7） |

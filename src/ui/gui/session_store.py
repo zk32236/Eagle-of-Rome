@@ -46,6 +46,18 @@ class GuiSessionStore(QObject):
     senateSubmitErrorsChanged = Signal()  # R6 DA-2 B5：Submit 结构化错误 + 草稿保留面
     senateFinalizationWarningChanged = Signal()  # R6 DA-4 B2：自动 finalization 失败 warning
 
+    # R8（SA §5.3，FC-UI-04，D-R8-04）：Senate 诊断**人话展示副本**映射（code 为内部查表键）。
+    # 仅用于 Store 侧旁路反馈（shell toast/status）的玩家可读摘要——不改原 feedback 返回 /
+    # 错误对象 / 日志（原始结构化诊断仍留 Store 数据面 / 运行日志）。
+    _SENATE_FRIENDLY_MESSAGES = {
+        "REINFORCEMENT_INVALID": "增援军团数量不符合要求，请修改数量",
+        "LEGION_POOL_EXCEEDED": "增援请求超过可用军团，请减少增援军团数量",
+        "COMMANDER_CLAIM_DUPLICATE": "同一指挥官不能同时指挥这些战争，请为涉事战争选择不同指挥官",
+        "COMMANDER_TARGET_INVALID": "所选指挥官不可用，请重新选择指挥官",
+        "COMMANDER_INELIGIBLE": "所选人物不符合指挥官资格，请另行选择",
+        "PACKAGE_ALREADY_SUBMITTED": "本会期已提交，请查看已提交内容",
+    }
+
     def __init__(self, state: GameState, parent=None):
         super().__init__(parent)
         self._state = state
@@ -1560,7 +1572,7 @@ class GuiSessionStore(QObject):
             if _row.get("war_id") is not None:
                 self._senate_drafts[self.senate_draft_key(_row["war_id"])] = dict(_row)
         self._apply_senate_submit_feedback(feedback)
-        self._raise_feedback(feedback)
+        self._raise_senate_feedback(feedback)
         if feedback.get("success"):
             self._refresh_snapshot()
             self._refresh_senate_view()
@@ -1590,11 +1602,11 @@ class GuiSessionStore(QObject):
         proposal_ids = [int(item.get("id")) for item in proposals if item.get("id") is not None]
         if not proposal_ids:
             feedback = self._feedback(False, "没有可表决的法案", "error")
-            self._raise_feedback(feedback)
+            self._raise_senate_feedback(feedback)
             return feedback
         votes = [True for _ in proposal_ids]
         feedback = self._adapter.submit_senate_votes(self._viewer_id, proposal_ids, votes)
-        self._raise_feedback(feedback)
+        self._raise_senate_feedback(feedback)
         if feedback.get("success"):
             self._refresh_snapshot()
             self._refresh_senate_view()
@@ -1607,7 +1619,7 @@ class GuiSessionStore(QObject):
                 and not self._senate_view.get("senate_result")
             ):
                 resolve_feedback = self._adapter.resolve_senate()
-                self._raise_feedback(resolve_feedback)
+                self._raise_senate_feedback(resolve_feedback)
                 self._refresh_snapshot()
                 self._refresh_senate_view()
         self.senateViewChanged.emit()
@@ -1641,21 +1653,21 @@ class GuiSessionStore(QObject):
             auto_feedback = self._adapter.call(
                 senate_api.apply_auto_tribune_vetoes, self._state, None, self._viewer_id
             )
-            self._raise_feedback(auto_feedback)
+            self._raise_senate_feedback(auto_feedback)
             if not auto_feedback.get("success"):
                 self._refresh_senate_view()
                 self.senateViewChanged.emit()
                 return auto_feedback
         elif veto_mode == "HUMAN" and veto_ids:
             veto_feedback = self._adapter.submit_senate_vetoes(self._viewer_id, veto_ids)
-            self._raise_feedback(veto_feedback)
+            self._raise_senate_feedback(veto_feedback)
             if not veto_feedback.get("success"):
                 self._refresh_senate_view()
                 self.senateViewChanged.emit()
                 return veto_feedback
 
         feedback = self._adapter.resolve_senate()
-        self._raise_feedback(feedback)
+        self._raise_senate_feedback(feedback)
         self._refresh_snapshot()
         self._refresh_senate_view()
         self.senateViewChanged.emit()
@@ -1670,7 +1682,7 @@ class GuiSessionStore(QObject):
             self._raise_feedback(feedback)
             return feedback
         feedback = self._adapter.advance_senate(self._viewer_id)
-        self._raise_feedback(feedback)
+        self._raise_senate_feedback(feedback)
         if feedback.get("success"):
             self._refresh_snapshot()
             self._refresh_senate_view()
@@ -1711,11 +1723,11 @@ class GuiSessionStore(QObject):
                     "can_retry_finalization": False,
                 },
             )
-            self._raise_feedback(feedback)
+            self._raise_senate_feedback(feedback)
             self.senateViewChanged.emit()
             return feedback
         feedback = self._adapter.resolve_senate()
-        self._raise_feedback(feedback)
+        self._raise_senate_feedback(feedback)
         self._refresh_snapshot()
         self._refresh_senate_view()
         self.senateViewChanged.emit()
@@ -1930,6 +1942,47 @@ class GuiSessionStore(QObject):
             self._resolution_resolving = False
             self.resolutionViewChanged.emit()
             self.phaseChanged.emit()  # 同步通知 advance 按钮绑定
+
+    def _senate_friendly_feedback_copy(self, items) -> str:
+        """R8（SA §5.3）：结构化 error_items → 人话摘要（去 machine code / field token）。
+
+        以 code 为内部查表键；未知/legacy code → 安全通用文案（原消息只留证据，不直出）。
+        """
+        parts = []
+        for item in items or []:
+            code = str((item or {}).get("code") or "")
+            msg = self._SENATE_FRIENDLY_MESSAGES.get(code)
+            if msg is None:
+                msg = "配置未能提交，请检查标记字段后重试"
+            elif code == "LEGION_POOL_EXCEEDED":
+                details = (item or {}).get("details") or {}
+                if details.get("requested_total") is not None and details.get("available_total") is not None:
+                    msg += "（请求 %s / 可用 %s" % (details.get("requested_total"),
+                                                   details.get("available_total"))
+                    if details.get("reduce_by") is not None:
+                        msg += " → 请减少 %s" % details.get("reduce_by")
+                    msg += "）"
+            msg += "。"
+            if msg not in parts:
+                parts.append(msg)
+        return "；".join(parts) if parts else "配置未能提交，请检查标记字段后重试。"
+
+    def _raise_senate_feedback(self, feedback: dict):
+        """R8（SA §5.3）：Senate 调用点**只读展示副本**——人话摘要经 `feedbackRaised` 发出。
+
+        **不改** 原 `feedback` 返回、错误对象、日志与其它阶段原行为：失败且有结构化
+        `error_items` → code→人话；否则（Store 本地 guard 等）保留已人话的 `feedback_message`。
+        """
+        if feedback.get("success"):
+            self._raise_feedback(feedback)
+            return
+        items = feedback.get("error_items")
+        if items:
+            fmsg = self._senate_friendly_feedback_copy(items)
+        else:
+            fmsg = str(feedback.get("feedback_message") or feedback.get("message") or "")
+        if fmsg:
+            self.feedbackRaised.emit(feedback.get("feedback_type", "error"), fmsg)
 
     def _raise_feedback(self, feedback: dict):
         ftype = feedback.get("feedback_type", "info")

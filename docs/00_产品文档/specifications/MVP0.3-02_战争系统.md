@@ -456,10 +456,22 @@ ACTIVE（no valid commander）──T15（Takeover P2）──▶ ACTIVE（新 C
 - **提交后 direct 可见性（R7-A）**：Consul Direct Action（Passive / Existing / Ongoing War 的 command/takeover/continue）Submit 后以**冻结只读**身份（`item_ref`）在会期连续可见——进 Results/PA 同一身份；**不进** Vote/Veto；Submit→边界之间**零军事 mutation**；`awaiting_boundary→executed` **仅**由 `Senate→Combat` 边界 receipt 驱动。R6 §3.2 时序与 §3.3 整包原子性**不变**。
 - **校验失败恢复（R7-B）**：非法 N / 重复 Commander 等整包失败 = bounded dialog + 精确卡/字段高亮 + 草稿深值保留 + 零部分发布 + 就地改值重提（无重启）。**不改变**战争规则 / 权威矩阵 / 原子性。
 
+## WP-G-R8 同步注记（2026-09-20；append-only）
+
+> **权威**：SA-Design-WP-G-R8-2026-09-20（DESIGN FROZEN `9d8f7bdb…`）+ R8 任务包 §6/§7/§10。**GAME_RULE_CHANGE = NO**（纯展示层闭合，零规则变更）。
+> 详细落点见 `technical-mappings/MVP0.5-20-sys_元老院系统API映射.md` §5.7.2。
+
+- **生命周期文案时点（R8-AC-01/02）**：提案期（step==proposal）= **配置**语义（路由文案「元老院表决」/「执政官直接行动」，**不含「决定」**）；**Proposal Step Exit 后**才呈现「执政官决定：<War>，由 <Commander> 指挥，增援 <N> 个军团」只读摘要；身份取自冻结 ledger 快照（`war_label` / `target_commander_label` / `reinforcement_n`），不从 live defaults 重建、不猜接管/继续 subtype。frozen direct 区可见性谓词不变（仅标题随 step 切换）。
+- **执行文案边界（R8-AC-03）**：`awaiting_boundary → executed` **仅**由 `Senate→Combat` 边界 receipt（COMMITTED）驱动；边界前「待战斗阶段执行（尚未执行）」，**禁**「已执行/已生效」；UI 只读 `execution`、不推断、不透传 producer 技术 receipt 文案。
+- **诊断可见性（R8-AC-04/05/08）**：Production 玩家面**零** raw diagnostic（无 machine code / field token / raw JSON / `item_ref` / opaque ID）；诊断留 Store 数据面 + 运行日志。校验失败 = bounded Dialog（人话消息 + 受影响对象人话清单 + 精确字段高亮）+ 固定 28px 状态条；草稿深值保留、零部分发布、就地改值重提。
+- **布局不变量（R8-AC-06/07）**：三面板行行高 = 唯一算法 `Hrow=min(460, max(360, U.h−28))`（`min=preferred=max`，step 无关；**不**随 results/内容/错误坍缩），同 viewport 跨 proposal/vote/veto/results 高差 ≤1px；Panel1 主 body 统一内滚（覆盖 War Card / frozen / nonWar），真实可读 body ≥265px；结果/PA 独立区 bounded 132（不挤压 Hrow）；Dialog 采用专用 envelope（usable rect = window client rect inset16）。
+- **Report 归属**：SLICE-R8-01（copy 时间线）/ 02（诊断去 machine）/ 03（布局几何 + Dialog envelope + 本文档收口）。
+
 ## 9. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.10 | 2026-09-20 | DA Sub-Agent (WP-G-R8) | R8 同步（SLICE-R8-01/02/03）：生命周期文案时点（配置→决定）/ 执行边界（边界前禁「已执行」）/ 诊断零 raw（去 machine + 人话 + Store 薄封装）/ 三面板几何不变量（`Hrow=min(460,max(360,U.h−28))`）/ Panel1 主 body scroll ownership / 结果区 bounded 132 / Dialog L-D envelope。新增「WP-G-R8 同步注记」。GAME_RULE_CHANGE=NO（纯展示层） |
 | v1.0 | 2026-07-12 | Document Officer Worker K | 初版创建 |
 | v1.1 | 2026-07-12 | DA Sub-Agent (GLM Audit Fix) | 修复：停战草案赔款公式、召回条件、惩罚范围 |
 | v1.2 | 2026-07-28 | PM (Augustus) | 新增技术债务附录：战斗三动作残桩（scout/defence/attack） |

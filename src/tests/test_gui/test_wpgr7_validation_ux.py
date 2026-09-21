@@ -216,8 +216,16 @@ class TestR7ValidationQmlWiring(unittest.TestCase):
             self.assertIn(marker, self.senate, marker)
 
     def test_dialog_dimensions_bounded(self):
-        self.assertIn("Math.min(root.width - 80, 640)", self.senate)
-        self.assertIn("Math.min(root.height - 120, 440)", self.senate)
+        # R8（SA §4.1 L-D **v1.3**，SLICE-R8-02 refit）：Dialog 内容自适应 envelope ——
+        # 唯一基准 W = 窗口 client rect；Dw=clamp(Wnat,320,min(round(0.50×W.w),W.w−32))；
+        # Dh≤round(0.40×W.h)。旧固定框 Dw=min(640,·)/Dh=min(440,·) 已作废（v1.2 VOID）。
+        # （原 R7 仅以 overlay 非布局子项保证 bounded；语义仍 = bounded，落点按冻结设计 L-D v1.3。）
+        self.assertNotIn("Math.min(640", self.senate)
+        self.assertNotIn("Math.min(440", self.senate)
+        self.assertIn("function ldMaxW()", self.senate)
+        self.assertIn("function ldMaxH()", self.senate)
+        self.assertIn("ldWmin: 320", self.senate)
+        self.assertIn("ldChrome: 116", self.senate)
 
     def test_package_strip_fixed_28(self):
         idx = self.senate.find('objectName: "senateValidationStrip"')
