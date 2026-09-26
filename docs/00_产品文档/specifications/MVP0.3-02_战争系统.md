@@ -467,10 +467,21 @@ ACTIVE（no valid commander）──T15（Takeover P2）──▶ ACTIVE（新 C
 - **布局不变量（R8-AC-06/07）**：三面板行行高 = 唯一算法 `Hrow=min(460, max(360, U.h−28))`（`min=preferred=max`，step 无关；**不**随 results/内容/错误坍缩），同 viewport 跨 proposal/vote/veto/results 高差 ≤1px；Panel1 主 body 统一内滚（覆盖 War Card / frozen / nonWar），真实可读 body ≥265px；结果/PA 独立区 bounded 132（不挤压 Hrow）；Dialog 采用专用 envelope（usable rect = window client rect inset16）。
 - **Report 归属**：SLICE-R8-01（copy 时间线）/ 02（诊断去 machine）/ 03（布局几何 + Dialog envelope + 本文档收口）。
 
+## WP-G-R9 同步注记（2026-09-26；append-only，目标锚点 §5.1/§5.2）
+
+> **权威**：SA-Design-WP-G-R9-2026-09-26 v1.1（DESIGN FROZEN `9b36bd8e…`；§3 FC-R9-01…11 / §5 AC-R9-01…05 / §7）+ G3-R9 Freeze Gate Record §2 + PM 补充裁定 ADDENDUM 01（`52362366…`）。**GAME_RULE_CHANGE = NO**（状态机 / 战争规则 / authority 零改动；仅元老院投影作用域收敛）。详细落点见 `technical-mappings/MVP0.5-20-sys_元老院系统API映射.md` §5.7.3。
+
+- **终结态 War 不在元老院可操作面（R9 / AC-R9-01）**：TRIUMPH/VICTORY → `WarStatus.RESOLVED` 的战争**不得出现在任何玩家可见可操作面**，含元老院当前行动面与**冻结 ConsulDirect 投影**（`senate_view.consul_direct_decisions`）。§2.5/§2.7/§3.1 的 RESOLVED 独立生命周期（区别于 approved temporary TRUCE）不变；**不按 War 状态窄滤、不以 QML 遮蔽**。
+- **作用域收敛 = 会期身份（R9 / FC-R9-01/02/04）**：修复对象是「**旧会期不属于当前顶层投影**」；判定**只**用 opaque 会期 id 与 PackageRecord 元数据（`senate_session_id` + `submitted_at.turn`），**不解析 session ID 文本、不按 War status / step / turn 推导**。跨回合旧 ACTIVE 行同样消失；其当前合法 `war_cards` 继续出现。
+- **同会期 Results 只读历史例外（R9 / FC-R9-05）**：同一 canonical 会期内已冻结的 direct 只读行（`item_ref` 稳定 / 无 `proposal_id`）在 Results/回看仍可见，即使当前 live War 已 RESOLVED——**这不是新动作**（execution 仍**仅**由 COMMITTED receipt 决定）。
+  - **历史例外支持边界（承 ADDENDUM 01，唯一确定无歧义）**：例外前提 = **有效 current-turn PackageRecord**——① direct 决策属于 canonical 当前会期 AND ② 存在身份匹配且值有效的 current-turn PackageRecord AND ③ 其 `submitted_at.turn` 完整、类型为整数（`bool` 非法）且匹配当前回合。**无 PackageRecord ⇒ 一律排除**（含 direct 自身带有效 turn / `s` 恰为 `turn-{current}`）；**PackageRecord 存在但 turn 缺失/非法/不匹配 ⇒ 一律排除，不 fallback**；未知 custom ⇒ 排除。正常生产路径（publish 总写 turn）不受损。性质 = 支持范围/兼容边界定义，**不声称已证实真实 legacy 回归**。
+- **边界声明**：不改 R8 冻结面 / 战争规则 / authority 路由 / Store·QML / Core；`data/config/game_config.json` 未触。
+
 ## 9. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.11 | 2026-09-26 | DA Sub-Agent (WP-G-R9) | R9 同步（SLICE-R9-01 文档义务）：新增「WP-G-R9 同步注记」（引 MVP0.5-20 §5.7.3）——终结态 War（TRIUMPH/VICTORY → RESOLVED）不出现在任何玩家可见可操作面（含冻结 ConsulDirect 投影）；作用域收敛 = 会期身份（canonical 仅由有效 PackageRecord 证明，不解析 session ID 文本）；同会期 Results 只读历史例外附支持边界（有效 current-turn PackageRecord；无包/坏包统一排除、不 fallback）。GAME_RULE_CHANGE=NO（零规则变更，仅投影作用域收敛） |
 | v1.10 | 2026-09-20 | DA Sub-Agent (WP-G-R8) | R8 同步（SLICE-R8-01/02/03）：生命周期文案时点（配置→决定）/ 执行边界（边界前禁「已执行」）/ 诊断零 raw（去 machine + 人话 + Store 薄封装）/ 三面板几何不变量（`Hrow=min(460,max(360,U.h−28))`）/ Panel1 主 body scroll ownership / 结果区 bounded 132 / Dialog L-D envelope。新增「WP-G-R8 同步注记」。GAME_RULE_CHANGE=NO（纯展示层） |
 | v1.0 | 2026-07-12 | Document Officer Worker K | 初版创建 |
 | v1.1 | 2026-07-12 | DA Sub-Agent (GLM Audit Fix) | 修复：停战草案赔款公式、召回条件、惩罚范围 |

@@ -245,6 +245,40 @@ can_trigger_ai_proposer / can_auto_veto  严格 mode=="AI"（D-3：NONE → 双 
 
 **GAME_RULE_CHANGE=NO**（纯展示层）。
 
+### 5.7.3 WP-G-R9 同步注记（2026-09-26；append-only）
+
+> **权威**：SA-Design-WP-G-R9-2026-09-26 v1.1（DESIGN FROZEN `9b36bd8e…`；§3 FC-R9-01…11 / §5 AC-R9-01…05 / §6.2 SECC / §7）+ G3-R9 Freeze Gate Record §2 + PM 补充裁定 ADDENDUM 01（`52362366…`）。**GAME_RULE_CHANGE = NO**（API 投影作用域收敛；不改 Store/QML/Core authority/战争规则/R8 冻结面）。
+
+**A. 当前投影作用域收敛（R9 / FC-R9-01/02/04）**
+- 变更点 = **仅 `get_senate_view` 顶层 direct 调用点** + 1 个 scope helper（`senate_api._current_canonical_direct_scope(state)`）；`scope guard` 仅此一处。
+- `consul_direct_decisions` 顶层投影只接收**同时满足**下列 AND 条件的决策：① 该 direct 决策属于 canonical 当前会期；② 存在与其身份匹配（`package.senate_session_id == s`）且值有效的 current-turn PackageRecord；③ 该 PackageRecord 的 `submitted_at.turn` 完整、类型为整数（`bool` 非法）且 `== state.turn.turn_number`。
+- 证明路径 = `get_senate_package_id_for_session(s) → get_senate_package_record(id)`；判定**只用 opaque session 与 package 元数据，不解析 session ID 文本**。缺 `state.turn` / 缺 `s` → 返回 `[]`。
+- 通过 scope → 调原 `_consul_direct_decision_rows(state, s)` **原样透传**（不逐 War 查状态、不改 payload/item_ref/order、无 `proposal_id`）；不通过 → `[]`。
+- **原 helper 与 `_build_public_announcement`（PA）语义不变；scope guard 仅顶层调用处；历史 PA 不清。**
+
+**B. canonical 会期 / custom session / package turn 判据（R9 / FC-R9-02）**
+- canonical 会期 = **由有效 PackageRecord 证明**的权威绑定会期；含 **opaque custom session**（要求身份匹配 + 有效 current-turn PackageRecord）。
+- 不硬编码「所有会期 ID 必为 `turn-N`」；缺省生产会期 ID 仍为 `turn-{turn}`，但调用者可显式提供 session ID。
+- 消费既有 `submitted_at.turn` 事实，**无新 schema / 持久字段 / 缓存 / 锁 / 公共 API / authority·route 变更**。
+
+**C. 无包与坏包统一排除（ADDENDUM 01 支持边界，无歧义、不 fallback）（R9 / FC-R9-03）**
+- **无 PackageRecord ⇒ 一律排除**（含 direct record 自身带有效 `turn`、或 `s` 恰等于 `turn-{current_turn}`）；**不设**前缀匹配、模糊解析或 `turn-{current}` 兜底 fallback。
+- **PackageRecord 存在但 `submitted_at.turn` 缺失/非法/不匹配 ⇒ 一律排除，不 fallback 到无包规则。**
+- 未知 custom ID → 返回 `[]`，**保留 ledger 不删**；需要恢复此类未证实记录须另裁，不猜。
+- **性质声明（防假闭合）**：本边界 = 支持范围/兼容边界定义，**不声称已证实真实 legacy 回归**；正常 publish 总写 `submitted_at.turn`，正常新生产包不受损。ADDENDUM 01 消除「无包反而放行 / 有坏包却被拒」的不一致——两者**统一排除**。
+- 七类 T03 参数化对照（current canonical valid / current custom valid ⇒ 保留；no-package canonical current、no-package canonical stale、坏包、unknown custom、SaveLoad 不可解析 ⇒ 排除）见 `03-da-evidence/R9/`。
+
+**D. 只读与生命周期边界（R9 / FC-R9-04/06/10）**
+- GET scope **纯读取**：不 `set_senate_session`、不清 pending、不删除 ledger、不重算/重执行 receipt、不改 completion/transaction/guard/奖励/军事绑定。旧 session 指针可保留于 state，不再作为当前投影的充分条件。
+- `clear_senate_pending` 不清历史 ledger/session；重读/SaveLoad 以当前 turn 与既有 PackageRecord 重判；不新增持久 scope。
+- authority 不变（THREAT/ACTIVE/TRUCE/approved temporary TRUCE/RESOLVED 路由继承 §5.7）；RESOLVED 无合法 Command/Takeover/Reassignment/Continue/Peace 配置入口。
+
+**E. 历史 helper / 冻结面保留（R9 / FC-R9-04）**
+- 原 `_consul_direct_decision_rows` 与 `_build_public_announcement` **保留、语义不变**；R9 仅在其顶层调用前增作用域门。
+- 不改 §5.7.1（R7）/ §5.7.2（R8）既有语义与布局；不重写 §5.7 全篇；不传播 stale 行号。§2.2 `process_war_takeover` 等旧链已由 R5 supersede（见文末 R5 supersede 注记），本注记不改其旧义。
+
+**F. RENDER/证据边界（R9 §6.1）**：CP1–4 实跑 + 两尺寸截图 = fresh G5 / Owner 义务；DA 不产截图、不冒充分级。
+
 ### 5.9 WP-F R2-01 Senate 中间投影 + Passed-Only 收敛（2026-08-30，v1.8）
 
 > 冻结语义来源：WP-F-R2 Task Package v1.0（§5~§8）+ SA Design（02-sa-design/WP-F-R2/SA-Design-WP-F-R2-V4Pro.md §4~§7）+ G4 DA-Plan（D-1~D-4）。GAME_RULE_CHANGE = NO（阈值/权重/AI 投票/Tribune 权威全部不变）。
@@ -271,6 +305,7 @@ can_trigger_ai_proposer / can_auto_veto  严格 mode=="AI"（D-3：NONE → 双 
 ## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v2.1 | 2026-09-26 | DA Sub-Agent (WP-G-R9) | R9 同步：新增「§5.7.3 WP-G-R9 同步注记」——`get_senate_view` 顶层 direct 投影作用域收敛（`_current_canonical_direct_scope`；canonical 仅由有效 PackageRecord 证明 = 身份匹配 + `submitted_at.turn` 完整/整数/匹配当前回合；含 opaque custom session，不解析 session ID 文本）；无包/坏包**统一排除、不 fallback**（ADDENDUM 01 支持边界，不声称已证实真实 legacy 回归）；原 helper 与 PA 语义保留 / scope guard 仅顶层调用处 / 纯读取、无新 schema·持久字段·公共 API。GAME_RULE_CHANGE=NO |
 | v2.0 | 2026-09-20 | DA Sub-Agent (WP-G-R8) | R8 同步：新增「§5.7.2 WP-G-R8 同步注记」——生命周期文案时点（配置→决定）/ 执行边界 / 诊断零 raw / 三面板几何不变量（`Hrow=min(460,max(360,U.h−28))`）/ Panel1 主 body scroll ownership / 结果区 bounded 132 / Dialog L-D envelope；`senateErrorMachineJson()` 保留空实现（Test Amendment Route）。GAME_RULE_CHANGE=NO（纯展示层） |
 | v1.9 | 2026-09-20 | DA Sub-Agent (WP-G-R7) | Direct Action 提交后连续可见性 + 校验失败恢复 UX 同步（R7-A/R7-B）：新增「§5.7.1 WP-G-R7 同步注记」——冻结 direct 决策按 `item_ref` 会期连续只读可见（进 Results/PA 同身份 / 不进 Vote-Veto / 边界前零军事 mutation / awaiting→executed 仅 receipt）；校验失败 = bounded dialog + 精确卡/N/Commander 高亮 + 草稿保留 + 零发布 + 就地重提。GAME_RULE_CHANGE=NO（纯展示层） |
 | v1.8 | 2026-08-30 | GUI-BETA-R1 WP-F-R2（R2-01）：①中间 vote_results 投影（`_build_vote_results_and_candidates`，voted_all 后，Stage 2 支持率即时可读，首次决策非重入）②`veto_candidate_ids` 权威 passed-only 候选集（DTO + `senateVetoCandidateIds` + QML 映射）③`record_veto` fail-closed 四条件 + `rejected_ids` + 全拒 success=False ④zero-passed 收敛（current_step=results + store 自动 resolve，D-2）；见 §5.9 |

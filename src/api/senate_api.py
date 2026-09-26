@@ -388,6 +388,45 @@ def _consul_direct_decision_rows(state: GameState,
     return rows
 
 
+def _current_canonical_direct_scope(state: GameState) -> Optional[str]:
+    """R9（FC-R9-02/03）：当前顶层 direct 投影的 **canonical 会期**（由有效 PackageRecord 证明）。
+
+    仅当下列 AND 全满足时返回该会期 id，否则返回 None（顶层投影据此返回 []）：
+      ① 存在当前会期指针 `state.get_senate_session()`（缺 s → 排除）；
+      ② `state.turn` 存在且 `turn_number` 为整数（缺 / 非整数 → 排除）；
+      ③ 该会期存在身份匹配的有效 PackageRecord：`get_senate_package_id_for_session(s)`
+         → `get_senate_package_record(package_id)`，且 `record.senate_session_id == s`
+         （**无 PackageRecord 一律排除**，含 direct 自身带有效 turn / s 恰为 `turn-{current}`）；
+      ④ 该 PackageRecord 的 `submitted_at.turn` 完整、类型为整数（bool 非法）、
+         且 `== state.turn.turn_number`（缺失/非法/不匹配 → 排除，**不 fallback 到无包规则**）。
+
+    判定只用 opaque 会期 id 与 package 元数据，**不解析 session ID 文本**。
+    """
+    session_id = state.get_senate_session()
+    if not session_id:
+        return None
+    turn = state.turn.turn_number if state.turn else None
+    if not isinstance(turn, int) or isinstance(turn, bool):
+        return None
+    package_id = state.get_senate_package_id_for_session(session_id)
+    if not package_id:
+        return None
+    record = state.get_senate_package_record(package_id)
+    if not isinstance(record, dict):
+        return None
+    if record.get("senate_session_id") != session_id:
+        return None
+    submitted_at = record.get("submitted_at")
+    if not isinstance(submitted_at, dict):
+        return None
+    package_turn = submitted_at.get("turn")
+    if not isinstance(package_turn, int) or isinstance(package_turn, bool):
+        return None
+    if package_turn != turn:
+        return None
+    return session_id
+
+
 def _seat_share_rows(state: GameState) -> List[Dict[str, Any]]:
     total = sum(faction.get_senate_influence(state) for faction in state.get_active_factions())
     rows = []
@@ -712,7 +751,15 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             senate_result_view["war_execution"] = war_execution
         # R6（SA §D.4，DA-4 B3）：Consul 冻结 direct 决策只读投影（**整个会期可读**，不依赖
         # `_senate_pending` 是否已清）；direct-only 结果页据此非空（**不得因无 passed_proposals 清空**）。
-        consul_direct_decisions = _consul_direct_decision_rows(state)
+        # R9（FC-R9-02/03/04）：顶层作用域收敛——仅 **canonical 当前会期**（由有效 current-turn
+        # PackageRecord 证明）的 direct 决策进入玩家当前行动面；无包 / 坏包（turn 缺失/非法/
+        # 不匹配）**一律排除、不 fallback**。scope guard 仅在本顶层调用处：原 helper 与
+        # `_build_public_announcement` 语义不变（历史 PA 不清）。
+        _direct_scope_session = _current_canonical_direct_scope(state)
+        consul_direct_decisions = (
+            _consul_direct_decision_rows(state, _direct_scope_session)
+            if _direct_scope_session else []
+        )
 
         data = {
             "phase_id": "senate",
