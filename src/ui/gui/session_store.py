@@ -675,6 +675,43 @@ class GuiSessionStore(QObject):
         return self._forum_view.get("resolved", False) or bool(self._forum_result)
 
     # -----------------------------------------------------------------------
+    # WP-I §3.G（DESIGN FROZEN 2026-09-26）：viewer 作用域权威招募容量只读透传。
+    # 全部只读 `_forum_view`（单一 resolver 派生的 DTO），notify=forumViewChanged，
+    # 零本地业务缓存；QML 只消费权威值、不自算容量（R-I06 / I-06）。
+    # -----------------------------------------------------------------------
+    @Property(dict, notify=forumViewChanged)
+    def forumRecruitment(self) -> Dict[str, Any]:
+        return self._forum_view.get("viewer_recruitment", {})
+
+    @Property(int, notify=forumViewChanged)
+    def forumRecruitmentCapacity(self) -> int:
+        return self.forumRecruitment.get("capacity", 0)
+
+    @Property(int, notify=forumViewChanged)
+    def forumRecruitmentCurrentMemberCount(self) -> int:
+        return self.forumRecruitment.get("current_member_count", 0)
+
+    @Property(int, notify=forumViewChanged)
+    def forumRecruitmentPhysicalVacancies(self) -> int:
+        return self.forumRecruitment.get("physical_vacancies", 0)
+
+    @Property(int, notify=forumViewChanged)
+    def forumRecruitmentPendingTargetCount(self) -> int:
+        return self.forumRecruitment.get("pending_recruitment_target_count", 0)
+
+    @Property(int, notify=forumViewChanged)
+    def forumRecruitmentRemainingSlots(self) -> int:
+        return self.forumRecruitment.get("remaining_recruitment_slots", 0)
+
+    @Property(bool, notify=forumViewChanged)
+    def forumRecruitmentCanSubmit(self) -> bool:
+        return bool(self.forumRecruitment.get("can_submit_recruitment_bid", False))
+
+    @Property(list, notify=forumViewChanged)
+    def forumViewerPendingRecruitmentTargetIds(self) -> list:
+        return self._forum_view.get("viewer_pending_recruitment_target_ids", [])
+
+    # -----------------------------------------------------------------------
     # Combat stage properties
     # -----------------------------------------------------------------------
     @Property(dict, notify=combatViewChanged)

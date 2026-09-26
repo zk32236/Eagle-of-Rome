@@ -55,6 +55,9 @@ def decide_bids(self, faction: Faction, available_figures: List[Figure],
 
 **关键规则：**
 
+- **空缺数入参语义（vacancies，WP-I 2026-09-26 对齐 · 恢复/对齐，非新规则）：** 处理器传入的 `vacancies` = 该派系
+  **权威剩余招募槽位**（`剩余招募槽位 = max(0, 物理空位 − 本回合已预留的 distinct 招募目标数)`），不再使用固定容量参数；
+  决策器**策略不变**（`selected = eligible[:vacancies]`），仅消费权威值。
 - **资金检查**：派系国库资金 ≤ 0 或空缺数 ≤ 0 时，不出价
 - **候选人筛选**：排除 `abandoned_by == faction.id` 的人物（已被遗弃）
 - **随机顺序**：使用 `random.shuffle()` 打乱候选人顺序，确保公平性
@@ -218,7 +221,7 @@ retire_id = self.retirement_decider.decide_whom_to_retire(faction)
 |------|------|------|
 | 派系 | `Faction` | 当前派系对象 |
 | 可用人物 | `List[Figure]` | 广场中的所有可用人物 |
-| 空缺数 | `int` | 派系当前空缺数 |
+| 空缺数 | `int` | 派系**权威剩余招募槽位**（`GameState.get_remaining_recruitment_slots()`；WP-I 对齐） |
 | 候选人 | `List[Figure]` | 派系在当前回合所有官职中的候选人列表 |
 | 派系成员 | `List[Figure]` | 派系所有成员列表 |
 | 配置 | `Config` | 决策器参数（年龄、概率等） |
@@ -309,4 +312,5 @@ retire_id = self.retirement_decider.decide_whom_to_retire(faction)
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.1 | 2026-09-26 | DA-Execute（WP-I） | 文档同步（恢复/对齐，非新规则）：§2.1/§4.1 明确决策器 `vacancies` 入参 = 权威剩余招募槽位（策略不变） |
 | v1.0 | 2026-07-13 | Document Officer (DA) | 初版创建 |

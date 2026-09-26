@@ -147,10 +147,10 @@ class AutoPlayerProcessor:
         try:
             # 1. 招募
             available_figures = self.state.curia.get_all_available()
-            vacancies = faction.get_vacancies(
-                self.state,
-                self.state.get_economic_rule("faction_member_limit", 6)
-            )
+            # WP-I S3（DESIGN FROZEN 2026-09-26）：Auto 路 vacancies 来源收敛单权威 resolver——
+            # 传“权威剩余招募槽位”（physical_vacancies − pending distinct）；不再读 config
+            # faction_member_limit / 固定 6（R-I02/R-I08）。decider 策略零改（vacancy-bounded）。
+            vacancies = self.state.get_remaining_recruitment_slots(faction.id)
             bids = self.recruitment_decider.decide_bids(
                 faction, available_figures, vacancies, self.state
             )

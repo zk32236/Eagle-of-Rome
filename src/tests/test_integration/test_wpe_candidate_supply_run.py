@@ -511,10 +511,11 @@ class TestWpeCandidateSupplyRun:
 
     @staticmethod
     def _relax_faction_limit(state: GameState) -> None:
-        """放宽派系容量上限（测试配置）：保证每回合注入新人可真实招募入派系
-        （recruit_figure 需 vacancies>0；产品语义的容量限制非本机制焦点）。"""
-        cfg = state._config._config
-        cfg.setdefault("economic_rules", {})["faction_member_limit"] = 999
+        """放宽派系容量上限（测试 seam）：保证每回合注入新人可真实招募入派系。
+
+        WP-I 后容量由唯一权威 resolver 派生（不再读 config faction_member_limit）；
+        本机制焦点为候选供给，故直接覆写实例 resolver（生产路径零改）。"""
+        state.get_faction_capacity = lambda: 999
 
     @staticmethod
     def _recruit_all_new_figures(state: GameState, init: dict) -> None:

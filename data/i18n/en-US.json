@@ -164,6 +164,7 @@
     "info_bid_recorded": "Bid recorded: contract {contract_name}, amount {amount}",
     "error_figure_not_candidate": "This character is not a valid candidate for this office",
     "error_faction_full": "Faction is full, cannot recruit new members.",
+    "error_recruitment_slots_exhausted": "Recruitment slots are exhausted this turn (not yet full; remaining vacancies are reserved by pending recruitment targets).",
     "error_not_knight": "Only knights can participate in contract bidding.",
     "error_not_triumph_war": "This war is not eligible for a triumph.",
     "error_unknown_contract_type": "Unknown contract type.",

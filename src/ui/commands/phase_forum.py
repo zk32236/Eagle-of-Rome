@@ -116,7 +116,10 @@ class ForumCommand(Command):
         # 1. 招募
         try:
             available_figures = self.state.curia.get_all_available()
-            vacancies = faction.get_vacancies(self.state, self.state.get_economic_rule("faction_member_limit", 6))
+            # WP-I S3（DESIGN FROZEN 2026-09-26）：CLI 自动路收敛单权威 resolver——
+            # 传入权威“剩余招募槽位”（physical_vacancies − pending distinct），
+            # 不再读 config faction_member_limit / 固定 6（R-I02/R-I08）。decider 策略零改。
+            vacancies = self.state.get_remaining_recruitment_slots(faction.id)
             bids = self.recruitment_decider.decide_bids(faction, available_figures, vacancies, self.state)
             for fig_id, amount in bids.items():
                 forum_api.recruit_figure(self.state, player_id, fig_id, amount)
@@ -647,20 +650,16 @@ class ForumCommand(Command):
         if not faction:
             return False
 
-        # 检查派系空缺（已有逻辑）
-        num_factions = len(self.state.factions)
-        if num_factions == 3:
-            max_members = 6
-        elif num_factions == 4:
-            max_members = 5
-        elif num_factions == 6:
-            max_members = 4
-        else:
-            max_members = 5
-        current_members = len(faction.get_members(self.state))
-        vacancies = max_members - current_members
-        if vacancies <= 0:
-            print(f"❌ {faction.name} 派系成员已满，无法招募", flush=True)
+        # WP-I S3（DESIGN FROZEN 2026-09-26）：删除 CLI 内联容量表（R-I08，不得留第二张表）；
+        # pre-check 只读委托单一权威 resolver（GameState.get_remaining_recruitment_slots）。
+        # 与 canonical API 同口径：仅 new distinct target 在 remaining<=0 时拒绝；
+        # 同目标重提（已在 pending distinct 集内）不受限（保持既有同目标语义，§C3）。
+        if (fig_id not in self.state.get_pending_recruitment_target_ids(faction.id)
+                and self.state.get_remaining_recruitment_slots(faction.id) <= 0):
+            if self.state.get_faction_physical_vacancies(faction.id) <= 0:
+                print(f"❌ {i18n.get('error_faction_full')}", flush=True)
+            else:
+                print(f"❌ {i18n.get('error_recruitment_slots_exhausted')}", flush=True)
             return False
 
         result = forum_api.recruit_figure(self.state, player_id, fig_id, amount)

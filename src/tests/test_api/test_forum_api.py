@@ -50,10 +50,14 @@ def test_state():
     state.set_current_player("p1")
 
     # 添加派系
+    # WP-I：容量口径 = 注册派系数（注册 3 派系 → 容量 6，对齐文档容量表）。
+    # 既存 fixture 依赖「容量 6」（原由 config faction_member_limit=6 提供）。
     faction1 = Faction(id="f1", name="Faction1", treasury=1000)
     faction2 = Faction(id="f2", name="Faction2", treasury=1000)
+    faction3 = Faction(id="f3", name="Faction3", treasury=1000)
     state.add_faction(faction1)
     state.add_faction(faction2)
+    state.add_faction(faction3)
 
     # 添加人物（存活）
     fig1 = Figure.create_nobile(1, "f1", 40)

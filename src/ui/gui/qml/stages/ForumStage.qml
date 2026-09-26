@@ -71,6 +71,17 @@ Rectangle {
         return 0
     }
 
+    // WP-I §3.G（DESIGN FROZEN 2026-09-26 / I-06）：招募动作业务可用性
+    // = 权威剩余槽位（can_submit_recruitment_bid）或本目标已 pending（同目标重提不受限）。
+    // 只读消费 sessionStore 权威布尔/槽位，QML 不自行计算容量（R-I06）。
+    function recruitActionAllowed(figureId) {
+        if (sessionStore.forumRecruitmentCanSubmit === true) {
+            return true
+        }
+        var ids = sessionStore.forumViewerPendingRecruitmentTargetIds || []
+        return ids.indexOf(figureId) >= 0
+    }
+
     // WP-F F-R3-03 / WP-F-R1 KEEP：结果 canonical 已收敛至公示区 announceArea（R1-F-05 语义纠正后），
     // 本行级稳定 id 去重函数保留不删（任务包 §5.4 明示可保留无害；最小 diff，禁无关 refactor）。
     function landAllocationRows() {
@@ -733,15 +744,23 @@ Rectangle {
                                         MarketValueCell { text: modelData.cost + " T"; color: "#681B07"; font.bold: true; Layout.preferredWidth: 32 }
 
                                         Rectangle {
+                                            id: recruitActionButton
                                             Layout.preferredWidth: 48
                                             height: 22
                                             radius: 4
-                                            color: root.marketUnlocked && sessionStore.canExecuteForum ? "#84250A" : "#D6B985"
-                                            opacity: root.marketUnlocked && sessionStore.canExecuteForum ? 1.0 : 0.65
+                                            // WP-I §G（I-06）：招募可用性 = 阶段/权限（canExecuteForum）× 权威剩余槽位
+                                            // （can_submit_recruitment_bid）或本目标已 pending（同目标重提语义不变）。
+                                            // QML 只消费权威布尔/槽位，不自行计算容量（R-I06）。
+                                            property bool recruitTimeReady: root.marketUnlocked && sessionStore.canExecuteForum
+                                            property bool recruitEnabled: recruitTimeReady && root.recruitActionAllowed(modelData.id)
+                                            property bool recruitSlotsBlocked: recruitTimeReady && !root.recruitActionAllowed(modelData.id)
+                                            color: recruitEnabled ? "#84250A" : "#D6B985"
+                                            opacity: recruitEnabled ? 1.0 : 0.65
 
                                             Text {
                                                 anchors.centerIn: parent
-                                                text: "招募"
+                                                // I-06：槽位耗尽且本目标未 pending → 清晰不可用态（不暴露 raw/内部诊断）
+                                                text: recruitActionButton.recruitSlotsBlocked ? "无空位" : "招募"
                                                 color: "#F7D778"
                                                 font.pixelSize: 10
                                                 font.bold: true
@@ -749,7 +768,7 @@ Rectangle {
 
                                             MouseArea {
                                                 anchors.fill: parent
-                                                enabled: root.marketUnlocked && sessionStore.canExecuteForum
+                                                enabled: recruitActionButton.recruitEnabled
                                                 cursorShape: Qt.PointingHandCursor
                                                 onClicked: root.openRecruitDialog(modelData.id, modelData.name, modelData.cost)
                                             }

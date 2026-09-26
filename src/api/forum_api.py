@@ -50,6 +50,12 @@ def get_forum_view(state: GameState, viewer_player_id: str) -> dict:
             "current_step": current_step,
             "my_figures": _my_figure_rows(state, viewer.faction_id),
             "available_figures": _available_figure_rows(state),
+            # WP-I §3.G（DESIGN FROZEN 2026-09-26）：viewer 作用域权威招募容量读模型
+            # （全部经单一 resolver 派生，无本地业务缓存；多玩家隔离）。
+            "viewer_recruitment": _viewer_recruitment(state, viewer.faction_id),
+            "viewer_pending_recruitment_target_ids": state.get_pending_recruitment_target_ids(
+                viewer.faction_id
+            ),
             "pending_contracts": _pending_contract_rows(state),
             "land_sale_quota": int(getattr(state, "pending_land_sale_quota", 0) or 0),
             # WP-E F5（E-06）：历史事实载体 + 权威价格展示上下文 + viewer 作用域 pending + 结构化分配
@@ -102,6 +108,28 @@ def get_forum_view(state: GameState, viewer_player_id: str) -> dict:
     except Exception as e:
         logging.exception("Forum view failed")
         return api_response(False, f"Forum view failed: {e}", errors=[str(e)])
+
+
+def _viewer_recruitment(state: GameState, faction_id: str) -> dict:
+    """WP-I §3.G：viewer 作用域权威招募容量读模型。
+
+    全部字段经单一权威 resolver 派生（容量 / 物理空位 / pending distinct / 剩余槽位）；
+    每次由活状态重算，无缓存，故 refresh/re-entry 权威一致（§8.6 / I-06）。
+    """
+    faction = state.get_faction(faction_id)
+    current_member_count = faction.get_living_member_count(state) if faction else 0
+    capacity = state.get_faction_capacity()
+    physical_vacancies = max(0, capacity - current_member_count)
+    pending_target_count = state.get_pending_recruitment_target_count(faction_id)
+    remaining = max(0, physical_vacancies - pending_target_count)
+    return {
+        "capacity": capacity,
+        "current_member_count": current_member_count,
+        "physical_vacancies": physical_vacancies,
+        "pending_recruitment_target_count": pending_target_count,
+        "remaining_recruitment_slots": remaining,
+        "can_submit_recruitment_bid": remaining > 0,
+    }
 
 
 def _check_player_permission(state: GameState, player_id: str) -> Tuple[bool, dict]:
@@ -282,9 +310,13 @@ def recruit_figure(state: GameState, player_id: str, figure_id: int, amount: int
     if not faction:
         return api_response(False, i18n.get("error_faction_not_found"))
 
-    vacancies = faction.get_vacancies(state, state.get_economic_rule("faction_member_limit", 6))
-    if vacancies <= 0:
-        return api_response(False, i18n.get("error_faction_full"))
+    # WP-I C3/§8.4（DESIGN FROZEN 2026-09-26）：new distinct target 受权威剩余槽位约束
+    # remaining = max(0, physical_vacancies − per-faction distinct pending targets)。
+    # 同目标重提（已在该派系 distinct 集内）不消耗新槽 → 不拒（保持既有同目标语义，
+    # 不新增 place_bid/buy_land 式防重规则）。
+    if figure_id not in state.get_pending_recruitment_target_ids(player.faction_id):
+        if state.get_remaining_recruitment_slots(player.faction_id) <= 0:
+            return api_response(False, i18n.get("error_faction_full"))
 
     state.add_forum_action("recruitment_bids", (player.faction_id, figure_id, amount))
 
@@ -571,9 +603,33 @@ def resolve_forum(state: GameState) -> dict:
 
             figure = next((f for f in state.curia.get_all_available() if f.id == fig_id), None)
             if figure:
+                faction = state.get_faction(winner_faction_id)
+                # WP-I C4/§8.5（DESIGN FROZEN）：逐次 append 前严格容量守卫（fail-safe
+                # 原子 no-op；合法数据永不触发）。溢出 → 显式 INVARIANT_VIOLATION 诊断；
+                # 守卫不做 winner-ranking / 不裁剪（R-I05；D-I06 OWNER CLARIFICATION 触发）。
+                capacity = state.get_faction_capacity()
+                living = faction.get_living_member_count(state) if faction else 0
+                if faction is None or living >= capacity:
+                    violation = {
+                        "type": "INVARIANT_VIOLATION",
+                        "faction_id": winner_faction_id,
+                        "figure_id": fig_id,
+                        "amount": max_amount,
+                        "capacity": capacity,
+                        "living_member_count": living,
+                    }
+                    results.append(
+                        f"⚠️ 招募结算容量守卫拒绝: 派系 {winner_faction_id} 已达容量上限"
+                        f"（living={living}, capacity={capacity}），人物 {fig_id} 未加入"
+                    )
+                    state.log_event(
+                        "招募结算容量守卫触发 INVARIANT_VIOLATION：拒绝超上限加入",
+                        level=logging.WARNING,
+                        extra=violation,
+                    )
+                    continue
                 state.curia.remove_figure(fig_id)
                 figure.faction_id = winner_faction_id
-                faction = state.get_faction(winner_faction_id)
                 if faction:
                     faction.member_ids.append(fig_id)
                 faction.treasury -= max_amount

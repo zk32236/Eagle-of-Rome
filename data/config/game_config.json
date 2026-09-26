@@ -205,7 +205,6 @@
 
     "faction_initial_treasury": 10,
     "faction_tax_rate": 0.1,
-    "faction_member_limit": 6,
     "fleet_build_cost": 50,
     "fleet_maintenance_cost": 5,
     "fleet_strength_base": 3,

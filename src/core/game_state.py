@@ -24,6 +24,7 @@ from src.core.systems.war_system import WarSystem
 from src.core.systems.military_system import MilitarySystem
 from src.core.systems.naval_system import NavalSystem
 from src.core.entities.city import City
+from src.core.entities.entities import FACTION_CAPACITY_TABLE, FACTION_CAPACITY_DEFAULT
 
 
 if TYPE_CHECKING:
@@ -2183,6 +2184,63 @@ class GameState:
             if living:
                 active.append(faction)
         return active
+
+    # ========== WP-I：Forum 招募容量唯一权威（单一 resolver，DESIGN FROZEN 2026-09-26） ==========
+
+    def get_faction_count_for_capacity(self) -> int:
+        """WP-I C1：容量口径 = 注册派系数 `len(self._factions)`。
+
+        术语等价（G3 冻结）：文档「派系数」≡ 注册派系数 ≡ `len(state.factions)`。
+        `get_active_factions()`（存活成员过滤）**不**作为容量口径（注册表从不逐条
+        删除 ⇒ 容量对整个对局稳定）。
+        """
+        return len(self._factions)
+
+    def get_faction_capacity(self) -> int:
+        """WP-I C2：唯一权威容量 resolver（表 = FACTION_CAPACITY_TABLE 不可变常量）。
+
+        表（文档 MVP0.7-27 §2.3）：3→6 / 4→5 / 6→4 / 其他→5。
+        所有消费者（API/CLI/Auto/GUI DTO/Settlement）必须经此方法取得容量；
+        禁止复制本表 / 固定 6 捷径（R-I01/R-I02/R-I08）。
+        """
+        return FACTION_CAPACITY_TABLE.get(
+            self.get_faction_count_for_capacity(), FACTION_CAPACITY_DEFAULT
+        )
+
+    def get_faction_physical_vacancies(self, faction_id: str) -> int:
+        """WP-I §8.2：physical_vacancies = max(0, capacity − living_member_count)。"""
+        faction = self.get_faction(faction_id)
+        if not faction:
+            return 0
+        return max(0, self.get_faction_capacity() - faction.get_living_member_count(self))
+
+    def get_pending_recruitment_target_ids(self, faction_id: str) -> List[int]:
+        """WP-I C3/§8.3：当前 Forum pending 中该派系的 distinct 招募目标 figure_id（升序）。
+
+        去重语义：同一 (faction_id, figure_id) 的重复记录只计 1 个 person-slot；
+        记录 schema 保持 3 元组 (faction_id, figure_id, amount)（不变更存储）。
+        """
+        bids = self._forum_pending.get("recruitment_bids", []) if self._forum_pending else []
+        ids = set()
+        for rec in bids:
+            if not isinstance(rec, (tuple, list)) or len(rec) < 2:
+                continue
+            if rec[0] == faction_id:
+                ids.add(rec[1])
+        return sorted(ids)
+
+    def get_pending_recruitment_target_count(self, faction_id: str) -> int:
+        """WP-I §8.3：pending_recruitment_target_count = 本派系 distinct figure_id 数。"""
+        return len(self.get_pending_recruitment_target_ids(faction_id))
+
+    def get_remaining_recruitment_slots(self, faction_id: str) -> int:
+        """WP-I §8.3：remaining_recruitment_slots
+        = max(0, physical_vacancies − pending_recruitment_target_count)。"""
+        return max(
+            0,
+            self.get_faction_physical_vacancies(faction_id)
+            - self.get_pending_recruitment_target_count(faction_id),
+        )
 
     # ========== 新增：派系资金管理 ==========
     def add_faction_treasury(self, faction_id: str, amount: int) -> bool:

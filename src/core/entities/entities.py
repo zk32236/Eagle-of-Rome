@@ -10,6 +10,16 @@ if TYPE_CHECKING:
     from src.core.entities.figure import Figure  # 仅类型检查时导入
 
 
+# ---------------------------------------------------------------------------
+# WP-I C2（设计 §2.C2，DESIGN FROZEN 2026-09-26）：产品派系容量表——不可变常量。
+# 文档权威 MVP0.7-27 §2.3：注册派系数 3→6 / 4→5 / 6→4 / 其他→5。
+# 唯一权威 resolver = GameState.get_faction_capacity()（消费者禁止复制本表；
+# R-I01/R-I08）。config `faction_member_limit` 不再承载容量语义（R-I02）。
+# ---------------------------------------------------------------------------
+FACTION_CAPACITY_TABLE = {3: 6, 4: 5, 6: 4}
+FACTION_CAPACITY_DEFAULT = 5
+
+
 @dataclass
 class Senator:
     """
@@ -117,10 +127,22 @@ class Faction:
                     total += member.influence
         return total
 
+    def get_living_member_count(self, state: 'GameState') -> int:
+        """存活成员数（WP-I 容量口径；设计 §3.C）。
+
+        living = 存在 且 not is_dead；`is_present`/`is_absent` 对容量恒为中立
+        （仅影响力面使用，见 get_senate_influence）。
+        """
+        return len(self.get_members(state))
+
     def get_vacancies(self, state: 'GameState', member_limit: int) -> int:
-        """计算派系空缺数（基于存活成员）"""
-        current_members = len(self.get_members(state))
-        return max(0, member_limit - current_members)
+        """计算派系空缺数（基于存活成员）。
+
+        WP-I：保留为通用 helper（沿用既有调用面）；容量语义路径请改用唯一权威
+        resolver `GameState.get_faction_physical_vacancies()` /
+        `get_remaining_recruitment_slots()`（禁复制容量表 / 禁固定 6；R-I01/R-I02）。
+        """
+        return max(0, member_limit - self.get_living_member_count(state))
 
     def remove_member(self, member_id: int):
         """
