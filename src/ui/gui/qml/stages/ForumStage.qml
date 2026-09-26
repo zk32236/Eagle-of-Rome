@@ -187,6 +187,8 @@ Rectangle {
 
     // WP-E R4（D-07）：竞标 Dialog 开/关 + 权威提交（复用 doPlaceBid/doPlaceFleetBid 权威链）
     function openBidDialog(contractId, contractName, baseCost, isFleet, baselineA, approvedB) {
+        // WP-I-R2 D2.2（G3-addendum 冻结）：时窗纵深守卫——结算后（forumResolved）零状态变更早返回
+        if (sessionStore.forumResolved) { return }
         var opts = root.equesBidOptions()
         root.bidDialogContractId = contractId
         root.bidDialogContractName = contractName
@@ -212,6 +214,8 @@ Rectangle {
     }
 
     function confirmBidDialog() {
+        // WP-I-R2 D2.2（G3-addendum 冻结）：时窗纵深守卫——结算后零状态变更早返回
+        if (sessionStore.forumResolved) { return }
         if (root.bidDialogFigureId <= 0) {
             showFeedback("error", "请选择竞标骑士。")
             return
@@ -261,6 +265,8 @@ Rectangle {
     }
 
     function openRecruitDialog(figureId, figureName, baseCost) {
+        // WP-I-R2 D2.1（G3-addendum 冻结）：时窗纵深守卫——结算后（forumResolved）零状态变更早返回
+        if (sessionStore.forumResolved) { return }
         root.selectedMarketFigureId = figureId
         root.recruitDialogFigureId = figureId
         root.recruitDialogFigureName = figureName
@@ -272,6 +278,8 @@ Rectangle {
     }
 
     function confirmRecruitDialog() {
+        // WP-I-R2 D2.1（G3-addendum 冻结）：时窗纵深守卫——结算后零状态变更早返回
+        if (sessionStore.forumResolved) { return }
         var amount = parseInt(root.recruitDialogAmount, 10)
         if (isNaN(amount) || amount <= 0) {
             showFeedback("error", "请输入有效的招募金额。")
@@ -751,7 +759,7 @@ Rectangle {
                                             // WP-I §G（I-06）：招募可用性 = 阶段/权限（canExecuteForum）× 权威剩余槽位
                                             // （can_submit_recruitment_bid）或本目标已 pending（同目标重提语义不变）。
                                             // QML 只消费权威布尔/槽位，不自行计算容量（R-I06）。
-                                            property bool recruitTimeReady: root.marketUnlocked && sessionStore.canExecuteForum
+                                            property bool recruitTimeReady: root.marketUnlocked && sessionStore.canExecuteForum && !sessionStore.forumResolved
                                             property bool recruitEnabled: recruitTimeReady && root.recruitActionAllowed(modelData.id)
                                             property bool recruitSlotsBlocked: recruitTimeReady && !root.recruitActionAllowed(modelData.id)
                                             color: recruitEnabled ? "#84250A" : "#D6B985"
@@ -760,7 +768,7 @@ Rectangle {
                                             Text {
                                                 anchors.centerIn: parent
                                                 // I-06：槽位耗尽且本目标未 pending → 清晰不可用态（不暴露 raw/内部诊断）
-                                                text: recruitActionButton.recruitSlotsBlocked ? "无空位" : "招募"
+                                                text: sessionStore.forumResolved ? "已结束" : (recruitActionButton.recruitSlotsBlocked ? "无空位" : "招募")
                                                 color: "#F7D778"
                                                 font.pixelSize: 10
                                                 font.bold: true
@@ -810,11 +818,13 @@ Rectangle {
                                     }
                                     actionText: {
                                         if (root.viewerBidForContract(modelData.id)) { return "已出价" }
+                                        if (sessionStore.forumResolved) { return "已结束" }
                                         return modelData.can_bid ? "竞标" : "待预算"
                                     }
                                     enabledAction: root.marketUnlocked && modelData.can_bid && sessionStore.canExecuteForum
                                         && root.equesBidOptions().length > 0
                                         && !root.viewerBidForContract(modelData.id)
+                                        && !sessionStore.forumResolved
                                     onTriggered: root.openBidDialog(modelData.id, modelData.name,
                                         modelData.base_cost, modelData.is_fleet_construction,
                                         modelData.baseline_construction_cost, modelData.approved_budget)
@@ -874,9 +884,14 @@ Rectangle {
                                     label: modelData.name + " · " + modelData.commander_name
                                     labelColor: modelData.commander_faction_id ? factionStyle.factionColor(modelData.commander_faction_id) : "#2E251B"
                                     value: "士兵份额 " + modelData.soldier_share
-                                    actionText: "赞成"
+                                    actionText: sessionStore.forumResolved ? "已结束" : "赞成"
                                     enabledAction: root.marketUnlocked && sessionStore.canExecuteForum
-                                    onTriggered: root.callAndReport(sessionStore.doVoteTriumph(modelData.war_id, true))
+                                        && !sessionStore.forumResolved
+                                    onTriggered: {
+                                        // WP-I-R2 D2.3（G3-addendum 冻结）：凯旋时窗纵深守卫（无对话框，inline 早返回）
+                                        if (sessionStore.forumResolved) { return }
+                                        root.callAndReport(sessionStore.doVoteTriumph(modelData.war_id, true))
+                                    }
                                 }
                             }
 
