@@ -624,13 +624,9 @@ Rectangle {
                                             delegate: RadioButton {
                                                 objectName: "populationVoteCandidate_" + modelData.office + "_" + modelData.id
                                                 text: modelData.name + " (" + root.factionShort(modelData.faction_name) + ")"
-                                                contentItem: Text {
-                                                    text: parent.text
-                                                    color: factionStyle.factionColor(modelData.faction_id)
-                                                    font: parent.font
-                                                    verticalAlignment: Text.AlignVCenter
-                                                    leftPadding: parent.indicator ? parent.indicator.width + parent.spacing : 0
-                                                }
+                                                palette.windowText: factionStyle.factionColor(modelData.faction_id)
+                                                palette.disabled.windowText: factionStyle.factionColor(modelData.faction_id)
+                                                palette.inactive.windowText: factionStyle.factionColor(modelData.faction_id)
                                                 checked: root.votedFigureId(modelData.office) === modelData.id
                                                 enabled: sessionStore.canVote && campaignSubmitted() && !sessionStore.populationResolved && !sessionStore.myVotes[modelData.office]
                                                 font.pixelSize: 12
