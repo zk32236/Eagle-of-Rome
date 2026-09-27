@@ -93,10 +93,35 @@ class WarSystem:
 
     # -------------- MVP 0.7-1 停战议和 -----------
 
+    def get_live_current_commander_id(self, war: War) -> Optional[int]:
+        """现任指挥官 id，经既有 live 谓词解析（FC-07）：None/missing/dead → None。
+
+        只读；委托 `GameState.get_living_member`（不新建并行资格规则、不改 get_member）。
+        存活但在役缺席（absent）不因该守卫失效（get_living_member 仅排除死者）。
+        """
+        if war is None or war.commander_id is None:
+            return None
+        member = self.state.get_living_member(war.commander_id)
+        return member.id if member is not None else None
+
+    def get_live_current_commander(self, war: War):
+        """现任指挥官 Figure（live）；None/missing/dead → None。只读。"""
+        if war is None or war.commander_id is None:
+            return None
+        return self.state.get_living_member(war.commander_id)
+
     def get_war_by_commander(self, commander_id: int) -> Optional[War]:
-        """通过指挥官ID查找其指挥的战争（包括 ACTIVE 和 TRUCE 状态的）"""
+        """通过指挥官ID查找其指挥的战争（包括 ACTIVE 和 TRUCE 状态的）。
+
+        FC-07/F-03：`commander_id is None` 或该身份 dead/missing → 返回 ``None``；
+        绝不返回首个无指挥官 War。
+        """
+        if commander_id is None:
+            return None
+        if self.state.get_living_member(commander_id) is None:
+            return None
         for war in self._active_wars + self._truce_wars:
-            if war.commander_id == commander_id:
+            if war.commander_id is not None and war.commander_id == commander_id:
                 return war
         return None
 
@@ -528,6 +553,10 @@ class WarSystem:
             'penalties_applied': [],
         }
 
+        # WP-O O-S2 R09（FC-07）：present-tense 效果统一解析 live 现任（dead/missing → None）；
+        # 死者不再获得战利品/声望/凯旋归属/返回 Rome（沿用既有 no-commander 分支）
+        live_commander_id = self.get_live_current_commander_id(war)
+
         if victory:
             war.status = WarStatus.RESOLVED
 
@@ -564,8 +593,8 @@ class WarSystem:
                 if province:
                     province.set_grievance(0)
                     province.clear_event_flag("rebellion_active")
-                    if war.commander_id:
-                        commander = self.state.get_member(war.commander_id)
+                    if live_commander_id is not None:
+                        commander = self.state.get_living_member(live_commander_id)
                         if commander:
                             commander.family_prestige += 1
                             self.state.log_event(
@@ -578,7 +607,7 @@ class WarSystem:
                             "type": "rebellion_suppressed",
                             "war_id": war.id,
                             "province_id": province.province_id if province else None,
-                            "commander_id": war.commander_id,
+                            "commander_id": live_commander_id,
                             "prestige_gained": 1,
                         }
                     )
@@ -596,8 +625,8 @@ class WarSystem:
             # 如果不是起义战争，执行正常战利品分配
             if not is_rebellion:
                 # 保存凯旋指挥官ID
-                if war.commander_id:
-                    war.set_triumph_commander(war.commander_id)
+                if live_commander_id is not None:
+                    war.set_triumph_commander(live_commander_id)
                 # 获取战利品奖励字典
                 rewards = war.calculate_rewards()
                 result['rewards'] = rewards
@@ -620,8 +649,8 @@ class WarSystem:
                 print(f"\n      📦 战利品分配 ({war.name}):")
                 print(f"        总额: {total_treasury} 塔兰特")
                 print(f"        国库: +{treasury_part}")
-                if war.commander_id:
-                    commander = self.state.get_member(war.commander_id)
+                if live_commander_id is not None:
+                    commander = self.state.get_living_member(live_commander_id)
                     commander_name = commander.name if commander else "未知"
                     print(f"        指挥官 {commander_name} 私库: +{commander_part}")
                     if commander and commander.faction_id:
@@ -637,7 +666,7 @@ class WarSystem:
                 print(f"        士兵份额: {soldier_part} (将转换为老兵支持)")
 
                 # 实际分配
-                if not war.commander_id:
+                if live_commander_id is None:
                     self.state.add_treasury(total_treasury)
                     self.state.log_event(f"战争 {war.name} 战利品: 国库 +{total_treasury}（无指挥官）")
                     war.set_soldier_share(0)
@@ -647,7 +676,7 @@ class WarSystem:
                         self.state.log_event(f"战争 {war.name} 战利品: 国库 +{treasury_part}")
 
                     if faction_part > 0:
-                        commander = self.state.get_member(war.commander_id)
+                        commander = self.state.get_living_member(live_commander_id)
                         if commander and commander.faction_id:
                             faction = self.state.get_faction(commander.faction_id)
                             if faction:
@@ -655,7 +684,7 @@ class WarSystem:
                                 self.state.log_event(f"战争 {war.name} 战利品: 派系 {faction.name} +{faction_part}")
 
                     if commander_part > 0:
-                        commander = self.state.get_member(war.commander_id)
+                        commander = self.state.get_living_member(live_commander_id)
                         if commander:
                             commander.wealth += commander_part
                             self.state.log_event(f"战争 {war.name} 战利品: 指挥官 {commander.name} +{commander_part}")
@@ -672,8 +701,8 @@ class WarSystem:
 
                 # 家族声望
                 prestige_reward = rewards.get('family_prestige', 0)
-                if prestige_reward > 0 and war.commander_id:
-                    commander = self.state.get_member(war.commander_id)
+                if prestige_reward > 0 and live_commander_id is not None:
+                    commander = self.state.get_living_member(live_commander_id)
                     if commander:
                         commander.family_prestige += prestige_reward
                         self.state.log_event(f"战争 {war.name} 家族声望: {commander.name} +{prestige_reward}")
@@ -689,8 +718,8 @@ class WarSystem:
                 print(f"   ✅ {war.name} resolved! Victory (rebellion suppressed).")
 
             # === 通用处理：指挥官返回（所有胜利战争都需要） ===
-            if war.commander_id:
-                commander = self.state.get_member(war.commander_id)
+            if live_commander_id is not None:
+                commander = self.state.get_living_member(live_commander_id)
                 if commander and not commander.is_dead:
                     old_office = commander.office
                     assigned_turn = war.commander_assigned_turn or (self.state.turn.turn_number - 1)
@@ -1028,8 +1057,10 @@ class WarSystem:
         return None
 
     def get_active_wars_without_commander(self) -> List[War]:
-        """获取活跃战争中无指挥官的列表"""
-        return [w for w in self._active_wars if w.status == WarStatus.ACTIVE and w.commander_id is None]
+        """获取活跃战争中无**现任**指挥官的列表（FC-07：dead/missing 现任视同无现任）。"""
+        return [w for w in self._active_wars
+                if w.status == WarStatus.ACTIVE
+                and self.get_live_current_commander_id(w) is None]
 
     # ========== R5（SA §2.1/§2.2，DA-1）Senate War lifecycle facts ==========
 
@@ -1086,7 +1117,7 @@ class WarSystem:
             "war_status": status.value,
             "activation_origin": origin,
             "activation_turn": war.activation_turn,
-            "current_commander_id": war.commander_id,
+            "current_commander_id": self.get_live_current_commander_id(war),
             "surviving_legion_count": surviving,
             "peace_capability": pending_peace,
             "allowed_modes": allowed_modes,
@@ -1104,6 +1135,8 @@ class WarSystem:
         war.legions_assigned = legions
         war.fleets_assigned = fleets
         war.set_commander_assigned_turn(self.state.turn.turn_number)  # 使用 setter
+        # FC-03/B4：显式成功指派存活指挥官 → 复位既有 active（killed 非 War 永久属性）
+        war.reset_commander_status_to_active()
         terms = TerminologyService.get()
         print(f"   🎖️  {terms.commander} assigned to {war.name}")
         print(f"      Forces: {legions} {terms.legion}, {fleets} {terms.fleet}")
@@ -1119,6 +1152,44 @@ class WarSystem:
         war.legions_assigned = 0
         war.fleets_assigned = 0
         return True
+
+    # ========== WP-O O-S1：非战斗死亡写侧单一权威解绑（FC-02/03/04）==========
+
+    def clear_deceased_commander_bindings(self, member_id: int) -> int:
+        """非战斗死亡单一解绑权威（FC-02/03；WarSystem = lifecycle owner）。
+
+        仅当 member_id 对应**真实存在且已死**的 Figure 才执行；缺失 / 存活 id = no-op
+        （绝不作为退役存活指挥官的手段）。遍历 `get_all_wars()`（去重容器，含 terminal 引用）：
+
+        - current `commander_id` 精确相等（非 truthiness）→ `commander_id=None` + 既有
+          伤亡标记 `killed`（该次阵亡 command 终止，不改变 war.status）；
+        - `original_commander_id` 精确相等 → 经窄实体方法清返回指针（不动存活替补指派回合）。
+
+        不覆盖其他存活指挥官、其 casualty 状态或指派元数据。随后经 MilitarySystem /
+        NavalSystem 各一窄 binding-clear helper 清匹配死者人物镜像（FC-04）；即使无 War
+        current 命中亦扫描镜像（旧 returned commander / 不一致资产镜像）。
+        返回清理到的绑定数（幂等：重复调用 = 0）。不吞错误、无外部 I/O。
+        """
+        member = self.state.get_member(member_id)
+        if member is None or not member.is_dead:
+            return 0
+        current_turn = self.state.turn.turn_number if self.state.turn else 0
+        cleared = 0
+        for war in self.get_all_wars():
+            if war.commander_id is not None and war.commander_id == member_id:
+                war.commander_id = None
+                war.report_commander_casualty("killed", current_turn)
+                cleared += 1
+            if war.original_commander_id is not None and war.original_commander_id == member_id:
+                war.clear_original_commander()
+                cleared += 1
+        ms = self.state.get_military_system()
+        if ms is not None:
+            cleared += ms.clear_deceased_commander_bindings(member_id)
+        ns = self.state.naval_system
+        if ns is not None:
+            cleared += ns.clear_deceased_commander_bindings(member_id)
+        return cleared
 
     # ========== 战争结算 ==========
 
@@ -1176,6 +1247,11 @@ class WarSystem:
         for war in self.get_active_wars():
             # 检查指挥官状态
             if war.commander_status != "active":
+                result.append(war)
+                continue
+
+            # FC-07/O-S2 R05：现任身份 dead/missing（原始态残留）亦视为需重指派
+            if war.commander_id is not None and self.state.get_living_member(war.commander_id) is None:
                 result.append(war)
                 continue
 

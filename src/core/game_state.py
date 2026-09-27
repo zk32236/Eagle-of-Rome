@@ -655,18 +655,19 @@ class GameState:
                 "activation_origin": war.activation_origin,
                 "activation_episode": war.activation_episode,
                 "activation_turn": war.activation_turn,
-                "current_commander_id": war.commander_id,
-                "current_commander_label": self._figure_label(war.commander_id),
+                "current_commander_id": self._live_member_id(war.commander_id),
+                "current_commander_label": self._figure_label(self._live_member_id(war.commander_id)),
                 "commander_assigned_turn": war.commander_assigned_turn,
-                "original_commander_id": war.original_commander_id,
+                "original_commander_id": self._live_member_id(war.original_commander_id),
                 "survivor_legion_ids": [lg.number for lg in legions],
-                "legion_bindings": {str(lg.number): lg.commander_id for lg in legions},
+                "legion_bindings": {str(lg.number): self._live_member_id(lg.commander_id)
+                                    for lg in legions},
                 "legion_numbers_field": list(war.legion_numbers),
                 "fleet_ids": list(war.assigned_fleet_ids),
                 "fleet_bindings": {
                     str(ft.number): {"status": getattr(ft.status, "value", ft.status),
                                      "assigned_war_id": ft.assigned_war_id,
-                                     "commander_id": ft.commander_id}
+                                     "commander_id": self._live_member_id(ft.commander_id)}
                     for ft in fleets},
                 "naval_required": bool(war.naval_required),
                 "rebellion_province_id": war.rebellion_province_id,
@@ -1170,6 +1171,9 @@ class GameState:
                 snap["wars"][war.id] = {
                     "status": war.status,
                     "commander_id": war.commander_id,
+                    # O-S3（SA §B3）：additive 内部字段——失败 Senate 命令回滚时
+                    # `killed` 与 null current/镜像一并恢复；非存档 schema 变更。
+                    "commander_status": war.commander_status,
                     "commander_assigned_turn": war.commander_assigned_turn,
                     "original_commander_id": war.original_commander_id,
                     "activation_turn": war.activation_turn,
@@ -1226,6 +1230,8 @@ class GameState:
                     continue
                 war.status = wsnap["status"]
                 war.commander_id = wsnap["commander_id"]
+                # O-S3（SA §B3）：additive 内部字段精确恢复（缺键 → 既有默认 active）
+                war._commander_status = wsnap.get("commander_status", "active")
                 war._commander_assigned_turn = wsnap["commander_assigned_turn"]
                 war._original_commander_id = wsnap["original_commander_id"]
                 war.activation_turn = wsnap["activation_turn"]
@@ -2147,6 +2153,17 @@ class GameState:
         """获取存活人物"""
         member = self._members.get(member_id)
         return member if (member and not member.is_dead) else None
+
+    def _live_member_id(self, figure_id: Optional[int]) -> Optional[int]:
+        """live 现任身份解析（FC-07）：None/missing/dead → None。只读。
+
+        供读侧 DTO/冻结上下文构造统一使用既有 `get_living_member` 谓词；
+        不更改 `get_member` 历史语义（历史死者仍可检索）。
+        """
+        if figure_id is None:
+            return None
+        member = self.get_living_member(figure_id)
+        return member.id if member is not None else None
 
     # ========== 新增：人物财富管理 ==========
     def add_figure_wealth(self, figure_id: int, amount: int) -> bool:
@@ -3092,6 +3109,13 @@ class GameState:
                     level=logging.DEBUG,
                     extra={"figure_id": member_id, "leader_ids_after": self._turn.leader_ids.copy()}
                 )
+
+        # WP-O O-S1（FC-01/02/10）：非战斗死亡写侧单一权威解绑。
+        # 死亡/领导权变更完成后、成功返回前，交由 WarSystem owner 清 current/original
+        # 绑定 + Military/Naval 人物镜像。system 缺失（最小非战争态）= 合法跳过，不惰性创建。
+        # 不吞清理错误：异常向上传播（不因 incomplete cleanup 返回 True）。
+        if self._war_system is not None:
+            self._war_system.clear_deceased_commander_bindings(member_id)
 
         return True
 

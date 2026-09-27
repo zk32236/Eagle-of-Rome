@@ -60,6 +60,8 @@ class TestFleet:
         commander = Figure(101, "Admiral")
         commander.martial = 4
         state.get_member.return_value = commander
+        # WP-O O-S2（FC-07）：fleet martial 现任身份经既有 get_living_member 谓词解析
+        state.get_living_member.return_value = commander
 
         fleet = Fleet(number=7)
         fleet._commander_id = 101

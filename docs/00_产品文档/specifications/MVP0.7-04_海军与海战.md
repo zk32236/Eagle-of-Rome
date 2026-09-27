@@ -101,3 +101,11 @@ TRIUMPH/VICTORY 分支；False 清理 = clear_sea_control，随战争正式结�
 | v1.2 | 2026-09-05 | DA Sub-Agent (WP-G-R3 B3) | R3-G-04 同步：§2.2 单舰战力表述改 quality-adjusted/package aggregate（nominal 快照 + q=D/A + raw→cap→round 一次；per-fleet 无 floor；D=0 不 fallback）+ 补「replacement 见 MVP0.5-04，nominal 非 effective」注；CRT/Sea Control/伤亡矩阵零改（GAME_RULE_CHANGE=NO） |
 | v1.0 | 2026-07-12 | Document Officer Worker K | 初版创建 |
 | v1.1 | 2026-08-31 | DA Sub-Agent (WP-G GC) | 冻结语义落地（G1-09/10/16/20）：§2.2 补五结果矩阵（STALEMATE 0 损、DEFEAT ceil(N/2) 随机无放回）；海军门槛状态机（naval_required 门 / STALEMATE-DEFEAT-DISASTER 阻断陆战 / TRIUMPH-VICTORY 获控）；Sea Control 持久契约（sea_control_acquired 权威字段替代 _sea_control_ratio）；舰队战力 martial 权威 = War Commander |
+
+## WP-O 同步注记（2026-09-27，DA-Execute WP-O/O-S3；append-only，目标锚点 §2.2）
+
+> 权威：SA-Design WP-O v1.0（`075f873b…`）§B2 R08 / FC-07/FC-08。**GAME_RULE_CHANGE = NO**（CRT/伤亡/Sea Control/指派零改）。
+
+- **§2.2 指挥官 martial 权威 = 存活现任**：单舰 `commander.martial` 与聚合 `Σ War Commander martial` 均要求现任身份为**存活** Figure（经 `GameState.get_living_member`）；dead/missing ⇒ 现任视为 absent、`commander` 贡献为 **0**（**禁死 fallback**）。
+- **per-Fleet fallback-private 身份同理**：`Fleet.get_combat_strength` / `NavalSystem.get_fleet_strength_breakdown` 的 War 现任或 Fleet 私有 `_commander_id` 回退均需 living；保留 fallback 优先级、nominal/quality/experience/target 与每 Fleet 一次加成。
+- **绑定-only 清理边界**：非战斗死亡只清匹配死者人物镜像（`NavalSystem.clear_deceased_commander_bindings`）；舰队保持 ON_MISSION/建造 provenance/质量/经验，**不召回/不解散**；War 两侧船队指派与 Sea Control 语义不变。

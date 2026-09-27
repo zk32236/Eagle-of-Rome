@@ -68,3 +68,26 @@ CRT 判定: combat_total = 2d6 + commander.martial + sum(legion_strengths) - war
 | v1.2 | 2026-07-26 | 追加 process_triumph_and_disbandment() 方法（Wave-04 Finale, C-E1） |
 | v1.1 | 2026-07-26 | 追加 assign_rebellion_commanders() + auto_recruit_and_assign() 方法（Wave-03） |
 | v1.0 | 2026-07-12 | 初版 |
+## WP-O 同步注记（2026-09-27，DA-Execute WP-O/O-S3；append-only）
+
+> 权威：SA-Design WP-O v1.0（`075f873b…`）§B1/§B2；规格 `specifications/MVP0.3-02_战争系统.md` §「WP-O 同步注记」。
+
+### 写侧 owner（唯一权威）
+| 事实 | owner 文件 | 方法 |
+|:--|:--|:--|
+| 现任指挥官解绑 + `killed` + 返回指针 | `core/systems/war_system.py` | `clear_deceased_commander_bindings(member_id)`（经 `get_all_wars()`，**精确 id**；仅真实存在且已死的 Figure，缺失/存活 = no-op） |
+| Legion 人物镜像清理 | `core/systems/military_system.py` | `clear_deceased_commander_bindings(member_id)`（窄，仅匹配死者） |
+| Fleet 人物镜像清理 | `core/systems/naval_system.py` | `clear_deceased_commander_bindings(member_id)`（窄，仅匹配死者） |
+| 死亡写点接线 | `core/game_state.py` | `mark_member_dead` 实际死亡后、成功返回前调用 WarSystem owner（缺失系统 = 合法 no-op） |
+| 显式重绑复位 | `core/systems/war_system.py` / `political_system.py` | 成功 command 绑定存活 → `reset_commander_status_to_active()` |
+
+### 读侧消费者（现任经 living 谓词 `GameState.get_living_member`）
+`war_system.py`（describe_senate_war / get_war_by_commander(F-03) / get_active_wars_without_commander / get_wars_needing_reassignment）· `political_system.py`（_current_command_war_ids / build_war_card_views / build_commander_claims 保留支 / build_war_resolution_plan c0）· `api/combat_api.py`（_war_card / _compute_combat_result / _actionable_wars / auto_resolve 分区）· `api/gui_query_api.py`（_war_summary）· `api/senate_api.py`（auto_propose_all）· `core/game_state.py`（build_submission_context）· `ui/commands/func_military.py`。
+
+### 回滚
+`GameState.snapshot_war_resolution_domains` / `restore_war_resolution_domains` **additive** 捕获 `War.commander_status`（失败 Senate 命令回滚恢复 `killed`，与 null current/镜像同版）。
+
+### 版本日志
+| 版本 | 日期 | 摘要 |
+|:--|:--|:--|
+| v1.6 | 2026-09-27 | WP-O O-S3：非战斗死亡解绑写侧 owner + 读侧消费者表 + 回滚 additive `commander_status`（DA-Execute） |

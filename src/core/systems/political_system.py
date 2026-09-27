@@ -1135,7 +1135,18 @@ class PoliticalSystem:
             out.append(war)
         return out
 
+    def _live_current_id(self, war) -> Optional[int]:
+        """现任身份经 live 谓词解析（FC-07）：None/missing/dead → None。只读。"""
+        cid = getattr(war, "commander_id", None)
+        if cid is None:
+            return None
+        member = self.state.get_living_member(cid)
+        return member.id if member is not None else None
+
     def _current_command_war_ids(self, figure_id: int) -> List[str]:
+        # FC-07：dead/missing 身份无现任指挥（历史死者仍可检索，但非现任统帅）
+        if figure_id is None or self.state.get_living_member(figure_id) is None:
+            return []
         return sorted(war.id for war in self._real_wars() if war.commander_id == figure_id)
 
     def _war_commander_role(self, fig) -> Optional[str]:
@@ -1243,7 +1254,7 @@ class PoliticalSystem:
                 continue
             label = ""
             if war.commander_id is not None:
-                cmd = self.state.get_member(war.commander_id)
+                cmd = self.state.get_living_member(war.commander_id)
                 label = cmd.get_formal_name() if cmd else ""
             card = dict(facts)
             card["schema_version"] = WAR_CARD_SCHEMA_VERSION
@@ -1335,10 +1346,11 @@ class PoliticalSystem:
             draft = drafts_by_war.get(war.id)
             checked = bool(draft and draft.get("checked"))
             mode = (draft or {}).get("mode", "command")
+            retained_id = self._live_current_id(war)  # FC-11：保留现任用 live（死者不占 claim）
             if not checked:
-                commander_id, basis, proposed_mode = war.commander_id, "retained_unchecked", "command"
+                commander_id, basis, proposed_mode = retained_id, "retained_unchecked", "command"
             elif mode == "peace":
-                commander_id, basis, proposed_mode = war.commander_id, "retained_peace", "peace"
+                commander_id, basis, proposed_mode = retained_id, "retained_peace", "peace"
             else:
                 commander_id, basis, proposed_mode = (draft.get("target_commander_id"),
                                                       "selected_command", "command")
@@ -2165,7 +2177,7 @@ class PoliticalSystem:
         pe_ids = {d["war_id"] for d in v if d.get("mode") == "peace"}
 
         r_ids = {w.id for w in real_wars}
-        c0 = {w.id: w.commander_id for w in real_wars}
+        c0 = {w.id: self._live_current_id(w) for w in real_wars}
 
         # ---- 集合合法性 assert + 跨 route / 重复 intent 拒绝（禁 last-write-wins）----
         conflicts: List[Dict[str, Any]] = []
@@ -2613,6 +2625,10 @@ class PoliticalSystem:
                     for fleet in ns.get_fleets_by_war(wid):
                         fleet.commander_id = target
                 war.commander_id = target
+                # WP-O O-S2 V-02/FC-03：存活指派复位 commander_status=active
+                # （killed 非 War 永久属性；重入本身不复位）
+                if target is not None and self.state.get_living_member(target) is not None:
+                    war.reset_commander_status_to_active()
                 recruited = self._strict_recruit_and_bind(war, target, plan["reinforcement_allocations"].get(wid, []))
                 if recruited:
                     effect["recruited"].extend(recruited)

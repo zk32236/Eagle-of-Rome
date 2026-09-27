@@ -1090,8 +1090,10 @@ def auto_submit_proposals(
     used_commanders = set()
     # 已真实战的现任指挥官保留 claim（unchecked/Peace 保留）→ 本包不得重复指派（A-I04 唯一性）
     for _war in politics._real_wars():
-        if _war.commander_id is not None:
-            used_commanders.add(_war.commander_id)
+        _live_cmd = (state.get_living_member(_war.commander_id)
+                     if _war.commander_id is not None else None)
+        if _live_cmd is not None:
+            used_commanders.add(_live_cmd.id)
     commander_candidates = politics.build_war_commander_candidates({})
 
     def _pick_ai_commander():

@@ -342,6 +342,20 @@ class MilitarySystem:
 
     # ========== 战斗相关 ==========
 
+    def clear_deceased_commander_bindings(self, member_id: int) -> int:
+        """WP-O O-S1（FC-04）：窄清理——仅清匹配死者 member_id 的常规军团人物镜像。
+
+        精确认同（非 truthiness）；仅改 commander_id，保留 war_id/status/is_veteran/
+        _destroyed_turn/_legion_type 等；不 recall / disband / destroy / recruit；无外部 I/O。
+        No direct `_status` writes。返回清理到的镜像数（幂等：重复调用 = 0）。
+        """
+        cleared = 0
+        for legion in self._legions:
+            if legion.commander_id is not None and legion.commander_id == member_id:
+                legion.commander_id = None
+                cleared += 1
+        return cleared
+
     def get_legions_for_battle(self, war_id: str) -> List[Legion]:
         """获取指派到某战争的所有军团（live 实体附着 = 战斗参与者唯一权威，R-17）"""
         return [l for l in self._legions if l.war_id == war_id]

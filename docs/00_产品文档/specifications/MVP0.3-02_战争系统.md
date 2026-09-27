@@ -518,3 +518,14 @@ ACTIVE（no valid commander）──T15（Takeover P2）──▶ ACTIVE（新 C
 - [ ] CLI 命令同时暴露三动作
 - [ ] bias 值改为 config 配置（当前硬编码 defence:+2, scout:-1）
 - [ ] 三动作的测试覆盖
+
+## WP-O 同步注记（2026-09-27，DA-Execute WP-O/O-S3；append-only，目标锚点 §2.5/§3.2/§5.3 + WP-G-R6 注记「adjacent defect」）
+
+> 权威：SA-Design WP-O v1.0（DESIGN FROZEN `075f873b…`）§A0/§A0.5 FC-01…12 / §B1/§B3。**GAME_RULE_CHANGE = NO**（语义澄清收口，非新策略）。
+
+- **非战斗死亡解绑（FC-01/02/03）—— 收口 WP-G-R6「adjacent defect」**：非战斗 Mortality 使前线指挥官死亡时，`GameState.mark_member_dead` 于成功返回前经**单一权威 owner** `WarSystem.clear_deceased_commander_bindings(member_id)` 解绑：`war.commander_id` 精确等于死者 → `None` 且置既有伤亡标记 `commander_status="killed"`；`war.original_commander_id` 精确等于死者 → 清返回指针（`clear_original_commander`，**不**动存活替补指派回合）。
+- **死者解绑 ≠ 部队释放（守 WP-G-R6）**：该路径只清「人物身份绑定」，**不**改变 War 归属——Legion/Fleet 继续绑定原 War（不召回/不解散/不伤亡），Sea Control/treaty/pending 保持。**Legion/Fleet recall 不是本缺陷的解**。
+- **现任 vs 历史 id 区分**：`commander_id`（现任，须存活）与 `original_commander_id`（返回指针）/ `declared_by` / `triumph_commander_id`（历史）为不同域；历史死者名保留（不可变），现任身份经 `GameState.get_living_member` 解析（None/missing/dead ⇒ 无现任统帅）。
+- **`killed` 语义（F-01）**：`commander_status` = 该次阵亡指挥的 command 终止标记，**非** War 永久属性、**非**战斗死因；显式成功 command 绑定到存活 Figure 时复位 `active`（`WarSystem.assign_commander` 与 canonical political command-set 分支），重入本身**不**复位。
+- **重入保留 null（FC-06）**：TRUCE pending 死亡 → 拒绝/未表决回退 → `TRUCE→ACTIVE`，`commander_id` 保持 `None`（`preserve_commander` 保留**已清值**，**不**回填历史 id）；`move_truce_war_to_active` 保持 container-only。
+- **持久化/回滚（FC-09）**：纠正态经既有 `to_dict`/`load_from_dict` 往返，keys/version 不变、无迁移；既有 Senate `snapshot_war_resolution_domains`/`restore_war_resolution_domains` 对 **additive 内部字段 `War.commander_status`** 扩展，使失败边界事务回滚时 `killed` 与 null current/镜像一并恢复（内部字段，**非**存档 schema 变更；无 Save/Load 功能变更）。

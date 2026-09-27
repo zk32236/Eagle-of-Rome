@@ -200,8 +200,8 @@ class Fleet:
             war = ws.get_war_by_id(self._assigned_war_id)
             if war is not None and war.commander_id is not None:
                 commander_id = war.commander_id  # 权威 = War Commander（G1-20）
-        if commander_id:
-            commander = state.get_member(commander_id)
+        if commander_id is not None:
+            commander = state.get_living_member(commander_id)
             if commander:
                 strength += commander.martial  # 使用 martial 作为海战加成
         return strength

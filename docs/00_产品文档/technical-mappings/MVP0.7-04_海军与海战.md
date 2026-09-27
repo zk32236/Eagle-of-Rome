@@ -37,3 +37,15 @@ src/core/entities/contract.py      # 舰队建造合同
 | v1.2 | 2026-09-09 | WP-G-R4 B3：readiness helper/新 resolve details/API→GUI+CLI v2 envelope 消费（DA-R4-B3） |
 | v1.1 | 2026-09-05 | R3-G-04 同步：package 聚合消费 + nominal replacement + strength DTO 字段（DA-R3-B3） |
 | v1.0 | 2026-07-12 | 初版 |
+
+## WP-O 同步注记（2026-09-27，DA-Execute WP-O/O-S3；append-only）
+
+> 权威：SA-Design WP-O v1.0（`075f873b…`）§B2 R08；规格 `specifications/MVP0.7-04_海军与海战.md` §「WP-O 同步注记」。
+
+- **海军消费者 living 谓词**：`Fleet.get_combat_strength` / `NavalSystem.get_fleet_strength_breakdown` 的现任（War `commander_id`）与 per-Fleet fallback-private（`Fleet._commander_id`）身份均经 `GameState.get_living_member`；dead/missing ⇒ 0 贡献（**禁死 fallback**）；保留 nominal/quality/experience/target 与每 Fleet 一次加成。
+- **绑定-only 清理**：`NavalSystem.clear_deceased_commander_bindings(member_id)`（窄，仅精确死者）；舰队保持 ON_MISSION/建造 provenance；指派/Sea Control 语义零改。
+
+### 版本日志（续）
+| 版本 | 日期 | 摘要 |
+|:--|:--|:--|
+| v1.3 | 2026-09-27 | WP-O O-S3：海军 martial living 谓词 + 绑定-only Fleet 镜像清理（DA-Execute） |

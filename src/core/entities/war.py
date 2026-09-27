@@ -408,6 +408,22 @@ class War:
         self._original_commander_id = commander_id
         self._commander_assigned_turn = assigned_turn
 
+    def clear_original_commander(self) -> None:
+        """清除返回指针 original_commander_id（FC-03；仅匹配死者时由 WarSystem 调用）。
+
+        窄方法：只清返回指针，**不重置** commander_assigned_turn（存活替补的指派回合
+        保留）。不触碰 current/legion/fleet 或其他历史身份。
+        """
+        self._original_commander_id = None
+
+    def reset_commander_status_to_active(self) -> None:
+        """显式成功指派存活指挥官后恢复既有值 active（FC-03/B4）。
+
+        `killed` = 该次阵亡指挥的 command 终止标记，**非** War 永久属性；重入本身不清，
+        仅显式成功 command 绑定（存活 Figure）时复位。
+        """
+        self._commander_status = "active"
+
     def set_peace_treaty(self, treaty: Dict):
         """设置和约，若未指定 status 则默认为 'pending'"""
         if 'status' not in treaty:

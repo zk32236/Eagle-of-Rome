@@ -101,6 +101,20 @@ class NavalSystem:
         """获取指派给某战争的所有舰队"""
         return [f for f in self._fleets.values() if f.assigned_war_id == war_id]
 
+    def clear_deceased_commander_bindings(self, member_id: int) -> int:
+        """WP-O O-S1（FC-04）：窄清理——仅清匹配死者 member_id 的舰队人物镜像。
+
+        精确认同（非 truthiness）；仅改 commander_id（Fleet.commander_id setter 仅动
+        _commander_id），保留 assigned_war_id/status/experience/quality/target/maintenance；
+        不 recall / disband / destroy；无外部 I/O。返回清理到的镜像数（幂等：重复调用 = 0）。
+        """
+        cleared = 0
+        for fleet in self._fleets.values():
+            if fleet.commander_id is not None and fleet.commander_id == member_id:
+                fleet.commander_id = None
+                cleared += 1
+        return cleared
+
     # ---------- 建造合同生成 ----------
     def _has_existing_fleet_or_contract_for_war(self, war_id: str) -> bool:
         """检查是否已有针对该战争的活动合同或存在非摧毁状态的舰队"""
@@ -478,8 +492,8 @@ class NavalSystem:
                 war = ws.get_war_by_id(fleet.assigned_war_id)
                 if war is not None and war.commander_id is not None:
                     commander_id = war.commander_id
-            if commander_id:
-                commander = self.state.get_member(commander_id)
+            if commander_id is not None:
+                commander = self.state.get_living_member(commander_id)
                 if commander:
                     commander_bonus += commander.martial
 

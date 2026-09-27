@@ -342,3 +342,11 @@ UNRAISED / DISBANDED ──[征召]──→ ACTIVE ──[指派]──→ ACTI
 | v1.2 | 2026-08-30 | DA Sub-Agent (WP-F-R2) | 权威已动员计数（`mobilized_legion_count = len(get_active_legions())`）：TRUCE 附着 ACTIVE 军团计入「已动员军团」概览与维护费同集；STALEMATE 非释放点（释放仅经 canonical 后续生命周期）；GUI 概览改读权威 DTO/Store 字段（combat_api.get_combat_view + `combatMobilizedLegions` + CombatStage.qml），禁 QML 生命周期推断 |
 | v1.3 | 2026-08-31 | DA Sub-Agent (WP-G GA) | 冻结语义同步（G1-17/G1-23/G1-24）：征召移除国库门槛（扣款照扣、国库可负、赤字 Resolution 兑底）；`get_available_legions()` = UNRAISED∪DISBANDED 明确定义为 Reinforcement N 可征召池（续战增援契约引用 MVP0.3-02 §3.3） |
 | v1.4 | 2026-08-31 | DA Sub-Agent (WP-G GB) | 陆战权威收敛（G1-05/06/07/19/22/25）：DEFEAT=随机 ceil(N/2) DESTROYED（禁「前一半 DISBANDED」）；DISASTER=全部实际参战 DESTROYED；VICTORY/TRIUMPH=全部幸存参战者晋升 Veteran→RESOLVED→召回；Veteran 持久契约（recall/解散/重募保留，唯一清除点=mark_destroyed）；恢复生命周期显式化（Veteran False + Resolution 先判胜负后恢复）；伤亡单一 owner=apply_land_casualties |
+
+## WP-O 同步注记（2026-09-27，DA-Execute WP-O/O-S3；append-only，目标锚点 §2.6/§5.3）
+
+> 权威：SA-Design WP-O v1.0（`075f873b…`）§A0/§B1；对应 WP-G-R6 冻结语义。**GAME_RULE_CHANGE = NO**。
+
+- **§5.3 战斗边界 收口**：原「指挥官已死亡时，战斗跳过（调用 `recall_commander()`）」只描述读侧跳过；**写侧**新增单一权威：非战斗 Mortality 经 `GameState.mark_member_dead → WarSystem.clear_deceased_commander_bindings(member_id)` 清死者现任 War 绑定 + `MilitarySystem.clear_deceased_commander_bindings(member_id)` 清**精确匹配死者**的 Legion 人物镜像，**不**触发 Legion 召回/解散/伤亡/征募。
+- **§2.6 维护费 provenance 保留**：非指挥官死亡不改变 Legion 附着/状态/`is_veteran`/维护口径；维护集仍为 ACTIVE + released survivors（AVAILABLE via recall）+ RECALLING（不含 UNRAISED/DISBANDED/DESTROYED），与 §2.6 原口径一致。
+- **非指挥官死亡**：无关 War/Legion 零变化（精确 id；无自动替补）。Legion 序列化 schema 不变（`commander_id` 可为 None）。

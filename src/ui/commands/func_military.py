@@ -62,9 +62,9 @@ class WarsCommand(Command):
                 print(f"      Strength: {war.get_total_strength()} | Duration: {war.duration}y")
 
                 # 指挥官状态
-                if war.commander_id:
-                    commander = self.state.get_member(war.commander_id)
-                    if commander and not commander.is_dead:
+                if war.commander_id is not None:
+                    commander = self.state.get_living_member(war.commander_id)
+                    if commander:
                         print(f"      🎖️  Commander: {commander.name}")
                     else:
                         status_info = {
@@ -203,10 +203,11 @@ class AssignCommand(Command):
             return False
         selected_war = active[war_idx]
 
-        # 如果已有指挥官，提供增援选项
-        if selected_war.commander_id is not None:
-            commander = self.state.get_member(selected_war.commander_id)
-            print(f"\n   ℹ️  {selected_war.name} 已有指挥官 {commander.name if commander else '未知'}")
+        # 如果已有（存活）指挥官，提供增援选项；死者现任视同无现任
+        live_cmd = (self.state.get_living_member(selected_war.commander_id)
+                    if selected_war.commander_id is not None else None)
+        if live_cmd is not None:
+            print(f"\n   ℹ️  {selected_war.name} 已有指挥官 {live_cmd.name}")
             print(f"   选项: [a] 增援军团 / [r] 替换指挥官 / [c] 取消")
             option = input("   > ").strip().lower()
             if option == 'c':

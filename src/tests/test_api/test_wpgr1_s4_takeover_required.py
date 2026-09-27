@@ -164,7 +164,8 @@ class TestTr108TakeoverRequiredCore(unittest.TestCase):
 
     def test_dead_commander_reason_and_rows(self):
         """commander 阵亡（commander_id 指向 dead figure）→ is_war_commander_valid False；
-        卡仍表达现任（不静默替换）。"""
+        WP-O O-S2（FC-07/R05/R06）：卡现任身份经 live 谓词解析 → 死者不呈现为现任
+        （current_commander_id None），且不静默替换（无复活指派）。"""
         state, _consul = _build_senate_state()
         dead = Figure(id=50, name="Dead General", faction_id="optimates", age=55)
         dead.is_dead = True
@@ -173,7 +174,10 @@ class TestTr108TakeoverRequiredCore(unittest.TestCase):
         war = _make_active_war(state, "war_dead_cmd", commander_id=50)
         self.assertFalse(PoliticalSystem(state).is_war_commander_valid(war))
         card = _card(state, "war_dead_cmd")
-        self.assertEqual(card["current_commander_id"], 50)
+        # WP-O O-S2 supersession（SA-Design R05 live-current predicate / FC-07）：原断言
+        # `== 50` 即 dead-identity 泄漏面，已由 O-S2 读侧闭合取代；卡不呈现死者为现任，
+        # 亦不静默替换（无复活指派）。
+        self.assertIsNone(card["current_commander_id"])
         self.assertNotIn(50, [c["figure_id"] for c in card["commander_candidates"]])
 
     def test_absent_commander_not_valid_war_commander(self):

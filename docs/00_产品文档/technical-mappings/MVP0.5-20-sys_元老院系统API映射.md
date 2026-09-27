@@ -334,3 +334,5 @@ GovernorAppointmentPanel.qml 同改（候选人行 :276）。
 ---
 
 > **R5 supersede（2026-09-12，WP-G-R5 DA-7 文档同步 / append-only）：** 本文 §2.2 `process_war_takeover`、`takeover_war`、`execute_ai_takeover_direct_action` 与 AI 自动接管直连语义已由 WP-G-R5 冻结设计退役。R5 唯一整包 Submit 入口 = `senate_api.propose_many`（Core `PoliticalSystem.submit_proposal_package`）；唯一边界 mutation 入口 = `senate_api.advance_senate_phase`（Senate→Combat 整包原子事务 + receipt exactly-once）。出征任命/续战统一经 War Card（`get_senate_view`.`war_cards`）。旧单槽 reservation / mandatory takeover / 即时 Continue 均退役。证据：`WP-G-WarTruceTakeover/03-da-evidence/DA-R5-B5/Ledger-归零对照表.md`。
+
+> **WP-O 同步注记（2026-09-27，DA-Execute WP-O/O-S3；append-only，目标锚点 §2 冻结上下文/保留 claim）：** 现任指挥官身份经单一 living 谓词 `GameState.get_living_member` 解析——新建冻结 SubmissionContext 的 current/return/资产镜像事实**省略死者现任**（None/空）；保留 claim 支（`build_commander_claims`）对失效选中目标**可见并 fail**（不静默丢弃）；plan c0/final 用 live（None/missing/dead ⇒ 无现任）。**已冻结的历史 snapshots/payload/labels 不可变**（历史死者名保留，不重写）。Plan/边界回滚 **additive** 捕获 `War.commander_status`（失败 Senate 命令回滚恢复 `killed`）。**GAME_RULE_CHANGE = NO**（authority/状态机零改）。

@@ -151,3 +151,12 @@ governor_returns/contract_expiries/truce_expiries/decay）——`execute_resolut
   （`test_preview_commit_parity`）。
 - **挂载点**：`get_resolution_view` 返回体 `preview` 键（QML 消费
   `sessionStore.resolutionView.preview.*`）。
+
+## WP-O 同步注记（2026-09-27，DA-Execute WP-O/O-S3；append-only）
+
+> 权威：SA-Design WP-O v1.0（`075f873b…`）§B1；Mortality 无专用 death feature id（本注记即集成映射）。
+
+- **Mortality → GameState → WarSystem 集成**：`mortality_api.execute_mortality_phase` → `MortalityService._handle_death_event` → `GameState.mark_member_dead` → （**同步、成功返回前**）`WarSystem.clear_deceased_commander_bindings` → Military/Naval 镜像清理。cleanup = 简单非失败本地字段转换、无外部 I/O、无新阶段事务。
+- **`mortality_service.py` 未改**：`_handle_death_event` 不新增第二 hook；死亡选择不 patch。（死亡 = 共享写点，战斗 DISASTER 路径复用。）
+- **幂等（FC-10）**：重复 `mark_member_dead` 返回 False，无二次国库/土地转移；直接 cleanup 重复 = no-op；非指挥官死亡不改无关 War/资产。
+- **持久化（FC-09）**：纠正态经既有 `to_dict`/`load_from_dict` 往返，keys/version 不变、无迁移。

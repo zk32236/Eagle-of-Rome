@@ -136,7 +136,7 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
     commander_id = -1
     commander = None
     if war.commander_id is not None:
-        commander = state.get_member(war.commander_id)
+        commander = state.get_living_member(war.commander_id)
         if commander:
             commander_name = commander.get_formal_name() if hasattr(commander, 'get_formal_name') else commander.name or ""
             commander_martial = getattr(commander, 'martial', 0) or 0
@@ -480,7 +480,7 @@ def _compute_combat_result(
     # Commander bonus
     commander_martial = 0
     if war.commander_id is not None:
-        commander = state.get_member(war.commander_id)
+        commander = state.get_living_member(war.commander_id)
         if commander:
             commander_martial = getattr(commander, 'martial', 0) or 0
 
@@ -613,6 +613,25 @@ def _apply_loss_consequence(war: War, result: str, state: GameState) -> None:
     war.duration += 1
 
 
+def _live_current_commander_id(ws, war, state):
+    """FC-07：现任指挥官 live id（复用既有 `GameState.get_living_member` 谓词）。
+
+    None/missing/dead → None；存活但在役缺席（absent）不失效。state 缺失时退回
+    WarSystem live helper（真实系统）或原始值。只读。
+    """
+    cid = getattr(war, "commander_id", None)
+    if cid is None:
+        return None
+    if state is not None:
+        member = state.get_living_member(cid)
+        return cid if member is not None else None
+    if ws is not None:
+        helper = getattr(ws, "get_live_current_commander_id", None)
+        if callable(helper):
+            return helper(war)
+    return cid
+
+
 def _actionable_wars(ws, phase_data, state=None) -> List[War]:
     """本回合仍可战斗的 ACTIVE 战争：有指挥官且未在本回合战斗（resolved_wars）。
 
@@ -631,7 +650,7 @@ def _actionable_wars(ws, phase_data, state=None) -> List[War]:
     )
     result = []
     for w in ws.get_active_wars():
-        if w.commander_id is None or w.id in battled_ids:
+        if _live_current_commander_id(ws, w, state) is None or w.id in battled_ids:
             continue
         if state is not None:
             code, _reason = _naval_attack_readiness(state, w)
@@ -1364,7 +1383,7 @@ def auto_resolve_combat(state: GameState, player_id: str) -> dict:
             })
 
         # 分类：有指挥官 vs 无指挥官
-        assigned_wars = [w for w in active_wars if w.commander_id is not None]
+        assigned_wars = [w for w in active_wars if _live_current_commander_id(ws, w, state) is not None]
         skipped = total_active - len(assigned_wars)
 
         # WP-G-R4 (SA v1.7 §3.4)：no-ready 战争输出独立 unavailable_wars（非 battles），
@@ -1397,7 +1416,7 @@ def auto_resolve_combat(state: GameState, player_id: str) -> dict:
             })
 
         # 先处理无指挥官战争：标记为已跳过
-        _skip_all_unassigned(state, [w for w in active_wars if w.commander_id is None])
+        _skip_all_unassigned(state, [w for w in active_wars if _live_current_commander_id(ws, w, state) is None])
 
         # 逐场结算（仅 ready wars；NOT_READY 已在 unavailable_wars）
         battles = []
