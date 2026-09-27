@@ -954,23 +954,26 @@ Rectangle {
                         }
                     }
 
-                    Rectangle {
-                        visible: !root.marketUnlocked
-                        anchors.centerIn: parent
-                        width: waitLabel.implicitWidth + 34
-                        height: 28
-                        radius: 5
-                        color: "#BF9B6D5C"
-                        z: 10
+                }
 
-                        Text {
-                            id: waitLabel
-                            anchors.centerIn: parent
-                            text: "⌛ 等待子环节完成"
-                            color: "#FFF4D1"
-                            font.pixelSize: 12
-                            font.bold: true
-                        }
+                // W09（WP-H S1-A2）：覆盖层**移出 layout**（reparen 至非 layout 祖先
+                // 市场面板 Rectangle），保留 anchors/几何/z/可见性；禁用 Layout.alignment 替代。
+                Rectangle {
+                    visible: !root.marketUnlocked
+                    anchors.centerIn: parent
+                    width: waitLabel.implicitWidth + 34
+                    height: 28
+                    radius: 5
+                    color: "#BF9B6D5C"
+                    z: 10
+
+                    Text {
+                        id: waitLabel
+                        anchors.centerIn: parent
+                        text: "⌛ 等待子环节完成"
+                        color: "#FFF4D1"
+                        font.pixelSize: 12
+                        font.bold: true
                     }
                 }
             }

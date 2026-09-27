@@ -131,7 +131,7 @@ Rectangle {
                     }
                 }
                 Repeater {
-                    model: (sessionStore.resolutionView.preview.governor_returns || [])
+                    model: ((sessionStore.resolutionView.preview || {}).governor_returns || [])
                     delegate: ColumnLayout {
                         readonly property var gt: modelData || {}
                         Layout.fillWidth: true
@@ -158,7 +158,7 @@ Rectangle {
                 Text {
                     id: governorReturnEmpty
                     objectName: "resolutionGovernorReturnEmpty"
-                    visible: (sessionStore.resolutionView.preview.governor_returns || []).length === 0
+                    visible: ((sessionStore.resolutionView.preview || {}).governor_returns || []).length === 0
                     text: "本年度结束时无总督返回"
                     color: "#766652"
                     font.pixelSize: 12
@@ -193,7 +193,7 @@ Rectangle {
                     }
                 }
                 Repeater {
-                    model: (sessionStore.resolutionView.preview.contract_expiries || [])
+                    model: ((sessionStore.resolutionView.preview || {}).contract_expiries || [])
                     delegate: Text {
                         readonly property var ce: modelData || {}
                         text: (ce.name || ("#" + ce.contract_id)) + " → 将于本年度结束时到期"
@@ -207,7 +207,7 @@ Rectangle {
                 Text {
                     id: contractExpiryEmpty
                     objectName: "resolutionContractExpiryEmpty"
-                    visible: (sessionStore.resolutionView.preview.contract_expiries || []).length === 0
+                    visible: ((sessionStore.resolutionView.preview || {}).contract_expiries || []).length === 0
                     text: "本年度结束时无合同到期"
                     color: "#766652"
                     font.pixelSize: 12
@@ -242,7 +242,7 @@ Rectangle {
                     }
                 }
                 Repeater {
-                    model: (sessionStore.resolutionView.preview.truce_expiries || [])
+                    model: ((sessionStore.resolutionView.preview || {}).truce_expiries || [])
                     delegate: Text {
                         readonly property var tw: modelData || {}
                         text: (tw.war_name || "") + " → 和约将在本年度结束时到期"
@@ -256,7 +256,7 @@ Rectangle {
                 Text {
                     id: truceExpiryEmpty
                     objectName: "resolutionTruceExpiryEmpty"
-                    visible: (sessionStore.resolutionView.preview.truce_expiries || []).length === 0
+                    visible: ((sessionStore.resolutionView.preview || {}).truce_expiries || []).length === 0
                     text: "本年度结束时无和约到期"
                     color: "#C45151"
                     font.pixelSize: 12
@@ -292,7 +292,7 @@ Rectangle {
                     }
                 }
                 Repeater {
-                    model: (sessionStore.resolutionView.preview.faction_influence || [])
+                    model: ((sessionStore.resolutionView.preview || {}).faction_influence || [])
                     delegate: Text {
                         readonly property var fi: modelData || {}
                         readonly property int delta: parseInt(fi.influence_delta) || 0
@@ -316,7 +316,7 @@ Rectangle {
                 Text {
                     id: annualDecayEmpty
                     objectName: "resolutionAnnualDecayEmpty"
-                    visible: (sessionStore.resolutionView.preview.faction_influence || []).length === 0
+                    visible: ((sessionStore.resolutionView.preview || {}).faction_influence || []).length === 0
                     text: "本年度结束时无派系影响力衰减"
                     color: "#766652"
                     font.pixelSize: 12

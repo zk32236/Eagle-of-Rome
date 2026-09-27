@@ -147,7 +147,7 @@ Rectangle {
                         Text {
                             text: modelData.effect === "death" ? "💀" : "⚡"
                             font.pixelSize: 13
-                            anchors.verticalCenter: parent.verticalCenter
+                            Layout.alignment: Qt.AlignVCenter
                         }
                         Text {
                             text: (modelData.name || "") + (modelData.summary ? "  " + modelData.summary : "")
@@ -155,7 +155,7 @@ Rectangle {
                             font.pixelSize: theme.bodySize
                             elide: Text.ElideRight
                             Layout.fillWidth: true
-                            anchors.verticalCenter: parent.verticalCenter
+                            Layout.alignment: Qt.AlignVCenter
                         }
                         Text {
                             text: modelData.summary || ""
@@ -164,7 +164,7 @@ Rectangle {
                             visible: !!modelData.summary && _deathList.length === 0
                             elide: Text.ElideRight
                             Layout.maximumWidth: 360
-                            anchors.verticalCenter: parent.verticalCenter
+                            Layout.alignment: Qt.AlignVCenter
                         }
                     }
 
@@ -187,20 +187,20 @@ Rectangle {
                                 Text {
                                     text: "💀"
                                     font.pixelSize: 11
-                                    anchors.verticalCenter: parent.verticalCenter
+                                    Layout.alignment: Qt.AlignVCenter
                                 }
                                 Text {
                                     text: modelData.figure_name || ""
                                     color: factionStyle.factionColor(modelData.faction_id || modelData.faction_name)
                                     font.pixelSize: theme.bodySize
                                     font.bold: true
-                                    anchors.verticalCenter: parent.verticalCenter
+                                    Layout.alignment: Qt.AlignVCenter
                                 }
                                 Text {
                                     text: "（" + (modelData.faction_name || "无派系") + "）"
                                     color: "#766652"
                                     font.pixelSize: theme.smallSize
-                                    anchors.verticalCenter: parent.verticalCenter
+                                    Layout.alignment: Qt.AlignVCenter
                                 }
                             }
                         }

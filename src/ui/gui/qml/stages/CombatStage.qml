@@ -445,7 +445,9 @@ Rectangle {
                         Text {
                             id: truceRemainLabel
                             anchors.centerIn: parent
-                            text: "⏳ 和约剩余 " + warData.truce_remaining_turns + " 回合"
+                            text: (!isEmptySlot && isTruceLocked && warData && warData.truce_remaining_turns !== null && warData.truce_remaining_turns !== undefined)
+                                ? ("⏳ 和约剩余 " + warData.truce_remaining_turns + " 回合")
+                                : ""
                             color: "#3A3A55"
                             font.pixelSize: theme.smallSize
                             font.bold: true
@@ -550,14 +552,14 @@ Rectangle {
             Text {
                 id: warCardFleetReadiness
                 objectName: "warCardFleetReadiness"
-                visible: !isEmptySlot && !isResolved
-                    && (warData && warData.naval_required)
+                visible: !!(!isEmptySlot && !isResolved
+                    && (warData && warData.naval_required))
                 text: (warData && warData.naval_ready)
                     ? "⚓ 舰队就绪: " + ((warData && warData.assigned_fleet_count) || 0) + " 艘"
                     : "⚓ 舰队未就绪"
                 color: (warData && warData.naval_ready) ? "#2E9D4D" : "#8A6F52"
                 font.pixelSize: theme.smallSize
-                font.bold: (warData && warData.naval_ready)
+                font.bold: !!(warData && warData.naval_ready)
                 Layout.leftMargin: 8
                 Layout.rightMargin: 8
                 Layout.topMargin: 2
@@ -570,9 +572,9 @@ Rectangle {
             Text {
                 id: warCardFleetStrength
                 objectName: "warCardFleetStrength"
-                visible: !isEmptySlot && !isResolved
+                visible: !!(!isEmptySlot && !isResolved
                     && (warData && warData.naval_required)
-                    && (warData && warData.assigned_fleet_count > 0)
+                    && (warData && warData.assigned_fleet_count > 0))
                 text: {
                     var nom = (warData && warData.fleet_nominal_strength) || 0
                     var base = (warData && warData.fleet_quality_adjusted_base) || 0
@@ -811,9 +813,11 @@ Rectangle {
         }
         Text {
             visible: navalExecuted
-            text: naval.sea_control_acquired === true
-                ? "🌊 海权: 已获取制海权" : "🌊 海权: 未获取制海权"
-            color: naval.sea_control_acquired === true ? "#1E6FA8" : "#766652"
+            text: naval !== null
+                ? (naval.sea_control_acquired === true
+                    ? "🌊 海权: 已获取制海权" : "🌊 海权: 未获取制海权")
+                : ""
+            color: (naval !== null && naval.sea_control_acquired === true) ? "#1E6FA8" : "#766652"
             font.pixelSize: compact ? theme.smallSize : theme.bodySize
             Layout.fillWidth: true
         }

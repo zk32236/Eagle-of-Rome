@@ -130,7 +130,7 @@ Rectangle {
                     // 公地收益
                     RowLayout {
                         Layout.fillWidth: true
-                        visible: _resultData.public_land_income && _resultData.public_land_income.amount !== undefined
+                        visible: !!(_resultData.public_land_income && _resultData.public_land_income.amount !== undefined)
                         Text { text: "  公地收益"; color: "#2E251B"; font.pixelSize: 12; Layout.fillWidth: true }
                         Text {
                             text: "+" + (_resultData.public_land_income ? _resultData.public_land_income.amount : 0) + " Talents"
@@ -200,7 +200,7 @@ Rectangle {
                     // 国家运营费
                     RowLayout {
                         Layout.fillWidth: true
-                        visible: _resultData.national_opex && _resultData.national_opex.amount !== undefined && _resultData.national_opex.amount > 0
+                        visible: !!(_resultData.national_opex && _resultData.national_opex.amount !== undefined && _resultData.national_opex.amount > 0)
                         Text { text: "  国家运营费"; color: "#2E251B"; font.pixelSize: 12; Layout.fillWidth: true }
                         Text {
                             text: "-" + (_resultData.national_opex ? _resultData.national_opex.amount : 0) + " Talents"
@@ -211,7 +211,7 @@ Rectangle {
                     // 军团维护费（WP-E-R5：行值 = 实扣 charged；短款时追加缺口提示）
                     RowLayout {
                         Layout.fillWidth: true
-                        visible: _resultData.maintenance && _resultData.maintenance.military && _resultData.maintenance.military.charged
+                        visible: !!(_resultData.maintenance && _resultData.maintenance.military && _resultData.maintenance.military.charged)
                         Text { text: "  军团维护费"; color: "#2E251B"; font.pixelSize: 12; Layout.fillWidth: true }
                         Text {
                             text: "-" + (_resultData.maintenance && _resultData.maintenance.military ? _resultData.maintenance.military.charged : 0) + " Talents"
@@ -223,10 +223,10 @@ Rectangle {
                     // 舰队维护费（R3-G-02 §2.3：显示实扣 charged——短款后不得虚报原应付 total）
                     RowLayout {
                         Layout.fillWidth: true
-                        visible: _resultData.maintenance && _resultData.maintenance.naval &&
+                        visible: !!(_resultData.maintenance && _resultData.maintenance.naval &&
                                  ((_resultData.maintenance.naval.charged || 0) > 0 ||
                                   (_resultData.maintenance.naval.unpaid || 0) > 0 ||
-                                  (_resultData.maintenance.naval.disbanded || 0) > 0)
+                                  (_resultData.maintenance.naval.disbanded || 0) > 0))
                         Text { text: "  舰队维护费"; color: "#2E251B"; font.pixelSize: 12; Layout.fillWidth: true }
                         Text {
                             text: {
