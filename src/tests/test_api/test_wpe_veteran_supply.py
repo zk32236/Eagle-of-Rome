@@ -206,7 +206,10 @@ class TestVeteranSupplyConfig:
 
     def test_tvs5_count1_clamp(self):
         """count=1 → k ≤ 1（clamp 到 count）。"""
-        state = _make_state({"new_figures_count": 1})
+        state = _make_state({
+            "new_figures_count": 1,
+            "veteran_supply": {"min_veteran_nobiles": 1, "max_veteran_nobiles": 2},
+        })
         figs = generate_market_figures(state)
         assert len(figs) == 1
         assert len(_veterans(figs)) == 1  # k = randint(1, min(2,1)=1) = 1
@@ -288,9 +291,10 @@ class TestVeteranSupplyEligibilityMatrix:
         return fgs._create_veteran_nobile(state, 1, plan2)
 
     def _make_ex_praetor(self, state, plan):
-        # ex_consul_probability=0 → slot 1 必掷 ex-praetor
+        # WP-M T4 重基线：默认 min_ex_consul_count=2（槽 0/1 强制 ex-consul）→ 非强制槽从 slot 2 起；
+        # ex_consul_probability=0 → slot 2 必掷 ex-praetor
         plan2 = dict(plan, ex_consul_probability=0.0)
-        return fgs._create_veteran_nobile(state, 1, plan2)
+        return fgs._create_veteran_nobile(state, 2, plan2)
 
     def test_tvs7_anchor_matrix(self):
         """censor-anchor：consul 冷却 ✗ / censor ✓ / praetor·quaestor·tribune 高阶禁选 ✗。"""

@@ -276,18 +276,14 @@ class SenateCommand(Command):
         self.state.clear_senate_pending()
 
         if self._auto_mode:
-            # 获取执政官人物（AU-R2-2c，C4 收敛）：全局 eligible Consul 唯一查找路径 =
-            # PoliticalSystem._find_any_eligible_consul（单一谓词 _is_eligible_consul）；
-            # 原无资格校验的 leader_ids[0] fallback 移除（D-6 fail-closed：无 eligible consul
-            # → 直接跳过提案，对齐 D-R2-05；FACT-6 行为等价）。
-            from src.core.systems.political_system import PoliticalSystem
-            consul_figure = PoliticalSystem(self.state)._find_any_eligible_consul()
-            if not consul_figure:
+            # 获取主持人（WP-M D6：CLI 统一经单一权威 GameState.get_presiding_officer；无主持人 → 跳过提案）。
+            host_figure = self.state.get_presiding_officer()
+            if not host_figure:
                 print("⚠️ 没有执政官，无法进行提案", flush=True)
                 self._handle_next([])
                 return
 
-            consul_player = self.state.get_player_by_faction(consul_figure.faction_id)
+            consul_player = self.state.get_player_by_faction(host_figure.faction_id)
             if not consul_player:
                 print("⚠️ 执政官无对应玩家", flush=True)
                 self._handle_next([])
@@ -307,17 +303,15 @@ class SenateCommand(Command):
             print(f" UI-05-1 回合 {abs(self.state.turn.year)} BC - 元老院阶段 [5/7] --- 提案环节")
             print("############################################################\n")
             print()
-            # 获取执政官人物（AU-R2-2c，C4 收敛）：与 auto 模式同源——
-            # PoliticalSystem._find_any_eligible_consul（单一谓词 _is_eligible_consul）
-            from src.core.systems.political_system import PoliticalSystem
-            consul_figure = PoliticalSystem(self.state)._find_any_eligible_consul()
+            # 获取主持人（WP-M D6：与 auto 模式同源——单一权威 GameState.get_presiding_officer）。
+            host_figure = self.state.get_presiding_officer()
 
-            if not consul_figure:
+            if not host_figure:
                 print("⚠️ 没有执政官，无法进行提案", flush=True)
                 self._handle_next([])
                 return
 
-            consul_player = self.state.get_player_by_faction(consul_figure.faction_id)
+            consul_player = self.state.get_player_by_faction(host_figure.faction_id)
             if not consul_player:
                 print("⚠️ 执政官无对应玩家", flush=True)
                 self._handle_next([])
@@ -332,7 +326,7 @@ class SenateCommand(Command):
                 self._print_proposal_options()
 
                 while True:
-                    consul_faction = self.state.get_faction(consul_figure.faction_id)
+                    consul_faction = self.state.get_faction(host_figure.faction_id)
                     print(f"\n> 请输入操作({consul_faction.id}_CONSUL): ", end="", flush=True)
                     cmd_input = input().strip()
                     self.state.log_event(f"[INPUT] {cmd_input}", level=logging.INFO)

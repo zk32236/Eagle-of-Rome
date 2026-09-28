@@ -23,13 +23,13 @@ if TYPE_CHECKING:
 # mechanism stays active even when the config block is absent.
 _DEFAULT_VETERAN_SUPPLY: Dict = {
     "enabled": True,
-    "min_veteran_nobiles": 1,
-    "max_veteran_nobiles": 2,
-    "min_ex_consul_count": 1,
+    "min_veteran_nobiles": 2,
+    "max_veteran_nobiles": 3,
+    "min_ex_consul_count": 2,
     "censor_anchor_years_ago": 1,
     "history_years_ago_min": 2,
     "history_years_ago_max": 8,
-    "ex_consul_probability": 0.5,
+    "ex_consul_probability": 0.7,
     "age_min": 45,
     "age_max": 58,
 }

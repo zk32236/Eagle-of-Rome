@@ -3014,14 +3014,37 @@ class GameState:
     # ========== 主持人 ==========
 
     def get_presiding_officer(self) -> Optional['Figure']:
-        """获取元老院主持人（官职等级最高且未出征者，同等级则选影响力高者）"""
+        """获取元老院主持人（WP-M D2 单一权威）。
+
+        主持池 = 在职 ∧ 未死 ∧ 未出征（not is_absent）的元老院官员（HOST_OFFICE_SET）；
+        权力顺序（OFFICE_RANK）最高者为主持人；四级 tie-break 保证唯一、可复现：
+        rank↓ → influence↓ → (martial+intelligence+charisma+zeal)↓ → id↑。
+        空池 → None（合法，触发结构性跳过）。排除 ex-*/office=None/proconsul/propraetor/dictator。
+        可用性谓词唯一权威 = Figure.is_absent（显式排除 legacy Figure.is_present）。
+        """
+        host_office_set = {"consul", "censor", "praetor", "quaestor", "tribune"}
         candidates = [
             m for m in self._members.values()
-            if not m.is_dead and m.is_present and not m.is_absent  # 新增 is_absent 过滤
+            if (not m.is_dead) and (not m.is_absent) and (m.office in host_office_set)
         ]
         if not candidates:
-            return None
-        return max(candidates, key=lambda m: (m.rank, m.influence))
+            presiding = None
+        else:
+            presiding = max(
+                candidates,
+                key=lambda m: (m.rank, m.influence,
+                               m.martial + m.intelligence + m.charisma + m.zeal,
+                               -m.id),
+            )
+        self.log_event(
+            "元老院主持人解析",
+            level=logging.DEBUG,
+            extra={"type": "presiding_officer_resolved",
+                   "office": (presiding.office if presiding else None),
+                   "actor_id": (presiding.id if presiding else None),
+                   "candidate_count": len(candidates)},
+        )
+        return presiding
 
     # ========== 日志 ==========
 

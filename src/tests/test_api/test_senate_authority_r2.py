@@ -140,9 +140,10 @@ class TestR2Resolver(_SenateAuthorityR2Base):
         self.assertEqual(c, {"mode": "AI", "actor": 1, "authority_reason": "ai_eligible_consul"})
 
     def test_proposal_none_no_eligible_consul(self):
+        # WP-M T1 重基线（D3）：consul 死但 host（本 fixture tribune id3）在城 → 转 ai_presiding_officer（actor=3）
         self.consul.is_dead = True
         c = self._politics().resolve_proposal_control("player1")
-        self.assertEqual(c, {"mode": "NONE", "actor": None, "authority_reason": "no_eligible_consul"})
+        self.assertEqual(c, {"mode": "AI", "actor": 3, "authority_reason": "ai_presiding_officer"})
 
     def test_proposal_missing_viewer(self):
         c = self._politics().resolve_proposal_control("missing_player")
@@ -155,9 +156,10 @@ class TestR2Resolver(_SenateAuthorityR2Base):
         self.assertEqual(c, {"mode": "NONE", "actor": None, "authority_reason": "missing_faction"})
 
     def test_proposal_consul_absent_not_eligible(self):
+        # WP-M T2 重基线（D3）：consul absent 但 host（tribune id3）在城 → ai_presiding_officer（actor=3）
         self.consul.is_absent = True
         c = self._politics().resolve_proposal_control("player1")
-        self.assertEqual(c, {"mode": "NONE", "actor": None, "authority_reason": "no_eligible_consul"})
+        self.assertEqual(c, {"mode": "AI", "actor": 3, "authority_reason": "ai_presiding_officer"})
 
     # ---- veto ----
     def test_veto_human(self):
@@ -214,22 +216,22 @@ class TestR2ProposalAuthority(_SenateAuthorityR2Base):
         self.assertIs(data["can_trigger_ai_proposer"], True)
 
     def test_consul_dead_fail_closed(self):
-        """§11：Consul 死 → NONE → 双 False（D-3：NONE 不再暴露 AI 入口）。"""
+        """WP-M T5 重基线（D3）：Consul 死 → 回退主持人（tribune）存在 → mode AI（非 NONE）；手动权仍锁。"""
         self.consul.is_dead = True
         data = self._view("player1")
-        self.assertEqual(data["proposal_control_mode"], "NONE")
+        self.assertEqual(data["proposal_control_mode"], "AI")
         self.assertIs(data["can_create_proposal"], False)
         self.assertIs(data["can_select_proposal"], False)
-        self.assertIs(data["can_trigger_ai_proposer"], False)
+        self.assertIs(data["can_trigger_ai_proposer"], True)
 
     def test_consul_absent_fail_closed(self):
-        """§11：Consul 缺席 → NONE（D-3 收严：can_trigger_ai 仅 mode==AI）。"""
+        """WP-M T5 重基线（D3）：Consul 缺席 → 回退主持人（tribune）存在 → mode AI；手动权仍锁。"""
         self.consul.is_absent = True
         data = self._view("player1")
-        self.assertEqual(data["proposal_control_mode"], "NONE")
+        self.assertEqual(data["proposal_control_mode"], "AI")
         self.assertIs(data["can_create_proposal"], False)
         self.assertIs(data["can_select_proposal"], False)
-        self.assertIs(data["can_trigger_ai_proposer"], False)
+        self.assertIs(data["can_trigger_ai_proposer"], True)
 
     def test_consul_absent_but_ai_consul_elsewhere_triggers_ai(self):
         """§11：本派系 consul 缺席但全局另有 eligible consul → AI 路由（actor=AI consul）。"""

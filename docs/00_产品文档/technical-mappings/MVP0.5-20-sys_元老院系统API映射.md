@@ -302,9 +302,40 @@ can_trigger_ai_proposer / can_auto_veto  严格 mode=="AI"（D-3：NONE → 双 
 
 **③ 消费者收敛：** AI veto（`apply_auto_tribune_vetoes`）已消费 `_passed_proposals_for_veto` 天然 passed-only（零改）；human/API veto 经新 guard；DTO/Store/QML 经 `veto_candidate_ids` 单一 producer —— 全消费者同源，无第二投票/否决算法。
 
+### 5.10 WP-M 主持单一权威收口（2026-09-28，v2.2）
+
+> 冻结语义来源：WP-M SA-Design v1.5（FC-01…10 / D1–D8 / M-AC-01…07）+ Owner ODR-M-01/03 Q1–Q6。**GAME_RULE_CHANGE = YES**（新增权威产品语义）。
+
+**① 元老院主持人单一权威（D2 / FC-01）：**
+
+```text
+GameState.get_presiding_officer() -> Optional[Figure]
+  主持池 = {m ∈ state._members : not is_dead ∧ not is_absent ∧ office ∈ HOST_OFFICE_SET}
+  HOST_OFFICE_SET = {consul, censor, praetor, quaestor, tribune}
+  tie-break（四级，保证唯一）: rank↓ → influence↓ → (martial+intelligence+charisma+zeal)↓ → id↑
+  空池 → None（合法，触发 D5 结构性跳过）
+```
+
+- 全局消费者**只读该符号、禁独立重算**（FC-06/D2.8）：`build_initial_info`/`get_senate_view` DTO `presiding_officer`、`resolve_proposal_control`、`submit_proposal_package`、`auto_submit_proposals`、CLI step0/step1、Store。
+- 可用性谓词唯一权威 = `Figure.is_absent`（与 `_is_eligible_consul` 同源）；legacy `Figure.is_present` 不参与。
+- 排除 `ex-*`/`office=None`/`proconsul`/`propraetor`/`dictator`。DEBUG log `type=presiding_officer_resolved`。
+
+**② 提案授权 resolver 扩展（D3）：** `PoliticalSystem.resolve_proposal_control(viewer)` 优先级：
+1 `missing_viewer` / 2 `missing_faction` / 3 faction 内 eligible consul → `HUMAN(human_eligible_consul)` / **4 host 存在且同派系 → `HUMAN(human_presiding_officer, actor=host.id)`** / 5 全局 eligible consul → `AI(ai_eligible_consul)` / **6 host 存在 → `AI(ai_presiding_officer, actor=host.id)`** / 7 否则 → **`NONE(no_eligible_host)`**（替代旧 `no_eligible_consul`）。
+`authority_reason` 固定集合扩展为：`{missing_viewer, missing_faction, human_eligible_consul, human_presiding_officer, ai_eligible_consul, ai_presiding_officer, no_eligible_host}`。DEBUG log `type=proposal_control_host_fallback`。
+
+**③ 提交门 + 主持人职能边界（D4）：** `PoliticalSystem.submit_proposal_package` 授权块：consul 缺失时回退 host（须同派系），否则 `SUBMIT_NOT_AUTHORIZED(details.reason="no_eligible_host")`；host 职能仅限提案主持（create/select/finish-empty/submit/AI proposer），**不含**军事指挥/`AUTHORITY_CONSUL_DIRECT` 战争直接决策/领袖位/否决/总督执行。**回退主持人提交任一 checked 且路由为 `AUTHORITY_CONSUL_DIRECT` 的 war_draft → 整包拒绝 `SUBMIT_NOT_AUTHORIZED(details.reason="host_no_direct_authority")`**（复用唯一 `classify_war_authority`，禁第二套路由）。既有 error code 集合不新增。DEBUG log `type=submit_host_direct_denied`。
+
+**④ 无主持人结构性跳过（D5 / FC-09）：** `get_senate_view` 新增布尔 DTO `senate_no_host`（=host is None）；为 True 时 `proposal_control.mode=="NONE"`、`authority_reason=="no_eligible_host"`、`can_create=can_select=can_finish_empty=False`、`can_trigger_ai_proposer=False`、`proposal_selection_disabled_reason="元老院无在职主持官员"`、`can_advance=actionable`。`finalize_senate_if_ready` 空选择守卫**唯一豁免** = `get_presiding_officer() is None`；`advance_senate_phase` 无 host 且无 phase_result 时先触发 finalize 再执行边界。DEBUG log `type=senate_no_host_skip`。
+
+**⑤ AI proposer / CLI host 化（D4.5 / D6）：** `auto_submit_proposals` 主持人查找由 `_find_any_eligible_consul` 改为 `get_presiding_officer`；无主持人 → `api_response(False, "没有可主持的官员，无法自动提交提案")`；host≠consul 时构造阶段跳过会路由到 `AUTHORITY_CONSUL_DIRECT` 的草案。CLI `phase_senate._handle_step_1` 主持/提交者查找统一经 `get_presiding_officer()`。
+
+**⑥ DTO 新增字段：** `get_senate_view.data["senate_no_host"]`（bool）；`proposal_control_*`/`authority_reason.proposal` 值域随 D3 扩展。**零新增持久化**（FC-10：主持/授权为派生事实）。
+
 ## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v2.2 | 2026-09-28 | DA Sub-Agent (WP-M M-S1) | 新增「§5.10 WP-M 主持单一权威收口」——`GameState.get_presiding_officer` D2 冻结定义（HOST_OFFICE_SET + 四级 tie-break）；`resolve_proposal_control` 新增 host 回退层（`human/ai_presiding_officer`，末层 `no_eligible_host`）；`submit_proposal_package` 授权块 host 回退 + direct 整包拒绝 `host_no_direct_authority`；`get_senate_view` 新增 `senate_no_host`；`finalize_senate_if_ready` 空选择守卫唯一豁免 host=None；`auto_submit_proposals`/CLI host 化。GAME_RULE_CHANGE=YES（ODR-M-01/03） |
 | v2.1 | 2026-09-26 | DA Sub-Agent (WP-G-R9) | R9 同步：新增「§5.7.3 WP-G-R9 同步注记」——`get_senate_view` 顶层 direct 投影作用域收敛（`_current_canonical_direct_scope`；canonical 仅由有效 PackageRecord 证明 = 身份匹配 + `submitted_at.turn` 完整/整数/匹配当前回合；含 opaque custom session，不解析 session ID 文本）；无包/坏包**统一排除、不 fallback**（ADDENDUM 01 支持边界，不声称已证实真实 legacy 回归）；原 helper 与 PA 语义保留 / scope guard 仅顶层调用处 / 纯读取、无新 schema·持久字段·公共 API。GAME_RULE_CHANGE=NO |
 | v2.0 | 2026-09-20 | DA Sub-Agent (WP-G-R8) | R8 同步：新增「§5.7.2 WP-G-R8 同步注记」——生命周期文案时点（配置→决定）/ 执行边界 / 诊断零 raw / 三面板几何不变量（`Hrow=min(460,max(360,U.h−28))`）/ Panel1 主 body scroll ownership / 结果区 bounded 132 / Dialog L-D envelope；`senateErrorMachineJson()` 保留空实现（Test Amendment Route）。GAME_RULE_CHANGE=NO（纯展示层） |
 | v1.9 | 2026-09-20 | DA Sub-Agent (WP-G-R7) | Direct Action 提交后连续可见性 + 校验失败恢复 UX 同步（R7-A/R7-B）：新增「§5.7.1 WP-G-R7 同步注记」——冻结 direct 决策按 `item_ref` 会期连续只读可见（进 Results/PA 同身份 / 不进 Vote-Veto / 边界前零军事 mutation / awaiting→executed 仅 receipt）；校验失败 = bounded dialog + 精确卡/N/Commander 高亮 + 草稿保留 + 零发布 + 就地重提。GAME_RULE_CHANGE=NO（纯展示层） |

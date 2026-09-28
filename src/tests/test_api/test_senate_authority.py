@@ -104,11 +104,10 @@ class TestConsulAuthority(TestSenateAuthorityBase):
         self.assertIs(data["can_trigger_ai_proposer"], True)
 
     def test_absent_consul_boundary(self):
-        """AU-1/R2-D-3：执政官 absent → 不 eligible → 该派系手动权消失。
+        """WP-M D3 重基线（原 AU-1/R2-D-3）：执政官 absent → 本派系手动权消失；
 
-        R2 收严（D-3，SA §1.4 冻结）：can_trigger_ai_proposer 严格 mode=="AI"——本场景
-        全局无 eligible consul（唯一 consul 已 absent）→ mode NONE → AI 入口同样关闭
-        （fail-closed D-R2-05；auto_submit_proposals 本就拒绝无执政官）。
+        回退主持人（权力顺序下一位在职在城官员，本例 = 另一派系 tribune）存在 → mode AI
+        → can_trigger_ai_proposer 开启（M-AC-03：consul 空缺不再阻断，由 host 回退主持）。
         """
         self.consul.is_absent = True
         view = senate_api.get_senate_view(self.state, "player1")
@@ -116,8 +115,9 @@ class TestConsulAuthority(TestSenateAuthorityBase):
         self.assertIs(data["viewer_has_consul"], False)
         self.assertIs(data["can_select_proposal"], False)
         self.assertIs(data["can_create_proposal"], False)
-        self.assertIs(data["can_trigger_ai_proposer"], False)
-        self.assertEqual(data["proposal_control_mode"], "NONE")
+        self.assertIs(data["can_trigger_ai_proposer"], True)
+        self.assertEqual(data["proposal_control_mode"], "AI")
+        self.assertEqual(data["authority_reason"]["proposal"], "ai_presiding_officer")
 
     def test_absent_consul_with_ai_consul_elsewhere_routes_ai(self):
         """R2-D-3 对照：本派系 consul absent 但全局另有 eligible consul → mode AI → AI 入口开启。"""

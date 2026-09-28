@@ -230,6 +230,7 @@ load_from_dict(data):
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
 | v1.9 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §9：candidate supply 来源补注（E-G7-09 veteran supply，资格契约 REVIEWED-NO-CHANGE）+ Population 转换公示时序（门控 total>0，E-ODR-04） |
+| v1.10 | 2026-09-28 | DA-Exec (WP-M M-S1) | 新增 §10：censor 供给政策 B（D7）——`forum_rules.veteran_supply` 值 `1/2/1/0.5` → `2/3/2/0.7`（供给质量手段；资格契约不变） |
 | v1.8 | 2026-08-09 | DA-Exec (AC-12 M2-BUG3 R2) | §7 实现落地：`set_vote_completed`/`get_vote_completed` API 从设计目标→磁盘实现（game_state.py）；`resolve_population_slice` 增加 once guard（get_phase_result 防重复结算，保全两阶段模式）；`doResolveElection` 调用链切换到 `resolve_population_slice`（FC-09 满足）；turn_order 保持全序（含 AI）供 drain 遍历 |
 | v1.7 | 2026-08-02 | DA-Exec (WP-02b v3.0) | 新增 §7.3 GUI selection map → Session 固定五条 → handoff/resolve_population_slice 单一调用链；明确无显式弃权控件、clone-and-reassign、submitting 与双区 AsNeeded scrollbar |
 | v1.6 | 2026-08-01 | DA-Exec (WP-02b v2.1) | v2.1 返工：移除 choice 枚举，vote 记录改为 3-tuple；ABSTAIN=figure_id=0 (FC-03)；修复 office="" bug（通过 record_population_vote 写入）；移除 inline resolve_election（FC-09）；新增 FC-01 batch 完整性、FC-04 重复 office 拒绝；更新 §4, §7 |
@@ -266,3 +267,22 @@ load_from_dict(data):
   War lifecycle 缺陷 → WP-G 移交）。
 - phase-result 生命周期：`begin_population_phase` 幂等（`resolve_population_slice`
   once guard），转换结果跨 refresh 稳定直读存储结果。
+
+## 10. WP-M 更新（2026-09-28，DA-Exec WP-M / M-S1）
+
+### 10.1 censor 供给政策 B（D7）—— 仅配置，资格不变
+
+- **变更点：** `data/config/game_config.json` `forum_rules.veteran_supply` 键值
+  `min_veteran_nobiles` 1→**2**、`max_veteran_nobiles` 2→**3**、`min_ex_consul_count` 1→**2**、
+  `ex_consul_probability` 0.5→**0.7**；同步 `figure_generation_system._DEFAULT_VETERAN_SUPPLY`
+  代码级默认（防止 config 缺键回落旧默认造成分叉）。读取器 `_read_veteran_supply_config` 不变。
+- **性质：** 供给**质量手段**（降低 censor **可避免**空缺频率），**非**强制填充；
+  **不承诺**每轮 censor 候选非空（未招募/死亡/缺席/全员弃权仍合法空缺，见 `specifications/MVP0.2-01 §2.8`）。
+- **资格契约契约不变：** `can_hold_office` 的 censor「须曾任 consul」规则零改动；
+  年龄/冷却/cursus/不造假人/不自动入派系 均不变。
+- **数值性质：** `2/3/2/0.7` = `delegated design/balance tuning baseline`（非不可变产品政策，验证后可调、不改设计语义）。
+
+### 10.2 无候选人/空缺韧性对接（M-AC-01/02/04）
+
+- 空候选集 → `figure_id=0`(ABSTAIN) 全链跳过（继承，无改）；censor 供给增强后仍为合法空缺。
+- 本 WP 不改选举计票/提名顺序/`get_candidates` read-model。

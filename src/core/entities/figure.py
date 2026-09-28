@@ -127,6 +127,25 @@ class Figure:
         "tribune": 1,
     }
 
+    # WP-M D1（2026-09-28）：双排序显式分离。
+    # OFFICE_RANK 保持不变 = 「权力顺序（高→低）」（元老院主持序列用此序）。
+    # OFFICE_PROMOTION_ORDER = 「升级顺序（低→高）」（cursus honorum 阶梯，逐级不可跳级）。
+    # OFFICE_CURSUS_PREREQUISITE 由其派生（行为等价重构，替换 can_hold_office 的 3 条显式前置分支）。
+    OFFICE_PROMOTION_ORDER = {
+        "tribune": 1,
+        "quaestor": 2,
+        "praetor": 3,
+        "consul": 4,
+        "censor": 5,
+    }
+
+    # cursus 前置映射（由升级顺序派生）：i>=3 的官职前置 = 阶梯 i-1 位；入口/分支 {tribune, quaestor} 无前置。
+    OFFICE_CURSUS_PREREQUISITE = {
+        "praetor": "quaestor",
+        "consul": "praetor",
+        "censor": "consul",
+    }
+
     OFFICE_INFLUENCE_BONUS = {
         "dictator": 60,
         "censor": 50,
@@ -383,19 +402,12 @@ class Figure:
                 if years_ago < cooldown:
                     return False, f"Cooldown: {years_ago}/{cooldown} years"
 
-        # 前置职务检查
-        if office_type == "consul":
-            has_praetor = any(h.office_type == "praetor" for h in self.office_history)
-            if not has_praetor:
-                return False, "Requires prior Praetor service"
-        elif office_type == "praetor":
-            has_quaestor = any(h.office_type == "quaestor" for h in self.office_history)
-            if not has_quaestor:
-                return False, "Requires prior Quaestor service"
-        elif office_type == "censor":
-            has_consul = any(h.office_type == "consul" for h in self.office_history)
-            if not has_consul:
-                return False, "Requires prior Consul service"
+        # 前置职务检查（WP-M D1.3：由 OFFICE_CURSUS_PREREQUISITE 派生，行为等价重构）
+        # praetor←quaestor / consul←praetor / censor←consul；tribune/quaestor 无前置（tribune 仅阶层门控）。
+        prereq = self.__class__.OFFICE_CURSUS_PREREQUISITE.get(office_type)
+        if prereq is not None:
+            if not any(h.office_type == prereq for h in self.office_history):
+                return False, f"Requires prior {prereq.capitalize()} service"
         elif office_type == "tribune":
             # 保民官仅限骑士和平民
             if self.class_tier not in (ClassTier.EQUES, ClassTier.PLEBEIAN):

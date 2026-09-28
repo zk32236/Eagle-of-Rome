@@ -180,13 +180,17 @@ def test_build_initial_info_presiding_officer_has_faction(state):
 
 
 def test_build_initial_info_presiding_no_faction_degrades(state):
-    """WP-05V V1 DP-7: 主持无派系时降级 faction_id=None / faction_name=""。"""
-    # 添加一个无派系、更高阶的独裁官作为主持（dictator rank 6 > consul rank 4）
-    dictator = Figure(id=9, name="Dictator", faction_id=None, age=50)
-    dictator.office = "dictator"
-    dictator.class_tier = ClassTier.NOBILE
-    dictator.influence = 200
-    state.add_member(dictator)
+    """WP-05V V1 DP-7 / WP-M T3 重基线: 主持无派系时降级 faction_id=None / faction_name=""。
+
+    WP-M D2：dictator 不入主持池（HOST_OFFICE_SET）⇒ 改用权力序次高的无派系 censor；
+    consul 置 absent（不在城）以让 censor 成为唯一最高主持。
+    """
+    state.get_member(1).is_absent = True  # consul 不在城 → 下一顺位无派系 censor 主持
+    censor = Figure(id=9, name="Censor", faction_id=None, age=50)
+    censor.office = "censor"
+    censor.class_tier = ClassTier.NOBILE
+    censor.influence = 200
+    state.add_member(censor)
 
     politics = PoliticalSystem(state)
     info = politics.build_initial_info()

@@ -1034,14 +1034,16 @@ class PoliticalSystem:
         return None
 
     def resolve_proposal_control(self, viewer_player_id: str) -> dict:
-        """单一权威提案控制解析（R2 冻结符号，SA §1.2）。
+        """单一权威提案控制解析（R2 冻结符号，SA §1.2；WP-M D3 扩展）。
 
-        输出 {mode: HUMAN|AI|NONE, actor, authority_reason}：
-        - viewer 缺失 → NONE(missing_viewer)；faction 缺失 → NONE(missing_faction)；
-        - faction 内 eligible Consul → HUMAN(human_eligible_consul)；
-        - 全局 eligible Consul（AI proposer 独立路径）→ AI(ai_eligible_consul)；
-        - 否则 NONE(no_eligible_consul)——fail-closed，不 fallback 猜测。
-        消费方（senate_api.get_senate_view / store / 测试）只读结果，禁独立重算。
+        输出 {mode: HUMAN|AI|NONE, actor, authority_reason}（WP-M D3 优先级）：
+        1 viewer 缺失 → NONE(missing_viewer)；2 faction 缺失 → NONE(missing_faction)；
+        3 faction 内 eligible Consul → HUMAN(human_eligible_consul)         [不变]
+        4 主持人 H 存在且 H.faction==viewer.faction → HUMAN(human_presiding_officer, actor=H.id) [新增]
+        5 全局 eligible Consul → AI(ai_eligible_consul, actor=consul.id)     [不变]
+        6 主持人 H 存在 → AI(ai_presiding_officer, actor=H.id)              [新增]
+        7 否则 → NONE(no_eligible_host)                                     [替代 no_eligible_consul]
+        主持人解析唯一权威 = GameState.get_presiding_officer()；消费方只读结果，禁独立重算。
         """
         viewer = self.state.get_player(viewer_player_id)
         if not viewer:
@@ -1052,10 +1054,28 @@ class PoliticalSystem:
         consul = self._find_consul_for_faction(faction)
         if consul:
             return {"mode": "HUMAN", "actor": consul.id, "authority_reason": "human_eligible_consul"}
+        host = self.state.get_presiding_officer()  # WP-M D2 单一权威
+        if host is not None and host.faction_id == viewer.faction_id:
+            self.state.log_event(
+                f"提案授权主持人回退命中（host={host.id}）",
+                level=logging.DEBUG,
+                extra={"type": "proposal_control_host_fallback", "actor_id": host.id,
+                       "office": host.office, "mode": "HUMAN"},
+            )
+            return {"mode": "HUMAN", "actor": host.id,
+                    "authority_reason": "human_presiding_officer"}
         ai_consul = self._find_any_eligible_consul()
         if ai_consul:
             return {"mode": "AI", "actor": ai_consul.id, "authority_reason": "ai_eligible_consul"}
-        return {"mode": "NONE", "actor": None, "authority_reason": "no_eligible_consul"}
+        if host is not None:
+            self.state.log_event(
+                f"提案授权主持人回退命中（host={host.id}，AI 语义）",
+                level=logging.DEBUG,
+                extra={"type": "proposal_control_host_fallback", "actor_id": host.id,
+                       "office": host.office, "mode": "AI"},
+            )
+            return {"mode": "AI", "actor": host.id, "authority_reason": "ai_presiding_officer"}
+        return {"mode": "NONE", "actor": None, "authority_reason": "no_eligible_host"}
 
     def resolve_veto_control(self, viewer_player_id: str) -> dict:
         """单一权威否决控制解析（R2 冻结符号，SA §1.2）。
@@ -1504,10 +1524,16 @@ class PoliticalSystem:
                                                      message="调用身份无效")], request_id)
         faction = self.state.get_faction(player.faction_id)
         consul = self._find_consul_for_faction(faction) if faction else None
+        host = self.state.get_presiding_officer()  # WP-M D4.1 host 回退（FC-01/D2）
+        via_host = False
         if consul is None:
-            return self._submit_failure([self._error("SUBMIT_NOT_AUTHORIZED",
-                                                     details={"actor_id": actor, "reason": "no_eligible_consul"},
-                                                     message="只有执政官可以提出提案")], request_id)
+            if host is None or host.faction_id != player.faction_id:
+                return self._submit_failure([self._error("SUBMIT_NOT_AUTHORIZED",
+                                                         details={"actor_id": actor, "reason": "no_eligible_host"},
+                                                         message="只有执政官可以提出提案")], request_id)
+            via_host = True
+        # 授权代理官员身份：consul（正常）或回退主持人（via_host）
+        authority_officer = host if via_host else consul
         # R6（SA §B.4，DA-2 B4）：**重放判定先于「已非 Proposal」门**。
         # 同键（session, actor, request_id）同意图重放必须在「会期已完成」门
         # （PACKAGE_ALREADY_SUBMITTED）/ 阶段门（SUBMIT_PHASE_INVALID）**之前**返回既有结
@@ -1689,6 +1715,23 @@ class PoliticalSystem:
                                           message="Reinforcement N 非法"))
                 war_inputs_complete = False
 
+        # WP-M D4.4：回退主持人（via_host）不得提交任何 checked 且路由为 AUTHORITY_CONSUL_DIRECT 的 war_draft
+        # （仅提案主持职能；复用唯一 route producer classify_war_authority，禁第二套路由）。
+        if via_host:
+            direct_war_ids = [d["war_id"] for d in canonical
+                              if d.get("checked") and d.get("authority") == AUTHORITY_CONSUL_DIRECT]
+            if direct_war_ids:
+                self.state.log_event(
+                    f"回退主持人提交执政官直接决策草案被拒: {direct_war_ids}",
+                    level=logging.DEBUG,
+                    extra={"type": "submit_host_direct_denied", "war_ids": list(direct_war_ids)},
+                )
+                return self._submit_failure([self._error(
+                    "SUBMIT_NOT_AUTHORIZED",
+                    details={"reason": "host_no_direct_authority",
+                             "war_ids": list(direct_war_ids)},
+                    message="回退主持人无权提交执政官直接决策（direct）草案")], request_id)
+
         # 非 War 提案纯校验（staging，不落库）
         staged_props: List[dict] = []
         gov_nominations: List[tuple] = []
@@ -1708,7 +1751,7 @@ class PoliticalSystem:
                 continue
             staging["proposer_faction"] = faction.id
             staging["proposer_player"] = actor
-            staging["consul_id"] = consul.id
+            staging["consul_id"] = authority_officer.id
             staged_props.append(staging)
             if ptype == "governor":
                 gov_nominations.append((staging.get("candidate_id"), staging.get("province_id")))
@@ -1829,7 +1872,7 @@ class PoliticalSystem:
                         "source": facts.get("classification"), "mode": "command",
                         "package_id": package_id, "senate_session_id": session_id,
                         "submission_context_id": context_id, "actor_id": actor,
-                        "consul_id": consul.id, "payload": payload,
+                        "consul_id": authority_officer.id, "payload": payload,
                         "submitted_at": {"turn": turn, "senate_session_id": session_id,
                                          "revision": revision},
                     })

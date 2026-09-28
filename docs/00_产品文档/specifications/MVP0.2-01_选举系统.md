@@ -270,6 +270,14 @@ IF eligible_candidates(office) == 0
 不只在 QML 隐藏问题而保留 backend deadlock
 ```
 
+**WP-M 补充（D7，2026-09-28）：censor 供给政策 = 选项 B（仅供给配置，保留资格）。**
+
+在既有供给机制 `forum_rules.veteran_supply` 内调整配置（`min_veteran_nobiles`/`max_veteran_nobiles`/
+`min_ex_consul_count`/`ex_consul_probability` 由 `1/2/1/0.5` 冻结为 `2/3/2/0.7`），以降低 censor
+**可避免**空缺频率。性质 = **供给质量手段**，**非**强制填充；**不承诺**每轮 censor 候选非空
+（未招募/死亡/缺席/全员弃权仍可空）。**资格契约不变**（`can_hold_office` 的 censor
+「须曾任 consul」保持）。详见 `technical-mappings/MVP0.2-01 §10` / `MVP0.5-07 §4.3`。
+
 ---
 
 ## 3. 历史演化
@@ -324,6 +332,7 @@ IF eligible_candidates(office) == 0
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.5 | 2026-09-28 | DA-Exec (WP-M M-S1) | §2.8 补 censor 供给政策 B（D7：`forum_rules.veteran_supply` `1/2/1/0.5` → `2/3/2/0.7`，供给质量手段非强制填充；保留资格） |
 | v1.4 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §8：candidate supply 来源补注（E-G7-09 veteran supply，资格契约 REVIEWED-NO-CHANGE）+ Population 转换公示时序（门控 total>0，E-ODR-04） |
 | v1.3 | 2026-08-17 | DA-Execute | WP-03：新增 §2.8 NO-CANDIDATE/VACANCY CONTRACT（no-candidate/vacancy 语义写回）；§2.2.5 补 GUI resolve 时机注（FUNC-09 一致性） |
 | v1.2 | 2026-07-17 | Audit Sub-Agent | 审计修复：修正 §2.2.4 卸任表格冗余表述 `is_absent=False 且 is_absent 不在战场` → `is_absent=False（即在罗马）` |

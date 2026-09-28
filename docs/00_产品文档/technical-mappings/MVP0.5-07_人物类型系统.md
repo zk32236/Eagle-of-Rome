@@ -83,18 +83,20 @@ CLI: phase_forum.py → forum_api.initialize_forum_turn(:138)
 
 ### 4.3 参数化（`forum_rules.veteran_supply`，代码默认 + 产品配置同步）
 
-| 键 | 默认 | 语义 |
+| 键 | 默认（WP-M D7 冻结值） | 语义 |
 |:---|:---|:---|
 | `enabled` | `true` | 总开关；false → 完全恢复现状（零注入） |
-| `min_veteran_nobiles` | `1` | 每回合保证的资深贵族下限 |
-| `max_veteran_nobiles` | `2` | 每回合资深贵族上限 |
-| `min_ex_consul_count` | `1` | 其中至少 1 名为 ex-consul（censor 供给锚） |
+| `min_veteran_nobiles` | `2` | 每回合保证的资深贵族下限（WP-M: 1→2） |
+| `max_veteran_nobiles` | `3` | 每回合资深贵族上限（WP-M: 2→3） |
+| `min_ex_consul_count` | `2` | 其中至少 2 名为 ex-consul（censor 供给锚）（WP-M: 1→2） |
 | `censor_anchor_years_ago` | `1` | 锚 ex-consul 任期距今回合数（< cooldown 2） |
 | `history_years_ago_min` | `2` | 其余资深贵族最近任期距今下限（≥ cooldown） |
 | `history_years_ago_max` | `8` | 距今上限 |
-| `ex_consul_probability` | `0.5` | 非锚槽位掷为 ex-consul 的概率 |
+| `ex_consul_probability` | `0.7` | 非锚槽位掷为 ex-consul 的概率（WP-M: 0.5→0.7） |
 | `age_min` | `45` | 注入年龄下界（≥ censor 门槛 42） |
 | `age_max` | `58` | 注入年龄上界 |
+
+> **WP-M D7（2026-09-28）：** 上述 `min_veteran_nobiles`/`max_veteran_nobiles`/`min_ex_consul_count`/`ex_consul_probability` 由 WP-M 冻结为 `2/3/2/0.7`（供给**质量手段**，**非**强制填充，不承诺每轮非空；保留 censor 资格规则）。同步来源：`data/config/game_config.json forum_rules.veteran_supply` 与 `figure_generation_system._DEFAULT_VETERAN_SUPPLY` 代码级默认；数值 = `delegated design/balance tuning baseline`（非不可变产品政策）。
 
 参数约束：`0 < min ≤ max ≤ count`（clamp）、`1 ≤ min_ex_consul_count ≤ max`、
 `1 ≤ censor_anchor_years_ago < cooldown`、`history_years_ago_min ≥ cooldown`。
@@ -131,6 +133,7 @@ recruit_figure / resolve_forum）、hero 生成、GUI/QML/Store/DTO、WP-G 生�
 ## 5. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.4 | 2026-09-28 | WP-M M-S1（D7）：`forum_rules.veteran_supply` 冻结值 `1/2/1/0.5` → `2/3/2/0.7`（§4.3 表 + 代码级默认同步；供给质量手段非强制填充） |
 | v1.3 | 2026-08-29 | WP-F 021：Figure 实体字段表补 is_hero/hero_type（§3.5）；figure.py 引用更新 |
 | v1.2 | 2026-08-23 | 新增 §4 市场资深贵族供给（veteran supply，E-G7-09）；§3.2 调用链修正（open_market → initialize_forum_turn → forum_api.generate_figures → figure_generation_system.generate_figures；`_generate_market_figures` 无生产调用方） |
 | v1.1 | 2026-07-25 | 新增人物生成调用链说明 + figure_generation_system 引用 |

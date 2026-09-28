@@ -24,9 +24,11 @@ from src.core.entities.figure import Figure
 from src.core.entities.war import WarStatus
 from src.core.game_state import GameState, SenateFinalizationTransaction
 from src.core.systems.political_system import (
+    AUTHORITY_CONSUL_DIRECT,
     AUTHORITY_SENATE_VOTE,
     PoliticalSystem,
     _tribune_absent_guard,
+    classify_war_authority,
 )
 
 
@@ -700,6 +702,8 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         # _viewer_eligible_consul / _viewer_has_tribune 独立重算已退役（FACT-1）。
         proposal_control = politics.resolve_proposal_control(viewer_player_id)
         veto_control = politics.resolve_veto_control(viewer_player_id)
+        # WP-M D5.2：无主持人（FC-01=0）标志（单一权威 host）
+        senate_no_host = state.get_presiding_officer() is None
         viewer_has_consul = proposal_control["mode"] == "HUMAN"
         viewer_has_tribune = veto_control["mode"] == "HUMAN"
         can_create = actionable and current_step == "proposal" and viewer_has_consul
@@ -723,7 +727,10 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         # R5（SA §2.7 A-I14，DA-4）：显式空结束不再受 mandatory Takeover 门阻塞。
         can_finish_empty = (actionable and current_step == "proposal" and viewer_has_consul)
         proposal_selection_disabled_reason = ""
-        if current_step != "proposal":
+        if senate_no_host:
+            # WP-M D5.2：无主持人 → 结构性跳过；零提案结算
+            proposal_selection_disabled_reason = "元老院无在职主持官员"
+        elif current_step != "proposal":
             proposal_selection_disabled_reason = "当前不在提案选择环节"
         elif not viewer_has_consul:
             proposal_selection_disabled_reason = "您的派系没有在城执政官可提交"
@@ -783,10 +790,12 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "can_auto_veto": actionable and current_step == "tribune_veto" and veto_control["mode"] == "AI",
             "viewer_has_tribune": viewer_has_tribune,
             "can_resolve": actionable and current_step == "tribune_veto",
-            "can_advance": (current_step == "results") and has_real_senate_result,
+            "can_advance": ((current_step == "results") and has_real_senate_result)
+            or (senate_no_host and actionable),
             # R5（SA §5.1，DA-4）：旧 pending Takeover / can_deploy 读模型键退役
             "can_finish_proposal_selection": can_finish_empty,
             "can_finish_empty": can_finish_empty,
+            "senate_no_host": senate_no_host,
             "proposal_selection_disabled_reason": proposal_selection_disabled_reason,
             # R3-G-01 §1.5：settlement-pending 可见恢复态（DTO 字段 + 恢复动作位）
             # R6（SA §D.1.1，DA-4 B1）：legacy 键保留但正常态恒 False（不得驱动 UI）
@@ -1057,17 +1066,15 @@ def auto_submit_proposals(
     if not state:
         return api_response(False, "无效的游戏状态")
 
-    # 1. 查找执政官人物（AU-R2-2c，C3 收敛）：全局 eligible Consul 唯一查找路径 =
-    #    PoliticalSystem._find_any_eligible_consul（FACT-3：原 leader fallback 带完整资格校验，
-    #    在 get_living_members 全量迭代下不可达成功 → 等效死代码，收敛移除；行为等价 D-7）。
-    consul_figure = _political_system(state)._find_any_eligible_consul()
-    if not consul_figure:
-        return api_response(False, "没有执政官，无法自动提交提案")
+    # 1. 查找主持人（WP-M D4.5：由 _find_any_eligible_consul 改为单一权威 GameState.get_presiding_officer）。
+    host_figure = state.get_presiding_officer()
+    if not host_figure:
+        return api_response(False, "没有可主持的官员，无法自动提交提案")
 
-    # 2. 查找执政官对应玩家
-    consul_player = state.get_player_by_faction(consul_figure.faction_id)
+    # 2. 查找主持人对应玩家
+    consul_player = state.get_player_by_faction(host_figure.faction_id)
     if not consul_player:
-        return api_response(False, "执政官无对应玩家")
+        return api_response(False, "主持人无对应玩家")
     consul_player_id = consul_player.player_id
 
     # 3. 默认决策器
@@ -1276,6 +1283,19 @@ def auto_submit_proposals(
     # R5（SA §5.2 C-M08，DA-4）：旧 AI 自动接管（execute_ai_takeover_direct_action Direct
     # Action / 4f 块）已退役——AI 意图统一经 propose_many → submit_proposal_package，
     # 执行统一 advance_senate_phase（不得经旧协议旁路直接部署）。
+    # WP-M D4.5：当主持人 office != consul 时，构造阶段跳过会路由到 AUTHORITY_CONSUL_DIRECT
+    # 的草案（与 D4.4 单一权威一致；复用唯一 route producer classify_war_authority）。
+    if host_figure.office != "consul" and war_drafts:
+        ws_route = state.get_war_system()
+        filtered_drafts: List[Dict[str, Any]] = []
+        for draft in war_drafts:
+            mode = draft.get("mode")
+            if draft.get("checked") and mode in ("command", "peace") and ws_route is not None:
+                facts = ws_route.describe_senate_war(draft["war_id"], {}) or {}
+                if classify_war_authority(facts).get(mode) == AUTHORITY_CONSUL_DIRECT:
+                    continue  # 回退主持人不得经 AI 路径提交 direct 草案
+            filtered_drafts.append(draft)
+        war_drafts = filtered_drafts
     submit = propose_many(state, consul_player_id, {
         "war_drafts": war_drafts, "proposals": non_war_proposals})
     if not submit.get("success"):
@@ -1488,6 +1508,12 @@ def advance_senate_phase(state: GameState, player_id: str) -> dict:
                                   "replayed": True, "receipt": prior, "next_phase_id": "combat"})
     if state.is_phase_executed("senate"):
         return api_response(False, "Senate phase already executed")
+    # WP-M D5.4：无主持人（FC-01=0）→ 先触发 finalize 豁免（零提案结算）再执行边界；
+    # 有主持人且无 phase_result → 仍按既有「未就绪」拒绝（禁隐式结算）。
+    if not state.get_phase_result("senate") and state.get_presiding_officer() is None:
+        finalize_result = finalize_senate_if_ready(state)
+        if not finalize_result.get("success"):
+            return api_response(False, finalize_result.get("message", ""))
     if not state.get_phase_result("senate"):
         return api_response(False, "Senate result is not ready")
     result = _execute_war_resolution_boundary(state, player_id)
@@ -1668,14 +1694,28 @@ def finalize_senate_if_ready(state: GameState,
 
     # 显式空选择守卫（仅对**首次** finalization 生效）——逐字保留 R4-09：零提案且未显式提交
     # 空批 → 拒绝，禁隐式 resolve。部分完成态（①已在、④缺）不适用本守卫（pending 已清）。
+    # WP-M D5.3 / FC-09：空选择守卫的**唯一豁免** = 无主持人（get_presiding_officer() is None）——
+    # 此时允许零提案结算（结构性跳过）。
     if (not existing_result
             and not state.get_senate_proposals()
-            and not state.senate_proposal_decision_complete):
+            and not state.senate_proposal_decision_complete
+            and state.get_presiding_officer() is not None):
         return api_response(
             False,
             "提案选择未完成：请先显式提交空批或完成提案后再结算",
             data={"proposal_selection_not_complete": True,
                   "settlement_guard": "proposal_selection_not_complete"},
+        )
+
+    # WP-M D8：无主持人结构性跳过（零提案结算前登记 DEBUG provenance）
+    if (not existing_result
+            and not state.get_senate_proposals()
+            and not state.senate_proposal_decision_complete
+            and state.get_presiding_officer() is None):
+        state.log_event(
+            "元老院无主持官员，按无法案提交结构性跳过",
+            level=logging.DEBUG,
+            extra={"type": "senate_no_host_skip", "senate_session_id": senate_session_id},
         )
 
     stage = "political_resolve"

@@ -81,18 +81,41 @@ influence = base + family_bonus + office_bonus + temp_influence
 - 否则 → 查 `OFFICE_INFLUENCE_BONUS` 表
 - 无官职（`office is None`）→ 返回 0
 
-### 3.3 官职等级表
+> **WP-M 声明（2026-09-28，A1·R4）：** 本表（`OFFICE_INFLUENCE_BONUS` / `EX_OFFICE_INFLUENCE_BONUS`）为**独立轴（影响力加成）**，**非** rank/power 序、**非**升级顺序，与元老院主持序列**无关**。本 WP 未改动该表。
 
-| 官职 | 等级值 | 说明 |
+### 3.3 官职等级表（WP-M 修正：拆为两套排序）
+
+> **WP-M 修正（2026-09-28，ODR-M-03 Q1 裁定）：** 原 §3.3 单表把两套不同排序混为一表
+> （旧表 `censor=5, consul=4, tribune=2, quaestor=1` 为 stale）。现拆为两表：
+> ① **权力顺序（高→低）** = `OFFICE_RANK`（元老院主持序列用此序）；
+> ② **升级顺序（低→高）** = `OFFICE_PROMOTION_ORDER`（cursus honorum 阶梯，逐级不可跳级）。
+
+**表 A —— 权力顺序（高→低）**（`Figure.OFFICE_RANK`；元老院主持序列用）：
+
+| 官职 | 权力序值 | 说明 |
 |------|--------|------|
-| dictator | 6 | 独裁官（最高） |
-| censor | 5 | 监察官 |
-| consul | 4 | 执政官 |
+| dictator | 6 | 独裁官（最高；**不入元老院主持池**） |
+| consul | 5 | 执政官 |
+| censor | 4 | 监察官 |
 | praetor | 3 | 大法官 |
-| tribune | 2 | 保民官 |
-| quaestor | 1 | 财务官（最低） |
+| quaestor | 2 | 财务官 |
+| tribune | 1 | 保民官（最低） |
 
 `OFFICE_RANK.get(office, 0)`：未在表中的官职返回 0。
+
+**表 B —— 升级顺序（低→高）**（`Figure.OFFICE_PROMOTION_ORDER`；cursus honorum 阶梯）：
+
+| 官职 | 升级序值 | 说明 |
+|------|--------|------|
+| tribune | 1 | 保民官（阶层门控分支，无前置） |
+| quaestor | 2 | 财务官（贵族 cursus 入口级，无前置） |
+| praetor | 3 | 大法官（前置：quaestor） |
+| consul | 4 | 执政官（前置：praetor） |
+| censor | 5 | 监察官（前置：consul） |
+
+> **派生前置映射：** `Figure.OFFICE_CURSUS_PREREQUISITE = {praetor: quaestor, consul: praetor, censor: consul}`
+> （由升级顺序派生；行为等价重构，替换 `can_hold_office` 原有 3 条显式前置分支；错误串不变）。
+> **两序不可混用：** `OFFICE_PROMOTION_ORDER` 不得用于主持序列；`OFFICE_RANK` 不得用于 cursus 前置派生。
 
 ### 3.4 投票权与席位
 
@@ -237,6 +260,7 @@ influence = base + family_bonus + office_bonus + temp_influence
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.1 | 2026-09-28 | DA-Exec (WP-M M-S1) | §3.3 拆为「权力顺序」+「升级顺序」两表（修正 stale 单表）；§3.2 声明影响力加成为独立轴（A1·R4）；新增 §3.3 双排序常量（`OFFICE_PROMOTION_ORDER`/`OFFICE_CURSUS_PREREQUISITE`） |
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent B | 初版创建 |
 
 > **维护规则：** 本文件为活文档，每次修改规格说明正文或技术映射时，必须在版本日志中追加新条目。版本号递增规则：大功能修改升主版本（v1→v2），小修小改升次版本（v1.0→v1.1）。

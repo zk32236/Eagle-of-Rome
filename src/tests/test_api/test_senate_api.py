@@ -358,7 +358,7 @@ class TestAutoSubmitProposals(unittest.TestCase):
             m.office = None
         result = senate_api.auto_submit_proposals(self.state)
         self.assertFalse(result["success"])
-        self.assertIn("没有执政官", result["message"])
+        self.assertIn("没有可主持的官员", result["message"])
 
     def test_auto_submit_proposals_empty_state(self):
         """空状态（无战争/空缺/合同/公地）返回成功但空列表"""
