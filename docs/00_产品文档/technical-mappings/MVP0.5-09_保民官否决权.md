@@ -77,6 +77,7 @@ is_absent 不参与判定
 - **AI 决策器：** `auto_tribune_veto_decider.py` —— 仅当否决权路由到 AI 时生效（chance 概率内部化，不参与 authority 判定）。
 - **GUI：** 否决 CheckBox enabled 绑定 DTO（canManuallySelectSenateVeto，session_store.py）；人类持 Tribune → 「确认否决 → 公示结果」；无 → 「AI 判定否决 → 公示结果」（SenateStage.qml tribuneActionText）。
 - **负向：** 未授权直接否决 mutation → fail-closed（record_veto，委托 `_find_tribune_for_faction`）。
+- **NONE 步自动收敛（WP-M-R1 R1-S1，2026-10-02，append-only）：** 与上述「NONE → 双 False」（DTO）及「store NONE→resolve」（`doSubmitSenateVetoes` 端点）语义对齐——**投票完成侧**新增等价收敛：`GuiSessionStore.doSubmitSenateVotes` 投票成功 + 视图刷新后，当 `current_step=="tribune_veto"` **且** `veto_control_mode=="NONE"`（无 eligible Tribune，resolver-backed 终条件）→ 复用 canonical finalization（`GuiApiAdapter.resolve_senate` → `senate_api.resolve_senate` → `finalize_senate_if_ready`）**自动收敛**（skip 否决权威步）→ `results` / `can_advance==True` / `canAdvanceSenate==True`，随后 `doAdvanceSenate` → `advance_senate_phase` → `next_phase_id=="combat"`。门禁**唯一** = resolver-backed `veto_control_mode=="NONE"`（**非** `can_resolve`——其对 HUMAN/AI 亦为 True，在本 WP 保持不变/未消费）；HUMAN/AI 双 False 所对应的否决交互路径逐字不变。`resolve_veto_control` / `get_senate_view`（GET 保持纯只读）/ `SenateStage.qml`（零 QML diff）一字不改；无新增持久化。**GAME_RULE_CHANGE = NO（REGRESSION_CORRECTION；恢复 WP-M 既有冻结语义）**。实现细节见 technical-mappings/MVP0.5-20-sys v2.3 §5.11。
 
 ## 8. 版本日志
 | 版本 | 日期 | 摘要 |
@@ -85,3 +86,4 @@ is_absent 不参与判定
 | v1.1 | 2026-08-23 | GUI-BETA-R1 WP-D + ODR-WP-D-01: D-10 authority 语义（非纯概率）/ 方案 B（在职+未死亡，is_absent 不参与）/ 防线 1（派遣路径 fail-closed）/ 防线 2（_set_absent + _tribune_absent_guard）/ 单谓词三消费方 / AI 否决路由边界——Trial Audit P1-PC-02/P1-PC-03 文档闭合 |
 | v1.0 | 2026-07-12 | 初版 |
 | v1.3 | 2026-09-12 | WP-G-R5 DA-7 文档同步（append-only）：§5 所述接管链（`takeover_war` 前置 consul 校验 / `process_war_takeover` / `execute_war_takeover_direct`）已退役——出征任命统一经 War Card + `propose_many`，边界 `advance_senate_phase`；tribune 防线 1/2（`_set_absent` / `_tribune_absent_guard`）保留不变 |
+| v1.4 | 2026-10-02 | DA Sub-Agent (WP-M-R1 R1-S1) | §7 append-only 补「NONE 步自动收敛」：投票完成后 `current_step=="tribune_veto"` 且 `veto_control_mode=="NONE"` → `GuiSessionStore.doSubmitSenateVotes` 复用 canonical finalization（`resolve_senate`）自动收敛 → results / canAdvanceSenate；门禁唯一 = resolver-backed NONE（非 `can_resolve`）；与既有「NONE→双 False / store NONE→resolve」对齐；`resolve_veto_control`/`get_senate_view`/QML 一字不改；GAME_RULE_CHANGE=NO。见 §7。 |

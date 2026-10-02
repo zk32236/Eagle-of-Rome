@@ -332,9 +332,27 @@ GameState.get_presiding_officer() -> Optional[Figure]
 
 **⑥ DTO 新增字段：** `get_senate_view.data["senate_no_host"]`（bool）；`proposal_control_*`/`authority_reason.proposal` 值域随 D3 扩展。**零新增持久化**（FC-10：主持/授权为派生事实）。
 
+### 5.11 WP-M-R1 R1-S1 NONE veto 步自动收敛（2026-10-02，append-only）
+
+> 冻结语义来源：WP-M-R1 SA-Design v1.0（FC-R1-01…08 / R1-AC-01…08 / R1-SC-01…05；G3-delta）。**REGRESSION_CORRECTION = YES**（恢复 WP-M 既有冻结语义）；**GAME_RULE_CHANGE = NO**（阈值 / 投票 / Tribune 权威 / `resolve_veto_control` 全部不变）；**Authoritative Product Spec Impact = NOT REQUIRED**。
+
+**语义增量：** 既有映射（§5.9 D-2）只描述 **zero-passed 收敛**（`current_step=="results"` + store 自动 resolve）。本件补齐 **NONE 终条件收敛**：投票完成后 `current_step=="tribune_veto"` **且** `veto_control_mode=="NONE"`（resolver `resolve_veto_control` 输出 = 无 eligible Tribune，`actor=None` / `authority_reason=="no_eligible_tribune"`）时，**同 owner 命令流**（`GuiSessionStore.doSubmitSenateVotes`）**自动收敛**——复用 canonical finalization（`GuiApiAdapter.resolve_senate` → `senate_api.resolve_senate` → `senate_api.finalize_senate_if_ready`），产出真实 `phase_result("senate"){success:true}`、`current_step=="results"`、`can_advance==True`、`canAdvanceSenate==True`；随后 `doAdvanceSenate` → `advance_senate_phase` 成功 → `next_phase_id=="combat"`。
+
+```text
+doSubmitSenateVotes（投票成功 + 视图刷新后）:
+  if   current_step=="results"  and not senate_result:  → 既有 zero-passed 收敛（§5.9 D-2，逐字不变）
+  elif current_step=="tribune_veto" and veto_control_mode=="NONE":  → NONE 终条件自动收敛（本件新增，复用 resolve_senate）
+  （HUMAN/AI：mode ≠ NONE → 两分支均不命中 → 否决交互路径逐字不变）
+```
+
+**硬边界（FC-R1-01…08）：** ① 门禁**唯一** = resolver-backed `veto_control_mode=="NONE"`（**禁**以 `can_resolve` 或「`can_veto`/`can_auto_veto` 均 False」推断作门禁——`can_resolve` 对 HUMAN/AI 亦为 True，在本 WP **保持不变、维持为未消费的权威 DTO 字段**）；② `resolve_veto_control` / `senate_api.get_senate_view`（GET 保持纯只读）/ `SenateStage.qml`（零 QML diff）**一字不改**；③ 无 fake 按钮 / 不把 NONE 当 AI / 不造 Tribune；④ **无新增持久化**、不改 save/load；⑤ 收敛仅在命令流（`doSubmitSenateVotes` 单 owner），不在 GET 路径隐式写。
+
+**单 owner / 落点：** `src/ui/gui/session_store.py` :: `GuiSessionStore.doSubmitSenateVotes`（既有 zero-passed 收敛块旁新增同 owner `elif` 条件；复用既有 `resolve_senate()`，不新增按钮 / 不改 DTO 派生 / 不改 Core resolver）。
+
 ## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v2.3 | 2026-10-02 | DA Sub-Agent (WP-M-R1 R1-S1) | NONE veto 步自动收敛：`GuiSessionStore.doSubmitSenateVotes` 投票完成后 `current_step=="tribune_veto"` 且 `veto_control_mode=="NONE"` → 复用 canonical finalization（`resolve_senate`）自动收敛 → results / canAdvanceSenate；HUMAN/AI 逐字不变；门禁唯一 = resolver-backed NONE（非 `can_resolve`）；零 QML diff / 无新增持久化。REGRESSION_CORRECTION=YES，GAME_RULE_CHANGE=NO。见 §5.11 |
 | v2.2 | 2026-09-28 | DA Sub-Agent (WP-M M-S1) | 新增「§5.10 WP-M 主持单一权威收口」——`GameState.get_presiding_officer` D2 冻结定义（HOST_OFFICE_SET + 四级 tie-break）；`resolve_proposal_control` 新增 host 回退层（`human/ai_presiding_officer`，末层 `no_eligible_host`）；`submit_proposal_package` 授权块 host 回退 + direct 整包拒绝 `host_no_direct_authority`；`get_senate_view` 新增 `senate_no_host`；`finalize_senate_if_ready` 空选择守卫唯一豁免 host=None；`auto_submit_proposals`/CLI host 化。GAME_RULE_CHANGE=YES（ODR-M-01/03） |
 | v2.1 | 2026-09-26 | DA Sub-Agent (WP-G-R9) | R9 同步：新增「§5.7.3 WP-G-R9 同步注记」——`get_senate_view` 顶层 direct 投影作用域收敛（`_current_canonical_direct_scope`；canonical 仅由有效 PackageRecord 证明 = 身份匹配 + `submitted_at.turn` 完整/整数/匹配当前回合；含 opaque custom session，不解析 session ID 文本）；无包/坏包**统一排除、不 fallback**（ADDENDUM 01 支持边界，不声称已证实真实 legacy 回归）；原 helper 与 PA 语义保留 / scope guard 仅顶层调用处 / 纯读取、无新 schema·持久字段·公共 API。GAME_RULE_CHANGE=NO |
 | v2.0 | 2026-09-20 | DA Sub-Agent (WP-G-R8) | R8 同步：新增「§5.7.2 WP-G-R8 同步注记」——生命周期文案时点（配置→决定）/ 执行边界 / 诊断零 raw / 三面板几何不变量（`Hrow=min(460,max(360,U.h−28))`）/ Panel1 主 body scroll ownership / 结果区 bounded 132 / Dialog L-D envelope；`senateErrorMachineJson()` 保留空实现（Test Amendment Route）。GAME_RULE_CHANGE=NO（纯展示层） |

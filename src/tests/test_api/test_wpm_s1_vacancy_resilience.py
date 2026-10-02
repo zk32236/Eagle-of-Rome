@@ -16,6 +16,8 @@ import json
 import os
 import unittest
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # GuiSessionStore(QObject) 构造前置（R1-S1）
+
 from src.api import senate_api, population_api
 from src.core.entities.entities import Faction, GameTurn
 from src.core.entities.figure import Figure, ClassTier
@@ -308,6 +310,158 @@ class TestSC6CensorSupplyConfig(unittest.TestCase):
         no_consul = Figure(id=902, name="NoConsul", faction_id=None, age=55)
         self.assertEqual(no_consul.can_hold_office("censor", 1, state.config),
                          (False, "Requires prior Consul service"))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# WP-M-R1 · R1-S1 — NONE Veto Auto-Convergence（真实 SessionStore 生产链）
+#   FC-R1-01/02/03/04/06/07；R1-AC-02/03/04/05/06；R1-SC-01…05
+#   纪律：真实生产链（submit package → doSubmitSenateVotes → refresh → 自动收敛 →
+#   results → doAdvanceSenate）；禁 monkeypatch 被测过渡；禁手改 office holder。
+# ══════════════════════════════════════════════════════════════════════
+
+
+def _make_gui_store(state, viewer_id="player1"):
+    """构造真实 GuiSessionStore 并初始化（GUI 命令链最高实用 seam）。"""
+    from src.ui.gui.session_store import GuiSessionStore
+    store = GuiSessionStore(state)
+    store.initialize(viewer_id)
+    return store
+
+
+_LAND_SALE_SPEC = {"type": "land", "params": {"act_type": "sale", "amount_C": 10}}
+
+
+class TestR1SC1NoneVetoAutoConvergence(unittest.TestCase):
+    """R1-SC-01：投票完成 + 无 eligible Tribune（NONE）→ 真实 SessionStore 链自动收敛。
+
+    真实生产链：submit package → doSubmitSenateVotes → refresh(NONE) → 自动收敛
+    → results → doAdvanceSenate → combat。**禁**直接 resolve_senate 顶替被测过渡。
+    """
+
+    def test_none_veto_auto_convergence_through_session_store(self):
+        ctx = _host_state()  # 主持官员（censor host）在场；缺陷 = no-Tribune（非 no-host）
+        state = ctx["state"]
+        store = _make_gui_store(state, "player1")
+
+        # --- submit package（真实生产链入口）---
+        submitted = store.doSubmitSenateProposals([dict(_LAND_SALE_SPEC)])
+        self.assertTrue(submitted["success"], submitted.get("message"))
+        self.assertTrue(state.senate_proposal_decision_complete)
+        self.assertIsNone(state.get_phase_result("senate"))  # 前置：尚未 finalize
+
+        # --- 投票（被测 seam：唯一 owner doSubmitSenateVotes）---
+        feedback = store.doSubmitSenateVotes()
+        self.assertTrue(feedback["success"], feedback.get("message"))
+
+        view = dict(store._senate_view)
+        # FC-R1-01：NONE 终条件（无 eligible Tribune）如实反映，无 fake actor
+        self.assertEqual(view.get("veto_control_mode"), "NONE")
+        self.assertIsNone(view.get("veto_actor"))
+        self.assertIs(view.get("can_veto"), False)
+        self.assertIs(view.get("can_auto_veto"), False)
+        # FC-R1-03/06：自动收敛 → results；can_advance 由真实 phase_result 支撑
+        self.assertEqual(view.get("current_step"), "results")
+        self.assertIs(view.get("can_advance"), True)
+        self.assertTrue(store.canAdvanceSenate)
+        phase_result = state.get_phase_result("senate")
+        self.assertIsInstance(phase_result, dict)
+        self.assertTrue(phase_result.get("success"))
+        # 无孤立可交互 tribune_veto 步
+        self.assertNotEqual(view.get("current_step"), "tribune_veto")
+
+        # --- advance（Senate → Combat）---
+        adv = store.doAdvanceSenate()
+        self.assertTrue(adv["success"], adv.get("message"))
+        self.assertTrue(state.is_phase_executed("senate"))
+        self.assertEqual((adv.get("data") or {}).get("next_phase_id"), "combat")
+
+
+class TestR1SC2HumanVetoUnchanged(unittest.TestCase):
+    """R1-SC-02：viewer 派系持 eligible Tribune → HUMAN；NONE 自动 skip 不发生（FC-R1-05/07）。"""
+
+    def test_human_veto_path_not_auto_converged(self):
+        ctx = _host_state()
+        state = ctx["state"]
+        _add_figure(state, ctx["faction"], 9, "Tribune Human", office="tribune",
+                    age=36, influence=20)
+        store = _make_gui_store(state, "player1")
+        self.assertTrue(store.doSubmitSenateProposals([dict(_LAND_SALE_SPEC)])["success"])
+        self.assertTrue(store.doSubmitSenateVotes()["success"])
+
+        view = dict(store._senate_view)
+        self.assertEqual(view.get("veto_control_mode"), "HUMAN")
+        self.assertEqual(view.get("current_step"), "tribune_veto")
+        self.assertIs(view.get("can_veto"), True)
+        # FC-R1-07：can_resolve 在 HUMAN 亦 True —— 但收敛门禁 = mode（非 can_resolve）→ 未收敛
+        self.assertIs(view.get("can_resolve"), True)
+        self.assertIsNone(state.get_phase_result("senate"))
+
+
+class TestR1SC3AiVetoUnchanged(unittest.TestCase):
+    """R1-SC-03：存在非 viewer eligible Tribune → AI；NONE 自动 skip 不发生（FC-R1-05/07）。"""
+
+    def test_ai_veto_path_not_auto_converged(self):
+        ctx = _host_state()
+        state = ctx["state"]
+        other = Faction(id="populares", name="Populares", treasury=100)
+        state.add_faction(other)
+        _add_figure(state, other, 11, "Tribune AI", office="tribune", age=36, influence=15)
+        store = _make_gui_store(state, "player1")
+        self.assertTrue(store.doSubmitSenateProposals([dict(_LAND_SALE_SPEC)])["success"])
+        self.assertTrue(store.doSubmitSenateVotes()["success"])
+
+        view = dict(store._senate_view)
+        self.assertEqual(view.get("veto_control_mode"), "AI")
+        self.assertEqual(view.get("current_step"), "tribune_veto")
+        self.assertIs(view.get("can_auto_veto"), True)
+        # FC-R1-07：can_resolve 亦 True，但门禁 = mode → 未收敛
+        self.assertIs(view.get("can_resolve"), True)
+        self.assertIsNone(state.get_phase_result("senate"))
+
+
+class TestR1SC4ZeroPassedUnchanged(unittest.TestCase):
+    """R1-SC-04：zero-passed（veto_candidate_ids==0）既有收敛逐字不变（FC-R1-04 旁路不干扰）。"""
+
+    def test_zero_passed_branch_still_converges(self):
+        ctx = _host_state()
+        state = ctx["state"]
+        # 注入非 viewer 高影响力派系（无 player）→ viewer 投 True 仍不过半 → 零通过候选
+        other = Faction(id="populares", name="Populares", treasury=100)
+        state.add_faction(other)
+        _add_figure(state, other, 21, "Bloc Senator", office="ex-consul",
+                    age=55, influence=500)
+        store = _make_gui_store(state, "player1")
+        self.assertTrue(store.doSubmitSenateProposals([dict(_LAND_SALE_SPEC)])["success"])
+
+        feedback = store.doSubmitSenateVotes()
+        self.assertTrue(feedback["success"], feedback.get("message"))
+
+        view = dict(store._senate_view)
+        # zero-passed → current_step=results（既有先例）→ 既有 auto-resolve 逐字不变
+        self.assertEqual(view.get("current_step"), "results")
+        self.assertIs(view.get("can_advance"), True)
+        self.assertTrue(state.get_phase_result("senate"))
+
+
+class TestR1SC5NoHostUnchanged(unittest.TestCase):
+    """R1-SC-05：无 Senate 主持（senate_no_host）结构性跳过逐字不变（不与 no-Tribune 混同）。"""
+
+    def test_no_host_structural_skip_unchanged(self):
+        ctx = _host_state(with_censor=False)
+        state = ctx["state"]
+        self.assertIsNone(state.get_presiding_officer())
+
+        view = senate_api.get_senate_view(state, "player1")["data"]
+        self.assertIs(view["senate_no_host"], True)
+        self.assertIs(view["can_advance"], True)
+
+        final = senate_api.resolve_senate(state)
+        self.assertTrue(final["success"], final.get("message"))
+        self.assertTrue(state.get_phase_result("senate"))
+
+        adv = senate_api.advance_senate_phase(state, "player1")
+        self.assertTrue(adv["success"], adv.get("message"))
+        self.assertTrue(state.is_phase_executed("senate"))
 
 
 if __name__ == "__main__":

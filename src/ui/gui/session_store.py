@@ -1659,6 +1659,21 @@ class GuiSessionStore(QObject):
                 self._raise_senate_feedback(resolve_feedback)
                 self._refresh_snapshot()
                 self._refresh_senate_view()
+            # WP-M-R1 R1-S1（FC-R1-04/06/07）：NONE veto 终条件自动收敛——投票完成且 DTO
+            # 显示 current_step=="tribune_veto" 且 veto_control_mode=="NONE"（无 eligible
+            # Tribune，resolver-backed 终条件）→ 复用 canonical finalization
+            # （resolve_senate → senate_api.resolve_senate → finalize_senate_if_ready）自动
+            # 结算 skip 否决权威步，使 results / canAdvanceSenate 恢复、Senate→Combat 可推进。
+            # 门禁**唯一** = resolver-backed veto_control_mode=="NONE"（**非** can_resolve，
+            # **非**能力位缺失推断）；HUMAN/AI 路径逐字不变（mode 门禁天然排除，不抢权）。
+            elif (
+                self._senate_view.get("current_step") == "tribune_veto"
+                and self._senate_view.get("veto_control_mode") == "NONE"
+            ):
+                resolve_feedback = self._adapter.resolve_senate()
+                self._raise_senate_feedback(resolve_feedback)
+                self._refresh_snapshot()
+                self._refresh_senate_view()
         self.senateViewChanged.emit()
         return feedback
 

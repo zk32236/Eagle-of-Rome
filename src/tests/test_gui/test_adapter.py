@@ -209,8 +209,17 @@ class TestGuiApiAdapter:
         feedback = store.doSubmitSenateVotes()
 
         assert feedback["success"]
-        assert store.senateCurrentStep == "tribune_veto"
-        assert store.senateSubmittedProposals == submitted_before_vote
+        # WP-M-R1 R1-S1（FC-R1-01/03/04/06；Test Amendment Route / G4-lite r2 §1）：本用例
+        # 场景无 eligible Tribune（veto_control_mode=="NONE"）→ 投票完成即自动收敛（skip 否决
+        # 权威 → canonical finalize）→ current_step=="results"。旧断言 "tribune_veto" = 被冻结
+        # 语义取代的 NONE 软锁行为，故按冻结语义 AMEND（仅改该断言 + 必要断言）。
+        assert store.senateCurrentStep == "results"
+        result_data = state.get_phase_result("senate")
+        assert result_data is not None
+        assert result_data.get("success")
+        # 冻结语义下投票结果回填入提案行（新增 'result' 键）→ 按稳定身份断言同一提案保留
+        assert [row["id"] for row in store.senateSubmittedProposals] == \
+               [row["id"] for row in submitted_before_vote]
         assert len(store.senateSubmittedProposals) == 1
 
     def test_session_store_submits_senate_veto_confirmation_and_records_result(self):
