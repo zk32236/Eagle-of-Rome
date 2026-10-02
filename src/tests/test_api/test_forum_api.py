@@ -259,7 +259,8 @@ class TestPlaceBid:
         pending = test_state.get_forum_pending()
         # 计算预期值：实际成本 = 80 * 0.8 = 64，成本比例 = 64/100=0.64
         # 工期 = int(3 * 100 / 64) = 4，质保 = int(10 * 0.64) = 6
-        assert (1, 2, "f1", 80, 0.2, 4, 6) in pending["contract_bids"]
+        # WP-L L1（FC-L1-02）：基建 PUBLIC_WORKS 现为 8 元组，指数 7 = D（int(80×0.8)=64）
+        assert (1, 2, "f1", 80, 0.2, 4, 6, 64) in pending["contract_bids"]
 
     def test_success_works_with_profit(self, test_state):
         result = forum_api.place_bid(test_state, "p1", 2, 1, 80, 0.15)
@@ -267,7 +268,8 @@ class TestPlaceBid:
         pending = test_state.get_forum_pending()
         # 实际成本 = 80 * 0.85 = 68，成本比例 = 68/100=0.68
         # 工期 = int(3 * 100 / 68) = 4，质保 = int(10 * 0.68) = 6
-        assert (1, 2, "f1", 80, 0.15, 4, 6) in pending["contract_bids"]
+        # WP-L L1（FC-L1-02）：基建 8 元组，指数 7 = D（int(80×0.85)=68）
+        assert (1, 2, "f1", 80, 0.15, 4, 6, 68) in pending["contract_bids"]
 
     def test_contract_not_found(self, test_state):
         result = forum_api.place_bid(test_state, "p1", 2, 999, 120)

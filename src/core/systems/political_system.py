@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from src.core.deciders.impl.auto_senate_vote_decider import AutoSenateVoteDecider
 from src.core.deciders.senate_vote_decider import SenateVoteDecider
-from src.core.entities.contract import ContractStatus
+from src.core.entities.contract import ContractStatus, ContractType
 from src.core.entities.figure import Figure
 from src.core.entities.war import WarStatus
 
@@ -732,6 +732,24 @@ class PoliticalSystem:
                         contract.base_cost = int(modified_budget)
                         self.state.log_event(
                             f"预算提案通过（Fleet）: 合同 {contract.name} 批准预算 B="
+                            f"{contract._approved_budget}，基线 A={contract._original_budget}",
+                            level=logging.INFO,
+                            extra={
+                                "contract_id": contract.id,
+                                "baseline_a": contract._original_budget,
+                                "approved_b": contract._approved_budget,
+                            },
+                        )
+                    elif contract.contract_type == ContractType.PUBLIC_WORKS:
+                        # WP-L L1（FC-L1-05/06）：基建预算 PASS——写 B（`_approved_budget`，
+                        # 即使金额未修改也写入），A（`_original_budget`）冻结不被覆盖；
+                        # base_cost 保持 B 投影（bid ceiling = B）
+                        if modified_budget is None:
+                            modified_budget = contract.base_cost
+                        contract._approved_budget = int(modified_budget)
+                        contract.base_cost = int(modified_budget)
+                        self.state.log_event(
+                            f"预算提案通过（基建）: 合同 {contract.name} 批准预算 B="
                             f"{contract._approved_budget}，基线 A={contract._original_budget}",
                             level=logging.INFO,
                             extra={

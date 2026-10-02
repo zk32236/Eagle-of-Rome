@@ -31,8 +31,21 @@ legacy 边界：旧存档 B 不可恢复 → approved_budget=None + authority_so
 已烘焙强度 → legacy_baked_quality（不还原 240/280）；缺省不创造 target
 ```
 
+## WP-L L1 同步注记（2026-10-02，DA-Execute；append-only）
+
+> 权威：SA-Development-Task WP-L L1 v1.1（`a74489cb…`）§3 FC-L1-11/12；规格 `specifications/MVP0.5-04_舰队建造合同.md` §5.2.1。
+
+- **强度展示契约（FC-L1-11 / ODR-L-03）**：界面显示的折算实际战力**必须等于**权威读模型字段
+  （`get_war_fleet_strength_read_model(...).fleet_quality_adjusted_base` / `fleet_effective_combat_strength`）；
+  QML 只渲染不重算（禁第二套经济真值）；**展示面 = 战争卡 post-build（唯一）**，竞标对话框预览行按 G2 ③ 撤回。
+- **单入队点 parity（FC-L1-12）**：GUI/CLI/AI/API 均经 `forum_api.place_bid` 单点入队；GUI 可传显式 D，
+  CLI/AI 用 rate 派生路径（ODR-L-04 不变）；无第二经济真值。
+- **四权威推广（WP-L L1）**：A/B/C/D + 显式 D + quality=D/A 现统一适用于全部 PUBLIC_WORKS（含普通公共工程，
+  见 MVP0.5-03 §2.4）；舰队下游差异（Fleet 实体/build_time/无质保）保持。
+
 ## 3. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.2 | 2026-10-02 | WP-L L1：强度展示契约（post-build 战争卡单一源，QML 只渲染）+ 单入队点 parity + 四权威推广至全部 PUBLIC_WORKS（DA-Execute） |
 | v1.1 | 2026-09-05 | R3-G-03/04 同步：四权威持久链 + nominal replacement + package 聚合器 + legacy 边界（DA-R3-B3） |
 | v1.0 | 2026-07-12 | 初版 |

@@ -32,6 +32,8 @@ Rectangle {
     // R3-G-03（§3.5）：Fleet 双输入（C+D）dialog 状态载体——独立 intended construction cost
     // 输入；A/B 权威展示；D 为独立用户决策，不按 C 自动隐藏锁死（D>C 由 API 复检 + 本层提示）
     property bool bidDialogIsFleet: false
+    // WP-L L1（D1.6）：对话经济块/D 输入 gating = supports explicit D（PUBLIC_WORKS：fleet + 基建）
+    property bool bidDialogSupportsD: false
     property int bidDialogBaselineA: 0
     property int bidDialogApprovedB: 0
     property string bidDialogConstructionCost: ""
@@ -186,7 +188,8 @@ Rectangle {
     }
 
     // WP-E R4（D-07）：竞标 Dialog 开/关 + 权威提交（复用 doPlaceBid/doPlaceFleetBid 权威链）
-    function openBidDialog(contractId, contractName, baseCost, isFleet, baselineA, approvedB) {
+    // WP-L L1：参数 isFleet → supportsD（PUBLIC_WORKS=fleet+基建均支持显式 D，D1.6）
+    function openBidDialog(contractId, contractName, baseCost, supportsD, baselineA, approvedB) {
         // WP-I-R2 D2.2（G3-addendum 冻结）：时窗纵深守卫——结算后（forumResolved）零状态变更早返回
         if (sessionStore.forumResolved) { return }
         var opts = root.equesBidOptions()
@@ -194,9 +197,10 @@ Rectangle {
         root.bidDialogContractName = contractName
         root.bidDialogFigureId = opts.length > 0 ? opts[0].id : 0
         root.bidDialogFigureName = opts.length > 0 ? opts[0].label : ""
-        // R3-G-03（§3.5）：Fleet 出价默认 C=approved budget（bid ceiling）；建造成本 D 为独立
+        // R3-G-03（§3.5）/ WP-L L1：出价默认 C=approved budget（bid ceiling）；建造成本 D 为独立
         // 输入（不静默用默认 rate 代替成本输入——GUI 不得隐藏 D 决策）
-        root.bidDialogIsFleet = !!isFleet
+        root.bidDialogIsFleet = !!supportsD
+        root.bidDialogSupportsD = !!supportsD
         root.bidDialogBaselineA = baselineA || 0
         root.bidDialogApprovedB = approvedB || 0
         root.bidDialogAmount = String(baseCost)
@@ -205,7 +209,7 @@ Rectangle {
             bidActorCombo.currentIndex = 0
         }
         bidDialog.open()
-        if (isFleet && costAmountField) {
+        if (supportsD && costAmountField) {
             costAmountField.forceActiveFocus()
         } else if (bidAmountField) {
             bidAmountField.forceActiveFocus()
@@ -225,7 +229,7 @@ Rectangle {
             showFeedback("error", "请输入有效的出价金额。")
             return
         }
-        if (root.bidDialogIsFleet) {
+        if (root.bidDialogSupportsD) {
             var cost = parseInt(root.bidDialogConstructionCost, 10)
             if (isNaN(cost) || cost < 0) {
                 showFeedback("error", "请输入有效的建造成本（非负整数）。")
@@ -811,7 +815,8 @@ Rectangle {
                                             }
                                             return "已出价 " + bid.amount + " T（待结算）"
                                         }
-                                        if (modelData.can_bid && root.equesBidOptions().length > 0) {
+                                        if (modelData.can_bid) {
+                                            // WP-L L1（FC-L1-09/10）：竞标可行性不依赖骑士可用性
                                             return "基准出价 " + modelData.base_cost + " T"
                                         }
                                         return modelData.status_label || ""
@@ -821,12 +826,13 @@ Rectangle {
                                         if (sessionStore.forumResolved) { return "已结束" }
                                         return modelData.can_bid ? "竞标" : "待预算"
                                     }
+                                    // WP-L L1（FC-L1-09）：移除 equesBidOptions().length>0 谓词——
+                                    // 无可选骑士时按钮仍可用（对话框可进、下拉为空、无专用提示）
                                     enabledAction: root.marketUnlocked && modelData.can_bid && sessionStore.canExecuteForum
-                                        && root.equesBidOptions().length > 0
                                         && !root.viewerBidForContract(modelData.id)
                                         && !sessionStore.forumResolved
                                     onTriggered: root.openBidDialog(modelData.id, modelData.name,
-                                        modelData.base_cost, modelData.is_fleet_construction,
+                                        modelData.base_cost, modelData.supports_construction_cost,
                                         modelData.baseline_construction_cost, modelData.approved_budget)
                                 }
                             }
@@ -1271,9 +1277,9 @@ Rectangle {
                 }
             }
 
-            // R3-G-03（§3.5）：Fleet 四权威展示（A baseline / B approved / C amount / D cost + 派生）
+            // R3-G-03（§3.5）/ WP-L L1：四权威展示（A baseline / B approved / C amount / D cost + 派生）
             ColumnLayout {
-                visible: root.bidDialogIsFleet
+                visible: root.bidDialogSupportsD
                 Layout.fillWidth: true
                 spacing: 4
 
@@ -1325,10 +1331,10 @@ Rectangle {
                 Keys.onEnterPressed: root.confirmBidDialog()
             }
 
-            // R3-G-03（§3.5）：Fleet intended construction cost（D authority）独立输入——
+            // R3-G-03（§3.5）/ WP-L L1：intended construction cost（D authority）独立输入（fleet + 基建）——
             // 不按 C 自动隐藏锁死 D；C 修改后若 D>C 提示调整（API 仍复检，双保险）
             ColumnLayout {
-                visible: root.bidDialogIsFleet
+                visible: root.bidDialogSupportsD
                 Layout.fillWidth: true
                 spacing: 6
 
@@ -1358,7 +1364,7 @@ Rectangle {
                     text: "确认"
                     highlighted: true
                     enabled: root.bidDialogAmount.length > 0
-                        && (!root.bidDialogIsFleet || root.bidDialogConstructionCost.length > 0)
+                        && (!root.bidDialogSupportsD || root.bidDialogConstructionCost.length > 0)
                     onClicked: root.confirmBidDialog()
                 }
 

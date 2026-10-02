@@ -60,9 +60,28 @@ political_system.execute_passed_proposal('budget')（Fleet 分支）：冻结 A=
 → Contract.to_dict/from_dict：A/B/C/D + _target_war_id/_fleet_type/_build_time
 ```
 
+### 3.5 基建统一为舰队式经济模型（WP-L L1，2026-10-02）
+```
+contract.py __post_init__：PUBLIC_WORKS（非 fleet）创建时 A=_original_budget 生成即设（base_cost 为基线）
+post_init__ 另有 create_public_works() 显式 _original_budget=budget
+→ forum_api.place_bid（PUBLIC_WORKS: fleet + 基建）：supports_d = PUBLIC_WORKS；显式 construction_cost=D
+  校验（非 bool 非负整数 / D≤C / 显式 D 与显式 rate 冲突拒）；基建入队 8 元组
+  (contract_id, figure_id, faction_id, amount, rate, construction, warranty, D)；ceiling=bid_ceiling()=B
+  基建工期/质保由 D 驱动既有 cost-ratio 公式（quality=D/A）
+→ political_system.execute_passed_proposal('budget')：PUBLIC_WORKS（非 fleet）分支写 B=_approved_budget
+  （即使未改金额），A 冻结不被覆盖，base_cost=B 投影
+→ forum_api.resolve_forum：基建 award 固化 _contract_price=C + _actual_cost=D（不重算）；
+  warranty/construction 由 D/A 派生
+→ EconomicService._settle_public_works_contract：基建末期成本尾差 D−(N−1)×annual_cost（D 已知时）
+→ forum_api._pending_contract_rows：PUBLIC_WORKS 暴露 supports_construction_cost / baseline_construction_cost(A)
+  / approved_budget(B) / bid_ceiling
+→ ForumStage.qml：bidDialogSupportsD gating（经济块 + D 输入 ≥ PUBLIC_WORKS）；移除 equesBidOptions().length>0
+```
+
 ## 4. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.5 | 2026-10-02 | WP-L L1：基建统一（A 生成即设 / B=PASS 写 / 显式 D 8 元组 / ceiling=B / quality=D/A / 成本尾差守恒）；无骑士非阻塞 UI（FC-L1-09/10） |
 | v1.4 | 2026-09-05 | R3-G-03 同步：Fleet 四权威流（Senate B ceiling / A 不可重写 / 8-tuple 兼容 / 独立 AI rate / C-D 结算工期尾差，DA-R3-B3） |
 | v1.3 | 2026-08-23 | GUI-BETA-R1 WP-E（Slice 11 PU-04）：`place_bid` 防重（E-G7-07）——同 (contract_id, figure_id) 已出价 → 显式拒绝「该人物已对本合同出价」（pending 恰一条，恰一次契约；双路反馈已存在） |
 | v1.2 | 2026-08-22 | GUI-BETA-R1 WP-C-R1: 预算权威值域（senate_budget config + _budget_range_for_contract + _populate_proposal 谓词 + FC-03 Slider 改接） |

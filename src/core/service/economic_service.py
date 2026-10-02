@@ -467,7 +467,14 @@ class EconomicService:
             else:
                 cost = contract.annual_cost
         else:
-            cost = contract.annual_cost
+            # WP-L L1（FC-L1-14）：基建总成本 D 守恒——末期尾差归并：
+            # cost = D − (N−1)·annual_cost（remaining_years==1）；legacy/None-D 保持 annual_cost
+            d_total = contract._actual_cost
+            n_total = contract.construction_years or contract.duration_years
+            if contract.remaining_years == 1 and d_total is not None and n_total and n_total >= 1:
+                cost = d_total - (n_total - 1) * contract.annual_cost
+            else:
+                cost = contract.annual_cost
         profit_float = float(payment - cost)
         tax_float = profit_float * tax_rate if profit_float > 0 else 0.0
         tax_int = int(round(tax_float))

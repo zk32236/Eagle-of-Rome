@@ -49,3 +49,12 @@ src/core/entities/contract.py      # 舰队建造合同
 | 版本 | 日期 | 摘要 |
 |:--|:--|:--|
 | v1.3 | 2026-09-27 | WP-O O-S3：海军 martial living 谓词 + 绑定-only Fleet 镜像清理（DA-Execute） |
+
+## WP-L L1 同步注记（2026-10-02，DA-Execute；REVIEWED-NO-CHANGE）
+
+> 权威：SA-Development-Task WP-L L1 v1.1（`a74489cb…`）FC-L1-11；规格 `specifications/MVP0.7-04_海军与海战.md`。
+
+- **结论：`MVP0.7-04`（海军与海战）本轮 REVIEWED-NO-CHANGE。** WP-L L1 仅消费既有强度读模型
+  （`get_war_fleet_strength_read_model` / `fleet_quality_adjusted_base` / `fleet_effective_combat_strength`）
+  作为**展示源**（FC-L1-11），未改动 `naval_system` 强度公式/read-model 字段/海战生命周期。故本映射无需修改；
+  仅登记本次审阅结论（若未来触及强度 read-model，再行更新）。

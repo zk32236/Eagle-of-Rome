@@ -74,6 +74,19 @@ class Contract:
 
     # 财务参数
     base_cost: int = 0
+
+    def __post_init__(self) -> None:
+        """WP-L L1 / FC-L1-06：公共工程 A 基线（`_original_budget`）生成即设、恒有值。
+
+        Infrastructure（非 fleet）PUBLIC_WORKS 在创建时若 A 未显式给出，则以 base_cost
+        （生成基线预算）为 A；Fleet 的 A 由 naval_system generator 以 total_budget 显式冻结
+        （同值），tax farming 不涉及。A 一经写入即为冻结分母（quality = D/A）。
+        """
+        if (self.contract_type == ContractType.PUBLIC_WORKS
+                and not self._is_fleet_construction
+                and self._original_budget == 0
+                and self.base_cost > 0):
+            self._original_budget = self.base_cost
     expected_profit: int = 0
     duration_years: int = 1
 
@@ -213,7 +226,11 @@ class Contract:
 
     @classmethod
     def create_public_works(cls, id: int, project: str, budget: int, profit_margin: float = 0.2) -> "Contract":
-        """创建工程合同"""
+        """创建工程合同
+
+        WP-L L1 / FC-L1-06：A 基线生成即冻结（`_original_budget = budget`），使
+        quality = D/A 对新基建恒可定义。
+        """
         expected_profit = int(budget * profit_margin)
         return cls(
             id=id,
@@ -223,7 +240,8 @@ class Contract:
             base_cost=budget,
             expected_profit=expected_profit,
             duration_years=2,
-            project_type=project
+            project_type=project,
+            _original_budget=budget,
         )
 
     # ==================== MVP 0.4.3 原有方法 ====================

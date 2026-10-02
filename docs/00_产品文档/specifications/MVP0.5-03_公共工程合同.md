@@ -31,12 +31,14 @@ def create_public_works(cls, id: int, project: str, budget: int, profit_margin: 
 
 ```python
 # PUBLIC_WORKS 专有字段
-_original_budget: int = 0          # 原始预算（预算可能被元老院修改）
+_original_budget: int = 0          # A 基线（生成即设、恒有值、冻结；quality 分母）
+_approved_budget: Optional[int]   # B 批准预算（Senate PASS 写入，即使未改金额）
+_actual_cost: Optional[int]       # D 实际成本（bid 显式 construction_cost；入队持久，award 固化；None≠0）
 _construction_years: int = 0       # 实际施工周期
 _warranty_years: int = 0           # 实际质保周期
 _warranty_remaining: int = 0       # 剩余质保年限
 _annual_income: int = 0            # 骑士年收入（中标价含利润）
-_annual_cost: int = 0              # 骑士年支出（施工维护成本）
+_annual_cost: int = 0              # 骑士年支出（施工维护成本，由 D 派生）
 _is_extended: bool = False         # 是否续约
 _standard_warranty: int = 0        # 标准质保年限
 ```
@@ -47,12 +49,11 @@ _standard_warranty: int = 0        # 标准质保年限
 2. 提案参数包含 `contract_id` 和可选的 `modified_budget`
 3. 执政官可在提案时修改预算金额（`propose B02 80` 表示将预算改为80塔兰特）
 4. 提案经元老院表决（支持率 > 50%）后执行
-5. `PoliticalSystem.execute_passed_proposal()` 处理 `budget` 提案：
-   - 若 `modified_budget != contract.base_cost`：
-     - 将 `contract._original_budget` 设为原始预算
-     - 将 `contract.base_cost` 更新为修改后的预算
-   - 将合同状态设为 `BUDGETED`
-   - 释放到广场等待竞标
+5. `PoliticalSystem.execute_passed_proposal()` 处理 `budget` 提案（PUBLIC_WORKS，WP-L L1 / FC-L1-05/06）：
+   - 写 B：`contract._approved_budget = modified_budget`（即使未修改金额也写入）
+   - A 冻结：`contract._original_budget`（生成基线）**不被覆盖**
+   - `contract.base_cost` 更新为 B（兼容投影；bid ceiling 由 `Contract.bid_ceiling()` 给出）
+   - 将合同状态设为 `BUDGETED`，释放到广场等待竞标
 
 ### 2.4 广场竞标与中标
 
@@ -65,13 +66,18 @@ _standard_warranty: int = 0        # 标准质保年限
    - 设置 `remaining_years = duration_years`
    - 设置 `_is_under_execution = True`
 
-> **Fleet 建造合同限定注（R3-G-03，2026-09-05 Owner 裁决；详细权威见 MVP0.5-04 §2.4/§3.3 + R3 FROZEN
-> 设计 §3）：** 仅舰队合同（`_is_fleet_construction`）采用 A/B/C/D 四权威——A 基线 = `_original_budget`
-> （生成冻结，Senate 预算 PASS 不可改写）、B 批准预算 = `_approved_budget`（PASS 写入，即使未改金额）、
-> C 中标价 = `_contract_price`、D 实际成本 = `_actual_cost`（bid 显式 construction_cost；None≠0）；
-> **bid ceiling = B**；`base_cost` 在 award 前投影 A/B、award 后 = C——**兼容投影，非历史 B 权威**；
-> gross profit = C−D ≥ 0（显式成本路径 D>C 拒绝，不发明补贴）；新 Fleet pending bid 为 8 元组（原 7 项
-> 尾部追加 construction_cost）。普通公共工程/税规则不重写。
+> **PUBLIC_WORKS A/B/C/D 四权威（WP-L L1，2026-10-02 Owner 裁决 ODR-L-01/§3b；统一适用于全部
+> PUBLIC_WORKS，含舰队与普通公共工程；舰队细则见 MVP0.5-04 §2.4/§3.3）：** A 基线 = `_original_budget`
+> （生成即设、恒有值、冻结，Senate 预算 PASS 不可改写；quality 分母）、B 批准预算 = `_approved_budget`
+> （PASS 写入，即使未改金额）、C 中标价 = `_contract_price`（award 固化）、D 实际成本 = `_actual_cost`
+> （bid 显式 construction_cost；None≠0，award 固化不重算）；**bid ceiling = B**；`base_cost` 在 award 前
+> 投影 A/B、award 后 = C——兼容投影，非历史 B 权威；gross profit = C−D ≥ 0（显式成本路径 D>C 拒绝，
+> 不发明补贴）；新 PUBLIC_WORKS pending bid 为 8 元组（原 7 项尾部追加 construction_cost）。**基建 quality
+> 与舰队同口径 = D/A**（舰队落在 Fleet 实体；基建为合同级 ratio，驱动既有工期/质保公式）。税规则不重写。
+
+> **UI 无骑士非阻塞（WP-L L1 / FC-L1-09/10）：** 无可合格骑士时竞标按钮**不再禁用**（移除
+> `equesBidOptions().length>0` 谓词）；对话框可进入、骑士下拉为空、**无专用提示**；确认未选人时仅触发
+> 既有通用校验「请选择竞标骑士」。资格真值仍以 DTO `can_bid`（Eques）为唯一来源。
 
 ### 2.5 施工结算
 
@@ -87,7 +93,8 @@ def mark_complete(self, current_turn: int) -> None:
 
 **结算流程：**
 1. 国库每年支付剩余款项（末年为尾款，其余年为 `annual_income`）
-2. 骑士承担 `annual_cost` 施工成本并获取（付款-成本）利润
+2. 骑士承担 `annual_cost` 施工成本并获取（付款-成本）利润（`annual_cost = D // 工期`；WP-L L1：
+   `_actual_cost`=D 于 award 固化，末年为成本尾差 `D − (N−1)×annual_cost` 以守恒总成本 D）
 3. 骑士利润按税率纳税
 4. 年数递减，当 `remaining_years <= 0` 时调用 `mark_complete()` 标记完成
 5. 状态变更 `ACTIVE → COMPLETED`
@@ -203,15 +210,16 @@ if contract.contract_type == ContractType.PUBLIC_WORKS:
 ### 5.3 预算修改边界
 
 - 元老院可增加或减少预算
-- 修改后 `_original_budget` 保留原始值用于审计
-- 若未修改，`_original_budget` 保持为0
+- A（`_original_budget`）为生成即冻结基线，Senate PASS **不得覆盖**；B（`_approved_budget`）为批准的预算（即使未修改金额也写入）
+- `base_cost` 保持 B 投影（award 后 = C）；`bid_ceiling()` 返回 B（legacy BUDGETED fallback = base_cost）
 
 ### 5.4 最小值边界
 
 - 工期 `duration_years` 不能为0（默认2年）
 - 预期利润不能为负数
-- **Fleet 限定（R3 2026-09-05）：** 显式成本路径（construction_cost）受 D≤C 约束（gross=C−D≥0）；
-  D=0 合法（q=0，见 MVP0.5-04 §3.5），非缺省回退；旧 rate 路径开区间校验保持
+- **PUBLIC_WORKS（fleet + 基建，WP-L L1 2026-10-02）：** 显式成本路径（construction_cost）受 D≤C 约束
+  （gross=C−D≥0）；D=0 合法（quality=D/A=0，无 q=1 fallback）；显式 D 与显式 rate 冲突拒绝（不静默任选）；
+  旧 rate 路径开区间校验保持
 
 ## 6. 验收标准
 
@@ -240,6 +248,7 @@ if contract.contract_type == ContractType.PUBLIC_WORKS:
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.3 | 2026-10-02 | DA Sub-Agent (WP-L L1) | 基建统一为舰队式经济模型（ODR-L-01/§3b，GAME_RULE_CHANGE=YES）：A 生成即设恒有值；B 由 Senate PASS 写入且 A 不被覆盖；显式 D（construction_cost）入队 8 元组；bid ceiling=B；quality=D/A 同口径驱动既有工期/质保；结算成本尾差守恒 D；无骑士非阻塞 UI；四权威注由「Fleet 限定」推广至全部 PUBLIC_WORKS |
 | v1.2 | 2026-09-05 | DA Sub-Agent (WP-G-R3 B3) | Fleet 建造合同限定注（R3-G-03，GAME_RULE_CHANGE=NO）：§2.4 增 A/B/C/D 四权威 + bid ceiling=B + base_cost 兼容投影说明（award 前 A/B、后 = C，非历史 B 权威）+ 8 元组 pending；§5.4 补 Fleet 显式成本 D≤C/gross≥0 边界；普通工程/税规则不重写 |
 | v1.0 | 2026-07-12 | Document Officer Worker L | 初版创建 |
 | v1.1 | 2026-07-12 | DA Sub-Agent (GLM Audit Fix) | 修复：更新 §2.5 施工结算描述，实际业务逻辑调用 `mark_complete()` 而非 `execute_works_payment()` 直接设置 COMPLETED；补充结算流程及 `mark_complete()` 方法签名 |

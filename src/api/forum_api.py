@@ -355,10 +355,12 @@ def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int
     if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
         return api_response(False, i18n.get("error_invalid_amount"))
 
-    # 利润率处理：默认 rate 仅在 legacy/AI explicit-rate 路径应用（Fleet 显式 D 路径
+    # 利润率处理：默认 rate 仅在 legacy/AI explicit-rate 路径应用（PUBLIC_WORKS 显式 D 路径
     # rate 缺省 = 纯 D authority，派生展示 rate——不静默用默认 rate 反算/冲突）
     is_fleet = bool(getattr(contract, "_is_fleet_construction", False))
-    if not is_fleet or construction_cost is None:
+    # WP-L L1 / FC-L1-02：基建与舰队同为 PUBLIC_WORKS，均接受显式 D（supports explicit D）
+    supports_d = contract.contract_type == ContractType.PUBLIC_WORKS
+    if not supports_d or construction_cost is None:
         if profit_rate is None:
             profit_rate = state.get_economic_rule("default_bid_profit_rate", 0.2)
         if not (isinstance(profit_rate, (int, float)) and not isinstance(profit_rate, bool)):
@@ -385,21 +387,18 @@ def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int
         if amount < contract.base_cost:
             return api_response(False, i18n.get("error_bid_too_low", min=contract.base_cost))
     elif contract.contract_type == ContractType.PUBLIC_WORKS:
-        if is_fleet:
-            # R3-09（设计 §3.3）：bid ceiling = Senate B（approved_budget；legacy BUDGETED
-            # fallback = base_cost）；stale total_budget（A）不被读作 ceiling
-            ceiling = contract.bid_ceiling()
-            if ceiling is None or amount > ceiling:
-                return api_response(False, i18n.get("error_bid_too_high", max=ceiling if ceiling is not None else 0))
-        else:
-            if amount > contract.base_cost:
-                return api_response(False, i18n.get("error_bid_too_high", max=contract.base_cost))
+        # R3-09 / WP-L L1（FC-L1-02）：bid ceiling = Senate B（approved_budget；
+        # legacy BUDGETED fallback = base_cost）——Fleet 与基建同口径；stale total_budget（A）
+        # 不被读作 ceiling
+        ceiling = contract.bid_ceiling()
+        if ceiling is None or amount > ceiling:
+            return api_response(False, i18n.get("error_bid_too_high", max=ceiling if ceiling is not None else 0))
     else:
         return api_response(False, "未知的合同类型")
 
-    # D authority（Fleet only）校验与持久化
-    fleet_construction_cost: Optional[int] = None
-    if is_fleet:
+    # D authority（PUBLIC_WORKS: fleet + infrastructure）校验与入队持久
+    d_authority: Optional[int] = None
+    if supports_d:
         if construction_cost is not None:
             if not isinstance(construction_cost, int) or isinstance(construction_cost, bool) \
                     or construction_cost < 0:
@@ -408,14 +407,20 @@ def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int
                 # Loss-making source check（MVP0.5-03 §5.4 / §3.3 冻结）：无授权亏本竞标
                 return api_response(False, "建造成本不得高于出价金额（无授权亏本竞标）")
             if profit_rate is not None and int(amount * (1 - profit_rate)) != construction_cost:
-                # 显式 D 与显式 rate 不一致 → 拒绝，不能静默任选一项
+                # 显式 D 与显式 rate 不一致 → 拒绝，不能静默任选一项（FC-L1-03）
                 return api_response(False, "显式建造成本与利润率不一致")
-            fleet_construction_cost = construction_cost
+            d_authority = construction_cost
+            rate_stored = profit_rate if profit_rate is not None else (
+                float(amount - d_authority) / amount if amount > 0 else 0.0)
         else:
             # Legacy/AI explicit rate 路径：入队时确定 D 并持久（award 不再算一遍）
-            fleet_construction_cost = int(amount * (1 - profit_rate))
+            rate_stored = profit_rate
+            d_authority = int(amount * (1 - rate_stored))
+    else:
+        rate_stored = profit_rate
 
-    # 计算工期和质保期（非 Fleet 公共工程路径不变）
+    # 计算工期和质保期（基建 PUBLIC_WORKS 由显式 D 驱动既有 cost-ratio 公式；FC-L1-07
+    # quality = D/A 同口径）
     actual_construction = 0
     actual_warranty = 0
 
@@ -423,16 +428,15 @@ def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int
         pass
     elif contract.contract_type == ContractType.PUBLIC_WORKS and not is_fleet:
         original_budget = getattr(contract, "_original_budget", contract.base_cost)
-        # 实际成本 = 金额 * (1 - 利润率)
-        actual_cost = int(amount * (1 - profit_rate))
-        if actual_cost <= 0:
-            actual_cost = 1  # 避免除零
-        cost_ratio = actual_cost / original_budget if original_budget > 0 else 1.0
+        # D 为入队权威（显式或 rate 派生）
+        actual_cost = d_authority if d_authority is not None else int(amount * (1 - profit_rate))
+        cost_ratio = (actual_cost / original_budget) if original_budget > 0 else 0.0
+        denom = actual_cost if actual_cost > 0 else 1  # 避免除零（D=0 → quality 0，无 q=1 fallback）
 
         theoretical_construction = state.get_economic_rule("project_theoretical_construction", 3)
         theoretical_warranty = state.get_economic_rule("project_theoretical_warranty", 10)
 
-        actual_construction = int(theoretical_construction * original_budget / actual_cost)
+        actual_construction = int(theoretical_construction * original_budget / denom)
         actual_construction = max(1, actual_construction)
 
         actual_warranty = int(theoretical_warranty * cost_ratio)
@@ -444,31 +448,25 @@ def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int
         if len(bid) >= 2 and bid[0] == contract_id and bid[1] == figure_id:
             return api_response(False, "该人物已对本合同出价")
 
-    if is_fleet:
-        # 8 元组（原 7 项尾部追加 construction_cost；Fleet 工期/质保保持既有 1/0，award 以
-        # build_time 为唯一 N 同步——§3.6）。rate 存储语义：显式 rate 路径原样；显式 D 路径
-        # 为派生展示 rate（(C-D)/C，D=C 时 0.0——零毛利合法）。
-        if construction_cost is not None:
-            derived_d = construction_cost
-            if profit_rate is None:
-                rate_stored = float(amount - derived_d) / amount if amount > 0 else 0.0
-            else:
-                rate_stored = profit_rate
+    if supports_d:
+        if d_authority is None:
+            d_authority = int(amount * (1 - rate_stored))
+        if is_fleet:
+            # Fleet 8 元组（工期/质保保持既有 1/0，award 以 build_time 为唯一 N 同步——§3.6）
+            bid_tuple = (contract_id, figure_id, faction.id, amount, rate_stored, 1, 0, d_authority)
         else:
-            rate_stored = profit_rate
-            derived_d = int(amount * (1 - rate_stored))
-        state.add_forum_action(
-            "contract_bids",
-            (contract_id, figure_id, faction.id, amount, rate_stored, 1, 0, derived_d)
-        )
-        gross = amount - derived_d
+            # 基建 8 元组（FC-L1-02）：保留施工/质保派生 + 尾部 D（index 7）
+            bid_tuple = (contract_id, figure_id, faction.id, amount, rate_stored,
+                         actual_construction, actual_warranty, d_authority)
+        state.add_forum_action("contract_bids", bid_tuple)
+        gross = amount - d_authority
         message = i18n.get("info_bid_recorded", contract_name=contract.name, amount=amount)
         return api_response(True, message, data={
             "contract_id": contract_id, "amount": amount, "profit_rate": rate_stored,
-            "construction_cost": derived_d, "gross_profit": gross,
+            "construction_cost": d_authority, "gross_profit": gross,
         })
 
-    # 存储出价（7 元组，非 Fleet 原样不变）
+    # 存储出价（7 元组，tax farming 原样不变）
     state.add_forum_action(
         "contract_bids",
         (contract_id, figure_id, faction.id, amount, profit_rate, actual_construction, actual_warranty)
@@ -780,12 +778,14 @@ def resolve_forum(state: GameState) -> dict:
                     contract._warranty_remaining = 0
                     state.naval_system.on_contract_awarded(contract, winner_figure)
                 else:
-                    # 普通工程旧逻辑（保持不变）：工期/质保按既有公式重算
+                    # WP-L L1（FC-L1-05/07）：基建 award 固化 C/D（D 来自入队持久 8 元组，
+                    # award 不重算）；quality = D/A 驱动既有工期/质保公式
                     r = profit_rate if profit_rate is not None else state.get_economic_rule(
                         "default_bid_profit_rate", 0.2)
                     original_budget = getattr(contract, "_original_budget", contract.base_cost)
-                    actual_cost = int(amount * (1 - r))
-                    cost_ratio = actual_cost / original_budget if original_budget > 0 else 1.0
+                    d_winner = winner["construction_cost"]
+                    actual_cost = d_winner if d_winner is not None else int(amount * (1 - r))
+                    cost_ratio = actual_cost / original_budget if original_budget > 0 else 0.0
 
                     state.log_event(
                         f"工程合同中标: {contract.name}, 中标金额={amount}, 利润率={r:.4f}, 实际成本={actual_cost}, 原始预算={original_budget}, 成本比例={cost_ratio:.4f}",
@@ -804,6 +804,8 @@ def resolve_forum(state: GameState) -> dict:
                     annual_income = amount // construction_years if construction_years else amount
                     annual_cost = actual_cost // construction_years if construction_years else actual_cost
 
+                    contract._contract_price = amount     # C 固化（FC-L1-05）
+                    contract._actual_cost = actual_cost   # D 固化（入队持久，award 不重算）
                     contract._annual_income = annual_income
                     contract._annual_cost = annual_cost
                     contract.remaining_years = construction_years
@@ -1128,6 +1130,8 @@ def _pending_contract_rows(state: GameState) -> List[Dict[str, Any]]:
             continue
         is_budgeted = contract.status == ContractStatus.BUDGETED
         is_fleet = bool(getattr(contract, "_is_fleet_construction", False))
+        # WP-L L1 / FC-L1-02：PUBLIC_WORKS（fleet + 基建）均支持显式 D
+        supports_d = contract.contract_type == ContractType.PUBLIC_WORKS
         row = {
             "id": contract.id,
             "name": contract.name,
@@ -1139,12 +1143,13 @@ def _pending_contract_rows(state: GameState) -> List[Dict[str, Any]]:
             "status": contract.status.value if hasattr(contract.status, "value") else str(contract.status),
             "status_label": "待广场竞标" if is_budgeted else "待元老院预算表决",
             "can_bid": is_budgeted,
-            # R3-G-03（§3.3）：Fleet 权威展示（A baseline / B approved / bid ceiling）——
-            # BUDGETED 的 ceiling=B；未批准不能 bid
+            # R3-G-03（§3.3）/ WP-L L1（FC-L1-02）：PUBLIC_WORKS（fleet + 基建）权威展示
+            # （A baseline / B approved / bid ceiling）——BUDGETED 的 ceiling=B；未批准不能 bid
             "is_fleet_construction": is_fleet,
-            "baseline_construction_cost": getattr(contract, "_original_budget", 0) if is_fleet else None,
-            "approved_budget": contract.approved_budget if is_fleet else None,
-            "bid_ceiling": contract.bid_ceiling() if is_fleet and is_budgeted else None,
+            "supports_construction_cost": supports_d,
+            "baseline_construction_cost": getattr(contract, "_original_budget", 0) if supports_d else None,
+            "approved_budget": contract.approved_budget if supports_d else None,
+            "bid_ceiling": contract.bid_ceiling() if supports_d and is_budgeted else None,
         }
         rows.append(row)
     return rows

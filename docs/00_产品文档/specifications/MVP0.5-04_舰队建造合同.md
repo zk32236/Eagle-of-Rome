@@ -92,12 +92,16 @@ needed_ships = max(1, (deficit + base_strength - 1) // base_strength)
    - 广场竞标 → 骑士出价（可打折）
    - 中标者确定后触发 `naval_system.on_contract_awarded()`
 
-> **四权威（A/B/C/D，R3-G-03，2026-09-05 Owner 裁决）：** A 基线 = `_original_budget`（generator
+> **四权威（A/B/C/D，R3-G-03，2026-09-05 Owner 裁决；WP-L L1 2026-10-02 推广至全部 PUBLIC_WORKS）：** A 基线 = `_original_budget`（generator
 > 冻结；Senate 预算 PASS 仅 Fleet 分支冻结 A、写 B，不得把 A 覆盖为上一次 B）；B 批准预算 =
 > `_approved_budget`（Senate PASS 写入，即使未修改金额，Optional）；C 中标价 = `_contract_price`
 > （Forum award 固化）；D 实际成本 = `_actual_cost`（Fleet bid 显式 construction_cost；None≠0）。
 > `base_cost` 在 PENDING/BUDGETED 投影 A/B、award 后 = C（兼容读）；**bid ceiling = B**（未批准不能
 > bid）；gross profit = C−D。例：A280/B350/C300/D240/gross60（R3 SC-02 主链）。
+>
+> **WP-L L1（2026-10-02）：** 该 A/B/C/D + 显式 D + quality=D/A 经济模型现**统一适用于全部
+> PUBLIC_WORKS**（舰队与普通公共工程同口径，普通公共工程不再仅为 rate 派生）；普通公共工程细则见
+> MVP0.5-03 §2.4。舰队下游差异（生成 Fleet 实体 / build_time 工期 / 无质保）保持不变。
 
 ### 2.5 中标后的舰队建造
 
@@ -352,6 +356,12 @@ commander_bonus       = Σ 每 Fleet War Commander martial（每 Fleet 加一次
   聚合；证据可选 `fleet_strength_packages`（package_id/A/D/ids/nominal/raw/capped/rounded，不泄漏他派系
   bid）。`assigned_fleet_count`/`naval_ready` 语义**不变**（不可改成 effective≥enemy 的 readiness 新规则）。
 
+- **强度展示契约（WP-L L1 / FC-L1-11 / ODR-L-03，2026-10-02）**：界面显示的**折算实际战力**必须**等于**
+  权威读模型字段（`get_war_fleet_strength_read_model(...).fleet_quality_adjusted_base` /
+  `fleet_effective_combat_strength`）；QML **只渲染不做算术**（禁第二套经济真值）。**展示面 = 战争卡
+  post-build（唯一）**；竞标对话框内「折算实际战力」预览行按 G2 ③（2026-10-02）**撤回**（D3.3 = fallback
+  N/A，不改 FC-L1-11）。冻结参考 oracle：nominal 21 → q=6/7 → 18。
+
 ### 5.3 舰队生命周期边界（G1-12/G1-13/G1-14，WP-G GC）
 
 | 操作 | 前置条件 | 目标状态 |
@@ -429,6 +439,7 @@ commander_bonus       = Σ 每 Fleet War Commander martial（每 Fleet 加一次
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.4 | 2026-10-02 | DA Sub-Agent (WP-L L1) | 强度展示契约（FC-L1-11 / ODR-L-03）：显示值 = 权威读模型字段、QML 只渲染不重算；展示面 = 战争卡 post-build（竞标对话框预览行按 G2 ③ 撤回）；四权威 + 显式 D + quality=D/A 推广至全部 PUBLIC_WORKS（交叉引用 MVP0.5-03） |
 | v1.3 | 2026-09-05 | DA Sub-Agent (WP-G-R3 B3) | **Owner 2026-09-05 superseding 裁决同步（R3-G-02/03/04，GAME_RULE_CHANGE=NO）：** §2.3 补充合同 required/usable/committed 全改 nominal——删旧「竞标折价 true deficit=可补」语义（quality/experience/martial 不决定 hull 数，R3 §4.3）；§2.4 增 A/B/C/D 四权威（A 基线生成冻结不可被 Senate 改写、B 批准、C 中标、D 实际成本，bid ceiling=B，A280/B350/C300/D240/gross60）；§2.5 award 改 quality 持久（n_i nominal 快照 + q=D/A 精确整数比 + package_id，不再 per-fleet round/floor）；§2.9/§2.10/§5.3/§5.6 维护短款累计解散含 ON_MISSION + charged 唯一实扣 + 多战退役窄修（resolved 战专属 released AVAILABLE 不由他战保留）+ `naval_maintenance`/`naval_fleet_disbanded` 事件 schema；§3.3 补四权威/nominal/quality/package 持久字段（serializer 含 `_target_war_id`/`_fleet_type`/`_build_time`）；§3.5 删 per-fleet lower floor=1 → Owner 选项 B（纯 raw package 舍入、D=0 不 fallback、upper cap 落 package 级 min(raw,2×nominal)）+ oracle 表（21→18、D28→2、D0→0、cap42、混合 round10）；§4.1 输入 C+D；§5.2.1 增强度读模型字段；§6 验收表补 R3 行 13–16。历史折价表述 append-only，不改为「当时已 nominal」（R3 设计 §11.2）。 |
 | v1.2 | 2026-09-05 | DA Sub-Agent (WP-G-R1 B2) | R1-G-04/R1-G-08 冻结语义同步：§2.3 补充合同改四要素权威 deficit（required-usable-committed_building-committed_pending，P1-02 committed 去重模型，删二值守卫 blanket skip）+ 两个 fleet generator 创建时 `_original_budget=total_budget` 原始预算不变量（§7.12.2，MVP0.5-04 既有折价规则实现缺陷修复，GAME_RULE_CHANGE=NO）；§5.2 合同重复保护改权威公式；§5.2.1 新增战斗读模型冻结 schema（per-war `assigned_fleet_count`/`naval_ready` + 全局 `built_fleet_count`，兼容 alias `fleet_count`/`fleets_assigned` 本 R1 保留，GUI 改读新字段） |
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent G | 初版创建 |

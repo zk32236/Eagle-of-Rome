@@ -521,7 +521,7 @@ class TestContractFixes:
         # 检查存储的出价是否包含了默认利润率
         pending = state.get_forum_pending()
         assert len(pending["contract_bids"]) == 1
-        _, _, _, _, profit_rate, _, _ = pending["contract_bids"][0]
+        _, _, _, _, profit_rate, _, _, _ = pending["contract_bids"][0]
         assert profit_rate == 0.2
 
     def test_fleet_contract_multiple_ships(self, basic_state):
