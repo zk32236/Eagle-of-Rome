@@ -1108,7 +1108,14 @@ class WarSystem:
         except Exception:
             surviving = len(getattr(war, "legion_numbers", []) or [])
 
-        allowed_modes = ["command", "peace"] if pending_peace else ["command"]
+        # WP-G-R11 Amendment A2（FC-R11-A2-01）：起义战（rebellion_province_id != None）
+        # 归属专属起义机制 —— 不暴露任何普通 command/peace 可执行能力（allowed_modes=[]）。
+        # classification 仍 "ongoing"、is_real_war=True（作为真实 ACTIVE War 可见）；
+        # 其余 facts 逐字不变。route 由唯一 classify_war_authority（allowed_modes ∩ 表）派生。
+        if war.rebellion_province_id is not None:
+            allowed_modes = []
+        else:
+            allowed_modes = ["command", "peace"] if pending_peace else ["command"]
         return {
             "war_id": war.id,
             "war_name": war.name,

@@ -400,9 +400,15 @@ class TestFR1TakeoverDirectAction(unittest.TestCase):
         self.assertEqual(self.state.get_senate_direct_actions(), [])
 
     def test_ai_auto_takeover_via_auto_submit_proposals(self):
-        """F-R1-04 AI 分支 → R5（Plan §4.2 L15；SA §1.2 SUPERSEDED + §4.10 C-M08，DA-4）：
-        AI 接管直连退位——auto_submit_proposals 经唯一整包 propose_many 提交（零部署）；
-        commanderless 真实战不再被 AI 接管（无 mandatory/直连副作用），部署仅由边界承担。"""
+        """F-R1-04 AI 分支 → **R11 再取代**（WP-G-R11 · SA Addendum A1）：commanderless 真实
+        ACTIVE 战由 AI 整包经唯一 propose_many 提交 consul_direct checked command
+        （构造/提交期零早写）；部署仅由唯一 Senate→Combat 边界（advance_senate_phase）
+        原子承担 **一次**。
+
+        该断言 re-supersede R5/R6「AI 直行动已退役」历史快照（原断言：有 checked 卡也不
+        部署）；R11 正当恢复 AI 现有战 consul_direct 直行动族（母设计 + Addendum A1），
+        故边界一次性部署为当前正确语义。非过时断言（零早写 / 旧 pending 退役 / 无
+        takeover_deploy 直连）保留。"""
         # resolve 先行（无 P → proposal_selection_not_complete 拒绝，零接管）
         refused = senate_api.resolve_senate(self.state)
         self.assertFalse(refused["success"])
@@ -413,29 +419,35 @@ class TestFR1TakeoverDirectAction(unittest.TestCase):
             land_proposal_deciders=[],  # 0 提案批
         )
         self.assertTrue(result["success"], result.get("message"))
-        # 零部署/零接管：war 仍 commanderless、Consul 留城、无军团、无旧 pending 直连
-        self.assertIsNone(self.war.commander_id)
+        # 构造/提交期零早写：war 仍 commanderless、Consul 留城、无军团、无旧 pending 直连
+        self.assertIsNone(self.war.commander_id, "submit 期零早写（commander 不变）")
         self.assertFalse(self.state.get_member(1).is_absent)
         self.assertFalse(self.war.legion_numbers)
         self.assertIsNone(self.state.get_takeover_pending(), "旧直连接管已退役")
         self.assertEqual(self.state.get_senate_direct_actions(), [], "部署前无 D")
 
-        # 边界仍可合法推进（无 mandatory 门）
+        # 边界：有 checked 卡 → 一次性部署替补指挥官（唯一原子 Senate→Combat 边界）
         resolved = senate_api.resolve_senate(self.state)
         self.assertTrue(resolved["success"], resolved.get("message"))
         adv = senate_api.advance_senate_phase(self.state, "player1")
         self.assertTrue(adv["success"], adv.get("message"))
-        self.assertIsNone(self.war.commander_id, "无 checked 卡 → 不部署")
-        self.assertFalse(self.state.get_member(1).is_absent)
+        self.assertIsNotNone(self.war.commander_id, "有 checked 卡 → 边界部署一次")
+        self.assertTrue(self.state.get_member(self.war.commander_id).is_absent,
+                        "边界后指挥官出征（一次性原子部署）")
         self.assertTrue(self.state.is_phase_executed("senate"))
         # 旧 D_Takeover provenance 退役：无 takeover_deploy 直连记录
+        # （R11 新族仅经整包 propose_many / 边界 commit_war_resolution，无 legacy 直连）
         actions = [a for a in self.state.get_senate_direct_actions()
                    if a.get("kind") == "takeover_deploy"]
         self.assertEqual(actions, [])
 
     def test_ai_takeover_skips_war_with_valid_commander(self):
-        """§11 negative：已有有效指挥官 → AI 自动接管跳过（零 mutation）。"""
-        self.war.commander_id = 2  # senator 2（非 absent/非死）→ 有效指挥官
+        """§11 negative：已有有效指挥官 → AI 自动接管跳过（零 mutation）。
+
+        R11 · Addendum A1 §4.3：本用例现任 id=2 为**非候选**现任（无 consul/praetor 履历的
+        普通元老）→ 4b′ Continue 分支被对称守卫 omit → 整包不因 COMMANDER_INELIGIBLE 失败
+        → 语义（"AI skips war with valid commander"）保持不变，fail→pass。"""
+        self.war.commander_id = 2  # senator 2（非 absent/非死）→ 有效指挥官（但非候选）
         result = senate_api.auto_submit_proposals(self.state, land_proposal_deciders=[])
         self.assertTrue(result["success"])
         self.assertEqual(self.war.commander_id, 2)

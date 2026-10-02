@@ -18,6 +18,7 @@ from src.core.deciders.impl.auto_land_proposal_decider import AutoLandProposalDe
 from src.core.deciders.land_proposal_decider import LandProposalDecider
 from src.core.deciders.senate_vote_decider import SenateVoteDecider
 from src.core.deciders.impl.auto_tribune_veto_decider import AutoTribuneVetoDecider
+from src.core.deciders.impl.auto_war_takeover_decider import AutoWarTakeoverDecider
 from src.core.deciders.tribune_veto_decider import TribuneVetoDecider
 from src.core.entities.contract import ContractType, ContractStatus
 from src.core.entities.figure import Figure
@@ -1116,13 +1117,14 @@ def auto_submit_proposals(
     # ========== 4a. 宣战提案（战争威胁 → checked command draft） ==========
     ws = state.get_war_system()
     if ws:
+        # R11-S1（共享剩余池）：4a 与 4b′ 共享同一可用军团池——此处一次读取
+        # （语义等价：有 threats 时值不变；无 threats 时 remaining=满池，供 4b′ 消费）。
+        ms = state.get_military_system()
+        remaining = len(ms.get_available_legions()) if ms else 0
         threats = ws.get_threat_wars()
         if threats:
             propose_chance = state.config.get("testing.propose_war_chance", 0.7)
             always_declare = state.config.get("testing.always_declare", False)
-            # P1-a: value range 改由 _legion_options_for_war（config 派生）提供，多战争总和守恒
-            ms = state.get_military_system()
-            remaining = len(ms.get_available_legions()) if ms else 0
 
             for war in threats:
                 if war.peace_treaty and war.peace_treaty.get('status') == 'pending':
@@ -1170,6 +1172,68 @@ def auto_submit_proposals(
                 "type": "peace",
                 "war_id": war.id,
                 "description": f"对 {war.name} 的停战协议进行表决",
+            })
+
+    # ========== 4b′. 现有/进行中真实战 → consul_direct command（WP-G-R11 补族） ==========
+    # 经共享权威路由（build_war_card_views 透传的 authority_by_mode = classify_war_authority
+    # 产物）枚举真实进行中/被动战争（禁私有 switch）；询问保留策略
+    # AutoWarTakeoverDecider.decide_takeover（TAKE ACTION / NO ACTION）；行动时用共享候选
+    # producer 选 target（有效现任 = Continue 保留；无有效现任 = Takeover 新选），用权威
+    # reinforcement_range 值域内 random.randint 取援军 N（镜像 4a 宣战随机口径、共享剩余池
+    # 守恒）；仅 append checked command draft，随既有 propose_many 整包提交（零构造期
+    # mutation / 零绕过整包 / 对 consul_direct 不走 Vote-Veto）。
+    if ws:
+        pending_peace_ids = {w.id for w in ws.get_truce_wars_with_pending_treaty()}
+        # Addendum A1 §4.1：复用既有共享候选 producer（commander_candidates closure，≈L1104；
+        # 零新候选逻辑/零第二 producer）。producer 忽略 ctx（仅读 state），故其候选集与
+        # submit 期 `submit_proposal_package` 校验的 candidate_ids 同集合。
+        _candidate_ids = {row["figure_id"] for row in commander_candidates}
+        takeover_decider = AutoWarTakeoverDecider()
+        for card in politics.build_war_card_views({
+                "current_turn": (state.turn.turn_number if state.turn else None),
+                "consul_id": host_figure.id}):
+            wid = card.get("war_id")
+            if (card.get("authority_by_mode") or {}).get("command") != AUTHORITY_CONSUL_DIRECT:
+                continue  # 非 consul_direct command（active_declaration=senate_vote 归 4a）→ 跳过
+            if wid in pending_peace_ids:
+                continue  # 已由 4b 产出 peace intent → 同一 War 禁双 intent（cross_route_conflict）
+            war = ws.get_war_by_id(wid)
+            if war is None:
+                continue
+            old_commander = (state.get_living_member(card.get("current_commander_id"))
+                             if card.get("current_commander_id") is not None else None)
+            if not takeover_decider.decide_takeover(war, host_figure, old_commander, state):
+                continue  # NO ACTION（含起义/同人守卫）→ omit（= unchecked / 保留 claim）
+            if card.get("current_commander_id") is not None:
+                target = card["current_commander_id"]  # Continue：保留现任（无强制替换）
+                if target not in _candidate_ids:
+                    # ★ Addendum A1 对称守卫：现任 ∉ 共享候选集 → Core 必拒
+                    # （COMMANDER_INELIGIBLE 整包 fail-closed）→ omit 本战，与 Takeover
+                    # 分支 `if target is None: continue` 对称；其余战争/提案照常发布。
+                    continue
+            else:
+                target = _pick_ai_commander()  # Takeover：共享候选 producer + claim 唯一性
+                if target is None:
+                    continue  # 无合法 Commander → 无法组合法草案 → omit
+            rng = reinforcement_range(state, war)
+            if rng is None:
+                continue  # 值域不可得（防御；生产 config 存在）
+            lo = rng["min"]
+            hi = min(remaining, rng["max"])  # 与 4a 共享剩余池（ΣN ≤ 实际池守恒）
+            if hi < lo:
+                n = 0  # 残余池不足 → N=0（仍绑定 Commander；REINFORCEMENT N≥0 合法）
+            else:
+                n = random.randint(lo, hi)  # 镜像 4a 宣战随机口径（同一 randint 机制）
+            remaining -= n
+            war_drafts.append({
+                "war_id": wid, "checked": True, "mode": "command",
+                "target_commander_id": target, "reinforcement_n": n,
+            })
+            created_proposals.append({
+                "type": "war",
+                "war_id": wid,
+                "legions": n,
+                "description": f"对 {war.name} 下达执政官直行动命令，增援 {n} 个军团",
             })
 
     # ========== 4c. 总督任命（行省空缺） ==========

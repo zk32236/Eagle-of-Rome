@@ -349,9 +349,62 @@ doSubmitSenateVotes（投票成功 + 视图刷新后）:
 
 **单 owner / 落点：** `src/ui/gui/session_store.py` :: `GuiSessionStore.doSubmitSenateVotes`（既有 zero-passed 收敛块旁新增同 owner `elif` 条件；复用既有 `resolve_senate()`，不新增按钮 / 不改 DTO 派生 / 不改 Core resolver）。
 
+### 5.12 WP-G-R11 同步注记（2026-10-02；append-only）
+
+> **权威**：SA-Design-WP-G-R11-2026-10-02（母设计 `dd102589…`；FC-R11-01…09 / §3.2 冻结语义式）+ SA-Design-Addendum-A1（`0b1b9312…`；§4.1 对称守卫 / §4.2 FC-R11-04 增补）。**PRODUCER PARITY REGRESSION CORRECTION = YES**（恢复 AI 现有战 consul_direct 直行动 parity）；**GAME_RULE_CHANGE = NO**（authority 矩阵 / 表决 / 否决 / 停火 / 战斗 / 灾难 / 军团恢复 / 舰队经济 **全部不变**）；**Authoritative Product Spec Impact = NOT REQUIRED**。基线 `a0d452fbe54e0f0c7a1398c853657137964203a3`（`task/gui-beta-r1-wpgr11`）。
+
+**A. 第三族：Existing/Ongoing → consul_direct command（落点 / 缺根因闭合）**
+- **单 owner：** `src/api/senate_api.py` :: `auto_submit_proposals`——在既有 **4b 停火族之后、4c 总督任命之前**新增 **4b′「现有/进行中真实战 → consul_direct command」** 族（缺口根因 = AI 整包生产者原先只造 4a 宣战 / 4b 停火**两族**，漏第三族；运行日志全 run `type=consul_war_decision` 计数 = 0）。
+- **共享路由消费（禁私有 switch）：** 枚举 `PoliticalSystem.build_war_card_views({current_turn, consul_id})`（透传 `classify_war_authority` 产物）；准入条件 = `authority_by_mode["command"] == AUTHORITY_CONSUL_DIRECT`；排除 4b 的 `get_truce_wars_with_pending_treaty()` 集合（跨路由冲突）；`active_declaration`（THREAT → `senate_vote`）仍归 4a。
+- **保留策略（不新增概率/策略）：** `AutoWarTakeoverDecider.decide_takeover(war, host, old_commander, state)`——`False → NO ACTION`（omit，= unchecked；R6 Q5 commanderless/legionless 合法）；`True → TAKE ACTION`（append checked command draft）。起义 / 同人守卫逐字保留。
+- **Target Commander（共享候选 producer）：** 有效现任 → **Continue 保留现任**（无强制替换）；无有效现任（commanderless / 现任 dead-missing）→ `_pick_ai_commander()`（复用既有 `build_war_commander_candidates` closure + 本包 claim 唯一性）；`None` → omit。
+- **Reinforcement N（镜像宣战随机口径）：** `random.randint(rng.min, min(remaining, rng.max))`，`rng = reinforcement_range(state, war)`；与 4a **共享同一 `remaining` 池守恒**（ΣN ≤ 实际池）；空池 → `N=0`（仍绑定 Commander）。**零第二套随机/值域**。
+- **零早写 / 单边界：** 仅 append `war_drafts`（checked command）+ `created_proposals`，随既有 `propose_many → PoliticalSystem.submit_proposal_package` 整包发布；`consul_direct → FROZEN ConsulWarDecision`（**无 `proposal_id`，不进 Vote/Veto**）；军事变更仅由唯一 `advance_senate_phase` → `commit_war_resolution` 原子边界执行。
+
+**B. Addendum A1 §4.1 对称守卫（Continue target ∈ 共享候选集）**
+- Continue 分支**产出前**校验 `target ∈ _candidate_ids`（`_candidate_ids = {row["figure_id"] for row in commander_candidates}`——复用既有 closure，**零新候选逻辑 / 零第二 producer**；producer 忽略 `ctx`，与 submit 期候选集**同集合**）；`target ∉ 候选集 → continue`（omit 本战），与 Takeover 分支 `if target is None: continue` **对称**。
+- **严格安全（零回归）：** 守卫判据 = Core `submit_proposal_package` **同一**候选谓词 ⇒ 凡被 omit 的 target 必触发整包 `COMMANDER_INELIGIBLE`；净效果 = 把「**整包 FAIL**（祸及全包，R11-AC-11 原子性反噬）」转为「**本战 omit**（其余照常发布）」。可达见证（REACHABLE）= 候任总督（`governor_designate`，`governor_id=None`）被 4b′ Takeover 选为 commander → 年度结算 `complete_governor_transition` 无条件升任 confirmed 总督（`governor_id=A`）→ 下一会期 Continue 以 A 为 target ∉ 候选集。
+- **FC-R11-04 增补句（append-only，仅该条）：** 有效现任（Continue）分支产出前 MUST 校验 `target ∈ build_war_commander_candidates()`（同一共享候选 producer，含「非 confirmed-总督」与「role≠None」两条件）；`target ∉ 候选集` → omit 本战（与 Takeover 分支 `if target is None: continue` 对称；防**单个**非法 target 触发整包 `COMMANDER_INELIGIBLE` fail-closed）。
+
+**C. 边界 / 证据**
+- 零 QML diff / 零新持久化字段；**不改** `political_system` / `war_system` / `auto_war_takeover_decider` / `province` / `game_state` / config / registry / FROOT / safe-bin；不动 §6 Out-of-Scope。
+- 测试：`src/tests/test_api/test_wpgr11_ai_direct_action_parity.py`（R11-SC-01…05，真实 `auto_submit_proposals` 链）；`src/tests/test_api/test_senate_r1.py::TestFR1TakeoverDirectAction` 2 用例按 R11 语义 re-supersede（F-1） / 守卫下 fail→pass（F-2）。
+- 证据：`WP-G-R11/03-da-evidence/R11-S1/`（ATTEMPT-1 报告 + ATTEMPT-2 守卫增量 / 三层回归）。
+
+### 5.13 WP-G-R11 Amendment A2 同步注记（2026-10-02；append-only）
+
+> **权威**：SA-Design-Amendment-A2-WP-G-R11-2026-10-02（`ff70d1168c2d4ab8a101e18d5a4df95d3789a7077e1a82bf5c728bedf31cc8a7`）+ 母设计（`dd102589…`）+ Addendum A1（`0b1b9312…`）；ODR-G-R11-05（Owner FROZEN）。**PRODUCER/PARITY CORRECTION = YES**（起义战 Human/AI/CLI/API 普通 command 路由统一关闭）；**GAME_RULE_CHANGE = NO**（authority 矩阵 / 表决 / 否决 / 停火 / 战斗 / 灾难 / 军团恢复 / 舰队经济 **全部不变**）；**AUTHORITY_CHANGE = NO**（权威矩阵不变，仅**收窄**起义战能力面）；**Authoritative Product Spec Impact = NOT REQUIRED**。基线 `a0d452fbe54e0f0c7a1398c853657137964203a3`（`task/gui-beta-r1-wpgr11`）。
+
+**A. 规则（单一 canonical owner）**
+- **单 owner：** `src/core/systems/war_system.py` :: `WarSystem.describe_senate_war` —— 起义战（`war.rebellion_province_id is not None`）产出 `allowed_modes = []`（其余 lifecycle facts **逐字不变**；`classification` 仍 `"ongoing"`、`is_real_war=True` ⇒ 起义战**仍作为真实 ACTIVE War 可见**）。**不新增** `WarCardView` 字段（键集合不变，仅收窄既有 `allowed_modes` 取值）。
+- **派生（零额外改动）：** `PoliticalSystem.classify_war_authority(facts)`（纯函数「能力面 ∩ 表」，**不改**）⇒ `allowed_modes=[]` 时返回 `{}`（**无 command authority**）⇒ War Card `authority_by_mode = {}`。
+
+**B. 四通道 parity（同一规则，均只读消费派生产物）**
+- **Human GUI：** `war_cards[].authority_by_mode = {}` ⇒ `authorityMap["command"]` 未定义 ⇒ `routeReady=false` ⇒ 勾选被拒、不入草稿、不进 `selectedWarDrafts()`（**零 QML diff**，fail-closed 门早已存在）。
+- **CLI：** `phase_senate._print_proposal_options` / `_stage_war_draft` 仅列/入 `authority_by_mode` 内 route ⇒ 起义战 `allowed_modes=[]` ⇒ **不列出 / 不入草稿**。
+- **API/手构 submit：** `submit_proposal_package` 服务端**重取** `classify_war_authority` ⇒ checked `command` draft 触发 `WAR_MODE_INVALID`（`"command" not in allowed_modes`）**整包 FAIL、零部分发布**（或先查 route 则 `WAR_NOT_PROPOSABLE`；两码均 fail-closed，**同一 owner**）。
+- **AI：** `auto_submit_proposals` 4b′ 准入条件 `authority_by_mode["command"] == consul_direct` ⇒ 起义战 `{}` ⇒ **skip**（不产普通 direct command）。
+
+**C. 专属机制唯一 normal owner（不改）**
+- 起义指挥官 = `governor_designate_id or governor_id`（在城非死）；起义募兵 = Senate→Combat retained-effect `rebellion_assign`（`min(rebellion_legion_count, residual)`）。**仅当 `commander_id is None` 时合格** —— 本修订靠关闭普通 command 路由**保住该前置**（漏洞 = commanderless 起义经普通 consul_direct command 落 `commander_id`，永久绕过专属 assign）。语义/时序/排序/强度/residual-pool 政策 **全部不改**（顾问 §10 Out-of-Scope）。
+
+**D. Defense-in-depth（保留，非第二业务规则 owner）**
+- `AutoWarTakeoverDecider.decide_takeover` 起义守卫**逐字保留**（AI 侧防御）；服务端 submit fail-closed 由**同一** `classify_war_authority` 派生（owner 的服务端应用，**非**第二独立规则）。
+
+**E. 契约关系（append-only；不改既有条）**
+- 新增 **FC-R11-A2-01…04**（起义战非 command 能力 / 起义战无 command authority / 服务端 fail-closed 同 owner / 专属机制唯一 normal owner）。
+- 与既有 **FC-R11-01**（强化）、**FC-R11-02**（收紧其输入集合）、**FC-R11-04**（令其不适用于起义战，defaults 本身不改）、**FC-R11-07**（对起义战空适用）关系**冻结为「不改」**；FC-R11-03/05/06/08/09 + A1 增补逐字不动。
+
+**F. 边界 / 证据**
+- 零 QML diff / 零新持久化字段；**不改** `political_system`（`classify_war_authority` / route 表 / `submit_proposal_package` / 边界 / retained-effect）/ `senate_api`（4b′ + A1 守卫）/ `auto_war_takeover_decider` / `data` / config / registry / FROOT / safe-bin。
+- 测试：`src/tests/test_api/test_wpgr11_rebellion_canonical_ownership.py`（R11-RBL-01…05；R11-RBL-02/03 走真实入口 `submit_proposal_package` / `auto_submit_proposals`）。
+- 证据：`WP-G-R11/03-da-evidence/R11-S1-A2/`（ATTEMPT-1 报告 + 三层回归）。
+
 ## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v2.5 | 2026-10-02 | DA Sub-Agent (WP-G-R11 R11-S1-A2) | 新增「§5.13 WP-G-R11 Amendment A2 同步注记」——起义战 canonical ownership：`WarSystem.describe_senate_war` 对起义战（`rebellion_province_id != None`）产出 `allowed_modes=[]`（单 owner；classification 仍 `ongoing` / `is_real_war=True` ⇒ 卡仍可见）⇒ `classify_war_authority`（route = 能力面 ∩ 表，不改）返回 `{}` ⇒ War Card `authority_by_mode={}` ⇒ Human routeReady=false / CLI 不列 / AI 4b′ skip / 手构 submit 服务端重取 route fail-closed（`WAR_MODE_INVALID`，整包 FAIL 零发布）。唯一 normal owner = 专属起义机制（`governor_designate>governor` + retained `rebellion_assign`）。新增 FC-R11-A2-01…04；与 FC-R11-01/02/04/07 关系冻结为不改。defense = `AutoWarTakeoverDecider` 起义守卫 + server fail-closed（同一 route owner）。零 QML diff / 零新持久化 / 零改 classify·submit·decider·边界。PRODUCER/PARITY CORRECTION=YES，GAME_RULE_CHANGE=NO，AUTHORITY_CHANGE=NO。见 §5.13 |
+| v2.4 | 2026-10-02 | DA Sub-Agent (WP-G-R11 R11-S1) | 新增「§5.12 WP-G-R11 同步注记」——AI proposer `auto_submit_proposals` 补**第三族** Existing/Ongoing → consul_direct command（4b′，置于 4b 停火后 / 4c 总督前）：共享 `build_war_card_views`（`classify_war_authority`）枚举 + `decide_takeover` 保留策略 + 共享候选 producer（Continue/Takeover）+ `reinforcement_range` 内 `random.randint`（与 4a 共享剩余池守恒）；仅 append checked command draft 随 `propose_many` 整包，FROZEN `ConsulWarDecision`（无 proposal_id / 不进 Vote-Veto），仅边界 `advance_senate_phase` 原子执行。**Addendum A1 §4.1 对称守卫**（Continue 产出前 `target ∈ 共享候选集`，否则 omit；FC-R11-04 增补句）。零 QML diff / 零新持久化。PRODUCER PARITY REGRESSION CORRECTION=YES，GAME_RULE_CHANGE=NO。见 §5.12 |
 | v2.3 | 2026-10-02 | DA Sub-Agent (WP-M-R1 R1-S1) | NONE veto 步自动收敛：`GuiSessionStore.doSubmitSenateVotes` 投票完成后 `current_step=="tribune_veto"` 且 `veto_control_mode=="NONE"` → 复用 canonical finalization（`resolve_senate`）自动收敛 → results / canAdvanceSenate；HUMAN/AI 逐字不变；门禁唯一 = resolver-backed NONE（非 `can_resolve`）；零 QML diff / 无新增持久化。REGRESSION_CORRECTION=YES，GAME_RULE_CHANGE=NO。见 §5.11 |
 | v2.2 | 2026-09-28 | DA Sub-Agent (WP-M M-S1) | 新增「§5.10 WP-M 主持单一权威收口」——`GameState.get_presiding_officer` D2 冻结定义（HOST_OFFICE_SET + 四级 tie-break）；`resolve_proposal_control` 新增 host 回退层（`human/ai_presiding_officer`，末层 `no_eligible_host`）；`submit_proposal_package` 授权块 host 回退 + direct 整包拒绝 `host_no_direct_authority`；`get_senate_view` 新增 `senate_no_host`；`finalize_senate_if_ready` 空选择守卫唯一豁免 host=None；`auto_submit_proposals`/CLI host 化。GAME_RULE_CHANGE=YES（ODR-M-01/03） |
 | v2.1 | 2026-09-26 | DA Sub-Agent (WP-G-R9) | R9 同步：新增「§5.7.3 WP-G-R9 同步注记」——`get_senate_view` 顶层 direct 投影作用域收敛（`_current_canonical_direct_scope`；canonical 仅由有效 PackageRecord 证明 = 身份匹配 + `submitted_at.turn` 完整/整数/匹配当前回合；含 opaque custom session，不解析 session ID 文本）；无包/坏包**统一排除、不 fallback**（ADDENDUM 01 支持边界，不声称已证实真实 legacy 回归）；原 helper 与 PA 语义保留 / scope guard 仅顶层调用处 / 纯读取、无新 schema·持久字段·公共 API。GAME_RULE_CHANGE=NO |
