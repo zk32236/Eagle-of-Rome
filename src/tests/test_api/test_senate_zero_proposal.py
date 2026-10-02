@@ -249,6 +249,45 @@ class TestSenateZeroProposal(unittest.TestCase):
         self.assertTrue(store.doAdvanceSenate()["success"])
         self.assertTrue(self.state.is_phase_executed("senate"))
 
+    # ---------------- R11-G7R-03/04 佐证：单一 canonical 谓词（direct-only / 空包保持） --------
+
+    def test_r11_g7r_03_human_consul_empty_batch_canonical_predicate(self):
+        """R11-G7R-03 佐证（Human direct-only / 空包保持）：canonical 谓词 `data["created"]` 为空
+        → Store 既有自动 finalization（唯一 Transition Owner）→ results + can_advance → 恰一次 advance。
+        Human 路径 `data` 无 `proposals` 键 → 旧 `or proposals` 兜底不参与（谓词收窄对其中性）。"""
+        from src.ui.gui.session_store import GuiSessionStore
+        store = GuiSessionStore(self.state)
+        store.initialize("player1")
+        feedback = store.doSubmitSenateProposals([])
+        self.assertTrue(feedback["success"])
+        data = feedback["data"] or {}
+        self.assertEqual(data.get("created"), [])
+        self.assertTrue((data.get("finalization") or {}).get("finalized"))
+        self.assertEqual(store.senateCurrentStep, "results")
+        self.assertTrue(store.canAdvanceSenate)
+        self.assertTrue(store.doAdvanceSenate()["success"])
+
+    def test_r11_g7r_04_ai_empty_package_canonical_predicate(self):
+        """R11-G7R-04 佐证（AI 空包保持）：AI 既无提案亦无 direct 动作 → canonical 谓词空
+        （created==[] 且 proposals==[]）→ 既有自动 finalization → 无软锁。"""
+        from src.ui.gui.session_store import GuiSessionStore
+        self.state.config.testing.propose_war_chance = 0.0
+        self.state.config.testing.always_declare = False
+        self.state.config.political_rules.land_proposal.sale_chance = 0.0
+        self.state.config.political_rules.land_proposal.distribution_chance = 0.0
+        self.state._current_player_id = "player2"
+        store = GuiSessionStore(self.state)
+        store.initialize("player2")
+        feedback = store.doSubmitSenateProposals([])
+        self.assertTrue(feedback["success"])
+        data = feedback["data"] or {}
+        self.assertEqual(data.get("created"), [])
+        self.assertEqual(data.get("proposals"), [])
+        self.assertTrue((data.get("finalization") or {}).get("finalized"))
+        self.assertEqual(store.senateCurrentStep, "results")
+        self.assertTrue(store.canAdvanceSenate)
+        self.assertTrue(store.doAdvanceSenate()["success"])
+
 
 if __name__ == "__main__":
     unittest.main()

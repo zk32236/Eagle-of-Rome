@@ -1616,8 +1616,11 @@ class GuiSessionStore(QObject):
             # 成功且确认 package refs（`_refresh_senate_view` 后 DTO 已含 submitted）
             # 才切冻结只读：清空 dirty draft 缓存与错误面。
             self._senate_drafts = {}
-            created = ((feedback.get("data") or {}).get("created")
-                       or (feedback.get("data") or {}).get("proposals") or [])
+            # G7R（FC-R11-G7R-01/02）：单一 canonical「真实元老院提案存在」谓词——仅取发布闭包
+            # 产出的 canonical refs `data["created"]`（== PackageRecord.proposal_refs）。
+            # **禁**用 `data["proposals"]`（AI 展示/动作摘要，mixed-purpose）作存在性谓词；
+            # **禁**任何 `created or proposals` 式兜底 / 第二存在性来源。
+            canonical_real_senate_proposal_refs = (feedback.get("data") or {}).get("created") or []
             # R6（SA §D.1，DA-4 B2，supersede R4-09）：Submit 发布成功且 **Senate count == 0**
             # （显式空包 / direct-only）→ 委托服务端唯一完成协议 `finalize_senate_if_ready`
             # **自动执行一次内部政治 finalization**（真实非空成功 phase_result / PA / direct
@@ -1626,7 +1629,7 @@ class GuiSessionStore(QObject):
             # 失败**不撤销已发布包**：仍 `submitted:true` + `success:true` + `finalization_error`
             # warning（状态落 FINALIZATION_ERROR、`can_advance=false`），UI 不允许重发包
             # （再提交由服务端 `PACKAGE_ALREADY_SUBMITTED` 拦截），仅可内部恢复重试。
-            if not created:
+            if not canonical_real_senate_proposal_refs:
                 self._auto_finalize_after_submit(feedback)
         self.senateViewChanged.emit()
         return feedback
