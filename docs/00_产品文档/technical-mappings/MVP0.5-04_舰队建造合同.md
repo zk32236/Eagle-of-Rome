@@ -43,9 +43,24 @@ legacy 边界：旧存档 B 不可恢复 → approved_budget=None + authority_so
 - **四权威推广（WP-L L1）**：A/B/C/D + 显式 D + quality=D/A 现统一适用于全部 PUBLIC_WORKS（含普通公共工程，
   见 MVP0.5-03 §2.4）；舰队下游差异（Fleet 实体/build_time/无质保）保持。
 
+## WP-L L2 同步注记（2026-10-02，DA-Execute；append-only）
+
+> 权威：SA-Development-Task WP-L L2 **v1.2**；规格 `specifications/MVP0.5-04_舰队建造合同.md` §2.2/§2.9/§2.10/§5.2/§5.5/§5.6。
+
+- `NavalSystem.apply_maintenance()` — **短款全额扣费**（`treasury -= initial_due`，可为负）；**删除短款自动解散分支**
+  （候选循环 / `Fleet.disband()` / `war.remove_fleet()` / `reason=treasury_shortfall` 事件）；DTO 退化常量
+  （`disbanded=0`/`disbanded_fleet_ids=[]`/`fleet_costs=[]`/`unpaid=0`/`success=True`/`required_after_disband=total`；
+  `charged=total`）键形状保留（FC-L2-02/11）。
+- `AutoFleetDisbandDecider.should_disband_fleet()` — 决策序（D2.5）：resolved-target 退役 → ACTIVE/THREAT/未批准-TRUCE
+  保留 → approved-TRUCE 退役 → 无相关海战战争保留（FC-L2-05/06）。
+- `NavalSystem._has_existing_fleet_or_contract_for_war()` — 舰队子句 `status ∉ {DESTROYED, DISBANDED}`（FC-L2-13）；
+  `generate_replacement_contracts` usable 集不变（已排除 DISBANDED）。
+- 零新增持久化字段；`economic_service.apply_naval_maintenance` DTO shape 不变（值退化）；`Fleet.disband()` 保留 `_target_war_id` provenance 不变。
+
 ## 3. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.3 | 2026-10-02 | WP-L L2：维护短款全额扣费+零解散 / decider 收窄（保留 resolved-target + approved-TRUCE 退役）/ THREAT 建造预算排除 DISBANDED（DA-Execute） |
 | v1.2 | 2026-10-02 | WP-L L1：强度展示契约（post-build 战争卡单一源，QML 只渲染）+ 单入队点 parity + 四权威推广至全部 PUBLIC_WORKS（DA-Execute） |
 | v1.1 | 2026-09-05 | R3-G-03/04 同步：四权威持久链 + nominal replacement + package 聚合器 + legacy 边界（DA-R3-B3） |
 | v1.0 | 2026-07-12 | 初版 |

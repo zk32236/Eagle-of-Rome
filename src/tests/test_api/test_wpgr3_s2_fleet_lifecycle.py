@@ -340,7 +340,8 @@ class TestTr104NavalVictoryRecallLifecycle(unittest.TestCase):
 
 
 class TestTr105NavalShortfallVariants(unittest.TestCase):
-    """T-R3-05：短款解散累计算法 + 全变体 + DTO/event schema（SC-R3-04，FIX-R3-SHORT）。"""
+    """T-R3-05（WP-L L2 重写，FC-L2-02/03/11）：短款全额扣费（国库可为负）+ 零解散
+    + DTO 退化常量（disbanded/unpaid=0；charged=total；键形状保留）。"""
 
     def _shortfall_state(self, fleet_specs, treasury):
         """fleet_specs: [(number, fleet_type, 'AVAILABLE'|'ON_MISSION'), ...]；
@@ -369,56 +370,46 @@ class TestTr105NavalShortfallVariants(unittest.TestCase):
             if f.status not in (FleetStatus.DESTROYED, FleetStatus.BUILDING, FleetStatus.DISBANDED)
         )
 
-    def test_exact_one_ship_short_disbands_one_and_pays_rest(self):
-        """恰差一舰费用（旧 break-before-add 缺陷）：treasury = due − 1×trireme(4) →
-        退役 1 艘（AVAILABLE 优先）→ 余费实扣；success（旧代码零解散 + 失败）。"""
+    def test_full_charge_on_shortfall_no_disband(self):
+        """WP-L L2 / FC-L2-02/03/11：短款 → 全额扣费（国库可为负），零舰队解散；
+        DTO 退化常量，无 reason=treasury_shortfall 退役事件。"""
         state, _war = self._shortfall_state(
             [(1, "trireme", "AVAILABLE"), (2, "trireme", "ON_MISSION"),
              (3, "quinquereme", "ON_MISSION")],
-            treasury=14 - 4,  # due 14，差 1 艘 trireme 费用
+            treasury=14 - 4,  # due 14
         )
         ns = state._naval_system
         before = state.treasury
         handler = _enable_capture(state)
         try:
-            service = EconomicService(state)
-            dto = service.apply_naval_maintenance()
+            dto = EconomicService(state).apply_naval_maintenance()
             after = state.treasury
             self.assertTrue(dto["success"], dto["message"])
             self.assertEqual(dto["available"], True)
             self.assertEqual(dto["total"], 14)
-            self.assertEqual(dto["disbanded"], 1)
-            self.assertEqual(dto["disbanded_fleet_ids"], [1])     # AVAILABLE 优先退役
-            self.assertEqual(dto["required_after_disband"], 10)
+            self.assertEqual(dto["charged"], 14)
             self.assertEqual(dto["charged"], before - after)
-            self.assertEqual(dto["charged"], 10)
             self.assertEqual(dto["charged"], dto["treasury_before"] - dto["treasury_after"])
-            self.assertEqual(dto["shortfall"], 0)
-            self.assertEqual(dto["initial_shortfall"], 4)
+            self.assertEqual(after, -4)                       # 国库可为负（FC-L2-03）
+            self.assertEqual(dto["disbanded"], 0)
+            self.assertEqual(dto["disbanded_fleet_ids"], [])
+            self.assertEqual(dto["fleet_costs"], [])
             self.assertEqual(dto["unpaid"], 0)
-            self.assertEqual(ns.get_fleet(1).status, FleetStatus.DISBANDED)
+            self.assertEqual(dto["required_after_disband"], 14)
+            self.assertEqual(dto["shortfall"], 4)
+            self.assertEqual(dto["initial_shortfall"], 4)
+            self.assertEqual(ns.get_fleet(1).status, FleetStatus.AVAILABLE)
             self.assertEqual(ns.get_fleet(2).status, FleetStatus.ON_MISSION)
             self.assertEqual(ns.get_fleet(3).status, FleetStatus.ON_MISSION)
-            self.assertEqual(self._due(state), 10)
-            # fleet_costs 证据（status_before/unit_cost/target_war）
-            self.assertEqual(dto["fleet_costs"][0]["fleet_number"], 1)
-            self.assertEqual(dto["fleet_costs"][0]["unit_cost"], 4)
-            self.assertEqual(dto["fleet_costs"][0]["status_before"], "available")
-            # naval_maintenance event + naval_fleet_disbanded event（reason=treasury_shortfall）
-            maint = _naval_maintenance_events(handler)
-            self.assertTrue(maint)
-            disbands = _fleet_disband_events(handler)
-            self.assertEqual(len(disbands), 1)
-            self.assertIn("fleet_number=1", disbands[0])
-            self.assertIn("reason=treasury_shortfall", disbands[0])
-            self.assertIn("fleet_status=disbanded", disbands[0])
+            self.assertEqual(self._due(state), 14)
+            self.assertTrue(_naval_maintenance_events(handler))
+            self.assertEqual(_fleet_disband_events(handler), [])
         finally:
             handler.close()
             state.close_logging()
 
-    def test_two_ships_accumulated_disband_and_war_index_cleared(self):
-        """累计两舰才够付：due 14（4/4/6）、treasury 6 → 退役 AVAILABLE F1 + ON_MISSION F2，
-        余 F3(6) 实扣；ON_MISSION 退役清 War assignment index + entity binding。"""
+    def test_shortfall_keeps_on_mission_fleets_and_war_binding(self):
+        """WP-L L2 / FC-L2-02：短款不触碰 ON_MISSION 舰队 / war assignment index（零解散）。"""
         state, war = self._shortfall_state(
             [(1, "trireme", "AVAILABLE"), (2, "trireme", "ON_MISSION"),
              (3, "quinquereme", "ON_MISSION")],
@@ -429,64 +420,65 @@ class TestTr105NavalShortfallVariants(unittest.TestCase):
         before = state.treasury
         dto = EconomicService(state).apply_naval_maintenance()
         self.assertTrue(dto["success"], dto["message"])
-        self.assertEqual(dto["disbanded"], 2)
-        self.assertEqual(dto["disbanded_fleet_ids"], [1, 2])
-        self.assertEqual(dto["required_after_disband"], 6)
+        self.assertEqual(dto["disbanded"], 0)
+        self.assertEqual(dto["disbanded_fleet_ids"], [])
         self.assertEqual(dto["charged"], before - state.treasury)
-        self.assertEqual(dto["charged"], 6)
-        self.assertEqual(ns.get_fleet(1).status, FleetStatus.DISBANDED)
-        self.assertEqual(ns.get_fleet(2).status, FleetStatus.DISBANDED)
+        self.assertEqual(dto["charged"], 14)
+        self.assertEqual(state.treasury, -8)
+        self.assertEqual(ns.get_fleet(1).status, FleetStatus.AVAILABLE)
+        self.assertEqual(ns.get_fleet(2).status, FleetStatus.ON_MISSION)
         self.assertEqual(ns.get_fleet(3).status, FleetStatus.ON_MISSION)
-        self.assertEqual(war.assigned_fleet_ids, [3], "ON_MISSION 解散必须清 War assignment index")
-        self.assertEqual(self._due(state), 6)
+        self.assertEqual(sorted(war.assigned_fleet_ids), [2, 3])
+        self.assertEqual(self._due(state), 14)
 
-    def test_zero_treasury_disbands_all_pays_zero(self):
-        """零国库：退役全部计费舰队 → 余费 0 → 支付 0 成功（不误报失败）。"""
+    def test_zero_treasury_full_charge_negative(self):
+        """WP-L L2：零国库 → 全额扣 10（国库 −10），零舰队解散。"""
         state, _war = self._shortfall_state(
             [(1, "trireme", "AVAILABLE"), (2, "quinquereme", "AVAILABLE")],
             treasury=0,
         )
+        ns = state._naval_system
         dto = EconomicService(state).apply_naval_maintenance()
         self.assertTrue(dto["success"], dto["message"])
-        self.assertEqual(dto["disbanded"], 2)
-        self.assertEqual(dto["required_after_disband"], 0)
-        self.assertEqual(dto["charged"], 0)
-        self.assertEqual(state.treasury, 0)
+        self.assertEqual(dto["charged"], 10)
+        self.assertEqual(state.treasury, -10)
+        self.assertEqual(dto["disbanded"], 0)
+        self.assertEqual(dto["required_after_disband"], 10)
+        self.assertEqual(ns.get_fleet(1).status, FleetStatus.AVAILABLE)
+        self.assertEqual(ns.get_fleet(2).status, FleetStatus.AVAILABLE)
 
-    def test_negative_treasury_failure_charge_zero(self):
-        """已负国库（−3 < recompute 0）：退役全部后仍不足 → 既有失败策略（MVP0.5-04 §5.6）
-        charge 0、国库不变、失败证据（不移植 military 可负国库强扣）。"""
+    def test_negative_treasury_full_charge_deeper_negative(self):
+        """WP-L L2：已负国库（−3）→ 仍全额扣 10（国库 −13），success，零解散。"""
         state, _war = self._shortfall_state(
             [(1, "trireme", "AVAILABLE"), (2, "quinquereme", "AVAILABLE")],
             treasury=-3,
         )
-        before = state.treasury
+        ns = state._naval_system
         dto = EconomicService(state).apply_naval_maintenance()
-        self.assertFalse(dto["success"])
-        self.assertEqual(dto["disbanded"], 2)
-        self.assertEqual(dto["charged"], 0)
-        self.assertEqual(state.treasury, before)
-        self.assertEqual(dto["required_after_disband"], 0)
+        self.assertTrue(dto["success"], dto["message"])
+        self.assertEqual(dto["charged"], 10)
+        self.assertEqual(state.treasury, -13)
+        self.assertEqual(dto["disbanded"], 0)
+        self.assertEqual(dto["required_after_disband"], 10)
         self.assertEqual(dto["unpaid"], 0)
+        self.assertEqual(ns.get_fleet(1).status, FleetStatus.AVAILABLE)
 
-    def test_on_mission_only_shortfall_now_disbands(self):
-        """ON_MISSION-only 短款（旧候选仅 AVAILABLE → 零解散失败）：due 8（2×trireme ON_MISSION）、
-        treasury 5 → 退役 F1（ON_MISSION，war index 清理）→ 余 F2 3 实扣 → success。"""
+    def test_on_mission_only_shortfall_full_charge(self):
+        """WP-L L2：ON_MISSION-only 短款 → 全额扣 8（国库 −3），零解散，war binding 不变。"""
         state, war = self._shortfall_state(
             [(1, "trireme", "ON_MISSION"), (2, "trireme", "ON_MISSION")],
             treasury=5,
         )
         assert war is not None
         ns = state._naval_system
-        before = state.treasury
         dto = EconomicService(state).apply_naval_maintenance()
         self.assertTrue(dto["success"], dto["message"])
-        self.assertEqual(dto["disbanded"], 1)
-        self.assertEqual(dto["disbanded_fleet_ids"], [1])
-        self.assertEqual(dto["charged"], before - state.treasury)
-        self.assertEqual(dto["charged"], 4)
-        self.assertEqual(war.assigned_fleet_ids, [2])
-        self.assertEqual(ns.get_fleet(1).status, FleetStatus.DISBANDED)
+        self.assertEqual(dto["charged"], 8)
+        self.assertEqual(state.treasury, -3)
+        self.assertEqual(dto["disbanded"], 0)
+        self.assertEqual(dto["disbanded_fleet_ids"], [])
+        self.assertEqual(sorted(war.assigned_fleet_ids), [1, 2])
+        self.assertEqual(ns.get_fleet(1).status, FleetStatus.ON_MISSION)
         self.assertEqual(ns.get_fleet(2).status, FleetStatus.ON_MISSION)
 
     def test_absent_naval_system_zero_shape(self):

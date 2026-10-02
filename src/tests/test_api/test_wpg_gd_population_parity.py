@@ -31,7 +31,7 @@ def _build_postwar_state():
     """战后态（G1-14 链：战争 RESOLVED → 幸存召回 AVAILABLE）：
     - war1 RESOLVED（discard），legion_numbers=[1,2]（残留镜像，召回后不清）
     - 军团 1/2 召回 → AVAILABLE；军团 3 AVAILABLE 入 _legions_to_disband 队列
-    - 舰队 1 AVAILABLE（无需要海战的战争 → decider 命中 → DISBANDED）
+    - 舰队 1/2 AVAILABLE 且绑定 war1（RESOLVED）→ decider resolved-target 退役（FC-L2-06）
     - 人口阶段为当前阶段（mortality/revenue/forum 已执行）
     """
     config = {
@@ -83,15 +83,17 @@ def _build_postwar_state():
     ms.get_legion_by_number(3).recall()  # ACTIVE → AVAILABLE（recall 无参）
     ws.add_legions_to_disband([3])
 
-    # 舰队 1：AVAILABLE（无需要海战的战争 → AutoFleetDisbandDecider 命中 → DISBANDED）
+    # 舰队 1/2：AVAILABLE 且绑定已 RESOLVED 的 war1（L2：preserved resolved-target 退役，FC-L2-06）
     fleet1 = Fleet(number=1, fleet_type="trireme")
     fleet1._strength_base = 3
     fleet1._status = FleetStatus.AVAILABLE
+    fleet1._target_war_id = "war1"
     ns._fleets[1] = fleet1
     # 舰队 2：AVAILABLE（同被解散）
     fleet2 = Fleet(number=2, fleet_type="trireme")
     fleet2._strength_base = 3
     fleet2._status = FleetStatus.AVAILABLE
+    fleet2._target_war_id = "war1"
     ns._fleets[2] = fleet2
 
     # 人口阶段为当前阶段（resolve_population_slice 阶段门）

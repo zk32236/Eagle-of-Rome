@@ -33,6 +33,7 @@ opex = int(total_conquered_land × land_price_per_unit × national_opex_rate)
 
 - 无已征服行省：opex=0，国库不变
 - 国库不足：允许负值，由其他逻辑处理
+- **（WP-L L2 / FC-L2-03/04，2026-10-02）**：舰队维护费亦与本条一致——`apply_maintenance` 短款**全额扣除**（国库可为负），**不再自动解散舰队**；负国库由既有失败条件（Resolution `check_victory_conditions` 破产）接管。详见 `MVP0.5-04` §2.9/§5.6。
 
 ## 3. 技术架构映射
 
@@ -44,3 +45,4 @@ opex = int(total_conquered_land × land_price_per_unit × national_opex_rate)
 |------|------|--------|---------|
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent C | 初版创建 |
 | v1.1 | 2026-07-12 | DA Sub-Agent (Phase2 Sync) | 新增 §10 收入阶段结算流程 |
+| v1.2 | 2026-10-02 | DA Sub-Agent (WP-L L2) | §2.3 增 cross-reference：舰队维护费与「允许负值，由其他逻辑处理」口径一致（FC-L2-03/04） |

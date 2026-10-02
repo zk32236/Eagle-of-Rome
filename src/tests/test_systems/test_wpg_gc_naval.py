@@ -396,10 +396,18 @@ def _minimal_naval_state():
 
 
 def test_tgc10_disband_unused_fleets_uses_disband_not_destroyed():
-    """决策器行政退役 → DISBANDED（非 DESTROYED），is_veteran 保留（G1-13 / R-11）"""
+    """决策器行政退役 → DISBANDED（非 DESTROYED），is_veteran 保留（G1-13 / R-11）。
+
+    WP-L L2 收窄（FC-L2-05）：无相关海战战争不再自动解散 → 本用例 re-anchor 到
+    **resolved-target**（战争结束退役，FC-L2-06 保留）以维持「行政退役 → DISBANDED
+    非 DESTROYED」意图。
+    """
     from src.core.deciders.impl.auto_fleet_disband_decider import AutoFleetDisbandDecider
     state = _minimal_naval_state()
     ns = state.naval_system
+    war = War(id="war1", name="Ended War", naval_required=True)
+    war.status = WarStatus.RESOLVED
+    state._war_system._war_discard.append(war)
     fleet = Fleet(number=1, fleet_type="trireme")
     fleet._strength_base = 3
     fleet._target_war_id = "war1"
@@ -414,8 +422,24 @@ def test_tgc10_disband_unused_fleets_uses_disband_not_destroyed():
     assert fleet.destroyed_turn == 0  # 非 DESTROYED 路径
 
 
-def test_tgc10_apply_maintenance_treasury_shortfall_disbands():
-    """国库不足 → 行政解散 → DISBANDED（非 DESTROYED，R-11）"""
+def test_tgc10_disband_unused_fleets_no_naval_war_retained():
+    """WP-L L2 / FC-L2-05：无相关海战战争（悬空 target）→ 保留，不自动解散。"""
+    from src.core.deciders.impl.auto_fleet_disband_decider import AutoFleetDisbandDecider
+    state = _minimal_naval_state()
+    ns = state.naval_system
+    fleet = Fleet(number=1, fleet_type="trireme")
+    fleet._strength_base = 3
+    fleet._target_war_id = "war_dangling"
+    fleet._status = FleetStatus.AVAILABLE
+    ns._fleets[1] = fleet
+
+    disbanded = ns.disband_unused_fleets(current_turn=10, decider=AutoFleetDisbandDecider())
+    assert disbanded == []
+    assert fleet.status == FleetStatus.AVAILABLE
+
+
+def test_tgc10_apply_maintenance_treasury_shortfall_full_charge_no_disband():
+    """WP-L L2 / FC-L2-02/03：国库不足 → 全额扣费（国库可为负），零舰队解散。"""
     state = _minimal_naval_state()
     ns = state.naval_system
     for num in (1, 2):
@@ -427,10 +451,16 @@ def test_tgc10_apply_maintenance_treasury_shortfall_disbands():
 
     state._treasury = 0
     ok, msg = ns.apply_maintenance()
-    # 两艘均无法单独补足总维护（0+4 < 8）→ 全部行政解散 → 维护归零
+    # 全额扣费（treasury 0 − 8 = −8），零舰队解散（旧行为：全部行政解散）
     assert ok is True
-    assert all(f.status == FleetStatus.DISBANDED for f in ns.get_all_fleets())
+    assert state.treasury == -8
+    assert all(f.status == FleetStatus.AVAILABLE for f in ns.get_all_fleets())
     assert all(f.destroyed_turn == 0 for f in ns.get_all_fleets())
+    summary = ns._last_naval_maintenance
+    assert summary["charged"] == 8
+    assert summary["disbanded"] == 0
+    assert summary["unpaid"] == 0
+    assert summary["success"] is True
 
 
 def test_tgc10_naval_casualty_is_destroyed_not_disbanded(naval_state):

@@ -10,7 +10,7 @@
 - 元老院审批预算后，通过广场竞标将舰队建造任务授予骑士
 - 骑士中标后按合同规定建造舰队，舰队建造完成后自动指派给相应战争
 - 形成"战争威胁→合同生成→竞标→建造→指派→海战"的完整链路
-- 国库不足时可解散可用舰队以节约维护费
+- 舰队维护费每年照扣（国库不足也**全额扣除**，国库可为负）；**不再因国库不足自动解散舰队**（WP-L L2 / FC-L2-02/03；后果由既有破产失败条件接管）
 
 ## 2. 玩家/系统行为
 
@@ -30,7 +30,7 @@ def _can_build_fleet(self) -> bool:
 2. `NavalSystem.generate_construction_contracts(current_turn)` 步骤：
    - 检查技术解锁（见 2.1）
    - 获取需要海战的威胁战争：`war_system.get_naval_threat_wars()`
-   - 对每个威胁战争，检查是否已有活跃合同或非摧毁舰队（防重复）
+   - 对每个威胁战争，检查是否已有活跃合同或**非摧毁/非解散（DISBANDED）**舰队（防重复；WP-L L2 / FC-L2-13）
    - 计算所需舰队数：`ceil(enemy_strength / base_strength)`
    - 计算总预算：`needed_ships * build_cost_per_ship`
    - 创建 `ContractType.PUBLIC_WORKS` 类型的合同，标记 `_is_fleet_construction = True`
@@ -160,35 +160,40 @@ needed_ships = max(1, (deficit + base_strength - 1) // base_strength)
    - **战争结束后召回 → AVAILABLE 幸存者仍计维护**（下个 Revenue 最后一次维护，G1-14）
    - 仅 DISBANDED 后不再产生维护
 2. `NavalSystem.apply_maintenance()` 在收入阶段扣除维护费：
-   - 国库充足时直接扣除
-   - 国库不足时尝试解散部分 maintenance-bearing 舰队以节约开支（行政退役 → DISBANDED，R-11；
-     候选含 ON_MISSION，R3-G-02）
+   - `initial_due = Σ eligible get_maintenance_cost`（FC-L2-01，口径不变）；`initial_due == 0` → 零维护出口（不扣款）
+   - `initial_due > 0` → **无条件全额扣除** `treasury -= initial_due`（**国库可为负**，FC-L2-03）；
+     **不解散任何舰队**（FC-L2-02；旧「国库不足时尝试解散部分 maintenance-bearing 舰队」分支已删除）
+   - 短款后果由**既有失败条件**（Resolution `check_victory_conditions` 破产）接管，非 naval 侧（FC-L2-04/09/10）
 3. 维护费从 `state.config.economic_rules.fleet_types[type].maintenance_cost` 读取
 
-> **R3-G-02 维护对账（2026-09-05）：** 每笔 `apply_maintenance`（正常/零维护/短款解散/失败四出口）产生
-> 同一结构化 `naval_maintenance` summary：`available/total/charged/shortfall/initial_shortfall/unpaid/
-> disbanded/required_after_disband/disbanded_fleet_ids/fleet_costs/treasury_before/treasury_after/
-> success/message`——**charged = service 调用前−后 treasury（唯一实扣真值）**；`initial_shortfall` =
-> `max(0, total − max(before,0))` 区别于 charged 的 shortfall；退役后仍不足走失败（charge 0 + failure
-> evidence，见 §5.6）。`_last_maintenance_disbanded` 逐次调用归零，不复用上次计数。
+> **R3-G-02 → WP-L L2 维护对账（2026-10-02 superseding）：** `apply_maintenance` 产生同一结构化
+> `naval_maintenance` summary：`available/total/charged/shortfall/initial_shortfall/unpaid/disbanded/
+> required_after_disband/disbanded_fleet_ids/fleet_costs/treasury_before/treasury_after/success/message`
+> —— **charged = total（= service 调用前−后 treasury，唯一实扣真值）**。L2 起**键形状保留但值退化为常量**
+> （FC-L2-11）：`disbanded = 0`、`disbanded_fleet_ids = []`、`fleet_costs = []`、`unpaid = 0`、
+> `success = True`、`required_after_disband = total`；`shortfall = max(0, charged − treasury_before)`；
+> `initial_shortfall = max(0, total − max(treasury_before,0))`。**不再有短款失败出口**（不解散、不 charge 0，
+> 见 §5.6）；不再产生 `reason=treasury_shortfall` 的 `naval_fleet_disbanded` 事件。`_last_maintenance_disbanded`
+> 逐次调用归零（恒 0）。
 
 ### 2.10 舰队解散（DISBANDED vs DESTROYED，G1-13 / R-11，WP-G GC）
 
-1. `AutoFleetDisbandDecider.should_disband_fleet()` 决策逻辑：
+1. `AutoFleetDisbandDecider.should_disband_fleet()` 决策逻辑（WP-L L2 收窄，FC-L2-05/06，D2.5 决策序）：
    - 建造中/已摧毁/已退役的舰队不解散
-   - 没有需要海战的战争 → 解散
-   - 有需要海战的活跃/威胁战争 → 不解散
-   - 停战已批准的战争 → 不解散（但如果还有活跃海战需要→不解散）
+   - (i) resolved-target（AVAILABLE + 该舰队 target 战 RESOLVED）→ **退役**（战争结束，FC-L2-06）
+   - (ii) 任一需要海战的战争处于 ACTIVE/THREAT 或 TRUCE-未批准 → **不解散**（有海战需求）
+   - (iii) 任一需要海战的 **approved-TRUCE**（战争未 RESOLVED）战争 → **退役**（保留现状行为，ODR-L-08）
+   - (iv) 否则（**无相关海战战争 / 战争未爆发**）→ **不解散**（L2-T2 移除自动解散，FC-L2-05）
 2. `NavalSystem.disband_unused_fleets()` 执行**行政退役**：调用 `Fleet.disband()` → `DISBANDED`
    （非战斗伤亡；**禁走 mark_destroyed → DESTROYED**，R-11）
-3. `apply_maintenance()` 国库不足解散分支同样走 `disband()` → `DISBANDED`
+3. ~~`apply_maintenance()` 国库不足解散分支~~ —— **WP-L L2 已删除**（FC-L2-02：短款不再解散任何舰队）
 
 > **R3-G-02 多战退役窄修（2026-09-05，Owner 冻结生命周期 CODE DEVIATION）：** 若 War A 已 RESOLVED、
 > War B 仍 ACTIVE，A 的 dedicated released AVAILABLE 幸存者（`_target_war_id == A`）在 next Population
 > 决策**先退役，不由 B 战保留**（`AutoFleetDisbandDecider` 对 resolved-target 的 released AVAILABLE 优先
 > 返回退役；其他 live target/legacy None 走既有决策）；B 战 live Fleet 仍 maintenance-bearing，不为总额
-> 归零连坐解散。事件按 fleet IDs 对账；短款行政解散同时清 War assignment index + entity binding，保留
-> `_target_war_id` provenance（后续真 hull 损失致 nominal deficit 是合法补充，非 quality top-up）。
+> 归零连坐解散。事件按 fleet IDs 对账；**WP-L L2 起国库不足解散分支已删除**（FC-L2-02），不再有
+> `reason=treasury_shortfall` 退役事件；resolved-target 退役保留（FC-L2-06）。
 
 > **状态语义分离（G1-13）：** `DESTROYED` = 仅战斗伤亡（海战 DEFEAT/DISASTER）；`DISBANDED` = 正常行政退役（决策器/国库解散/战争结束 Population 退役）。两者均不可复用。
 
@@ -218,7 +223,7 @@ BUILDING ──[工期到期]──→ AVAILABLE ──[指派战争（同战专
 
 ON_MISSION / AVAILABLE ──[战争结束召回]──→ AVAILABLE
 AVAILABLE ──[下个 Revenue 最后维护]──→ AVAILABLE
-AVAILABLE ──[下个 Population / 决策器 / 国库不足]──→ DISBANDED（行政退役）
+AVAILABLE ──[下个 Population / 决策器：战争结束(resolved target) 或 approved-TRUCE]──→ DISBANDED（行政退役）
 ```
 
 - `DESTROYED` 与 `DISBANDED` 均为终端态，不可复用（G1-13）
@@ -334,7 +339,7 @@ commander_bonus       = Σ 每 Fleet War Commander martial（每 Fleet 加一次
 
 - `_has_existing_fleet_or_contract_for_war()` 检查防止同一战争生成多个**初始建造**合同
   （仅 `generate_construction_contracts` 路径）
-- 检查范围包括：PENDING/BUDGETED/ACTIVE 状态的合同、非 DESTROYED 状态的舰队
+- 检查范围包括：PENDING/BUDGETED/ACTIVE 状态的合同、**非 DESTROYED/非 DISBANDED** 状态的舰队（FC-L2-13，WP-L L2）
 - **补充合同**（G1-11 + R1-G-04）：不再使用二值守卫 blanket skip——同战权威 deficit
   公式四要素（required/usable/committed_building/committed_pending）计算；PENDING/BUDGETED
   合同容量按合同组成计 `committed_pending`，ACTIVE 合同容量以 BUILDING live fleets 计
@@ -371,14 +376,13 @@ commander_bonus       = Σ 每 Fleet War Commander martial（每 Fleet 加一次
 | `assign_to_war()` | AVAILABLE 且同战专属（R-12） | ON_MISSION |
 | `recall()` | ON_MISSION | AVAILABLE |
 | `mark_destroyed()` | 战斗伤亡（海战 DEFEAT/DISASTER） | DESTROYED |
-| `disband()` | 行政退役（决策器/国库不足/Population） | DISBANDED |
+| `disband()` | 行政退役（战争结束 resolved-target / approved-TRUCE / Population 决策器；**不含国库不足**） | DISBANDED |
 
 > **G1-14 战争结束时序：** TRIUMPH/VICTORY/批准和约 → 幸存舰队召回 → AVAILABLE → **下个 Revenue 付最后维护**（AVAILABLE 仍计维护）→ 下个 Population → DISBANDED。立即解散会逃避最后维护（禁止）。
 
-> **R3-G-02 多战退役与短款解散（2026-09-05）：** A 已 RESOLVED、B 仍 ACTIVE 时，A 的 released AVAILABLE
+> **R3-G-02 多战退役（2026-09-05；WP-L L2 更新）：** A 已 RESOLVED、B 仍 ACTIVE 时，A 的 released AVAILABLE
 > （`_target_war_id==A`）在 next Population 决策先退役（AutoFleetDisbandDecider 窄修），不由 B 保留；
-> B 战 live Fleet 仍 maintenance-bearing，不为总额归零连坐解散。短款行政解散（含 ON_MISSION）同步清
-> War assignment index + entity binding，保留 `_target_war_id` provenance。
+> B 战 live Fleet 仍 maintenance-bearing，不为总额归零连坐解散。**L2（FC-L2-02）：国库不足不再解散任何舰队。**
 
 ### 5.4 无效操作
 
@@ -391,16 +395,19 @@ commander_bonus       = Σ 每 Fleet War Commander martial（每 Fleet 加一次
 
 - 当没有需要海战的威胁战争时，`generate_construction_contracts()` 返回空列表
 - 当没有活跃战争时，`generate_replacement_contracts()` 返回空列表
+- **（WP-L L2 / FC-L2-13）**：`_has_existing_fleet_or_contract_for_war` 的「已有舰队」判定**排除
+  DISBANDED**（`status ∉ {DESTROYED, DISBANDED}`）；已退役舰队（保留 `_target_war_id` provenance）**不**
+  构成「已有舰队」阻断 → 停战终止→威胁升级→**THREAT 阶段即生成建造预算**。合同子句
+  （PENDING/BUDGETED/ACTIVE）与存活舰队仍构成阻断。
 
-### 5.6 费用不足
+### 5.6 费用不足（WP-L L2 / FC-L2-02/03/04/09/10/11，2026-10-02）
 
-- 国库不足以支付舰队维护费时，自动解散 maintenance-bearing 舰队（R3-G-02）：候选 = 既有 AVAILABLE 序
-  + 其余 maintenance-bearing（含 ON_MISSION）稳定序；**累计节省**、`treasury >= remaining_due` 才停、
-  含「恰好足够」的最后一艘（修正旧 break-before-add/未累计错误）；`recompute_due == remaining_due` 断言
-- 行政解散同步清 War assignment index + entity binding，保留 `_target_war_id` provenance
-  （后续真 hull 损失致 nominal deficit 是合法补充，非 quality top-up，§2.3）
-- 解散后仍不足：返回失败并记录日志（**不移植 military「可负国库强扣」**；charge 0 + failure evidence）；
-  DTO/事件对账见 §2.9（charged 唯一实扣真值；每艘退役恰一条 `naval_fleet_disbanded`，reason=treasury_shortfall）
+- 国库不足以支付舰队维护费时，**照扣全额**（`treasury -= total`，**国库可为负**）；**不解散任何舰队**（FC-L2-02/03）。
+- 无新机制、无玩家决策触点、无自动保护（FC-L2-09/10）。
+- 国库为负的后果由**既有失败条件**接管：Resolution `GameState.check_victory_conditions()` 累计
+  `_treasury_deficit_turns`，`>= national_opex_deficit_limit`（默认 **3**）→ `bankruptcy`（game_over）。非 naval 侧新增分支（FC-L2-04）。
+- DTO/事件对账见 §2.9（charged = total；disbanded/unpaid 恒 0；不再有 `reason=treasury_shortfall` 退役事件）。
+- 与 `deduct_national_opex`（MVP0.7-03 §2.3「允许负值，由其他逻辑处理」）口径一致。
 
 ## 6. 验收标准（编码已验证）
 
@@ -411,7 +418,7 @@ commander_bonus       = Σ 每 Fleet War Commander martial（每 Fleet 加一次
 | 3 | 舰队完整生命周期（生成→中标→建造→完成→指派） | 合同生成、舰队建造、到期完成、自动指派 | `test_fleet_construction.py::test_fleet_construction_lifecycle` |
 | 4 | 建造中舰队不解散 | `should_disband_fleet()` 返回 False | `test_naval_system.py::test_ignore_building_fleet` |
 | 5 | 已摧毁舰队不解散 | `should_disband_fleet()` 返回 False | `test_naval_system.py::test_ignore_destroyed_fleet` |
-| 6 | 无海战战争时解散 | `should_disband_fleet()` 返回 True | `test_naval_system.py::test_no_wars_should_disband` |
+| 6 | 无相关海战战争时**不解散**（WP-L L2 收窄） | `should_disband_fleet()` 返回 False（旧为 True） | `test_naval_system.py::test_no_wars_should_disband` |
 | 7 | 有海战活跃战争时不解散 | `should_disband_fleet()` 返回 False | `test_naval_system.py::test_active_war_with_naval_required` |
 | 8 | 舰队创建默认状态 BUILDING | `fleet.status == FleetStatus.BUILDING` | `test_fleet.py::test_fleet_creation` |
 | 9 | 舰队指派战争和召回 | assign→ON_MISSION, recall→AVAILABLE | `test_fleet.py::test_fleet_assign_to_war` / `test_fleet_assign_to_war` |
@@ -421,7 +428,7 @@ commander_bonus       = Σ 每 Fleet War Commander martial（每 Fleet 加一次
 | 13 | 四权威链（A280/B350/C300/D240/gross60 + 无损 roundtrip） | 持久 B 不被 award 覆盖、legacy B unknown 诚实 | `test_wpgr3_s3_fleet_economics.py` / `test_wpgr3_longchain.py`（T07/SC02/09） |
 | 14 | nominal replacement（T11/T12/T15） | quality/experience/martial 不决定 hull 数；真损 2 舰→补 2；enemy24→补 1 | `test_wpgr3_s4_nominal_effective.py` |
 | 15 | 冻结 oracle（21→18、D28→2、D0→0、q1.2→25、cap42、混合 round10） | raw→cap→round 逐例数值 | `test_wpgr3_s4_nominal_effective.py`（T20/T21 + §4.2 oracle） |
-| 16 | 短款累计解散（含 ON_MISSION）+ charged 对账 + Population 退役 exactly-once | charged=before−after；同批 DISBANDED 恰一次、次年零再 charge | `test_wpgr3_s2_fleet_lifecycle.py` / `test_wpgr3_longchain.py`（T05/06/LC） |
+| 16 | 短款**全额扣费**（国库可为负）+ 零解散 + Population 退役 exactly-once（resolved-target） | charged=total；disbanded=0；国库可为负；战争结束退役恰一次、次年零再 charge | `test_wpgr3_s2_fleet_lifecycle.py` / `test_wpgr3_longchain.py`（T05/06/LC）/ `test_wpl_l2_fleet_economy_longchain.py`（LC-L2-01..06） |
 
 ## 7. 历史演化与证据
 
@@ -439,6 +446,7 @@ commander_bonus       = Σ 每 Fleet War Commander martial（每 Fleet 加一次
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.5 | 2026-10-02 | DA Sub-Agent (WP-L L2) | **WP-L L2 维护/解散政策（FC-L2-01…13，GAME_RULE_CHANGE=YES）**：§1 删除「国库不足解散舰队」；§2.2 建造生成「非摧毁→非摧毁/非解散(DISBANDED)」；§2.9/§5.6 维护短款改**全额扣费+零解散+国库可负**（DTO 退化常量、无 treasury_shortfall 事件、失败交既有破产条件）；§2.10 decider 收窄（无相关海战战争→保留；保留 resolved-target + approved-TRUCE 退役）；§3.2/§5.3 状态机/生命周期去「国库不足」退役路径；§5.2/§5.5 DISBANDED 不阻断 THREAT 建造预算；§6 行 6/16 更新 |
 | v1.4 | 2026-10-02 | DA Sub-Agent (WP-L L1) | 强度展示契约（FC-L1-11 / ODR-L-03）：显示值 = 权威读模型字段、QML 只渲染不重算；展示面 = 战争卡 post-build（竞标对话框预览行按 G2 ③ 撤回）；四权威 + 显式 D + quality=D/A 推广至全部 PUBLIC_WORKS（交叉引用 MVP0.5-03） |
 | v1.3 | 2026-09-05 | DA Sub-Agent (WP-G-R3 B3) | **Owner 2026-09-05 superseding 裁决同步（R3-G-02/03/04，GAME_RULE_CHANGE=NO）：** §2.3 补充合同 required/usable/committed 全改 nominal——删旧「竞标折价 true deficit=可补」语义（quality/experience/martial 不决定 hull 数，R3 §4.3）；§2.4 增 A/B/C/D 四权威（A 基线生成冻结不可被 Senate 改写、B 批准、C 中标、D 实际成本，bid ceiling=B，A280/B350/C300/D240/gross60）；§2.5 award 改 quality 持久（n_i nominal 快照 + q=D/A 精确整数比 + package_id，不再 per-fleet round/floor）；§2.9/§2.10/§5.3/§5.6 维护短款累计解散含 ON_MISSION + charged 唯一实扣 + 多战退役窄修（resolved 战专属 released AVAILABLE 不由他战保留）+ `naval_maintenance`/`naval_fleet_disbanded` 事件 schema；§3.3 补四权威/nominal/quality/package 持久字段（serializer 含 `_target_war_id`/`_fleet_type`/`_build_time`）；§3.5 删 per-fleet lower floor=1 → Owner 选项 B（纯 raw package 舍入、D=0 不 fallback、upper cap 落 package 级 min(raw,2×nominal)）+ oracle 表（21→18、D28→2、D0→0、cap42、混合 round10）；§4.1 输入 C+D；§5.2.1 增强度读模型字段；§6 验收表补 R3 行 13–16。历史折价表述 append-only，不改为「当时已 nominal」（R3 设计 §11.2）。 |
 | v1.2 | 2026-09-05 | DA Sub-Agent (WP-G-R1 B2) | R1-G-04/R1-G-08 冻结语义同步：§2.3 补充合同改四要素权威 deficit（required-usable-committed_building-committed_pending，P1-02 committed 去重模型，删二值守卫 blanket skip）+ 两个 fleet generator 创建时 `_original_budget=total_budget` 原始预算不变量（§7.12.2，MVP0.5-04 既有折价规则实现缺陷修复，GAME_RULE_CHANGE=NO）；§5.2 合同重复保护改权威公式；§5.2.1 新增战斗读模型冻结 schema（per-war `assigned_fleet_count`/`naval_ready` + 全局 `built_fleet_count`，兼容 alias `fleet_count`/`fleets_assigned` 本 R1 保留，GUI 改读新字段） |

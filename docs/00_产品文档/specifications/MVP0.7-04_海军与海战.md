@@ -93,10 +93,21 @@ TRIUMPH/VICTORY 分支；False 清理 = clear_sea_control，随战争正式结�
 >   R4-05）；envelope deepcopy 持久 `pending_result` + `war_results[war_id]`，get_combat_view 三类
 >   卡同回合附 result（TRUCE_LOCKED 卡亦保留双结果）；`combat_action_resolved` 纯观察 summary event。
 
+## WP-L L2 同步注记（2026-10-02，DA-Execute；append-only，目标锚点 §2.2/§2.1）
+
+> 权威：SA-Development-Task WP-L L2 **v1.2**（`02-sa-design/L2/L2-SA-Development-Task.md`）FC-L2-01…13；
+> 规格 `specifications/MVP0.5-04_舰队建造合同.md`。**GAME_RULE_CHANGE = YES**（维护/解散政策，Owner ODR-L-05/06/08/09）。
+
+- **维护费（FC-L2-02/03）**：`NavalSystem.apply_maintenance` 短款**全额扣费**（国库可为负），**不再自动解散任何舰队**（旧「（含 ON_MISSION）短款累计解散」已删除）；失败交既有 Resolution 破产条件（FC-L2-04）。
+- **舰队解散（FC-L2-05/06）**：`AutoFleetDisbandDecider` 收窄——无相关海战战争（战争未爆发）→ **保留**；**保留** approved-TRUCE（未 RESOLVED）退役与 resolved-target（战争结束）退役。
+- **建造预算（FC-L2-13）**：`_has_existing_fleet_or_contract_for_war` 舰队子句排除 DISBANDED → THREAT 阶段即生成建造预算。
+- **零改**：CRT / 伤亡矩阵 / Sea Control / 强度公式（R3-G-04）/ readiness / 战争生命周期。
+
 ## 4. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.4 | 2026-10-02 | DA Sub-Agent (WP-L L2) | WP-L L2 同步：维护短款**全额扣费+零解散**（国库可负）/ decider 收窄（无相关海战战争保留；保留 resolved-target + approved-TRUCE 退役）/ THREAT 建造预算排除 DISBANDED（FC-L2-01…13；GAME_RULE_CHANGE=YES）；CRT/伤亡/Sea Control/强度公式零改 |
 | v1.3 | 2026-09-09 | DA Sub-Agent (WP-G-R4 B3) | R4 同步（FROZEN v1.7 §3/§5）：§2.2 追加注记——Naval readiness 单一事实源/NOT_READY 非 battle 零副作用、one ATTACK Naval 成功自动 Land、dual-stage v2 envelope（未执行 stage omitted keys）、海权 stage 快照与 terminal 值并列、TRUCE 卡双结果入镜；CRT/伤亡/Sea Control 持久规则零改（GAME_RULE_CHANGE=NO） |
 | v1.2 | 2026-09-05 | DA Sub-Agent (WP-G-R3 B3) | R3-G-04 同步：§2.2 单舰战力表述改 quality-adjusted/package aggregate（nominal 快照 + q=D/A + raw→cap→round 一次；per-fleet 无 floor；D=0 不 fallback）+ 补「replacement 见 MVP0.5-04，nominal 非 effective」注；CRT/Sea Control/伤亡矩阵零改（GAME_RULE_CHANGE=NO） |
 | v1.0 | 2026-07-12 | Document Officer Worker K | 初版创建 |

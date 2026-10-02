@@ -117,7 +117,13 @@ class NavalSystem:
 
     # ---------- 建造合同生成 ----------
     def _has_existing_fleet_or_contract_for_war(self, war_id: str) -> bool:
-        """检查是否已有针对该战争的活动合同或存在非摧毁状态的舰队"""
+        """检查是否已有针对该战争的活动合同或存在**非摧毁/非解散（DISBANDED）**状态的舰队
+
+        WP-L L2 / FC-L2-13（v1.2 / ODR-L-09，FROZEN）：舰队子句由 `status != DESTROYED`
+        收窄为 `status ∉ {DESTROYED, DISBANDED}`——已退役（DISBANDED，保留 _target_war_id
+        provenance）舰队不得再短路 THREAT 阶段 `generate_construction_contracts`（停战终止→威胁
+        升级→THREAT 即生成建造预算）。合同子句 (i)（status ∈ {PENDING, BUDGETED, ACTIVE}）不变。
+        """
         # 检查合同
         for contract in self.state.get_all_contracts():
             if getattr(contract, "_target_war_id", None) == war_id:
@@ -125,7 +131,7 @@ class NavalSystem:
                     return True
         # 检查舰队
         for fleet in self._fleets.values():
-            if fleet._target_war_id == war_id and fleet.status != FleetStatus.DESTROYED:
+            if fleet._target_war_id == war_id and fleet.status not in (FleetStatus.DESTROYED, FleetStatus.DISBANDED):
                 return True
         return False
 
@@ -1008,24 +1014,21 @@ class NavalSystem:
 
 
     def apply_maintenance(self) -> Tuple[bool, str]:
-        """扣除舰队维护费（R3-G-02 设计 §2.1/§2.2，FROZEN）。
+        """扣除舰队维护费（WP-L L2 / FC-L2-02/03/04/09/10/11，FROZEN）。
 
-        正常 / 零维护 / 短款解散后支付 / 失败四出口均产生同一 `naval_maintenance` 结构化
-        summary（self._last_naval_maintenance + log_event type=naval_maintenance，字段见
-        §2.3）；逐次调用入口清零 `_last_maintenance_disbanded` 与 summary，不复用上次计数。
+        计费口径不变（FC-L2-01）：initial_due = Σ eligible 费用（Fleet.status ∉
+        {BUILDING, DESTROYED, DISBANDED}——含 AVAILABLE/ON_MISSION/既有 IN_COMBAT），
+        与战争状态无关。
 
-        短款算法（§2.2 冻结）：initial_due = Σ eligible 费用（Fleet.status ∉
-        {BUILDING, DESTROYED, DISBANDED}——含 AVAILABLE/ON_MISSION/既有 IN_COMBAT）；
-        candidates = 既有 AVAILABLE 序 + 其余 maintenance-bearing 既有序（稳定遍历，不随机、
-        不按战力重排、不引入 AI 策略）；for fleet in candidates: if treasury >=
-        remaining_due: break（先查后拆，break-before-add 修正）→ 记 assigned war + target
-        war + status + unit cost → 若 assigned war 存在先清该 war assignment index →
-        fleet.disband()（非 mark_destroyed，R-11）→ remaining_due -= unit_cost（含“恰好
-        足够”的最后一艘）→ recompute_due = calculate_maintenance() 对账；不足 → 既有失败
-        策略（MVP0.5-04 §5.6，不移植 military 可负国库强扣）：charge 0 + 失败证据；
-        否则 treasury -= recompute_due。每艘成功短款退役恰一条 naval_fleet_disbanded 事件
-        （fleet_number/war_id/target_war_id/reason=treasury_shortfall/current_turn/
-        fleet_status=disbanded）。
+        **不再有短款自动解散**（FC-L2-02/03）：initial_due > 0 → treasury -= initial_due
+        无条件全额扣费（国库可为负）；不解散任何舰队；无新机制/触点/自动保护
+        （FC-L2-09/10）。短款后果由既有失败条件（Resolution check_victory_conditions
+        破产，FC-L2-04）接管，非 naval 侧新增分支。
+
+        DTO 退化常量、键形状保留（FC-L2-11）：disbanded=0 / disbanded_fleet_ids=[] /
+        fleet_costs=[] / unpaid=0 / success=True / required_after_disband=total /
+        charged=total；不再产生 reason=treasury_shortfall 的 naval_fleet_disbanded 事件。
+        逐次调用入口清零 `_last_maintenance_disbanded` 与 summary，不复用上次计数。
         """
         # R3-G-02（§2.1）：入口清零，防 total==0 早退/上次计数复用
         self._last_maintenance_disbanded = 0
@@ -1068,97 +1071,15 @@ class NavalSystem:
                 self._log_naval_maintenance(summary)
                 return True, summary["message"]
 
-            if treasury_before >= initial_due:
-                # 足额正常出口：全扣（charged = initial_due）
-                self.state.treasury -= initial_due
-                summary["charged"] = initial_due
-                summary["required_after_disband"] = initial_due
-                summary["treasury_after"] = self.state.treasury
-                summary["message"] = f"支付舰队维护费 {initial_due}"
-                self._last_naval_maintenance = summary
-                self._log_naval_maintenance(summary)
-                return True, summary["message"]
-
-            # 短款出口（§2.2 冻结算法）：候选 = AVAILABLE 序 + 其余 maintenance-bearing 序
-            remaining_due = initial_due
-            available = [f for f in self._fleets.values() if f.status == FleetStatus.AVAILABLE]
-            other_bearing = [
-                f for f in self._fleets.values()
-                if f.status != FleetStatus.AVAILABLE
-                and f.status not in (FleetStatus.DESTROYED, FleetStatus.BUILDING, FleetStatus.DISBANDED)
-            ]
-            candidates = available + other_bearing
-            disbanded_ids: List[int] = []
-            fleet_costs: List[Dict[str, Any]] = []
-            for fleet in candidates:
-                if treasury_before >= remaining_due:
-                    break
-                unit_cost = fleet.get_maintenance_cost(self.state)
-                war_id = fleet.assigned_war_id
-                target_war_id = fleet._target_war_id
-                status_before = fleet.status.value if hasattr(fleet.status, "value") else str(fleet.status)
-                # 对 ON_MISSION 行政解散：先清 War assignment index（entity binding 由 disband 清，
-                # 保留 _target_war_id provenance；后续真 hull loss 致 nominal deficit 是合法补充）
-                if war_id:
-                    ws = self.state.get_war_system()
-                    if ws:
-                        war = ws.get_war_by_id(war_id)
-                        if war is not None:
-                            war.remove_fleet(fleet.number)
-                fleet.disband()                  # 非 mark_destroyed（R-11 / G1-13）
-                remaining_due -= unit_cost       # 含“恰好足够”的最后一艘
-                disbanded_ids.append(fleet.number)
-                self._last_maintenance_disbanded += 1
-                fleet_costs.append({
-                    "fleet_number": fleet.number,
-                    "fleet_type": fleet.fleet_type,
-                    "target_war": target_war_id,
-                    "war_id": war_id,
-                    "status_before": status_before,
-                    "unit_cost": unit_cost,
-                })
-                current_turn = self.state.turn.turn_number if self.state.turn else 0
-                self.state.log_event(
-                    f"因国库不足，舰队 {fleet.name} 解散",
-                    extra={
-                        "type": "naval_fleet_disbanded",
-                        "fleet_number": fleet.number,
-                        "war_id": war_id,
-                        "target_war_id": target_war_id,
-                        "reason": "treasury_shortfall",
-                        "current_turn": current_turn,
-                        "fleet_status": "disbanded",
-                    },
-                )
-            summary["disbanded"] = self._last_maintenance_disbanded
-            summary["disbanded_fleet_ids"] = disbanded_ids
-            summary["fleet_costs"] = fleet_costs
-            # 重算对账（冻结不变量：recompute_due == remaining_due）
-            recompute_due = self.calculate_maintenance()
-            summary["required_after_disband"] = recompute_due
-            if recompute_due != remaining_due:
-                self.state.log_event(
-                    f"舰队维护费对账不一致: recompute={recompute_due} remaining={remaining_due}",
-                    level=logging.WARNING,
-                    extra={"type": "naval_maintenance_reconcile_mismatch",
-                           "recompute": recompute_due, "remaining": remaining_due},
-                )
-            if treasury_before < recompute_due:
-                # 失败出口（MVP0.5-04 §5.6：解散后仍不足 → 失败保留；不移植负国库强扣）
-                summary["unpaid"] = recompute_due - 0
-                summary["success"] = False
-                summary["message"] = f"国库仍不足以支付舰队维护费，需要 {recompute_due}"
-                summary["treasury_after"] = treasury_before
-                self._last_naval_maintenance = summary
-                self._log_naval_maintenance(summary)
-                return False, summary["message"]
-            # 短款解散后支付出口
-            self.state.treasury -= recompute_due
-            summary["charged"] = recompute_due
+            # 全额扣费出口（WP-L L2 / FC-L2-02/03，FROZEN）：initial_due > 0 → 无条件
+            # 全额扣（treasury 可为负）；零舰队解散；无失败出口（短款后果由既有破产失败
+            # 条件接管，FC-L2-04）。DTO 退化常量（FC-L2-11）：disbanded=0 /
+            # disbanded_fleet_ids=[] / fleet_costs=[] / unpaid=0 / required_after_disband=total。
+            self.state.treasury -= initial_due
+            summary["charged"] = initial_due
+            summary["required_after_disband"] = initial_due
             summary["treasury_after"] = self.state.treasury
-            summary["message"] = f"支付舰队维护费 {recompute_due}"
-            if summary["disbanded"]:
-                summary["message"] += f"（解散 {summary['disbanded']} 艘）"
+            summary["message"] = f"支付舰队维护费 {initial_due}"
             self._last_naval_maintenance = summary
             self._log_naval_maintenance(summary)
             return True, summary["message"]

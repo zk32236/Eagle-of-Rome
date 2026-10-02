@@ -571,11 +571,21 @@ class TestPopulationCommandManual:
         assert fig3.id not in praetor_ids
 
     def test_fleet_disband_once(self, state_normal_mode, capsys, monkeypatch):
-        """验证舰队解散信息只输出一次"""
-        from unittest.mock import MagicMock
-        # 模拟海军系统
-        state_normal_mode.naval_system = MagicMock()
-        state_normal_mode.naval_system.disband_unused_fleets.return_value = [1, 2]
+        """WP-L L2 收窄：舰队退役显示只输出一次（re-anchor 到 resolved-target，FC-L2-06）。"""
+        from src.core.systems.war_system import WarSystem
+        from src.core.systems.naval_system import NavalSystem
+        from src.core.entities.war import War, WarStatus
+        from src.core.entities.fleet import Fleet, FleetStatus
+
+        state_normal_mode._war_system = WarSystem(state_normal_mode)
+        state_normal_mode._naval_system = NavalSystem(state_normal_mode)
+        war = War(id="w_end", name="Ended", naval_required=True)
+        war.status = WarStatus.RESOLVED
+        state_normal_mode._war_system._war_discard.append(war)
+        fleet = Fleet(number=1, fleet_type="trireme")
+        fleet._status = FleetStatus.AVAILABLE
+        fleet._target_war_id = war.id
+        state_normal_mode._naval_system._fleets[1] = fleet
 
         # 模拟输入序列
         inputs = iter(["next", "next", "next", "next"])
@@ -585,12 +595,10 @@ class TestPopulationCommandManual:
         cmd = PopulationCommand(state_normal_mode)
         cmd.execute([])
 
-        # 断言 disband_unused_fleets 只被调用一次
-        state_normal_mode.naval_system.disband_unused_fleets.assert_called_once()
-
         captured = capsys.readouterr()
-        assert "舰队 [1, 2] 已解散" in captured.out
+        assert "舰队 [1] 已解散" in captured.out
         assert captured.out.count("舰队") == 1
+        assert fleet.status == FleetStatus.DISBANDED
 
     def test_commander_conversion_once(self, state_normal_mode, monkeypatch, capsys):
         """验证战场指挥官转换只执行一次，且状态正确"""

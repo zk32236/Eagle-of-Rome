@@ -58,3 +58,17 @@ src/core/entities/contract.py      # 舰队建造合同
   （`get_war_fleet_strength_read_model` / `fleet_quality_adjusted_base` / `fleet_effective_combat_strength`）
   作为**展示源**（FC-L1-11），未改动 `naval_system` 强度公式/read-model 字段/海战生命周期。故本映射无需修改；
   仅登记本次审阅结论（若未来触及强度 read-model，再行更新）。
+
+## WP-L L2 同步注记（2026-10-02，DA-Execute；append-only）
+
+> 权威：SA-Development-Task WP-L L2 **v1.2**；规格 `specifications/MVP0.5-04_舰队建造合同.md` §2.9/§2.10/§5.6、`specifications/MVP0.7-04_海军与海战.md`。
+
+- **维护/解散政策变更（GAME_RULE_CHANGE=YES）**：`naval_system.apply_maintenance` 短款全额扣费 + 零解散；
+  `auto_fleet_disband_decider` 收窄（无相关海战战争保留；保留 resolved-target + approved-TRUCE 退役）；
+  `_has_existing_fleet_or_contract_for_war` 排除 DISBANDED（FC-L2-01…13）。
+- **零改**：强度公式/read-model 字段（R3-G-04）/ readiness / CRT / 伤亡矩阵 / Sea Control / 战争生命周期。
+
+### 版本日志（WP-L L2）
+| 版本 | 日期 | 摘要 |
+|:--|:--|:--|
+| 2026-10-02 | WP-L L2 | 海军维护/解散政策同步（FC-L2-01…13；强度/CRT/Sea Control 零改）（DA-Execute） |

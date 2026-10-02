@@ -60,12 +60,12 @@ class TestAutoFleetDisbandDecider(unittest.TestCase):
         result = self.decider.should_disband_fleet(fleet, self.state)
         self.assertFalse(result)
 
-    # ---------- 无战争测试 ----------
+    # ---------- 无战争测试（WP-L L2 收窄：无相关海战战争 → 保留，FC-L2-05） ----------
     def test_no_wars_should_disband(self):
-        """没有任何需要海战的战争，应解散"""
+        """没有任何需要海战的战争 → 保留（L2-T2 移除 terminal 自动解散）"""
         fleet = self.create_fleet()
         result = self.decider.should_disband_fleet(fleet, self.state)
-        self.assertTrue(result)
+        self.assertFalse(result)
 
     # ---------- 活跃战争测试 ----------
     def test_active_war_with_naval_required_should_not_disband(self):
@@ -77,12 +77,12 @@ class TestAutoFleetDisbandDecider(unittest.TestCase):
         self.assertFalse(result)
 
     def test_active_war_without_naval_required_should_disband(self):
-        """有活跃战争但不需要海战，应解散"""
+        """有活跃战争但不需要海战 → 保留（L2-T2：无相关海战战争不自动解散）"""
         fleet = self.create_fleet()
         war = self.create_war(naval_required=False, status=WarStatus.ACTIVE)
         self.war_system.get_active_wars.return_value = [war]
         result = self.decider.should_disband_fleet(fleet, self.state)
-        self.assertTrue(result)
+        self.assertFalse(result)
 
     # ---------- 威胁战争测试 ----------
     def test_threat_war_with_naval_required_should_not_disband(self):
@@ -166,10 +166,10 @@ class TestAutoFleetDisbandDecider(unittest.TestCase):
         self.assertFalse(result)
 
     def test_fleet_on_mission_should_be_considered(self):
-        """舰队处于 ON_MISSION 状态也应考虑解散（只要没有需要海战的战争）"""
+        """舰队处于 ON_MISSION 状态也考虑解散，但无相关海战战争 → 保留（L2-T2）"""
         fleet = self.create_fleet(status=FleetStatus.ON_MISSION, is_building=False)
         result = self.decider.should_disband_fleet(fleet, self.state)
-        self.assertTrue(result)
+        self.assertFalse(result)
 
 
 if __name__ == '__main__':
