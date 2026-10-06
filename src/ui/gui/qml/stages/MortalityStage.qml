@@ -29,9 +29,13 @@ Rectangle {
 
     FactionStyle { id: factionStyle }
 
-    // Filter impacts for figure_death type (supports multiple victims per event)
+    // Filter impacts for figure_death type (supports multiple victims per event).
+    // WP-J J-AC-09 / FC-10: list-detection predicate. The authoritative payload arrives as a
+    // Qt list (`QVariantList`), for which `Array.isArray(...)` is ALWAYS false in this runtime
+    // (G1 §1.2 / diag-array-probe.json) → guarded to [] and the rows never rendered.
+    // Consume the authoritative list iff it exposes a numeric `length`; never fabricate fields.
     function deathImpacts(impacts) {
-        if (!impacts || !Array.isArray(impacts)) return []
+        if (!impacts || typeof impacts.length !== "number") return []
         var result = []
         for (var i = 0; i < impacts.length; i++) {
             if (impacts[i].type === "figure_death") {
@@ -176,29 +180,61 @@ Rectangle {
 
                         delegate: Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 22
+                            Layout.preferredHeight: _deathCol.implicitHeight + 6
                             color: "transparent"
 
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 20
-                                spacing: 6
+                            // WP-J Group-A R1 / FC-15（J-AC-13）：归公明细仅渲染。
+                            // 字段存在且 ≥ 1 → 渲染子行；缺失 / 0 → 不渲染（**QML 禁重算/禁推导**）。
+                            property var _wealth: modelData.wealth_confiscated
+                            property var _land: modelData.land_confiscated
+                            property bool _showWealth: _wealth !== undefined && _wealth !== null && _wealth >= 1
+                            property bool _showLand: _land !== undefined && _land !== null && _land >= 1
 
+                            ColumnLayout {
+                                id: _deathCol
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.leftMargin: 20
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 2
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+
+                                    Text {
+                                        text: "💀"
+                                        font.pixelSize: 11
+                                        Layout.alignment: Qt.AlignVCenter
+                                    }
+                                    Text {
+                                        text: modelData.figure_name || ""
+                                        color: factionStyle.factionColor(modelData.faction_id || modelData.faction_name)
+                                        font.pixelSize: theme.bodySize
+                                        font.bold: true
+                                        Layout.alignment: Qt.AlignVCenter
+                                    }
+                                    Text {
+                                        text: "（" + (modelData.faction_name || "无派系") + "）"
+                                        color: "#766652"
+                                        font.pixelSize: theme.smallSize
+                                        Layout.alignment: Qt.AlignVCenter
+                                    }
+                                }
+
+                                // FC-15：归公财富（T）子行（仅 ≥ 1）。
                                 Text {
-                                    text: "💀"
-                                    font.pixelSize: 11
+                                    visible: _showWealth
+                                    text: "💰 损失财富 " + _wealth + " T（收归国库）"
+                                    color: "#8B2500"
+                                    font.pixelSize: theme.smallSize
                                     Layout.alignment: Qt.AlignVCenter
                                 }
+                                // FC-15：归公土地（C）子行（仅 ≥ 1）。
                                 Text {
-                                    text: modelData.figure_name || ""
-                                    color: factionStyle.factionColor(modelData.faction_id || modelData.faction_name)
-                                    font.pixelSize: theme.bodySize
-                                    font.bold: true
-                                    Layout.alignment: Qt.AlignVCenter
-                                }
-                                Text {
-                                    text: "（" + (modelData.faction_name || "无派系") + "）"
-                                    color: "#766652"
+                                    visible: _showLand
+                                    text: "🏞️ 损失土地 " + _land + " C（收归国库）"
+                                    color: "#2E6B2E"
                                     font.pixelSize: theme.smallSize
                                     Layout.alignment: Qt.AlignVCenter
                                 }

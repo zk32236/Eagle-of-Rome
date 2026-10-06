@@ -292,10 +292,55 @@ if self.state.is_phase_executed("senate"):
 > - **单一推进 owner**：Senate CLI 尾部不再自行 `mark_phase_executed("senate")`，改经
 >   `senate_api.advance_senate_phase` 部署推进（失败不推进、不 return True）。
 
+## WP-J Group A 同步注记（2026-10-06，DA-Execute WP-J / J-AC-09~11；append-only）
+
+> 权威：SA-Design-WP-J-GroupA v2（delta A1，FROZEN，G3 = PASS）；范围 = **只读呈现修复**（无阶段
+> 业务语义 / 生命周期 / 推进 owner / 持久化变更）。
+
+- **J-AC-10 权威子环节步骤读模型（新增，`additive read-model only`）**：六阶段 `get_*_view()`
+  各新增 `steps: [{key,label,state}]`（`state ∈ {todo,current,complete,not_applicable}`，每步恰一值、
+  相位内 `current ≤ 1`），由该阶段**自身**权威 token 派生（**单一 owner**；QML/Store 仅透传，
+  零业务重建 — J-D02）。
+  - 基数/键（顺序冻结）：mortality `[execute]` / revenue `[confirm]` / forum `[retirement,market]`
+    / population `[campaign,vote]` / senate `[proposal,senate_vote,tribune_veto]`
+    / combat `[select,action,result,advance]`。
+  - 「公示区」「查看事件结果」**不是**子环节 → **不入步骤条**（规格 §1.3「不占子环节位」；§3.1 结果内联
+    展示、非生命周期）。Combat 标签/顺序与权威工作流一致（仅绑定状态，不改集合）。
+  - `GuiSessionStore.phaseSteps` = 只读透传选中相位 `steps`；`StepBar.qml` = 唯一渲染 owner；
+    `GameShell.qml` 原内联六阶段步骤条退役（含移除 QML 业务重建 `populationCampaignDone`）。
+- **J-AC-09 Mortality 死亡影响行呈现修复（呈现层，非业务语义）**：`MortalityStage.deathImpacts()`
+  守卫由 `Array.isArray` 改为长度检测 `typeof impacts.length === "number"`（本运行时
+  `Array.isArray(QVariantList) === false` ⇒ 原守卫恒返 `[]` ⇒ 死亡行永不渲染）。全遍历取
+  `type == "figure_death"`；payload 无死亡项 → 不渲染（不伪造）。**退回项（J-D06）**：规格要求
+  显示「损失土地/财富数量」但权威 payload 不携带 → 业务语义缺陷，退回 owning domain，不在本包实现。
+- **J-AC-11 广场子环节操作按钮滚动可及性**：广场「解雇成员」「市场」两子环节的提交/完成**操作按钮**
+  固定于滚动区之外（UI-P09(c)）；不改按钮动作/推进 owner，不改右列主操作与人口/元老院。
+
+## WP-J Group A R1 同步注记（2026-10-06，DA-Execute WP-J R1 / J-AC-12~14；append-only）
+
+> 权威：SA-Development-Task-WP-J-GroupA-R1 v3.2（R1b，FROZEN，G3 = PASS）+ Owner S-2；Owner R-1~R-4。
+> 范围 = Group A R1 修复（步骤条几何 + 战斗步骤语义 + 死亡归公供数）；阶段业务语义/生命周期/推进 owner/持久化
+> 零改（GAME_RULE_CHANGE=NO）。
+
+- **J-AC-12（FC-14，步骤条几何）**：六阶段子环节步骤条**内容紧凑左对齐**（去 `right` 锚）+ 节点间固定
+  `gapStep = 7px`（唯一权威 = Product GUI Layout Contract Phase1 v3.25.1 §4.2）；`gapStep` 视口无关
+  （1280×720 == 1440×900 == 7）。四色 token 不变；框高 50px 不变。根因 = A-2 引入的布局回归。
+- **J-AC-14（FC-16/FC-04/FC-05 修订，战斗步骤）**：Combat `steps` 由固定 `[select,action,result,advance]`
+  改为**可执行战争「占位→实名」进度**：槽数 = `max(3, N)`（N = 可执行战争数，含无指挥官自动跳过者；
+  **N>3 不封顶**）；槽 k≤N 处理前「可执行战争k」→ 处理后该场战争名并变绿；`current` = 最低序 `todo` 槽；
+  槽 N<k≤`max(3,N)` = `not_applicable`；**N=0 → 全槽灰**；**无「推进决算」步骤**；玩家自选执行顺序；
+  `current_step` 相位内部状态机保留。Frozen v2 注记中 Combat `[select,action,result,advance]` 基数行由本条取代。
+- **J-AC-13（FC-15/FC-09，死亡归公供数；属业务语义/数据供给扩展）**：`MortalityService._handle_death_event`
+  为每名死者在 `figure_death` impact 增 `wealth_confiscated:int`(T) / `land_confiscated:int`(C)，与
+  `GameState.mark_member_dead` 转账/CLI print **同源**（`mark_member_dead` `bool` 返回契约不变）；
+  GUI 仅渲染（存在且 ≥1 渲染；缺/0 不渲染；QML 禁重算）。
+
 ## 9. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.7 | 2026-10-06 | DA-Execute (WP-J Group A R1) | 追加「WP-J Group A R1 同步注记」：步骤条紧凑左对齐 + `gapStep=7px`（J-AC-12）+ 战斗步骤 `max(3,N)` 占位→实名/无 advance（J-AC-14，修订 FC-04/FC-05）+ 死亡归公生产者按人供数（J-AC-13）；业务语义/推进 owner/持久化零改（GAME_RULE_CHANGE=NO） |
+| v1.6 | 2026-10-06 | DA-Execute (WP-J Group A) | 追加「WP-J Group A 同步注记」：六阶段权威 `steps` 子环节读模型（J-AC-10）+ Mortality 死亡影响行呈现修复（J-AC-09，呈现层）+ 广场子环节操作按钮滚动可及性（J-AC-11）；阶段业务语义/推进/持久化零改（GAME_RULE_CHANGE=NO） |
 | v1.5 | 2026-09-09 | DA Sub-Agent (WP-G-R4 B3) | R4 同步（O5/OD-R4-06，FROZEN v1.7 §2）：Senate-War 生命周期注记——显式 Senate→Combat advance = Takeover 部署唯一边界（Submit 锁 commitment 零部署、执政官留城、部署原子/exactly-once/fail-closed）；phase transition 非 GUI-lazy（R4-23）；CLI 尾部经 advance 推进（GAME_RULE_CHANGE=NO） |
 | v1.4 | 2026-09-01 | DA Sub-Agent (WP-G G3C) | Treaty Lifecycle 修正（G3C，2026-09-01 Owner Correction / DC-TREATY-LIFECYCLE-CORRECTION-01）：年度推进注记更新——和约到期恢复（到期 → THREAT → 自动升级 → ACTIVE）；§3.1 补「和约到期恢复」依赖句；撤销 v1.3 DI-4 的「无和约到期恢复」表述 |
 | v1.3 | 2026-08-31 | DA Sub-Agent (WP-G GD) | DI-2：§2.1 后新增「军事生命周期时序」小节（G1-14 精确链：战争结束 → recall → 下个 Revenue 最后维护 → 下个 Population DISBANDED，GUI/CLI 共享 canonical；维护数学零变更）；§3.1 补 Resolution 顺序不变式（G1-25：先判胜负后恢复）；DI-4：年度推进注记（⚠️「无和约到期恢复」表述已被 v1.4 G3C 撤销） |

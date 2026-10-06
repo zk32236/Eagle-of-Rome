@@ -242,7 +242,25 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
         if not is_current:
             field_errors["global"] = "不是你的回合"
 
+        # WP-J J-AC-10 / FC-01..FC-06: authoritative intra-phase step read model.
+        # Population has exactly two sub-steps [campaign, vote]; 「公示区」is not a sub-step (FC-06).
+        steps = [
+            {
+                "key": "campaign",
+                "label": "🎉 庆典赞助",
+                "state": "current" if current_step == "campaign"
+                else ("complete" if campaign_done else "todo"),
+            },
+            {
+                "key": "vote",
+                "label": "🗳️ 投票选举",
+                "state": "current" if current_step == "vote"
+                else ("complete" if current_step == "results" else "todo"),
+            },
+        ]
+
         data = {
+            "steps": steps,
             "my_figures": my_figures,
             "candidates": candidates,
             "my_votes": my_votes,

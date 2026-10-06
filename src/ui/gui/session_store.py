@@ -40,6 +40,7 @@ class GuiSessionStore(QObject):
     queryResultChanged = Signal()
     currentPlayerChanged = Signal()
     phaseChanged = Signal()
+    phaseStepsChanged = Signal()  # WP-J J-AC-10：选中相位的权威步骤读模型 notify
     feedbackRaised = Signal(str, str)  # type, message
     handoffRequired = Signal(str)  # next_player_id
     populationVoteSubmittingChanged = Signal()
@@ -183,6 +184,23 @@ class GuiSessionStore(QObject):
     @Property(dict, notify=phaseChanged)
     def selectedPhaseSummary(self) -> Dict[str, Any]:
         return self._selected_phase_summary
+
+    @Property(list, notify=phaseStepsChanged)
+    def phaseSteps(self) -> List[Dict[str, Any]]:
+        """WP-J J-AC-10 / FC-01/FC-08：选中相位的权威子环节步骤读模型。
+
+        只读透传：各阶段 `get_*_view().steps` 为唯一 owner；Store 不重算、不造步骤
+        （zero QML/Store business rebuild）。未实现相位 / 无步骤 → 空列表。
+        """
+        views = {
+            "mortality": self._mortality_view,
+            "revenue": self._revenue_view,
+            "forum": self._forum_view,
+            "population": self._population_view,
+            "senate": self._senate_view,
+            "combat": self._combat_view,
+        }
+        return views.get(self._selected_phase_id, {}).get("steps", []) or []
 
     @Property(str, notify=snapshotChanged)
     def currentPhaseId(self) -> str:
@@ -1800,6 +1818,7 @@ class GuiSessionStore(QObject):
         self._selected_phase_id = phase_id
         self._selected_phase_summary = self._summary_from_phase(phase)
         self.phaseChanged.emit()
+        self.phaseStepsChanged.emit()
         logger.info(
             "GUI phase selected",
             extra={
@@ -1939,32 +1958,39 @@ class GuiSessionStore(QObject):
         self.snapshotChanged.emit()
         self.phaseChanged.emit()
         self.currentPlayerChanged.emit()
+        self.phaseStepsChanged.emit()
 
     def _refresh_population_view(self):
         self._population_view = self._adapter.get_population_view(self._viewer_id)
         self.populationViewChanged.emit()
+        self.phaseStepsChanged.emit()
 
     def _refresh_mortality_view(self):
         self._mortality_view = self._adapter.get_mortality_view(self._viewer_id)
         self.mortalityViewChanged.emit()
+        self.phaseStepsChanged.emit()
 
     def _refresh_senate_view(self):
         self._senate_view = self._adapter.get_senate_view(self._viewer_id)
         self.senateViewChanged.emit()
+        self.phaseStepsChanged.emit()
 
     def _refresh_revenue_view(self):
         self._revenue_view = self._adapter.get_revenue_view(self._viewer_id)
         self.revenueViewChanged.emit()
+        self.phaseStepsChanged.emit()
 
     def _refresh_forum_view(self):
         self._forum_view = self._adapter.get_forum_view(self._viewer_id)
         if self._forum_step_override and self._forum_view.get("resolved"):
             self._forum_step_override = "resolution"
         self.forumViewChanged.emit()
+        self.phaseStepsChanged.emit()
 
     def _refresh_combat_view(self):
         self._combat_view = self._adapter.get_combat_view(self._viewer_id)
         self.combatViewChanged.emit()
+        self.phaseStepsChanged.emit()
 
     def _refresh_resolution_view(self):
         self._resolution_view = self._adapter.get_resolution_view(self._viewer_id)

@@ -491,6 +491,7 @@ ACTIVE（no valid commander）──T15（Takeover P2）──▶ ACTIVE（新 C
 | v1.5 | 2026-08-31 | DA Sub-Agent (WP-G GC) | 海军门语义同步（G1-09/16/R-05/R-06）：§2.3 海战前置句补完整状态机——STALEMATE/DEFEAT/DISASTER 阻断陆战（legacy CLI 同步）、TRIUMPH/VICTORY 获控后同场陆战、已获控跳过海战；制海权持久至战争正式结束（sea_control_acquired 权威字段，替代 _sea_control_ratio；GameState 存档接线 = GD） |
 | v1.7 | 2026-09-09 | DA Sub-Agent (WP-G-R4 B3) | R4 同步（FROZEN v1.7 §2/§3/§4/§5）：Takeover 决策/承诺与物理部署分离（O5）；互斥/单 commitment/pending-aware M；§2.3 readiness 前置（NAVAL_NOT_READY 非 DEFEAT、就绪后可重试）；§2.7 resolve_war 显式 combat_result 载体 + legacy unknown 中性事件；dual-stage v2 envelope（未执行无统计/海权 stage 快照）——GAME_RULE_CHANGE=NO |
 | v1.6 | 2026-09-01 | DA Sub-Agent (WP-G G3C) | Treaty Lifecycle 修正（Owner Correction 2026-09-01 / DC-TREATY-LIFECYCLE-CORRECTION-01）：**approved = TEMPORARY TRUCE（撤销 v1.3 的 approved=RESOLVED）**——War 保持 TRUCE + truce_end_turn + Commander 返回 + Legion/Fleet 释放 + Revenue 最后维护 + Population DISBANDED；到期 → THREAT（threat_level=1，禁直接 ACTIVE / 旧绑定恢复，Sea Control 保持）→ 自动升级 → ACTIVE；TRIUMPH/VICTORY = RESOLVED 独立；ODR-CAND-01 修复 = enqueue-then-clear（_legions_to_disband 双入残留消除） |
+| v1.10 | 2026-10-06 | DA-Execute (WP-J Group A R1) | 追加「WP-J Group A R1 同步注记」：战斗步骤条槽数 = `max(3,N)` 可执行战争「占位→实名」进度（N 含无指挥官自动跳过者；N>3 不封顶；无 advance；下一空槽 current）；与 `resolved_wars`（执行序）+ `_actionable_wars` 对账一致；面板/游戏结束业务语义不变。GAME_RULE_CHANGE=NO（仅步骤条读模型） |
 | v1.9 | 2026-09-20 | DA Sub-Agent (WP-G-R7) | Direct Action 提交后连续可见性 + 校验失败恢复 UX（R7-A/R7-B）：新增「WP-G-R7 同步注记」（引 MVP0.5-20 §5.7.1）——冻结 direct 决策按 `item_ref` 会期连续只读可见 / 不进 Vote-Veto / 边界前零军事 mutation；校验失败 = bounded dialog + 精确卡/N/Commander 高亮 + 草稿保留 + 零发布 + 就地重提。GAME_RULE_CHANGE=NO（纯展示层） |
 | v1.8 | 2026-09-19 | DA Sub-Agent (WP-G-R6) | 平局语义显式化同步（Advisor 最终结论 Option C = ACCEPT / Owner 2026-09-19 确认）：新增「WP-G-R6 同步注记」——`TRUCE + pending` 正式定义为临时军事冻结；pending 期间军团/舰队/指挥官驻留 + 维护费照付 + 不产生到期与赔款；Peace 未获批 ⇒ `TRUCE → ACTIVE` 且下一回合正常开战；`ongoing_war_count = ACTIVE + TRUCE`（计入失败条件）；跨阶段消费者不变量 A–F。GAME_RULE_CHANGE=NO（仅文档显式化） |
 
@@ -529,3 +530,19 @@ ACTIVE（no valid commander）──T15（Takeover P2）──▶ ACTIVE（新 C
 - **`killed` 语义（F-01）**：`commander_status` = 该次阵亡指挥的 command 终止标记，**非** War 永久属性、**非**战斗死因；显式成功 command 绑定到存活 Figure 时复位 `active`（`WarSystem.assign_commander` 与 canonical political command-set 分支），重入本身**不**复位。
 - **重入保留 null（FC-06）**：TRUCE pending 死亡 → 拒绝/未表决回退 → `TRUCE→ACTIVE`，`commander_id` 保持 `None`（`preserve_commander` 保留**已清值**，**不**回填历史 id）；`move_truce_war_to_active` 保持 container-only。
 - **持久化/回滚（FC-09）**：纠正态经既有 `to_dict`/`load_from_dict` 往返，keys/version 不变、无迁移；既有 Senate `snapshot_war_resolution_domains`/`restore_war_resolution_domains` 对 **additive 内部字段 `War.commander_status`** 扩展，使失败边界事务回滚时 `killed` 与 null current/镜像一并恢复（内部字段，**非**存档 schema 变更；无 Save/Load 功能变更）。
+
+## WP-J Group A R1 同步注记（2026-10-06，DA-Execute WP-J R1；append-only）
+
+> 权威：SA-Development-Task-WP-J-GroupA-R1 v3.2（R1b，FROZEN）+ Owner S-2（R-2/R-3）；对应规格 MVP0.3-01 R1 注记 + §3.6 战争面板。**GAME_RULE_CHANGE = NO**（仅步骤条读模型；战争面板/游戏结束业务语义不变）。
+
+- **战斗步骤条 = 可执行战争进度（步骤条镜像源 = 战争系统）**：`combat_api.get_combat_view().steps` 槽数 =
+  **`max(3, N)`**，N = `len(resolved_wars) + len(_actionable_wars) + len(无存活指挥官且 ∉ resolved_wars 的 active 战争)`
+  （**含无指挥官自动跳过者**，按未执行战斗处理；**N>3 不封顶**，镜像 `_build_war_slots` 的 `length=max(3, max_slot+1)`）。
+- **占位→实名**：槽 k≤N 处理前「可执行战争k」（todo）→ 处理后该场**战争名**（complete，绿）；k 映射处理序
+  `resolved_wars[k-1]`（`_persist_combat_envelope` 追加序 = 玩家执行序；`_skip_all_unassigned` 亦入序）。
+- **current / 余槽 / 无 advance**：`current` = 最低序 `todo` 槽（「下一空槽」）；槽 N<k≤`max(3,N)` = `not_applicable`；
+  **N=0 → 全槽灰**；**无「推进决算」步骤**。
+- **零写边界变更**：`select_war` / `do_combat_action` / `advance_combat` / `_skip_all_unassigned` 不变；
+  玩家自选执行顺序为既有能力。
+
+**修订：** 本文档无「推进决算子环节」表述；步骤条旧固定 `[select,action,result,advance]` 已由 MVP0.3-01 R1 注记取代。

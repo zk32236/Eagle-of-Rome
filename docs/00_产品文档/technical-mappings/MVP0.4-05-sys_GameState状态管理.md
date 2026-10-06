@@ -25,4 +25,17 @@
 ### 版本日志
 | 版本 | 日期 | 摘要 |
 |:--|:--|:--|
+| v1.3 | 2026-10-06 | WP-J Group A R1：`mark_member_dead` 资产回收额供数同源注记（`wealth_confiscated`(T)/`land_confiscated`(C)，生产者按人捕获；`bool` 契约不变） |
 | v1.2 | 2026-09-27 | WP-O O-S3：死亡同步 hook + 纠正态往返 + snapshot/restore additive `commander_status`（DA-Execute） |
+
+## WP-J Group A R1 同步注记（2026-10-06，DA-Execute WP-J R1；append-only）
+
+> 权威：SA-Development-Task-WP-J-GroupA-R1 v3.2（R1b，FROZEN）§5.2；Owner R-4 = Option 1。
+
+- **写点（本域，未改）**：`GameState.mark_member_dead` 内部转账 = `add_treasury(member.wealth)`（`transfer_wealth and
+  member.wealth > 0`）/ `add_national_public_land(member._land_private)`（`transfer_land`，`land > 0`）；
+  并 `print` CLI 明细。**方法签名/`bool` 返回/守卫不变**。
+- **供数（上游 Mortality 域）**：`core/service/mortality_service.py::_handle_death_event` 在调用前按人捕获
+  `wealth_confiscated = victim.wealth if >0 else 0` / `land_confiscated = victim._land_private if >0 else 0`
+  写入 `figure_death` impact；与上述转账**同源**。
+- **消费（GUI 只读）**：`stages/MortalityStage.qml` 渲染条件子行（存在且 ≥1）；缺/0 不渲染；零重算（J-D02）。

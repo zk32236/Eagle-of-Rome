@@ -41,8 +41,28 @@ def get_forum_view(state: GameState, viewer_player_id: str) -> dict:
         else:
             current_step = "retirement"
 
+        step1_complete = current_step in {"market", "resolution"}
+        step2_complete = current_step == "resolution"
+        # WP-J J-AC-10 / FC-01..FC-06: authoritative intra-phase step read model.
+        # Forum has exactly two sub-steps [retirement, market]; the「公示区」is NOT a sub-step
+        # (FC-06, spec §1.3) and must never be rendered as a step node.
+        steps = [
+            {
+                "key": "retirement",
+                "label": "解雇成员",
+                "state": "current" if current_step == "retirement"
+                else ("complete" if step1_complete else "todo"),
+            },
+            {
+                "key": "market",
+                "label": "市场（招募·竞标·认购·凯旋）",
+                "state": "current" if current_step == "market"
+                else ("complete" if step2_complete else "todo"),
+            },
+        ]
         data = {
             "phase_id": "forum",
+            "steps": steps,
             "current_phase_id": current_phase_id,
             "current_player_id": current_player.player_id if current_player else "",
             "viewer_player_id": viewer_player_id,
@@ -98,8 +118,8 @@ def get_forum_view(state: GameState, viewer_player_id: str) -> dict:
                 and bool(result)
                 and not state.is_phase_executed("forum")
             ),
-            "step1_complete": current_step in {"market", "resolution"},
-            "step2_complete": current_step == "resolution",
+            "step1_complete": step1_complete,
+            "step2_complete": step2_complete,
             "resolved": bool(result),
             "resolution_results": result_data.get("results", []) if isinstance(result_data, dict) else [],
             "next_phase_id": NEXT_PHASE_ID,

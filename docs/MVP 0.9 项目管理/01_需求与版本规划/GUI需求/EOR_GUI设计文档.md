@@ -721,3 +721,63 @@ label.text = i18n.get("ui.treasury.display", amount=142)
 | 原型输出 | `E:\OpenClaw\EOR\` |
 | 开发文档 | `docs/MVP 0.9 项目管理/` |
 | GUI 测试 | `src/tests/test_gui` |
+
+## 6. WP-J Group A 呈现同步（2026-10-06）
+
+> 权威：SA-Design-WP-J-GroupA v2（delta A1，FROZEN）；只读呈现修复，不改业务语义。
+
+### 6.1 子环节区（§1.4）：权威步骤读模型 + StepBar 单 owner
+
+- 步骤条（`StageInstructionSlot`）**只含子环节节点**；「**公示区不占子环节位**」（§1.3）⇒ 公示区**不进进度条**
+  （无节点、不加灰标签），保留为**内容/状态区**（归 `StageContentSlot`）。
+- 步骤态由各阶段权威 `get_*_view().steps` 产出（`todo/current/complete/not_applicable`），QML 逐字渲染（零重建）。
+  「查看事件结果」为被动查看、非生命周期 → 不作为步骤（§3.1 天命结果内联展示）。
+- 四色：灰=todo / 金=current / 绿=complete / 冷淡=not_applicable。
+
+### 6.2 广场子环节面板（§3.3）：操作按钮不进滚动区（UI-P09(c)）
+
+- 「解雇成员」「市场」两子环节面板统一三段式：header(固定) → content `ScrollView`(唯一 scroll owner)
+  → action row(固定)。
+- 子环节**操作按钮**（「↪ 完成解雇」/「⚖ 提交下注」）固定于滚动区之外；子环节内**列表行操作**
+  （逐行解雇/认购/竞标/赞成）仍随内容滚动。右列主操作（`ContextPanel.OperationSection`）不动。
+
+### 6.3 天命阶段死亡影响行（§3.1）
+
+- 死亡事件为猝死，需显示死者（名字 + 所属派系）；实现为消费权威 `impacts[]` 中 `figure_death` 行。
+- **待补（业务语义，退回 owning domain）**：规格要求的「损失土地/财富数量」目前权威 payload 不携带。
+  - **R1 已解决（见 §7.3）**：Owner R-4 = Option 1，生产者按人供数后，本条改为「载荷携带且 ≥1 时渲染」。
+
+## 7. WP-J Group A R1 呈现同步（2026-10-06，DA-Execute WP-J R1；append-only）
+
+> 权威：SA-Development-Task-WP-J-GroupA-R1 v3.2（R1b，FROZEN，G3 = PASS）+ Owner S-2 (`G2-WP-J-S2-Owner-Confirm-R1-2026-10-06.md`)；Owner R-1~R-4。
+
+### 7.1 子环节区几何（§1.4）：紧凑左对齐 + 固定 `gapStep = 7px`（A-4 / J-AC-12 / FC-14）
+
+- 步骤条节点条**内容紧凑左对齐**（`stepRow` 仅锚 `left`+`verticalCenter`，**去 `right` 锚**，禁拉伸铺满）；
+  节点间 = 单一常量 **`gapStep = 7px`**（唯一权威 = Product GUI Layout Contract Phase1 v3.25.1 §4.2
+  「StageInstructionSlot (Step Bar): Gap 7px」）；框内余量 = **右侧留白**。
+- 几何**视口无关**：`gapStep(1280×720) == gapStep(1440×900) == 7`。四色 token（§6.1）不变；框高 50px 不变。
+- 根因：Group A A-2 引入（内联左锚 `Row{spacing:7}` → 共享 `StepBar` 双锚铺满）；R1 回归紧凑左对齐。
+
+### 7.2 战争阶段步骤条（§3.6）：可执行战争「占位→实名」进度（A-6 / J-AC-14 / FC-16）
+
+- 子环节步骤槽数 = **`max(3, N)`**（N = 可执行战争数，含**无指挥官自动跳过者**；N>3 **不封顶** → 槽数 = N）。
+- 槽 k≤N：**处理前** label=「可执行战争k」（`todo`）→ **处理后** label=该场**战争名**并变绿（`complete`；k 映射处理序 `resolved_wars[k-1]`）。
+- **`current` = 最低序 `todo` 槽**（「下一空槽」）；槽 N<k≤`max(3,N)` = `not_applicable`（灰）；**N=0 → 全槽灰**。
+- **无「推进决算」步骤**（阶段推进另计）；玩家**自选执行顺序**；`current_step` 相位内部状态机保留（`CombatStage` 布局依赖）。
+- 注：§3.6 正文「最多 3 场 / 第 4 场=游戏结束」为**战争面板/游戏结束业务语义**（不变）；本条仅涉**步骤条槽数**（不封顶）。
+
+### 7.3 天命阶段死亡归公明细（§3.1）：生产者按人供数 + 仅渲染（A-5 / J-AC-13 / FC-15）
+
+- 规格 §3.1「损失土地（收归国库）/ 损失财富（收归国库）」= 死亡归公明细，R1 由 owning domain
+  `MortalityService._handle_death_event` **按人（per-victim）供数**：`figure_death` impact 增
+  `wealth_confiscated:int`（Talents/T）、`land_confiscated:int`（公地/C），与 `GameState.mark_member_dead`
+  转账/CLI print **同源**（`mark_member_dead` `bool` 返回契约不变）。
+- GUI **仅渲染**：字段**存在且 ≥1** → 子行 `💰 损失财富 {n} T（收归国库）` / `🏞️ 损失土地 {n} C（收归国库）`；
+  **缺失或 0 → 不渲染**（不占位、不伪造）；**QML 禁重算**（J-D02）。
+
+### 7.4 版本日志
+
+| 版本 | 日期 | 修改人 | 修改说明 |
+|------|------|--------|---------|
+| R1 | 2026-10-06 | DA-Execute (WP-J Group A R1) | 追加 §7 R1 呈现同步：§1.4 步骤条紧凑左对齐 + `gapStep=7px`（A-4/J-AC-12）+ §3.6 战斗步骤 `max(3,N)` 占位→实名（A-6/J-AC-14）+ §3.1 死亡归公生产者按人供数/仅渲染（A-5/J-AC-13）；业务语义/推进 owner 零改 |

@@ -698,6 +698,40 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             current_step = "tribune_veto" if len(veto_candidate_ids) > 0 else "results"
         else:
             current_step = "senate_vote"
+        # WP-J J-AC-10 / FC-01..FC-06: authoritative intra-phase step read model.
+        # Senate has exactly three sub-steps [proposal, senate_vote, tribune_veto]; 「公示」
+        # is NOT a sub-step (FC-06). tribune_veto is `not_applicable` only when the
+        # authoritative flow skipped the veto (zero passed candidates → direct `results`).
+        _senate_veto_reached = (
+            bool(veto_candidate_ids)
+            or bool(result_data.get("passed_proposals_snapshot"))
+            or bool(result_data.get("vetoed_proposals_snapshot"))
+        )
+        if current_step == "tribune_veto":
+            _tribune_veto_state = "current"
+        elif current_step == "results":
+            _tribune_veto_state = "complete" if _senate_veto_reached else "not_applicable"
+        else:
+            _tribune_veto_state = "todo"
+        steps = [
+            {
+                "key": "proposal",
+                "label": "执政官提案",
+                "state": "current" if current_step == "proposal"
+                else ("complete" if current_step in {"senate_vote", "tribune_veto", "results"} else "todo"),
+            },
+            {
+                "key": "senate_vote",
+                "label": "元老表决",
+                "state": "current" if current_step == "senate_vote"
+                else ("complete" if current_step in {"tribune_veto", "results"} else "todo"),
+            },
+            {
+                "key": "tribune_veto",
+                "label": "保民官否决",
+                "state": _tribune_veto_state,
+            },
+        ]
         actionable = current_phase_id == "senate" and state.is_current_player(viewer_player_id)
         # AU-R2-2b（C4/C5）：能力位全由单一 authority resolver 产出（provenance 全收敛）——
         # _viewer_eligible_consul / _viewer_has_tribune 独立重算已退役（FACT-1）。
@@ -778,6 +812,7 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             "current_phase_id": current_phase_id,
             "interaction_mode": "interactive" if current_phase_id == "senate" else "readonly",
             "current_step": current_step,
+            "steps": steps,
             "actionable": actionable,
             "can_create_proposal": can_create,
             # R2-A-2（C5）：can_select_proposal 补 actionable+step guard，对齐 can_create_proposal 三重 guard

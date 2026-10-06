@@ -22,19 +22,30 @@ def get_revenue_view(state: GameState, viewer_player_id: str) -> dict:
 
     current_phase_id = _current_phase_id(state)
     result = state.get_phase_result("revenue")
+    can_execute = (
+        current_phase_id == "revenue"
+        and state.is_current_player(viewer_player_id)
+        and not state.is_phase_executed("revenue")
+        and not result
+    )
+    # WP-J J-AC-10 / FC-01..FC-05: authoritative step read model (single owner = phase view).
+    # Revenue has exactly one sub-step [confirm].
+    steps = [
+        {
+            "key": "confirm",
+            "label": "💰 查看/确认收入结算",
+            "state": "current" if can_execute else ("complete" if result else "todo"),
+        }
+    ]
     data = {
         "phase_id": "revenue",
+        "steps": steps,
         "executed": state.is_phase_executed("revenue"),
         "current_phase_id": current_phase_id,
         "is_current_player": state.is_current_player(viewer_player_id),
         "result": result,
         "settled_data": result.get("data") if result else None,
-        "can_execute": (
-            current_phase_id == "revenue"
-            and state.is_current_player(viewer_player_id)
-            and not state.is_phase_executed("revenue")
-            and not result
-        ),
+        "can_execute": can_execute,
         "can_advance": (
             current_phase_id == "revenue"
             and state.is_current_player(viewer_player_id)

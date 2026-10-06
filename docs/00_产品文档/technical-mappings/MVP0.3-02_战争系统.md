@@ -91,3 +91,20 @@ CRT 判定: combat_total = 2d6 + commander.martial + sum(legion_strengths) - war
 | 版本 | 日期 | 摘要 |
 |:--|:--|:--|
 | v1.6 | 2026-09-27 | WP-O O-S3：非战斗死亡解绑写侧 owner + 读侧消费者表 + 回滚 additive `commander_status`（DA-Execute） |
+
+## WP-J Group A R1 同步注记（2026-10-06，DA-Execute WP-J R1；append-only）
+
+> 权威：SA-Development-Task-WP-J-GroupA-R1 v3.2（R1b，FROZEN）；对应规格 MVP0.3-02 R1 注记 + MVP0.3-01 R1 注记。
+
+- **战斗步骤条读模型（镜像源 = 战争系统）**：`api/combat_api.py::get_combat_view` 的 `steps` 由固定 4 步改为
+  **可执行战争「占位→实名」进度**：槽数 `max(3, N)`；`N = len(resolved_wars) + len(_actionable_wars) +
+  len(无存活指挥官且 ∉ resolved_wars 的 active 战争)`（含 `_skip_all_unassigned` auto-skip；N>3 不封顶，
+  镜像 `_build_war_slots`）；槽 k≤N 处理前 `「可执行战争k」`→处理后 `war name`（`resolved_wars[k-1]`，
+  与 `_persist_combat_envelope` 追加序同源）；`current` = 最低序 todo；无 advance。
+- **零写边界变更**：`select_war` / `do_combat_action` / `advance_combat` / `_skip_all_unassigned` / `_build_war_slots`
+  行为不变；`war_slots` / `resolved_wars` / `war_results` DTO 不变。
+
+### 版本日志（R1）
+| 版本 | 日期 | 摘要 |
+|:--|:--|:--|
+| v1.7 | 2026-10-06 | WP-J Group A R1：combat `steps` = `max(3,N)` 可执行战争占位→实名进度（只读派生；与 `resolved_wars`/`_actionable_wars` 同源） |

@@ -42,5 +42,16 @@ src/api/forum_api.py            # resolve_forum() 公地认购结算
 ## 4. 版本日志
 | 版本 | 日期 | 修改人 | 修改说明 |
 |:--|:--|:--|:--|
+| v1.2 | 2026-10-06 | DA-Execute (WP-J Group A R1) | 追加 §5：死亡土地回收 → 国家公地供数同源注记（`land_confiscated`(C)） |
 | v1.1 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §3：三载体语义分离（total / remaining / allocation）+ buy_land 防重 + resolve 无条件配额处置（GUI-BETA-011/017） |
 | v1.0 | 2026-07-12 | Document Officer | 初版 |
+
+## 5. WP-J Group A R1 同步注记（2026-10-06，DA-Execute WP-J R1；append-only）
+
+> 权威：SA-Development-Task-WP-J-GroupA-R1 v3.2（R1b，FROZEN）§5.2；Owner R-4 = Option 1。
+
+- **国家公地写点（本域，未改）**：`GameState.mark_member_dead` → `add_national_public_land(land)`（`land = member._land_private`，`>0` 守卫）
+  + `sync_italy_public_land`；实际转账与 CLI `print` 不变。
+- **供数**：`core/service/mortality_service.py::_handle_death_event` 调用前按人捕获 `land_confiscated = victim._land_private if >0 else 0`，
+  写入 `figure_death` impact（additive），与公地增量同源。
+- **呈现**：`stages/MortalityStage.qml` 仅当载荷字段存在且 ≥1 时渲染 `🏞️ 损失土地 {n} C（收归国库）`。

@@ -20,19 +20,33 @@ def get_mortality_view(state: GameState, viewer_player_id: str) -> dict:
         return api_response(False, "Viewer player not found")
 
     current_phase_id = _current_phase_id(state)
+    result = state.get_phase_result("mortality")
+    can_execute = (
+        current_phase_id == "mortality"
+        and state.is_current_player(viewer_player_id)
+        and not state.is_phase_executed("mortality")
+        and not result
+    )
+    # WP-J J-AC-10 / FC-01..FC-07: authoritative intra-phase step read model.
+    # Single owner = this phase view; QML/Store may only consume (FC-01/FC-08).
+    # Mortality has exactly one sub-step [execute]; the passive 「查看事件结果」 is NOT a
+    # lifecycle state (FC-07, spec §3.1) and must never be modelled as a step.
+    steps = [
+        {
+            "key": "execute",
+            "label": "⚡ 执行天命",
+            "state": "current" if can_execute else ("complete" if result else "todo"),
+        }
+    ]
     data = {
         "phase_id": "mortality",
+        "steps": steps,
         "executed": state.is_phase_executed("mortality"),
         "current_phase_id": current_phase_id,
         "is_current_player": state.is_current_player(viewer_player_id),
-        "result": state.get_phase_result("mortality"),
-        "events": (state.get_phase_result("mortality") or {}).get("events", []),
-        "can_execute": (
-            current_phase_id == "mortality"
-            and state.is_current_player(viewer_player_id)
-            and not state.is_phase_executed("mortality")
-            and not state.get_phase_result("mortality")
-        ),
+        "result": result,
+        "events": (result or {}).get("events", []),
+        "can_execute": can_execute,
         "can_advance": (
             current_phase_id == "mortality"
             and state.is_current_player(viewer_player_id)

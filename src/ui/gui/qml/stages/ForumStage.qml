@@ -909,57 +909,61 @@ Rectangle {
                                 enabledAction: false
                             }
 
-                            Rectangle {
-                                visible: root.marketUnlocked && !sessionStore.forumResolved
-                                Layout.fillWidth: true
-                                Layout.leftMargin: 12
-                                Layout.rightMargin: 12
-                                Layout.topMargin: 4
-                                Layout.bottomMargin: 12
-                                Layout.preferredHeight: 28
-                                radius: 4
-                                color: "#84250A"
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "⚖ 提交下注"
-                                    color: "#F7D778"
-                                    font.pixelSize: 12
-                                    font.bold: true
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    enabled: sessionStore.canExecuteForum
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.callAndReport(sessionStore.doResolveForum())
-                                }
-                            }
-
-                            Rectangle {
-                                visible: sessionStore.forumResolved
-                                Layout.fillWidth: true
-                                Layout.leftMargin: 12
-                                Layout.rightMargin: 12
-                                Layout.topMargin: 4
-                                Layout.bottomMargin: 12
-                                Layout.preferredHeight: 28
-                                radius: 4
-                                color: "#C89A80"
-                                border.color: "#D9AF63"
-                                border.width: 1
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "✓ 完成下注"
-                                    color: "#FFF4D1"
-                                    font.pixelSize: 12
-                                    font.bold: true
-                                }
-                            }
                         }
                     }
 
+                    // ---- A-3（J-AC-11 / FC-13 / UI-P09(c)）：子环节操作按钮固定于滚动区之外 ----
+                    // 面板 = header(固定) → marketScroll(唯一 scroll owner) → action row(固定)
+                    Rectangle {
+                        objectName: "forumMarketSubmitButton"
+                        visible: root.marketUnlocked && !sessionStore.forumResolved
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 12
+                        Layout.rightMargin: 12
+                        Layout.topMargin: 4
+                        Layout.bottomMargin: 12
+                        Layout.preferredHeight: 28
+                        radius: 4
+                        color: "#84250A"
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "⚖ 提交下注"
+                            color: "#F7D778"
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            enabled: sessionStore.canExecuteForum
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.callAndReport(sessionStore.doResolveForum())
+                        }
+                    }
+
+                    Rectangle {
+                        objectName: "forumMarketDoneStrip"
+                        visible: sessionStore.forumResolved
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 12
+                        Layout.rightMargin: 12
+                        Layout.topMargin: 4
+                        Layout.bottomMargin: 12
+                        Layout.preferredHeight: 28
+                        radius: 4
+                        color: "#C89A80"
+                        border.color: "#D9AF63"
+                        border.width: 1
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "✓ 完成下注"
+                            color: "#FFF4D1"
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                    }
                 }
 
                 // W09（WP-H S1-A2）：覆盖层**移出 layout**（reparen 至非 layout 祖先

@@ -540,356 +540,29 @@ Rectangle {
             }
         }
 
-        // ---- StageInstructionSlot: phase step bar ----
+        // ---- StageInstructionSlot: phase step bar (WP-J J-AC-10) ----
+        // StepBar = 唯一渲染 owner：逐字渲染 sessionStore.phaseSteps（各阶段 get_*_view().steps
+        // 权威读模型）。内联六阶段步骤条已退役（含公示区伪节点、「查看事件结果」伪步骤、
+        // 以及 QML 业务重建 root.populationCampaignDone）。公示区不进步骤条（FC-06）。
         Rectangle {
+            id: phaseStepBarFrame
+            objectName: "phaseStepBarFrame"
             parent: centerPanel.stageInstruction
             anchors.fill: parent
-            color: "transparent"
-            visible: true
+            color: "#D1FFF9EC"
+            border.color: "#85A8753B"
+            border.width: 1
+            radius: 10
+            visible: (sessionStore.phaseSteps || []).length > 0
 
-            // Mortality step bar (only visible in mortality phase)
-            Rectangle {
-                visible: sessionStore.selectedPhaseId === "mortality"
+            StepBar {
+                id: phaseStepBar
+                objectName: "phaseStepBar"
                 anchors.fill: parent
-                color: "#D1FFF9EC"
-                border.color: "#85A8753B"
-                border.width: 1
-                radius: 10
-
-                Row {
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.left: parent.left
-                    anchors.leftMargin: 12
-                    spacing: 7
-
-                    // Step 1: current
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: 20; height: 20; radius: 10
-                            color: "#E8B84B"
-                            Text {
-                                anchors.centerIn: parent
-                                text: "1"
-                                color: "#2C1E12"
-                                font.pixelSize: theme.smallSize; font.bold: true
-                            }
-                        }
-                        Text {
-                            text: "⚡ 执行天命"
-                            color: "#2C1E12"
-                            font.pixelSize: theme.bodySize
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
-
-                    // Arrow
-                    Text {
-                        text: "→"
-                        color: "#B8A080"
-                        font.pixelSize: theme.bodySize
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-
-                    // Step 2: todo
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: 20; height: 20; radius: 10
-                            color: "#E8D5C4"
-                            Text {
-                                anchors.centerIn: parent
-                                text: "2"
-                                color: "#999999"
-                                font.pixelSize: theme.smallSize; font.bold: true
-                            }
-                        }
-                        Text {
-                            text: "📜 查看事件结果"
-                            color: "#999999"
-                            font.pixelSize: theme.bodySize
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
-                }
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                steps: sessionStore.phaseSteps || []
             }
-
-            // Revenue step bar (only visible in revenue phase)
-            Rectangle {
-                visible: sessionStore.selectedPhaseId === "revenue"
-                anchors.fill: parent
-                color: "#D1FFF9EC"
-                border.color: "#85A8753B"
-                border.width: 1
-                radius: 10
-
-                Row {
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.left: parent.left
-                    anchors.leftMargin: 12
-                    spacing: 7
-
-                    // Step 1: current
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: 20; height: 20; radius: 10
-                            color: "#E8B84B"
-                            Text {
-                                anchors.centerIn: parent
-                                text: "1"
-                                color: "#2C1E12"
-                                font.pixelSize: theme.smallSize; font.bold: true
-                            }
-                        }
-                        Text {
-                            text: "💰 查看/确认收入结算"
-                            color: "#2C1E12"
-                            font.pixelSize: theme.bodySize
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
-                }
-            }
-
-            // Forum step bar
-            Rectangle {
-                visible: sessionStore.selectedPhaseId === "forum"
-                anchors.fill: parent
-                color: "#D1FFF9EC"
-                border.color: "#85A8753B"
-                border.width: 1
-                radius: 10
-
-                Row {
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.left: parent.left
-                    anchors.leftMargin: 12
-                    spacing: 7
-
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle { width: 20; height: 20; radius: 10; color: "#2EA44F"; Text { anchors.centerIn: parent; text: "✓"; color: "#FFFFFF"; font.pixelSize: theme.smallSize; font.bold: true } }
-                        Text { text: "公示区"; color: "#2C1E12"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    }
-                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: 20; height: 20; radius: 10
-                            color: sessionStore.forumCurrentStep === "retirement" ? "#E8B84B" : "#E8D5C4"
-                            Text { anchors.centerIn: parent; text: "1"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true }
-                        }
-                        Text {
-                            text: "解雇成员"
-                            color: sessionStore.forumCurrentStep === "retirement" ? "#2C1E12" : "#766652"
-                            font.pixelSize: theme.bodySize
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
-                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: 20; height: 20; radius: 10
-                            color: sessionStore.forumCurrentStep !== "retirement" ? "#E8B84B" : "#E8D5C4"
-                            Text { anchors.centerIn: parent; text: "2"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true }
-                        }
-                        Text {
-                            text: "市场（招募·竞标·认购·凯旋）"
-                            color: sessionStore.forumCurrentStep !== "retirement" ? "#2C1E12" : "#999999"
-                            font.pixelSize: theme.bodySize
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
-                }
-            }
-
-            // Population step bar
-            Rectangle {
-                visible: sessionStore.selectedPhaseId === "population"
-                anchors.fill: parent
-                color: "#D1FFF9EC"
-                border.color: "#85A8753B"
-                border.width: 1
-                radius: 10
-
-                Row {
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.left: parent.left
-                    anchors.leftMargin: 12
-                    spacing: 7
-
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle { width: 20; height: 20; radius: 10; color: "#2EA44F"; Text { anchors.centerIn: parent; text: "✓"; color: "#FFFFFF"; font.pixelSize: theme.smallSize; font.bold: true } }
-                        Text { text: "📢 公示区"; color: "#2C1E12"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    }
-                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: 20; height: 20; radius: 10
-                            color: root.populationCampaignDone ? "#2EA44F" : "#E8B84B"
-                            Text {
-                                anchors.centerIn: parent
-                                text: root.populationCampaignDone ? "✓" : "1"
-                                color: root.populationCampaignDone ? "#FFFFFF" : "#2C1E12"
-                                font.pixelSize: theme.smallSize
-                                font.bold: true
-                            }
-                        }
-                        Text {
-                            text: "🎉 庆典赞助"
-                            color: "#2C1E12"
-                            font.pixelSize: theme.bodySize
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
-                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: 20; height: 20; radius: 10
-                            color: root.populationCampaignDone ? "#E8B84B" : "#E8D5C4"
-                            Text { anchors.centerIn: parent; text: "2"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true }
-                        }
-                        Text {
-                            text: "🗳️ 投票选举"
-                            color: root.populationCampaignDone ? "#2C1E12" : "#999999"
-                            font.pixelSize: theme.bodySize
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
-                }
-            }
-
-            // Senate step bar
-            Rectangle {
-                visible: sessionStore.selectedPhaseId === "senate"
-                anchors.fill: parent
-                color: "#D1FFF9EC"
-                border.color: "#85A8753B"
-                border.width: 1
-                radius: 10
-
-                Row {
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.left: parent.left
-                    anchors.leftMargin: 12
-                    spacing: 7
-
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle { width: 20; height: 20; radius: 10; color: "#2EA44F"; Text { anchors.centerIn: parent; text: "✓"; color: "#FFFFFF"; font.pixelSize: theme.smallSize; font.bold: true } }
-                        Text { text: "公示"; color: "#2C1E12"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    }
-                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: 20; height: 20; radius: 10
-                            color: sessionStore.senateCurrentStep === "proposal" ? "#E8B84B" : "#2EA44F"
-                            Text { anchors.centerIn: parent; text: sessionStore.senateCurrentStep === "proposal" ? "1" : "✓"; color: sessionStore.senateCurrentStep === "proposal" ? "#2C1E12" : "#FFFFFF"; font.pixelSize: theme.smallSize; font.bold: true }
-                        }
-                        Text { text: "执政官提案"; color: "#2C1E12"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter; font.bold: sessionStore.senateCurrentStep === "proposal" }
-                    }
-                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: 20; height: 20; radius: 10
-                            color: sessionStore.senateCurrentStep === "senate_vote" ? "#E8B84B" : "#E8D5C4"
-                            Text { anchors.centerIn: parent; text: "2"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true }
-                        }
-                        Text { text: "元老表决"; color: sessionStore.senateCurrentStep === "senate_vote" ? "#2C1E12" : "#766652"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter; font.bold: sessionStore.senateCurrentStep === "senate_vote" }
-                    }
-                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle { width: 20; height: 20; radius: 10; color: "#E8D5C4"; Text { anchors.centerIn: parent; text: "3"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true } }
-                        Text { text: "保民官否决"; color: "#766652"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    }
-                }
-            }
-
-            // Combat step bar
-            Rectangle {
-                visible: sessionStore.selectedPhaseId === "combat"
-                anchors.fill: parent
-                color: "#D1FFF9EC"
-                border.color: "#85A8753B"
-                border.width: 1
-                radius: 10
-
-                Row {
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.left: parent.left
-                    anchors.leftMargin: 12
-                    spacing: 7
-
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle { width: 20; height: 20; radius: 10; color: "#2EA44F"; Text { anchors.centerIn: parent; text: "✓"; color: "#FFFFFF"; font.pixelSize: theme.smallSize; font.bold: true } }
-                        Text { text: "公示"; color: "#2C1E12"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    }
-                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: 20; height: 20; radius: 10
-                            color: sessionStore.combatCurrentStep === "select" ? "#E8B84B" : "#2EA44F"
-                            Text { anchors.centerIn: parent; text: sessionStore.combatCurrentStep === "select" ? "1" : "✓"; color: sessionStore.combatCurrentStep === "select" ? "#2C1E12" : "#FFFFFF"; font.pixelSize: theme.smallSize; font.bold: true }
-                        }
-                        Text { text: "选择战争"; color: "#2C1E12"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter; font.bold: sessionStore.combatCurrentStep === "select" }
-                    }
-                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: 20; height: 20; radius: 10
-                            color: sessionStore.combatCurrentStep === "action" ? "#E8B84B" : "#E8D5C4"
-                            Text { anchors.centerIn: parent; text: "2"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true }
-                        }
-                        Text { text: "进攻/防御"; color: sessionStore.combatCurrentStep === "action" ? "#2C1E12" : "#766652"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter; font.bold: sessionStore.combatCurrentStep === "action" }
-                    }
-                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: 20; height: 20; radius: 10
-                            color: sessionStore.combatCurrentStep === "result" ? "#E8B84B" : "#E8D5C4"
-                            Text { anchors.centerIn: parent; text: "3"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true }
-                        }
-                        Text { text: "查看战果"; color: sessionStore.combatCurrentStep === "result" ? "#2C1E12" : "#766652"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    }
-                    Text { text: "→"; color: "#B8A080"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    Row {
-                        spacing: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle { width: 20; height: 20; radius: 10; color: "#E8D5C4"; Text { anchors.centerIn: parent; text: "4"; color: "#2C1E12"; font.pixelSize: theme.smallSize; font.bold: true } }
-                        Text { text: "推进决算"; color: "#766652"; font.pixelSize: theme.bodySize; anchors.verticalCenter: parent.verticalCenter }
-                    }
-                }
-            }
-
         }
 
         // ---- StageContentSlot: phase stage components ----
@@ -1168,9 +841,9 @@ Rectangle {
         // ============================================================
     }
 
-    readonly property bool populationCampaignDone: sessionStore.populationResolved
-        || sessionStore.populationCurrentStep !== "campaign"
-        || (sessionStore.populationCampaigns || []).length > 0
+    // WP-J J-AC-10 / FC-08: QML 业务重建已移除 ——
+    // 旧 `populationCampaignDone` 复合式（populationResolved || currentStep!="campaign" || campaigns>0）
+    // 已被权威步骤读模型（sessionStore.phaseSteps / population view `steps`）取代。
 
     // 玩家交接遮罩
     PlayerHandoffOverlay {

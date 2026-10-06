@@ -772,6 +772,49 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
         else:
             current_step = "select"
         all_resolved = _all_battled(ws, phase_data, state=state)
+        # WP-J Group-A R1 / FC-16 / FC-04 / FC-05（J-AC-14）：Combat steps = 可执行战争
+        # 「占位→实名」进度。槽数 = max(3, N)（N>3 不封顶）。
+        # N = len(resolved_wars) + len(_actionable_wars) + len(无存活指挥官的 active 战争 ∉ resolved)
+        #     （含无指挥官自动跳过者，按「未执行战斗」处理）。
+        # 槽 k≤N：处理前 label=「可执行战争k」(todo) → 处理后 label=该场战争名(complete，k=处理序)。
+        # current = 最低序 todo 槽（「下一空槽」）；槽 N<k≤max(3,N)=not_applicable；N=0 全灰。
+        # **无 advance（推进决算）步骤节点**（阶段推进另计；`current_step` 相位内部机保留不变）。
+        resolved_ids = list(resolved_wars) if isinstance(resolved_wars, list) else []
+        _resolved_set = set(resolved_ids)
+        _actionable = _actionable_wars(ws, phase_data, state=state)
+        _no_commander_wars = [
+            w for w in active_wars
+            if _live_current_commander_id(ws, w, state) is None
+            and w.id not in _resolved_set
+        ]
+        _n_wars = len(resolved_ids) + len(_actionable) + len(_no_commander_wars)
+        _slot_count = max(3, _n_wars)
+
+        # war id -> name（active / truce / resolved 三源；实名渲染用）
+        _name_by_id: Dict[str, Any] = {}
+        for _w in active_wars:
+            _name_by_id[_w.id] = _w.name
+        for _w in (ws.get_truce_wars() if ws else []):
+            _name_by_id.setdefault(_w.id, _w.name)
+        for _w in (ws.get_resolved_wars() if ws else []):
+            _name_by_id.setdefault(_w.id, _w.name)
+
+        steps = []
+        for _idx in range(_slot_count):
+            _k = _idx + 1
+            if _idx < len(resolved_ids):
+                _wid = resolved_ids[_idx]
+                _label = _name_by_id.get(_wid, str(_wid))
+                _state = "complete"
+            else:
+                _label = "可执行战争%d" % _k
+                _state = "todo" if _k <= _n_wars else "not_applicable"
+            steps.append({"key": "war_%d" % _k, "label": _label, "state": _state})
+        # current = 最低序 todo 槽（「下一空槽」；无 todo 槽 → 无 current）
+        for _s in steps:
+            if _s["state"] == "todo":
+                _s["state"] = "current"
+                break
 
         actionable = (
             current_phase_id == "combat"
@@ -842,6 +885,7 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
             "current_phase_id": current_phase_id,
             "interaction_mode": interaction_mode,
             "current_step": current_step,
+            "steps": steps,
             "actionable": actionable,
             "selected_war_id": selected_war_id,
             "can_advance": all_resolved,
@@ -862,7 +906,7 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
             "summary": {
                 "title": "战斗阶段",
                 "status": current_step,
-                "message": "选择战争 → 进攻/防御/侦查 → 查看战果 → 推进决算",
+                "message": "选择战争 → 逐场进攻/防御/侦查 → 查看战果",
                 "active_war_count": active_war_count,
                 "resolved_war_count": resolved_war_count,
             },

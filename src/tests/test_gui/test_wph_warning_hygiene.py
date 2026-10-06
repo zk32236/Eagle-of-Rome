@@ -927,8 +927,10 @@ class TestTH07MortalityRowAlignment:
         # W10 事件头文案不得丢失（垂直居中修正不得改变内容）
         assert any("（" in t for t in texts) or any("天命" in t for t in texts), texts
         assert any("2 人死亡" in t for t in texts), texts
-        # W11 前置：嵌套死亡行 delegate 在 launch baseline 不实例化（见下 precondition 测试）
-        assert not any(t.startswith("（") for t in texts), texts
+        # WP-J J-AC-09（FC-10）取代 W11 前置：列表检测谓词修复后，嵌套死亡行 delegate
+        # **必须实例化**（原「不实例化」= 修复前行为，仅作 WP-H 历史基线；
+        # 见 test_wpj_groupa_mortality_death_rows.py）。行文本以「（派系）」开头。
+        assert any(t.startswith("（") for t in texts), texts
 
 
 # ───────────────────────────── T-H08 ─────────────────────────────

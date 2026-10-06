@@ -220,3 +220,19 @@ add_national_public_land(amount)
 - **buy_land 防重**：pending 内同 figure 已有认购请求 → 显式拒绝（非静默替换）。
 - **resolve_forum 无条件配额处置**：无认购且 quota>0 → 「📭 本回合公地未售，配额 X C 作废」+ clear（G-14 收敛）。
 - **经济价格权威值**：`land_price_per_unit` 经 `get_economic_rule` 读取（禁硬编码）。
+
+## 11. WP-J Group A R1 同步注记（2026-10-06，DA-Execute WP-J R1；append-only）
+
+> 权威：SA-Development-Task-WP-J-GroupA-R1 v3.2（R1b，FROZEN）§5.2（FC-15/FC-09）；Owner R-4 = Option 1。
+
+- **死亡土地回收 → 国家公地（供数来源）**：`GameState.mark_member_dead` 将死者 `_land_private`（`>0` 守卫）
+  经 `add_national_public_land` 转入国家公地，并 `print` CLI 明细。本幂源不变。
+- **生产者按人供数（上游 Mortality 域）**：`MortalityService._handle_death_event` 在调用前按人捕获死亡土地回收额
+  （= `victim._land_private if >0 else 0`，单位 C），写入 `figure_death` impact 的 `land_confiscated:int`；
+  与上述国家公地增量**逐值一致（同源）**。
+- **呈现（GUI 只读）**：天命死亡行渲染 `🏞️ 损失土地 {n} C（收归国库）`（存在且 ≥1；缺/0 不渲染；禁重算）。
+
+### 版本日志（R1）
+| 版本 | 日期 | 修改人 | 修改说明 |
+|------|------|--------|---------|
+| v1.2 | 2026-10-06 | DA-Execute (WP-J Group A R1) | 追加 §11：死亡土地回收 → 国家公地供数同源注记（`land_confiscated`(C)，生产者按人供数；回收/转账语义未变） |

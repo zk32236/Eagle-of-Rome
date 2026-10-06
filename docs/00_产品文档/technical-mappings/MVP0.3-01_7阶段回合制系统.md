@@ -59,10 +59,47 @@ PHASE_SEQUENCE = ["mortality", "revenue", "forum", "population", "senate", "comb
 - **结算:** 由 `resolve_population_slice()` 在所有玩家完成后统一触发 `resolve_election()`（FC-09）；batch_vote 内不触发结算
 - **GUI:** `sessionStore.batchVote(entries)` → 单批入口，移除旧逐项 doVote 循环
 
+## WP-J Group A 同步注记（2026-10-06，DA-Execute WP-J；append-only）
+
+> 权威：SA-Design-WP-J-GroupA v2（delta A1，FROZEN）§3.3 / §9.2。仅 `additive` 读模型 + 呈现层，零写边界/推进 owner 变更。
+
+- **六阶段 API：`steps` 读模型（additive）**：`get_mortality_view`（`execute`）/ `get_revenue_view`（`confirm`）
+  / `get_forum_view`（`retirement,market`）/ `get_population_view`（`campaign,vote`）/ `get_senate_view`
+  （`proposal,senate_vote,tribune_veto`）/ `get_combat_view`（`select,action,result,advance`）各新增
+  `steps: [{key,label,state}]` 字段（shape 见 spec §WP-J 注记）。单一 owner = 各 phase api；向后兼容（新增键）。
+- **Store**：`GuiSessionStore.phaseSteps`（`@Property(list)`），读选中相位的 view `steps`，每次视图刷新 + 相位切换
+  发 `phaseStepsChanged`；零重算。
+- **QML**：`components/StepBar.qml` 升级为消费 `{key,label,state}` 四态（唯一渲染 owner）；
+  `shell/GameShell.qml` L543–L893 内联六阶段步骤条退役 → `StepBar{ steps: sessionStore.phaseSteps }`；移除 `root.populationCampaignDone`。
+- **MortalityStage.qml**：`deathImpacts()` 守卫 = 列表检测（`typeof impacts.length === "number"`），行取
+  `events[].impacts[]` 中 `type == "figure_death"`（全遍历）；不改 producer/DTO（`mortality_service.py` 零改，承 WP-O 注记）。
+- **ForumStage.qml**：市场面板三段式 = header(固定 36) → `marketScroll`(唯一 scroll owner) → action row(固定)；
+  「⚖ 提交下注」/「✓ 完成下注」自 `marketScroll` 移出（FC-13 / UI-P09(c)）；解雇面板 action row 已在滚动区外（冻结）。
+
+## WP-J Group A R1 同步注记（2026-10-06，DA-Execute WP-J R1；append-only）
+
+> 权威：SA-Development-Task-WP-J-GroupA-R1 v3.2（R1b，FROZEN）§3.3 / §9 + Owner S-2。
+> 零写边界/推进 owner 变更（combat `steps` 为只读派生；StepBar 为布局；死亡归公为 additive 供数）。
+
+- **A-4（`components/StepBar.qml`）**：`stepRow` 去 `anchors.right`（仅 left+verticalCenter），`spacing = root.gapStep`；
+  新增 `readonly property int gapStep: 7`；节点 `objectName: "stepNode"`、`Layout.fillWidth: false`；标签 `elide` +
+  `Layout.maximumWidth`。产品侧无 API/写边界变更。
+- **A-6（`api/combat_api.py::get_combat_view`）**：`steps` 派生重写 —— 槽数 `max(3, N)`；`N = len(resolved_wars) +
+  len(_actionable_wars) + len(无存活指挥官且 ∉ resolved_wars 的 active 战争)`（含 auto-skip）；槽 k≤N 处理前
+  `「可执行战争k」`/处理后 `war name`（`resolved_wars[k-1]`）；`current` = 最低序 todo；无 advance；
+  `current_step` 与 `summary` 结构保留（`summary.message` 去「推进决算」文案）。仅读模型（无写）。
+- **A-5（`core/service/mortality_service.py::_handle_death_event`）**：`mark_member_dead` 调用前捕获
+  `wealth_confiscated = victim.wealth if >0 else 0` / `land_confiscated = victim._land_private if >0 else 0`，写入
+  `figure_death` impact（additive）；与 `GameState.mark_member_dead` 转账/CLI print 同源；`bool` 返回契约不变。
+- **A-5（`stages/MortalityStage.qml`）**：死亡行 delegate 改 ColumnLayout，新增两条件子行
+  `💰 损失财富 {n} T（收归国库）` / `🏞️ 损失土地 {n} C（收归国库）`，仅当字段存在且 ≥1 渲染（缺/0 不渲染；禁重算）。
+
 ## 5. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.7 | 2026-10-06 | DA-Execute (WP-J Group A R1) | 追加 R1 同步注记：StepBar `gapStep=7` 紧凑左对齐（A-4）+ combat `steps` `max(3,N)` 占位→实名（A-6）+ 死亡归公生产者按人供数 + MortalityStage 条件子行（A-5） |
+| v1.6 | 2026-10-06 | DA-Execute (WP-J Group A) | 追加 WP-J 同步注记：六阶段 `steps` 读模型 + Store.phaseSteps + StepBar 单 owner + GameShell 内联退役 + Mortality 死亡行守卫修复 + Forum 市场 action row 出滚动 |
 | v1.5 | 2026-08-29 | DA-Exec (WP-F 003) | 阶段 GUI 视觉一致性：全局派系色走共享 FactionStyle（config 全名键 + 三族色 + F4~F6 占位）；展示层补注 |
 | v1.4 | 2026-08-24 | DA-Exec (WP-E-G7R) | §6.1 两段式 → 单命令；step_definitions 移除（preview 四类目替代）；resolved 单源化；新增 §7 Resolution Preview DTO（只读投影 + 零变异 + parity 契约） |
 | v1.3 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §6：Resolution 四步事件身份 read-model + 两段式年度推进；市场生成段补注（veteran supply 注入） |

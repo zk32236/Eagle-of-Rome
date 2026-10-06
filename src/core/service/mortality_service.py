@@ -161,6 +161,12 @@ class MortalityService:
                         })
                         logs.append(f"      📜 {victim.name} 的合同 {contract.name} 已终止")
 
+            # WP-J Group-A R1 / FC-15（J-AC-13）：按人（per-victim）供给归公数量。
+            # 与 `GameState.mark_member_dead` 的转账/CLI print **同源**（同一实体/时刻/`>0` 守卫）。
+            # 必须在 mark_member_dead 之前捕获——该调用会将 wealth / _land_private 清零。
+            # 单位：wealth_confiscated = Talents(T)；land_confiscated = 公地(C)。
+            wealth_confiscated = victim.wealth if victim.wealth > 0 else 0
+            land_confiscated = victim._land_private if victim._land_private > 0 else 0
             self.state.mark_member_dead(victim.id, transfer_land=True, transfer_wealth=True)
             faction = self.state.get_faction(victim.faction_id)
             faction_name = faction.name if faction else "无派系"
@@ -183,6 +189,9 @@ class MortalityService:
                 "faction_id": victim.faction_id,
                 "faction_name": faction_name,
                 "terminated_contracts": terminated_contracts,
+                # FC-15/FC-09：生产者按人供数（GUI 仅渲染；缺/0 不渲染）
+                "wealth_confiscated": wealth_confiscated,
+                "land_confiscated": land_confiscated,
             })
 
         self.state.log_event(f"💀 死神来了：{len(victims)} 人死亡，财产归公")
