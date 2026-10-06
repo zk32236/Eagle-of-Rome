@@ -200,10 +200,26 @@
 > - **Forum 公开 seam**：get_forum_view（triumph_wars 行）→ vote_triumph → resolve_forum
 >   恰一次；批准后 soldier_share 消费归零、二次 resolve 无二次奖励（J 链同 run 断言）。
 
+## WP-J Group B 同步注记（2026-10-06，DA-Execute；append-only，目标锚点 §2.1/§2.2/§3.1）
+
+> 权威：WP-J Group B SA-Development-Task v1.3（G3 FROZEN）§3.3/§4/§5.1/§9；Owner 2026-10-06 16:43 S-2 最小规则；凯旋 share/vote/reward 规则零改。
+>
+> - **Forum 公开 seam 增 additive 只读字段**：`forum_api.get_forum_view().triumph_wars[]` 逐行新增
+>   `action:{state:"actionable"|"readonly", reason}`（单一权威动作可用性投影，FC-B01–B03；`reason` 词表
+>   {ok,not_current_player,not_phase,vote_window_closed,resolved} 内部保留、界面不呈现）与
+>   `viewer_vote: null|true|false`（FC-B18，viewer 派系对该 war 的最新票）。
+> - **GUI 最小规则（③，Owner 16:43）**：凯旋行按钮**三态**——`actionable ∧ 未投` → 「赞成」（可点）；
+>   点击 → 既有 `vote_triumph(war_id, True)` → 刷新后**即灰化（disabled）**「已投」（重复点击无效，UI 消除重复投票）；
+>   其余 `readonly` → **灰化（disabled）+ 统一「不可投」**（不解释原因）。**无弹窗 / 无赞成·反对二选 / 无二次确认**。
+>   QML 逐字消费 producer 投影（零业务重建，FC-B06），不再以 `marketUnlocked/canExecuteForum/forumResolved` 重算可用性。
+> - **Q1（投票窗口）** = Owner 16:07 **CLOSED / NO-CHANGE**（市场子环节；不新增 `vote_triumph` 窗口强校验）。
+> - **写语义零改**：`vote_triumph` bool + append 记录语义不变。
+
 ## 9. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.2 | 2026-10-06 | DA Sub-Agent (WP-J Group B) | ③ GUI 最小规则同步（FROZEN v1.3 / Owner 16:43）：§2.2 追加注记——凯旋行按钮三态（赞成/已投[灰disabled]/不可投[灰disabled]）、点击后即灰化无重复、不可投统一文案；additive 读模型 `triumph_wars[].action`/`.viewer_vote`；Q1 = CLOSED；`vote_triumph` bool/append 语义零改（GAME_RULE_CHANGE=NO） |
 | v1.1 | 2026-09-09 | DA Sub-Agent (WP-G-R4 B3) | R4 同步（FROZEN v1.7 §4.3）：§2.1/§3.1/§4.3 追加注记——VICTORY/TRIUMPH 均按当前四条件可 eligible（ordinary VICTORY 保留仪式，无 CRT==TRIUMPH 门）；triumph_commander_id=ceremony candidate 非 CRT 证据；战斗身份 carrier 与 legacy unknown 中性事件；Forum 公开 vote/resolve 一次 + share 单次消费（GAME_RULE_CHANGE=NO） |
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent E | 初版创建 |
 

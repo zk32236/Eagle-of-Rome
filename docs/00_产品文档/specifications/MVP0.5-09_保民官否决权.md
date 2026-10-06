@@ -174,6 +174,7 @@
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
 | v1.0 | 2026-07-12 | Document Officer | 初版创建 |
+| v1.1 | 2026-10-06 | DA Sub-Agent (WP-J Group B) | §2.2/§2.3 GUI 可见归属注记：保民官否决归属文案绑权威 `veto_control_mode`（HUMAN/AI/NONE 最小文案）；不点名 actor、不分列；执行后不塔 AI。GAME_RULE_CHANGE=NO。见下方「WP-J Group B 同步记录」。 |
 
 ### R2 复核记录（2026-08-23，GUI-BETA-R1 WP-D-R2）
 
@@ -182,5 +183,9 @@
 ### R2-01 复核记录（2026-08-30，GUI-BETA-R1 WP-F-R2）
 
 **REVIEWED — CONFIRMED**：否决候选 = **Senate 通过提案 only**（passed-only 收敛，规格 §2.5/§3.3 既有语义现已全消费者落地）：①中间 `veto_candidate_ids` 权威集（= `_passed_proposals_for_veto` id 投影）供 DTO/Store/QML Stage 3 唯一消费；②`record_veto` fail-closed 四条件（not submitted / vote not complete / Senate failed / outside candidate set → 拒绝 + rejected_ids，全拒 success=False），failed 提案不可经 GUI 或 direct API 否决；③zero-passed → current_step=results 流程收敛，无需「否决空集」解锁。GAME_RULE_CHANGE = NO（阈值 >50% / AI 概率 / Tribune 权威均不变）。实现细节见 technical-mappings/MVP0.5-20 v1.8 §5.9。
+
+### WP-J Group B 同步记录（2026-10-06，GUI-BETA-R1 WP-J Group B）
+
+**SPEC-UPDATE（GUI 可见归属绑权威 veto_control_mode）**——针对 §2.2（人类保民官手动模式）/§2.3（AI 保民官）：保民官否决的**玩家可见归属文案**绑定权威 actor/source `veto_control_mode`（来源 `politics.resolve_veto_control` → `senate_api.get_senate_view`，单一 owner）：`HUMAN` → 「判定否决 → 公示结果」；`AI` → 「AI判定否决 → 公示结果」；`NONE` → 「无保民官，跳过否决」。**不点名 actor、不做 vetoed/表决未通过 分列**；人类否决**执行后**（`current_step→results`，mode 仍 HUMAN）**保持人类文案、不得回塔「AI判定」**。GUI 零业务重建（不得由 `can_veto`/`current_step` 推断 actor）。**GAME_RULE_CHANGE = NO**（否决权威 / 概率 / 阈值不变）。实现细节见 `technical-mappings/MVP0.5-09` v1.5 §7。
 
 > **维护规则：** 本文件为活文档，每次修改规格说明正文或技术映射时，必须在版本日志中追加新条目。版本号递增规则：大功能修改升主版本（v1→v2），小修小改升次版本（v1.0→v1.1）。

@@ -26,3 +26,17 @@ src/api/forum_api.py              # vote_triumph(), resolve_forum()
 > - **候选字段含义**：`war.triumph_commander_id` = ceremony candidate（非 CRT 身份证据）；
 >   CRT identity（combat_victory/combat_triumph）由 combat envelope/event 独立携带，不从候选反推。
 > - 版本行：| v1.1 | 2026-09-09 | WP-G-R4 B3：Forum 公开 seams/候选字段/CRT identity 与 ceremony 分离（DA-R4-B3） |
+
+## WP-J Group B 同步注记（2026-10-06，DA-Execute；append-only）
+
+> 权威：WP-J Group B SA-Development-Task v1.3（G3 FROZEN）§3.3/§4/§5.1；Owner 2026-10-06 16:43 S-2 最小规则。
+
+- **链路（③ J-AC-03，additive 只读）**：`forum_api.get_forum_view()` → `_triumph_war_rows()`（逐行增 `action:{state,reason}` + `viewer_vote`，FC-B01–B03/B18）→ `session_store.forumTriumphWars`（只读透传，零本地缓存）→ `ForumStage.qml` 凯旋行 `MarketActionRow`（`enabledAction = action.state=="actionable" && viewer_vote===null`；文本 = `viewer_vote!=null?「已投」:(actionable?「赞成」:「不可投」）`）→ `onTriggered` 复用既有 `session_store.doVoteTriumph(war_id, true)`。
+- **最小交互提交链（不变）**：单击「赞成」→ `forum_api.vote_triumph(state, player_id, war_id, True)` → `add_forum_action("triumph_votes", (war_id, faction_id, True))`（bool + append 语义**零改**）→ 刷新后行呈「已投」 disabled（重复点击无效）。
+- **单一谓词**：`action.state=="actionable"` iff 权威 `vote_triumph` 在当前态会接受（`_check_player_permission` ∧ `_triumph_eligibility`）∧ 市场子环节窗口开放 ∧ ¬resolved；`reason` 词表 {ok,not_current_player,not_phase,vote_window_closed,resolved} 保留于 DTO、界面不呈现（Owner 16:43）。QML/Store 不得重算（FC-B06）。Q1 = CLOSED（Owner 16:07，不新增窗口强校验）。
+
+## 版本日志（append-only）
+
+| 版本 | 日期 | 修改人 | 修改说明 |
+|------|------|--------|---------|
+| v1.2 | 2026-10-06 | DA Sub-Agent (WP-J Group B) | ③ 行 action/viewer_vote 读取链路 + 最小交互提交链（WP-J Group B / J-AC-03；additive read-model，写语义零改） |

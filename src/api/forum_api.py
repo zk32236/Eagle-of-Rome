@@ -95,7 +95,12 @@ def get_forum_view(state: GameState, viewer_player_id: str) -> dict:
             "land_allocation": result_data.get("land_allocation", [])
             if isinstance(result_data, dict)
             else [],
-            "triumph_wars": _triumph_war_rows(state),
+            # WP-J Group B ③ (J-AC-03 / FC-B01/B02/B18): additive single-authority
+            # actionability projection + viewer settled-vote projection on each triumph row.
+            "triumph_wars": _triumph_war_rows(
+                state, viewer_player_id, current_step,
+                state.is_phase_executed("forum") or bool(result),
+            ),
             "war_threats": _war_threat_rows(state),
             # WP-E F7（E-G7-14P/06P）：war_events 保留载体 + has_active_war（权威访问器）
             "war_events": state.get_forum_war_events(),
@@ -1224,10 +1229,59 @@ def _triumph_eligibility(state: GameState, war) -> Dict[str, Any]:
     return {"eligible": True, "reason": None}
 
 
-def _triumph_war_rows(state: GameState) -> List[Dict[str, Any]]:
+def _triumph_action(state: GameState, viewer_player_id: str, current_step: str,
+                    resolved: bool) -> Dict[str, Any]:
+    """WP-J Group B ③ (J-AC-03 / FC-B01–B03): 凯旋行动作可用性**单一权威投影**。
+
+    ``state == "actionable"`` iff 权威 ``vote_triumph`` 在当前状态会接受该票
+    （``_check_player_permission`` ∧ ``_triumph_eligibility``）∧ 投票窗口开放（市场子环节）
+    ∧ 尚未结算（FC-B03）。``reason`` = 唯一否决因，取自冻结词表（FC-B02）
+    {ok, not_current_player, not_phase, vote_window_closed, resolved}。
+
+    单一 owner（FC-B01）：QML/Store 必须消费本投影，不得重算（FC-B06）；Q1 = CLOSED
+    （FC-B05）——本投影仅将既有市场子环节窗口语义**呈现**为权威字段，不新增
+    ``vote_triumph`` 写边界强校验。``reason`` 为内部/未来字段，本切片界面不呈现（FC-B02/B04）。
+    """
+    if resolved or current_step == "resolution":
+        return {"state": "readonly", "reason": "resolved"}
+    if _current_phase_id(state) != "forum":
+        return {"state": "readonly", "reason": "not_phase"}
+    ok, _resp = _check_player_permission(state, viewer_player_id)
+    if not ok:
+        return {"state": "readonly", "reason": "not_current_player"}
+    if current_step == "retirement":
+        return {"state": "readonly", "reason": "vote_window_closed"}
+    return {"state": "actionable", "reason": "ok"}
+
+
+def _viewer_triumph_vote(pending_votes, war_id: str, faction_id: Optional[str]):
+    """WP-J Group B ③ (J-AC-03 / FC-B18): viewer 派系对该 war 的**最新**已投记录。
+
+    ``_forum_pending["triumph_votes"]`` 行 = ``(war_id, faction_id, vote: bool)``。返回
+    (war_id, faction_id) 的最新 ``bool``；无记录 → ``None``（未投）。每次由活状态重算
+    （FC-B07），无缓存；多玩家隔离（仅 viewer 派系作用域）。
+    """
+    if not faction_id:
+        return None
+    latest = None
+    for entry in pending_votes or []:
+        try:
+            if len(entry) >= 3 and str(entry[0]) == str(war_id) and entry[1] == faction_id:
+                latest = bool(entry[2])
+        except TypeError:
+            continue
+    return latest
+
+
+def _triumph_war_rows(state: GameState, viewer_player_id: str = "",
+                      current_step: str = "market",
+                      resolved: bool = False) -> List[Dict[str, Any]]:
     war_system = state.get_war_system()
     if not war_system:
         return []
+    viewer = state.get_player(viewer_player_id) if viewer_player_id else None
+    viewer_faction_id = viewer.faction_id if viewer else None
+    pending_votes = state.get_forum_pending().get("triumph_votes", [])
     rows: List[Dict[str, Any]] = []
     for war in war_system.get_resolved_wars():
         # R1-G-07（WP-G-R1 v1.6 §2.7）：Forum rows 过滤——单一 _triumph_eligibility 同源
@@ -1242,6 +1296,11 @@ def _triumph_war_rows(state: GameState) -> List[Dict[str, Any]]:
             "commander_name": _figure_name(commander) if commander else "未知指挥官",
             "commander_faction_id": commander.faction_id if commander else None,
             "soldier_share": war.soldier_share,
+            # WP-J Group B ③ (J-AC-03): additive read-model only.
+            # action = 单一权威动作可用性投影（FC-B01/B02/B03）；
+            # viewer_vote = viewer 已投态（FC-B18）。写语义零改。
+            "action": _triumph_action(state, viewer_player_id, current_step, resolved),
+            "viewer_vote": _viewer_triumph_vote(pending_votes, str(war.id), viewer_faction_id),
         })
     return rows
 

@@ -97,6 +97,17 @@ def _force_death(state, count=2):
 
 
 def _capture(engine, out_png, width=1440, height=900):
+    """Offscreen capture with a bounded poll/retry loop until the frame is ready.
+
+    Determinism fix (WP-J Group A ATTEMPT-4): the previous implementation issued a
+    single grab after a fixed `QTimer.singleShot(900, grab)` delay. Under load the
+    freshly-shown offscreen window was sometimes not yet renderable at that instant,
+    so `grabWindow()` returned a null image and the capture intermittently failed
+    (flaky `test_render_group_a2_six_phase_steps` under full regression). Here we
+    (re)grab on a fixed cadence until a non-null image is produced, bounded by
+    MAX_ATTEMPTS so a genuinely unreachable window still fails closed (never a silent
+    pass). The `capture_ok` assertions are unchanged.
+    """
     from PySide6.QtCore import QCoreApplication, QTimer, QUrl
     from PySide6.QtGui import QGuiApplication
 
@@ -109,14 +120,27 @@ def _capture(engine, out_png, width=1440, height=900):
     window = roots[0]
     result = []
 
+    out_dir = os.path.dirname(out_png)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+
+    # Bounded poll: 100 ms cadence x 150 attempts = 15 s ceiling (below the 20 s guard).
+    MAX_ATTEMPTS = 150
+    RETRY_INTERVAL_MS = 100
+    attempts = {"n": 0}
+
     def finish(value):
         if not result:
             result.append(value)
         QCoreApplication.quit()
 
     def grab():
+        if result:
+            return
+        attempts["n"] += 1
         try:
-            window.show()
+            if not window.isVisible():
+                window.show()
             try:
                 window.setWidth(width)
                 window.setHeight(height)
@@ -124,26 +148,62 @@ def _capture(engine, out_png, width=1440, height=900):
                 pass
             QGuiApplication.processEvents()
             QGuiApplication.processEvents()
+            try:
+                window.requestUpdate()
+            except Exception:
+                pass
+            QGuiApplication.processEvents()
+
             img = None
-            if hasattr(window, "grabWindow"):
+            if hasattr(window, "grabWindow") and window.width() > 0 and window.height() > 0:
                 img = window.grabWindow()
-            if (img is None or img.isNull()):
+            if img is None or img.isNull():
                 scr = QGuiApplication.primaryScreen()
                 if scr is not None:
                     img = scr.grabWindow(int(window.winId()))
-            if img is None or img.isNull():
-                finish(None)
+
+            if img is not None and not img.isNull():
+                ok = img.save(out_png)
+                finish((out_png, img.width(), img.height()) if ok else None)
                 return
-            ok = img.save(out_png)
-            finish((out_png, img.width(), img.height()) if ok else None)
+
+            if attempts["n"] >= MAX_ATTEMPTS:
+                finish(None)
+            else:
+                QTimer.singleShot(RETRY_INTERVAL_MS, grab)
         except Exception as exc:  # noqa: BLE001
             finish("exc:" + type(exc).__name__ + ":" + str(exc))
 
-    QTimer.singleShot(900, grab)
+    QTimer.singleShot(0, grab)
     QTimer.singleShot(20000, lambda: finish("timeout"))
     app.exec()
     value = result[0] if result else None
     return value
+
+
+def _teardown(engine):
+    """释放离屏窗口与引擎（降低全量套件下的 offscreen 资源累积）。
+
+    Determinism fix (WP-J Group A ATTEMPT-4): the sibling fixture
+    `test_wpj_groupa_r1_render_evidence.py` already releases each offscreen window/engine
+    after capture; this fixture leaked every engine (a2 alone leaks 6), which under a full
+    suite intermittently exhausted the offscreen platform and made later grabs return a
+    null image. Releasing here mirrors that sibling's non-semantic robustness measure.
+    """
+    from PySide6.QtCore import QCoreApplication
+    from PySide6.QtGui import QGuiApplication
+    try:
+        for win in list(QGuiApplication.topLevelWindows()):
+            try:
+                win.close()
+                win.deleteLater()
+            except Exception:
+                pass
+        engine.deleteLater()
+    except Exception:
+        pass
+    QCoreApplication.processEvents()
+    QCoreApplication.processEvents()
 
 
 def _sha256(path):
@@ -194,6 +254,7 @@ def test_render_group_a1_mortality_death_rows():
     row = _emit("Group-A-1", "group-a-1-mortality-death-rows-1440x900.png", cap,
                 "create_gui_prototype_session(mortality)+force_death_deck+doExecuteMortality+selectPhase",
                 "mortality", (1440, 900))
+    _teardown(engine)
     assert row["capture_ok"], f"capture failed: {cap!r}"
 
 
@@ -210,6 +271,7 @@ def test_render_group_a2_six_phase_steps():
         rows.append(_emit("Group-A-2", name, cap,
                           f"create_gui_prototype_session({phase})+selectPhase({phase})",
                           phase, (1440, 900)))
+        _teardown(engine)
     manifest = os.path.join(EVIDENCE_BASE, "Group-A-2", "steps-screenshots.manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupa-render-manifest/v1", "rows": rows}, fh,
@@ -234,6 +296,7 @@ def test_render_group_a3_forum_market_buttons():
         rows.append(_emit("Group-A-3", name, cap,
                           "create_gui_prototype_session(forum)+forum_api.open_market+selectPhase(forum)",
                           "forum", (w, h)))
+        _teardown(engine)
     manifest = os.path.join(EVIDENCE_BASE, "Group-A-3", "forum-screenshots.manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupa-render-manifest/v1", "rows": rows}, fh,

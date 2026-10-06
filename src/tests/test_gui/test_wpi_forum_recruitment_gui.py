@@ -314,27 +314,40 @@ def _label_text(obj):
 
 
 def test_ti21a_static_time_window_gating_present():
-    """T-I21①：ForumStage.qml 三处行级门控含 !sessionStore.forumResolved + 纵深守卫 + 结束态文案。"""
+    """T-I21①：ForumStage.qml 招募/竞标行级门控含 !sessionStore.forumResolved；
+    凯旋行改由 producer 单一权威投影门控（WP-J Group B ③ FC-B04/B06）+ 纵深守卫 + 结束态文案。"""
     src = _read_forum_qml()
     flat = _flat(src)
-    # 三处行级门控（同源单一窗口权威 = !sessionStore.forumResolved）
+    # 招募行级门控（保留：同源单一窗口权威 = !sessionStore.forumResolved）
     assert _flat(
         "recruitTimeReady: root.marketUnlocked && sessionStore.canExecuteForum"
         " && !sessionStore.forumResolved"
     ) in flat
+    # 竞标行级门控（保留）
     assert _flat(
         "&& !root.viewerBidForContract(modelData.id) && !sessionStore.forumResolved"
     ) in flat
+    # 凯旋行级门控（WP-J Group B ③ / J-AC-03 / FC-B04/B06 取代 WP-I 旧 forumResolved 复合式）：
+    # 可用性改由 producer 投影（action.state + viewer_vote）驱动，QML 零业务重建。
+    assert _flat("enabledAction: rowActionable && !rowVoted") in flat
     assert _flat(
-        "enabledAction: root.marketUnlocked && sessionStore.canExecuteForum"
-        " && !sessionStore.forumResolved"
+        "readonly property bool rowActionable: modelData.action !== undefined"
+        " && modelData.action !== null && modelData.action.state === \"actionable\""
     ) in flat
-    # 纵深守卫（招募 open/confirm、竞标 open/confirm、凯旋 inline）——≥ 5 处 early-return
-    assert flat.count(_flat("if (sessionStore.forumResolved) { return }")) >= 5
-    # 结束态玩家可读文案（玩家可读中性词，与业务不可用态「无空位」可区分）
+    assert _flat(
+        "readonly property bool rowVoted: modelData.viewer_vote !== null"
+        " && modelData.viewer_vote !== undefined"
+    ) in flat
+    # 纵深守卫：招募 open/confirm、竞标 open/confirm 的 forumResolved early-return
+    # （原 ≥5 的凯旋项已由 producer 投影守卫取代 ⇒ 阈值 = 4）
+    assert flat.count(_flat("if (sessionStore.forumResolved) { return }")) >= 4
+    # 凯旋行 inline 纵深守卫（FC-B04：已投/不可投即早返回；取代原 forumResolved 守卫）
+    assert _flat("if (rowVoted) { return }") in flat
+    assert _flat("if (!rowActionable) { return }") in flat
+    # 结束态玩家可读文案（不变）
     assert "已结束" in src
     assert "无空位" in src
-    # 无内部诊断 / raw 串（本 delta 新增文案面）
+    # 无内部诊断 / raw 串（不变）
     for bad in ("INVARIANT_VIOLATION", "forumResolved="):
         assert bad not in src
 

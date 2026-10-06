@@ -438,7 +438,13 @@ Rectangle {
     }
 
     function tribuneActionText() {
-        if (sessionStore.canManuallySelectSenateVeto) return "\u786e\u8ba4\u5426\u51b3 \u2192 \u516c\u793a\u7ed3\u679c"
+        // WP-J Group B ④ (J-AC-02 / FC-B10/B12/B13): 归属绑定**权威 actor/source**——
+        //   sessionStore.senateVetoControlMode（← politics.resolve_veto_control），
+        //   **非**可用性位 canManuallySelectSenateVeto（本缺陷根因）。执行后（results，
+        //   mode 仍 HUMAN）不得回塌「AI判定」；NONE → 「无保民官，跳过否决」不空白。
+        var mode = sessionStore.senateVetoControlMode
+        if (mode === "HUMAN") return "\u5224\u5b9a\u5426\u51b3 \u2192 \u516c\u793a\u7ed3\u679c"
+        if (mode === "NONE") return "\u65e0\u4fdd\u6c11\u5b98\uff0c\u8df3\u8fc7\u5426\u51b3"
         return "AI\u5224\u5b9a\u5426\u51b3 \u2192 \u516c\u793a\u7ed3\u679c"
     }
 

@@ -418,6 +418,17 @@ class GuiSessionStore(QObject):
     def canManuallySelectSenateVeto(self) -> bool:
         return self._senate_view.get("can_veto", False)
 
+    @Property(str, notify=senateViewChanged)
+    def senateVetoControlMode(self) -> str:
+        """WP-J Group B ④ (J-AC-02 / FC-B09): 保民官否决权威 actor/source 只读透传。
+
+        ← ``_senate_view["veto_control_mode"]``（单一 owner = politics.resolve_veto_control
+        → senate_api.get_senate_view）；值域 HUMAN/AI/NONE；缺省 NONE（不伪造 actor，FC-B12）。
+        零本地业务缓存；随 view 刷新重算（FC-B07 同原则）。**不改**既有 veto 键。
+        """
+        mode = self._senate_view.get("veto_control_mode")
+        return mode if mode in ("HUMAN", "AI", "NONE") else "NONE"
+
     @Property(bool, notify=senateViewChanged)
     def canAdvanceSenate(self) -> bool:
         return self._senate_view.get("can_advance", False)

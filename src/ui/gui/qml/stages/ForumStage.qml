@@ -887,15 +887,27 @@ Rectangle {
                                 model: sessionStore.forumTriumphWars
 
                                 delegate: MarketActionRow {
+                                    // WP-J Group B ③ (J-AC-03 / FC-B04/B06/B18): 逐字消费权威 producer
+                                    // 投影（FC-B01）；QML 零业务重建（禁 marketUnlocked/canExecuteForum/
+                                    // forumResolved 重算）。三态（FC-B04）：
+                                    //   viewer_vote!=null → 灰化 disabled「已投」（重复点击无效；FC-B18）
+                                    //   actionable       → enabled「赞成」→ 既有 doVoteTriumph(war_id,true)
+                                    //   readonly         → 灰化 disabled 统一「不可投」（不解释原因）
+                                    readonly property bool rowActionable: modelData.action !== undefined
+                                        && modelData.action !== null
+                                        && modelData.action.state === "actionable"
+                                    readonly property bool rowVoted: modelData.viewer_vote !== null
+                                        && modelData.viewer_vote !== undefined
                                     label: modelData.name + " · " + modelData.commander_name
                                     labelColor: modelData.commander_faction_id ? factionStyle.factionColor(modelData.commander_faction_id) : "#2E251B"
                                     value: "士兵份额 " + modelData.soldier_share
-                                    actionText: sessionStore.forumResolved ? "已结束" : "赞成"
-                                    enabledAction: root.marketUnlocked && sessionStore.canExecuteForum
-                                        && !sessionStore.forumResolved
+                                    actionText: rowVoted ? "已投" : (rowActionable ? "赞成" : "不可投")
+                                    enabledAction: rowActionable && !rowVoted
                                     onTriggered: {
-                                        // WP-I-R2 D2.3（G3-addendum 冻结）：凯旋时窗纵深守卫（无对话框，inline 早返回）
-                                        if (sessionStore.forumResolved) { return }
+                                        // WP-I-R2 D2.3 纵深守卫保留（无对话框，inline 早返回）；
+                                        // 权威可用性由 producer action 投影驱动（enabledAction）。
+                                        if (rowVoted) { return }
+                                        if (!rowActionable) { return }
                                         root.callAndReport(sessionStore.doVoteTriumph(modelData.war_id, true))
                                     }
                                 }
