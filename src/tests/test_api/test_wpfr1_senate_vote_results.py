@@ -165,11 +165,15 @@ def test_tf04_vote_result_dto_full_chain():
     for pid in (pid1, pid2, pid3):
         assert VOTE_RESULT_KEYS <= set(by_id[pid]), f"vote_results row {pid} missing fields"
         assert by_id[pid]["support_influence"] + by_id[pid]["oppose_influence"] == by_id[pid]["total_influence"]
-    # 双支持 → 通过；保民官否决短路 → vetoed=True + total=0（QML「支持率 —」数据侧）
+    # 双支持 → 通过；保民官否决 → vetoed=True + passed=False，且**保留真实元老院表决 tally**
+    # （G7 Test R6 Delta v2.3 / FC-C39，Owner 裁 C1：② 支持率反映元老院表决，与非否决提案同口径）
     assert by_id[pid1]["passed"] is True and by_id[pid1]["vetoed"] is False
     assert by_id[pid2]["passed"] is True and by_id[pid2]["vetoed"] is False
     assert by_id[pid3]["vetoed"] is True and by_id[pid3]["passed"] is False
-    assert by_id[pid3]["total_influence"] == 0
+    # FC-C39：被否决提案**不再清零** tally —— 为真实元老院表决值（total>0，support+oppose==total）
+    assert by_id[pid3]["total_influence"] > 0
+    assert by_id[pid3]["support_influence"] + by_id[pid3]["oppose_influence"] == \
+        by_id[pid3]["total_influence"]
 
     # get_senate_view 透传 + phase_result 持久化（同一权威存储值）
     view = senate_api.get_senate_view(state, "player1")

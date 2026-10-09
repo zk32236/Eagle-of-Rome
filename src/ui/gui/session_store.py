@@ -252,6 +252,11 @@ class GuiSessionStore(QObject):
         return flat
 
     @Property(dict, notify=populationViewChanged)
+    def populationFeaturedCandidateIds(self) -> Dict[str, Any]:
+        """WP-J Group C-1（FC-C01）：每 office 的权威 featured figure_id（只读透传，零本地业务）。"""
+        return self._population_view.get("featured_candidate_ids", {})
+
+    @Property(dict, notify=populationViewChanged)
     def populationView(self) -> Dict[str, Any]:
         return self._population_view
 
@@ -1663,8 +1668,8 @@ class GuiSessionStore(QObject):
         self.senateViewChanged.emit()
         return feedback
 
-    @Slot(result=dict)
-    def doSubmitSenateVotes(self) -> dict:
+    @Slot("QVariant", result=dict)
+    def doSubmitSenateVotes(self, agree_ids=None) -> dict:
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
         proposals = self._senate_view.get("submitted_proposals", []) or []
@@ -1673,7 +1678,18 @@ class GuiSessionStore(QObject):
             feedback = self._feedback(False, "没有可表决的法案", "error")
             self._raise_senate_feedback(feedback)
             return feedback
-        votes = [True for _ in proposal_ids]
+        # WP-J Group C G7 Test R7 Delta（delta v2.3 / FC-C42）：**删除**硬编码全赞成 `[True ...]`；
+        # `votes` 由玩家 ② 选择派生（`agree_ids` = ② 勾选集：勾选 = 同意 / 未勾选 = 否决）。
+        # **向后兼容签名** `agree_ids=None`：None（无参调用）**不静默全赞成** ⇒ 所有提案按
+        # **反对**处理（`False`），不再虚构赞成票（原则「不无参静默全赞成」）。
+        # `proposal_ids` 仍取 `submitted_proposals`（不变）；长度天然一致（逐 pid 映射）。
+        selectable = set()
+        for item in (self._variant_to_python(agree_ids) or []):
+            try:
+                selectable.add(int(item))
+            except (TypeError, ValueError):
+                continue
+        votes = [pid in selectable for pid in proposal_ids]
         feedback = self._adapter.submit_senate_votes(self._viewer_id, proposal_ids, votes)
         self._raise_senate_feedback(feedback)
         if feedback.get("success"):

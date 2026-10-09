@@ -12,6 +12,11 @@ Rectangle {
 
     property var selectedProposalKeys: []
     property var selectedVetoProposalIds: []
+    // WP-J Group C G7 Test R7 Delta（delta v2.3 / FC-C41）：②「2 元老院表决」**专属**选择集
+    // （仿 ③ selectedVetoProposalIds/hasSelectedVeto/setVetoSelected；**禁**与 ①/③ 串味）。
+    // 勾选 = 同意；未勾选 = 否决（**默认未勾选**）。**随会期重置**（OBS-R7-3，见 syncSenateVoteSelection）。
+    property var selectedSenateVoteIds: []
+    property string _senateVoteSelectionKey: ""
     property bool proposalStepDone: sessionStore.senateCurrentStep !== "proposal"
     // R5（SA §5.1，DA-5）：统一 War Card 草稿暂存（仅本地输入；可编辑真值由 Core 在 Submit 时
     // 重验，QML 不得本地推导分类/N 上限/部署门 —— A-I18/D-SC02/D-SC15）
@@ -56,6 +61,52 @@ Rectangle {
         if (!item) return theme.statusSuccess
         return (item.result === "rejected" || item.result === "vetoed") ? "#B3261E" : theme.statusSuccess
     }
+
+    // WP-J Group C G7 Test R4 Delta（delta v1.9 / FC-C32）：②「2 元老院表决」面板
+    // **非输入态结果字形**的 **②-local** 判定（**禁**改共享 `resultMark()`/`resultMarkColor()`——
+    // ③ 否决面板仍需 `vetoed → ✗`）。口径 = 仅反映「元老院表决」：
+    //   `rejected → ✗`；`passed`/`vetoed → ✓`（依据 `veto_candidate_ids = passed && !vetoed`
+    //   ⇒ **`vetoed ⟹ 元老院已通过`**）；无表决数据行（`.result` 缺失/未知）→ **空白（禁 ✗）**。
+    // WP-J Group C G7 Test R5 Delta（delta v2.0 / FC-C35 —— 数据源**扩展**，修订 FC-C32）：
+    //   ② 结果字形须**元老院表决一完成（`tribune_veto` 步）即显**，不再等到 `results`。
+    //   `results` 步：`item.result` 权威（复用上方口径）。`.result` **缺失**（`tribune_veto` 步、
+    //   否决前）→ **回退** `root.voteResultFor(item.id)`（元老院表决投影 `vote_results`；该步已在
+    //   read-model）——`vr && vr.total_influence > 0` ⇒ `vr.passed ? ✓ : ✗`；否则**空白**。
+    //   **否决不改写 ②**：本回退分支**仅在 `.result` 缺失时命中**（即无否决的 `tribune_veto` 步），
+    //   `vetoed` 只经 `item.result` 路径命中（→ ✓）；**绝不**被否决短路污染（FC-C32 禁项守恒）。
+    function senateResultMark(item) {
+        if (!item) return ""
+        if (item.result === "rejected") return "\u2717"
+        if (item.result === "passed" || item.result === "vetoed") return "\u2713"
+        var vr = root.voteResultFor(item.id)
+        // WP-J Group C G7 Test R6 Delta（delta v2.3 / FC-C39 协同，OBS-C39-1）：C1 后 vetoed 行带
+        // 真 tally，回退分支须加 `!vr.vetoed` 门，否则「否决已记录、`item.result` 未打标」的中间态
+        // 误显红 ✗，违 FC-C32『vetoed 不改写 ② / 禁第二红叉源』。vetoed 行仅经 `item.result` 路径（→ ✓）。
+        if (vr && vr.total_influence > 0 && !vr.vetoed) return vr.passed ? "\u2713" : "\u2717"
+        return ""
+    }
+
+    function senateResultMarkColor(item) {
+        if (!item) return theme.statusSuccess
+        if (item.result === "rejected") return "#B3261E"
+        if (item.result === "passed" || item.result === "vetoed") return theme.statusSuccess
+        var vr = root.voteResultFor(item.id)
+        if (vr && vr.total_influence > 0 && !vr.vetoed && !vr.passed) return "#B3261E"
+        return theme.statusSuccess
+    }
+
+    // WP-J Group C G7 Test R5 Delta（delta v2.0 / FC-C36，**FC-C22 SUPERSEDED**）：`senateVoteIdentityGap`
+    // **退役** —— ② 身份文本已由 `CheckBox.contentItem` 承载**重构为行内同级 `Text`**（与 ①③ 同构），
+    // 行内间距 = `RowLayout{ spacing:6 }`，不再需要「指示器宽 + 基准」的净缩进特例。
+
+    // WP-J Group C G7 Test R4 Delta（delta v1.9 / FC-C31，Q2 方案回退）：**撤回全部自绘勾选框
+    // `indicator`**（R3 方案甲 `FC-C28`/`FC-C29`/`FC-C30` = WITHDRAWN）⇒ ①②③ + 战争卡四行勾选框
+    // **全部回归平台默认样式指示器**（系统勾选框；③ 勾选 = 系统 `☑`，Owner 明示可接受，
+    // **不再要求 ⮽/自绘叉**）。四行不再有任何自绘勾/叉子图元；状态机（`checked`/`onToggled`/
+    // `enabled`/选择与表决语义）**字节级不变**；行卡 `FC-C18` / ② 身份文本 wrap `FC-C15–C17` /
+    // 单一 `ScrollView` 保留。
+    // ② 非输入态结果字形**保留**（K2=A），但**移出被撤的 `indicator`**、改由**行内独立无框 `Text`**
+    // 承载（②-local 谓词 `senateResultMark()`/`senateResultMarkColor()`，见 `FC-C32`）。
 
     // WP-F R1-F-03：per-proposal 支持率 helper（join 权威 vote_results，纯展示除法，禁重算/decider 重入）
     function voteResultFor(proposalId) {
@@ -461,6 +512,36 @@ Rectangle {
         selectedVetoProposalIds = next
     }
 
+    // WP-J Group C G7 Test R7 Delta（delta v2.3 / FC-C41）：② 专属选择集读写（仿 ③；**仅 ②**）。
+    function hasSelectedSenateVote(id) {
+        return selectedSenateVoteIds.indexOf(id) >= 0
+    }
+
+    function setSenateVoteSelected(id, checked) {
+        if (id === undefined || id === null || isNaN(id)) return
+        var next = selectedSenateVoteIds.slice()
+        var pos = next.indexOf(id)
+        if (checked && pos < 0) next.push(id)
+        if (!checked && pos >= 0) next.splice(pos, 1)
+        selectedSenateVoteIds = next
+    }
+
+    // WP-J Group C G7 Test R7 Delta（delta v2.3 / FC-C41(4)，OBS-R7-3）：② 选择集**随会期重置**——
+    // 会期提案集（id 集合）变化即清空（新会期 `proposal_id` 可能复用，防残留串味）。
+    function syncSenateVoteSelection() {
+        var rows = sessionStore.senateSubmittedProposals || []
+        var ids = []
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].id !== undefined && rows[i].id !== null) ids.push(Number(rows[i].id))
+        }
+        ids.sort(function(a, b) { return a - b })
+        var key = ids.join(",")
+        if (key !== _senateVoteSelectionKey) {
+            _senateVoteSelectionKey = key
+            selectedSenateVoteIds = []
+        }
+    }
+
     function leaderCountCopy(count) {
         return GuiText.senateLeaderCount(count)
     }
@@ -719,6 +800,8 @@ Rectangle {
     Connections {
         target: sessionStore
         function onSenateViewChanged() {
+            // WP-J Group C G7 Test R7 Delta（FC-C41(4)，OBS-R7-3）：② 选择集随会期重置。
+            root.syncSenateVoteSelection()
             // 提案阶段：选项加载完成后同步默认选中并展开（G7「只有法案条目无控件」闭合）
             if (sessionStore.senateCurrentStep === "proposal") {
                 if (selectedProposalKeys.length === 0) root.refreshAccordion()
@@ -1490,7 +1573,7 @@ Rectangle {
                                     property real defaultBudget: (modelData.budget_range) ? modelData.budget_range.default : 0
                                     Layout.preferredHeight: isProposal
                                         ? (expanded ? cardColumn.implicitHeight + 12 : headerRow.implicitHeight + 12)
-                                        : 48
+                                        : (cardColumn.implicitHeight + 12)
                                     Layout.minimumHeight: 32
                                     radius: 4
                                     color: "#FFF6E6"
@@ -1509,10 +1592,16 @@ Rectangle {
                                             spacing: 6
 
                                             CheckBox {
+                                                id: proposalSelectCheck
                                                 visible: isProposal
                                                 enabled: sessionStore.canCreateSenateProposal
                                                 checked: root.hasSelectedProposal(modelData.key)
                                                 onToggled: root.setProposalSelected(modelData.key, checked)
+                                                // WP-J Group C G7 Test R4 Delta（delta v1.9 / FC-C31）：
+                                                // **移除** R3 方案甲（FC-C28）自绘框 `indicator` ⇒ 回落**平台默认样式**
+                                                // 指示器（系统勾选框，勾选 = 系统 ☑）。状态机
+                                                // （visible/enabled/checked/onToggled）逐字不变；不动 ① 结果标记 Text
+                                                // （紧随其后，硬编码绿 ✓，不受本次回退影响）。
                                             }
 
                                             Text {
@@ -1529,7 +1618,8 @@ Rectangle {
                                                 font.pixelSize: 12
                                                 font.bold: true
                                                 Layout.fillWidth: true
-                                                elide: Text.ElideRight
+                                                wrapMode: Text.Wrap
+                                                elide: Text.ElideNone
                                             }
 
                                             Text {
@@ -1558,7 +1648,8 @@ Rectangle {
                                             color: "#766652"
                                             font.pixelSize: 10
                                             Layout.fillWidth: true
-                                            elide: Text.ElideRight
+                                            wrapMode: Text.Wrap
+                                            elide: Text.ElideNone
                                         }
 
                                         ColumnLayout {
@@ -1749,18 +1840,81 @@ Rectangle {
                             Text { text: "勾选同意（多选），未勾选 = 否决。所有派系执行完毕后进入否决环节。"; color: theme.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.Wrap }
                             Repeater {
                                 model: sessionStore.senateSubmittedProposals || []
-                                delegate: ColumnLayout {
+                                delegate: Rectangle {
+                                    // WP-J Group C Pre-G6 VisualDelta（delta v1.3 / FC-C18）：本面板每行套用与
+                                    // ③ 保民官否决行（L1829–1836）/ ① 执政官提案卡（L1484–1498）逐字一致的
+                                    // 带边框卡；行高内容驱动；整行仍可点选/勾选；单一 scroll owner 不变。
+                                    id: voteRowCard
                                     Layout.fillWidth: true
-                                    spacing: 2
-                                    CheckBox { Layout.fillWidth: true; enabled: sessionStore.senateCurrentStep === "senate_vote"; text: (modelData.label || modelData.type) + root.voteParamDescription(modelData); checked: true; font.pixelSize: 12 }
-                                    // WP-F R2-01（F-01A）：投票完成后（voted_all → 中间投影已产出）
-                                    // Stage 2 即显示权威通过/未通过 + 支持率（纯展示除法，禁 QML 阈值判定）
-                                    Text {
-                                        visible: root.voteResultFor(modelData.id) !== null
-                                        text: root.supportRateText(root.voteResultFor(modelData.id))
-                                        color: "#766652"
-                                        font.pixelSize: 10
-                                        Layout.fillWidth: true
+                                    Layout.preferredHeight: voteRowColumn.implicitHeight + 16
+                                    Layout.minimumHeight: 32
+                                    radius: 4
+                                    color: "#FFF6E6"
+                                    border.color: "#E0B56C"
+                                    border.width: 1
+                                    ColumnLayout {
+                                        id: voteRowColumn
+                                        anchors.fill: parent
+                                        anchors.margins: 8
+                                        spacing: 2
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+                                            // WP-J Group C G7 Test R4 Delta（delta v1.9 / FC-C31 + FC-C32）：
+                                            // ② 非输入态（step ∈ {tribune_veto, results}）行**最左端** = **无框**结果字形，
+                                            // 由**行内独立 `Text`** 承载（**移出**已撤的自绘 `indicator`）。
+                                            // 谓词 = ②-local `senateResultMark()`（FC-C35；`rejected→✗`，`passed/vetoed→✓`，
+                                            // `results` 步源=`item.result`；`tribune_veto` 步 `.result` 缺失 → `voteResultFor()`
+                                            // 回退 → 表决完成即显；无表决数据→空白）。
+                                            Text {
+                                                visible: sessionStore.senateCurrentStep !== "senate_vote"
+                                                text: root.senateResultMark(modelData)
+                                                color: root.senateResultMarkColor(modelData)
+                                                font.pixelSize: 13
+                                                font.bold: true
+                                            }
+                                            // WP-J Group C G7 Test R5 Delta（delta v2.0 / FC-C36）：② 勾选框
+                                            // **非输入态隐藏**（新增 `visible` 门）⇒ `tribune_veto` / `results`
+                                            // （及 `proposal` 锁态）**不渲染勾选框（含平台默认指示器）**。
+                                            // WP-J Group C G7 Test R7 Delta（delta v2.3 / FC-C41）：② 勾选框由常量
+                                            // `checked:true` 改为**真实可切换选择态**——`checked` 绑定 ② 专属选择集
+                                            // （默认未勾选 = 否决），新增 `onToggled` 写回选择集。平台默认指示器守恒
+                                            // （**禁**覆写 `indicator`；`FC-C31`）。**仅 ②**。
+                                            CheckBox {
+                                                id: proposalVoteCheck
+                                                visible: sessionStore.senateCurrentStep === "senate_vote"
+                                                enabled: sessionStore.senateCurrentStep === "senate_vote"
+                                                checked: root.hasSelectedSenateVote(Number(modelData.id))
+                                                onToggled: root.setSenateVoteSelected(Number(modelData.id), checked)
+                                                font.pixelSize: 12
+                                                // WP-J Group C G7 Test R4 Delta（FC-C31）：**移除** FC-C25/FC-C28 自绘
+                                                // `indicator`（输入态 USS 方框 + 结果态无框字形）⇒ 回落**平台默认样式**
+                                                // 指示器；结果字形已**移出**为行内独立 `Text`（见上）。`enabled` / 状态机 /
+                                                // 数据源逐字不变；`checked` 由常量改为绑定 ② 专属选择集（FC-C41）。
+                                            }
+                                            // WP-J Group C G7 Test R5 Delta（delta v2.0 / FC-C36，**FC-C15–C17 修订**）：
+                                            // ② 身份文本由 `CheckBox.contentItem` **移出**为行内**同级 `Text`**（与 ①③ 同构）；
+                                            // **保留 wrap 语义**（`wrapMode: Text.Wrap` + `elide: Text.ElideNone`）。
+                                            // 非输入态 = [结果字形][身份文本]；输入态（senate_vote） = [勾选框][身份文本]。
+                                            // **FC-C22 退役**：不再使用 `senateVoteIdentityGap` / contentItem 净缩进。
+                                            Text {
+                                                text: (modelData.label || modelData.type) + root.voteParamDescription(modelData)
+                                                color: "#2C1E12"
+                                                font.pixelSize: 12
+                                                Layout.fillWidth: true
+                                                wrapMode: Text.Wrap
+                                                elide: Text.ElideNone
+                                            }
+                                        }
+                                        // WP-F R2-01（F-01A）：投票完成后（voted_all → 中间投影已产出）
+                                        // Stage 2 即显示权威通过/未通过 + 支持率（纯展示除法，禁 QML 阈值判定）
+                                        Text {
+                                            visible: root.voteResultFor(modelData.id) !== null
+                                            text: root.supportRateText(root.voteResultFor(modelData.id))
+                                            color: "#766652"
+                                            font.pixelSize: 10
+                                            Layout.fillWidth: true
+                                        }
                                     }
                                 }
                             }
@@ -1773,7 +1927,7 @@ Rectangle {
                             anchors.fill: parent
                             text: root.senateVoteButtonText()
                             enabled: sessionStore.canSubmitSenateVote
-                            onTriggered: sessionStore.doSubmitSenateVotes()
+                            onTriggered: sessionStore.doSubmitSenateVotes(root.selectedSenateVoteIds)
                         }
                     }
                 }
@@ -1805,12 +1959,14 @@ Rectangle {
                                 model: root.stageThreeRows()
                                 delegate: Rectangle {
                                     Layout.fillWidth: true
-                                    height: sessionStore.senateCurrentStep === "results" ? 66 : 48
+                                    Layout.preferredHeight: stageThreeRow.implicitHeight + 16
+                                    Layout.minimumHeight: 40
                                     radius: 4
                                     color: "#FFF6E6"
                                     border.color: "#E0B56C"
                                     border.width: 1
                                     RowLayout {
+                                        id: stageThreeRow
                                         anchors.fill: parent
                                         anchors.margins: 8
                                         spacing: 6
@@ -1822,10 +1978,18 @@ Rectangle {
                                             font.bold: true
                                         }
                                         CheckBox {
+                                            id: vetoCheck
                                             visible: sessionStore.senateCurrentStep !== "results"
                                             enabled: sessionStore.senateCurrentStep === "tribune_veto" && sessionStore.canManuallySelectSenateVeto
                                             checked: root.hasSelectedVeto(Number(modelData.id))
                                             onToggled: root.setVetoSelected(Number(modelData.id), checked)
+                                            // 历史：WP-J Group C G7-Delta（FC-C23，取代 FC-C20）/ G7 Test 2（FC-C26）/
+                                            // G7 Test R3（FC-C28/FC-C29）—— 现由本 R4 Delta（FC-C31）**回退**。
+                                            // WP-J Group C G7 Test R4 Delta（delta v1.9 / FC-C31）：**移除**自绘框/自绘叉
+                                            // `indicator`（方案甲已放弃）⇒ 回落**平台默认样式**指示器（勾选 = 系统 ☑；
+                                            // Owner 明示可接受，**不再要求 ⮽**）。状态机
+                                            // （checked/onToggled/enabled/hasSelectedVeto/setVetoSelected）逐字不变；
+                                            // results 态红 ✗ 由既有**独立** `resultMark()` Text 承载（不动）。
                                         }
                                         ColumnLayout {
                                             Layout.fillWidth: true
@@ -1836,7 +2000,8 @@ Rectangle {
                                                 font.pixelSize: 12
                                                 font.bold: true
                                                 Layout.fillWidth: true
-                                                elide: Text.ElideRight
+                                                wrapMode: Text.Wrap
+                                                elide: Text.ElideNone
                                             }
                                             Text {
                                                 visible: root.proposalDetail(modelData).length > 0
@@ -1844,14 +2009,8 @@ Rectangle {
                                                 color: "#766652"
                                                 font.pixelSize: 10
                                                 Layout.fillWidth: true
-                                                elide: Text.ElideRight
-                                            }
-                                            Text {
-                                                visible: sessionStore.senateCurrentStep === "results"
-                                                text: root.supportRateText(root.voteResultFor(modelData.id))
-                                                color: "#766652"
-                                                font.pixelSize: 10
-                                                Layout.fillWidth: true
+                                                wrapMode: Text.Wrap
+                                                elide: Text.ElideNone
                                             }
                                         }
                                     }

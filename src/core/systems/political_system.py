@@ -606,15 +606,11 @@ class PoliticalSystem:
         vote_decider = vote_decider or AutoSenateVoteDecider()
         proposal_id = proposal["id"]
         vetoes = self.state.get_senate_vetoes_copy()
-        if proposal_id in vetoes:
-            return {
-                "proposal": proposal,
-                "passed": False,
-                "vetoed": True,
-                "support_influence": 0,
-                "oppose_influence": 0,
-                "total_influence": 0,
-            }
+        # WP-J Group C G7 Test R6 Delta（delta v2.3 / FC-C39，Owner 裁 C1）：**解除「否决短路清零」**。
+        # 被保民官否决的提案**仍走正常派系循环**算**真实元老院表决 tally**（② 支持率反映元老院
+        # 表决，与否决无关）；仅强制 `passed=False` / `vetoed=True`。返回 dict 键集 /
+        # `passed`·`vetoed` 布尔 / `veto_candidate_ids`（= passed && !vetoed）语义均**不变**。
+        is_vetoed = proposal_id in vetoes
 
         votes = self.state.get_senate_votes_copy()
         support_influence = 0
@@ -671,11 +667,15 @@ class PoliticalSystem:
             else:
                 oppose_influence += influence
 
-        passed = total_influence > 0 and support_influence / total_influence > 0.5
+        if is_vetoed:
+            # FC-C39：被否决提案的元老院表决结果恒为「未通过」（passed=False），但 tally 保留真值。
+            passed = False
+        else:
+            passed = total_influence > 0 and support_influence / total_influence > 0.5
         return {
             "proposal": proposal,
             "passed": passed,
-            "vetoed": False,
+            "vetoed": is_vetoed,
             "support_influence": support_influence,
             "oppose_influence": oppose_influence,
             "total_influence": total_influence,

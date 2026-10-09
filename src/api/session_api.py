@@ -156,6 +156,56 @@ def get_session_snapshot(state: GameState, viewer_player_id: str) -> dict:
 # 3. 人口阶段视图
 # ---------------------------------------------------------------------------
 
+# WP-J Group C-1 (J-AC-05a / BL-G7-07) — 权威 featured 只读投影（FC-C01 单一 owner = 本模块）。
+# 资格属性映射与 `figure.get_qualification_attribute` 逐字一致（tribune/aedile/dictator 未配置=0）。
+_OFFICE_QUALIFICATION_ATTR = {
+    "consul": "charisma",
+    "censor": "zeal",
+    "praetor": "intelligence",
+    "quaestor": "martial",
+}
+
+
+def _featured_row_key(state: GameState, office: str, row: dict):
+    """featured 排序键：(-资格属性, first_name, figure_id) 升序（最小者即 featured）。
+
+    资格属性 = 权威 `figure.get_qualification_attribute(office)`；first_name = `praenomen`。
+    无法解析 Figure 时退化为行 DTO 字段（只读、确定性），不改提名集。
+    """
+    fid = row.get("id")
+    fig = state.get_member(fid) if fid is not None else None
+    if fig is not None:
+        attr = fig.get_qualification_attribute(office)
+        first_name = fig.praenomen or ""
+    else:
+        attr_key = _OFFICE_QUALIFICATION_ATTR.get(office)
+        try:
+            attr = int(row.get(attr_key, 0) or 0) if attr_key else 0
+        except (TypeError, ValueError):
+            attr = 0
+        name = row.get("name") or ""
+        first_name = name.split(" · ")[0] if name else ""
+    return (-attr, first_name, fid if fid is not None else 0)
+
+
+def _derive_featured_candidate_id(state: GameState, office: str, rows, election_results):
+    """FC-C02 featured 谓词（只读投影）。
+
+    ① resolved 且 `election_results` 含该 office → 当选者 `figure_id`（winner 永不隐藏）；
+    ② 否则该 office 提名后候选集内 `qualification_attribute(office)` 最大者；
+       平局 → first_name 字典序升序（A-Z）；再平局 → figure_id 升序（最终确定性）；
+    ③ office 空 → None。**不改提名集/提名顺序**。
+    """
+    if not rows:
+        return None
+    for entry in election_results or []:
+        if isinstance(entry, dict) and entry.get("office") == office \
+                and entry.get("figure_id") is not None:
+            return entry["figure_id"]
+    best = min(rows, key=lambda row: _featured_row_key(state, office, row))
+    return best.get("id")
+
+
 def get_population_view(state: GameState, viewer_player_id: str) -> dict:
     """
     返回人口阶段的详细视图，包含候选人、已投票状态、可执行操作。
@@ -197,6 +247,18 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
         resolved = bool(result) or state.is_phase_executed("population")
         if resolved and isinstance(result_data, dict) and result_data.get("candidates"):
             candidates = result_data["candidates"]
+
+        # WP-J Group C-1（FC-C01/C02）：权威 featured 只读投影（单一 owner = 此处）。
+        # office 级 `featured_candidate_id` + 行级 `is_featured`（additive；零写语义；不改提名集）。
+        _election_results = result_data.get("election_results", []) if isinstance(result_data, dict) else []
+        featured_candidate_ids = {}
+        featured_candidates = {}
+        for _office, _rows in candidates.items():
+            _fid = _derive_featured_candidate_id(state, _office, _rows, _election_results)
+            featured_candidate_ids[_office] = _fid
+            featured_candidates[_office] = [
+                dict(_r, is_featured=(_r.get("id") == _fid)) for _r in _rows
+            ]
 
         # 当前 viewer 已投票的官职
         my_votes = {}
@@ -262,7 +324,8 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
         data = {
             "steps": steps,
             "my_figures": my_figures,
-            "candidates": candidates,
+            "candidates": featured_candidates,
+            "featured_candidate_ids": featured_candidate_ids,
             "my_votes": my_votes,
             "my_campaigns": my_campaigns,
             "current_step": current_step,
@@ -272,7 +335,7 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
             "my_candidate_count": my_candidate_count,
             "campaign_done": campaign_done,
             "vote_done": vote_done,
-            "election_results": result_data.get("election_results", []) if isinstance(result_data, dict) else [],
+            "election_results": _election_results,
             "faction_influence_before": (
                 result_data.get("faction_influence_before", _faction_influence_rows(state))
                 if isinstance(result_data, dict) else _faction_influence_rows(state)

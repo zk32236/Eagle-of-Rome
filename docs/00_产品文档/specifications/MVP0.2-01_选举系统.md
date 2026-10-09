@@ -212,6 +212,8 @@ state._population_pending["votes"]: List[Tuple[player_id, office, figure_id]]
 1. 选举结果表格（各官职当选者及所属派系）
 2. 各派系影响力对比表（庆典前 vs. 庆典后）
 
+> **候选人信息表显示粒度（2026-10-08 Owner 授权变更；WP-J Group C）：** 候选信息表**每个官职只显示最佳（featured）候选人 1 行**；「最佳」= 权威提名资格属性最高（`figure.get_qualification_attribute(office)`，平局按 first name A-Z，再平局按 figure_id 升序）；`resolved` 结算后最佳 = 当选者。权威投影由 `session_api.get_population_view()` 单点产出（additive 只读：`candidates[office]` 行级 `is_featured` + office 级 `featured_candidate_id`），**不改提名集/提名顺序**。**投票选择列表（`votePanel`）仍列全部合法候选**（不变）。原「逐候选逐行」显示见 `EOR_GUI设计文档.md` §3.4 同步。
+
 **影响力计算公式（`Figure.update_influence`）：**
 ```python
 base = land_private * 10 + veterans * 10 + popularity
@@ -332,6 +334,7 @@ IF eligible_candidates(office) == 0
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.6 | 2026-10-08 | DA-Execute (WP-J Group C) | §2.7 新增候选人信息表**显示粒度变更**（每官职只显示最佳 featured 候选；resolved 后=当选者；Owner 授权；投影单一 owner=`session_api.get_population_view`，additive 只读，不改提名集；投票列表仍列全部） |
 | v1.5 | 2026-09-28 | DA-Exec (WP-M M-S1) | §2.8 补 censor 供给政策 B（D7：`forum_rules.veteran_supply` `1/2/1/0.5` → `2/3/2/0.7`，供给质量手段非强制填充；保留资格） |
 | v1.4 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §8：candidate supply 来源补注（E-G7-09 veteran supply，资格契约 REVIEWED-NO-CHANGE）+ Population 转换公示时序（门控 total>0，E-ODR-04） |
 | v1.3 | 2026-08-17 | DA-Execute | WP-03：新增 §2.8 NO-CANDIDATE/VACANCY CONTRACT（no-candidate/vacancy 语义写回）；§2.2.5 补 GUI resolve 时机注（FUNC-09 一致性） |

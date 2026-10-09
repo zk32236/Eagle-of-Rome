@@ -182,6 +182,9 @@ Rectangle {
                 enabled: cardRoot.editable && cardRoot.routeReady
                 checked: cardRoot.checkedNow
                 onToggled: cardRoot.emitDraft({"checked": checked})
+                // WP-J Group C G7 Test R4 Delta（delta v1.9 / FC-C31）：**移除** R3 方案甲（FC-C28）
+                // 自绘框 `indicator` ⇒ 回落**平台默认样式**指示器（系统勾选框）。状态机
+                // （enabled/checked/onToggled/emitDraft）逐字不变。
             }
 
             Text {

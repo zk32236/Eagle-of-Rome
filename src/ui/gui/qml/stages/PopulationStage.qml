@@ -10,6 +10,8 @@ Rectangle {
     color: "transparent"
 
     property var offices: ["consul", "censor", "praetor", "quaestor", "tribune"]
+    // WP-J Group C-1（FC-C05）：featured 候选行高（确定性；内容有界 1 行/office）。
+    readonly property int candidateFeaturedRowHeight: 28
     property var selectedVotes: ({})
     // EOR-DEFECT-20260817-01 Fix A (P0): 年度切换哨兵 —— 上次快照所见年度（turnNumber）
     property int _lastSeenTurn: 0
@@ -67,6 +69,17 @@ Rectangle {
         var all = sessionStore.populationCandidates || []
         for (var i = 0; i < all.length; i++) {
             if (all[i].office === office) rows.push(all[i])
+        }
+        return rows
+    }
+
+    // WP-J Group C-1（FC-C03）：候选信息表只渲染 producer 的 featured 行（每 office 恰 1 行）。
+    // 纯投影：仅保留 is_featured 者；零本地排序/选择（J-D02）。投票列表仍用 candidatesForOffice（全部）。
+    function featuredRows(office) {
+        var rows = []
+        var all = sessionStore.populationCandidates || []
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].office === office && all[i].is_featured) rows.push(all[i])
         }
         return rows
     }
@@ -240,7 +253,8 @@ Rectangle {
             id: candidateTable
             objectName: "populationCandidateTable"
             Layout.fillWidth: true
-            Layout.preferredHeight: 206
+            // FC-C05：确定性压缩（header 20 + 5×featured 行 + spacing；内容有界，5 office 固定）。
+            Layout.preferredHeight: 20 + (root.candidateFeaturedRowHeight + 3) * root.offices.length
             clip: true
             color: "transparent"
 
@@ -253,7 +267,7 @@ Rectangle {
                     Layout.preferredHeight: 20
                     spacing: 0
                     Text { text: "官职"; color: "#766652"; font.pixelSize: 11; Layout.preferredWidth: 172 }
-                    Text { text: "候选人"; color: "#766652"; font.pixelSize: 11; Layout.preferredWidth: 220 }
+                    Text { text: "最佳候选人"; color: "#766652"; font.pixelSize: 11; Layout.preferredWidth: 220 }
                     Text { text: "军略"; color: "#766652"; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter; Layout.preferredWidth: 64 }
                     Text { text: "智略"; color: "#766652"; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter; Layout.preferredWidth: 64 }
                     Text { text: "魅力"; color: "#766652"; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter; Layout.preferredWidth: 64 }
@@ -263,34 +277,23 @@ Rectangle {
                     Text { text: "选举结果"; color: "#766652"; font.pixelSize: 11; Layout.fillWidth: true }
                 }
 
-                Flickable {
+                // FC-C05：移除内嵌 Flickable/ScrollBar（内容有界，不再滚动）。
+                ColumnLayout {
+                    id: candidateRows
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    contentWidth: width
-                    contentHeight: candidateRows.implicitHeight
-                    boundsBehavior: Flickable.StopAtBounds
-
-                    ScrollBar.vertical: ScrollBar {
-                        policy: ScrollBar.AsNeeded
-                    }
-
-                    ColumnLayout {
-                        id: candidateRows
-                        width: parent.width
-                        spacing: 3
+                    spacing: 3
 
                 Repeater {
                     model: root.offices
                     delegate: Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: Math.max(36, candidatesColumn.implicitHeight + 12)
+                        Layout.preferredHeight: root.candidateFeaturedRowHeight
                         color: "#FFF5E6"
                         radius: 4
                         border.color: "#D9B77A"
                         border.width: 1
 
-                        property var rows: root.candidatesForOffice(modelData)
+                        property var rows: root.featuredRows(modelData)
                         property var result: root.resultForOffice(modelData)
 
                         RowLayout {
@@ -370,7 +373,6 @@ Rectangle {
                         }
                     }
                 }
-                    }
                 }
             }
         }

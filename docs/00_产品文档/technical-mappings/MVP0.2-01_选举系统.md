@@ -77,6 +77,14 @@ src/
 - `_vote_completed_by_player: Dict[str, bool]` — 与 campaign 的 `_batch_completed_by_player` 独立隔离
 - p1 完成不推进 p2；p2 失败不回退 p1
 
+### 人口读模型 `candidates` — featured 只读投影（WP-J Group C，2026-10-08）
+
+`session_api.get_population_view()["candidates"]` 为 `{office: [row,...]}`；WP-J Group C 起每行 **additive 增** `is_featured: bool`，data 顶层**新增** `featured_candidate_ids: {office: int|null}`。
+
+- **单一 owner** = `session_api.get_population_view()`；谓词：resolved 且 `election_results` 含该 office → 当选者 `figure_id`；否则该 office 提名后候选集内 `figure.get_qualification_attribute(office)` 最大者（平局 first-name A-Z，再平局 figure_id 升序）；office 空 → `null`。
+- **additive 只读；不改提名集/提名顺序**（`population_api.get_candidates` 不变）。
+- 消费：`PopulationStage.qml` 候选信息表 `featuredRows()` 只渲染 `is_featured`（每 office 1 行）；投票列表 `votePanel` 仍用 `candidatesForOffice()`（全部合法候选，不变）。Store 只读透传（`populationFeaturedCandidateIds`）。
+
 ## 5. 配置项
 
 | 配置路径 | 默认值 | 说明 |
@@ -229,6 +237,7 @@ load_from_dict(data):
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.11 | 2026-10-08 | DA-Execute (WP-J Group C) | §4 新增人口读模型 `candidates` featured 只读投影（行级 `is_featured` + office 级 `featured_candidate_id`；additive；单一 owner=`session_api.get_population_view`；提名集不变） |
 | v1.9 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §9：candidate supply 来源补注（E-G7-09 veteran supply，资格契约 REVIEWED-NO-CHANGE）+ Population 转换公示时序（门控 total>0，E-ODR-04） |
 | v1.10 | 2026-09-28 | DA-Exec (WP-M M-S1) | 新增 §10：censor 供给政策 B（D7）——`forum_rules.veteran_supply` 值 `1/2/1/0.5` → `2/3/2/0.7`（供给质量手段；资格契约不变） |
 | v1.8 | 2026-08-09 | DA-Exec (AC-12 M2-BUG3 R2) | §7 实现落地：`set_vote_completed`/`get_vote_completed` API 从设计目标→磁盘实现（game_state.py）；`resolve_population_slice` 增加 once guard（get_phase_result 防重复结算，保全两阶段模式）；`doResolveElection` 调用链切换到 `resolve_population_slice`（FC-09 满足）；turn_order 保持全序（含 AI）供 drain 遍历 |

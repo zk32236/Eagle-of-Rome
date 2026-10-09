@@ -386,7 +386,10 @@ class TestR1SC2HumanVetoUnchanged(unittest.TestCase):
                     age=36, influence=20)
         store = _make_gui_store(state, "player1")
         self.assertTrue(store.doSubmitSenateProposals([dict(_LAND_SALE_SPEC)])["success"])
-        self.assertTrue(store.doSubmitSenateVotes()["success"])
+        # FC-C42（v2.3）：无参调用 ⇒ agree_ids=None ⇒ 全反对（不再静默全赞成）；本用例需提案
+        # 通过以到达 tribune_veto，故显式传入全选（赞成）选择集。
+        self.assertTrue(store.doSubmitSenateVotes(
+            [p["id"] for p in store.senateSubmittedProposals])["success"])
 
         view = dict(store._senate_view)
         self.assertEqual(view.get("veto_control_mode"), "HUMAN")
@@ -408,7 +411,9 @@ class TestR1SC3AiVetoUnchanged(unittest.TestCase):
         _add_figure(state, other, 11, "Tribune AI", office="tribune", age=36, influence=15)
         store = _make_gui_store(state, "player1")
         self.assertTrue(store.doSubmitSenateProposals([dict(_LAND_SALE_SPEC)])["success"])
-        self.assertTrue(store.doSubmitSenateVotes()["success"])
+        # FC-C42（v2.3）：同上——显式传入全选（赞成）选择集，保证提案通过到达 tribune_veto。
+        self.assertTrue(store.doSubmitSenateVotes(
+            [p["id"] for p in store.senateSubmittedProposals])["success"])
 
         view = dict(store._senate_view)
         self.assertEqual(view.get("veto_control_mode"), "AI")
