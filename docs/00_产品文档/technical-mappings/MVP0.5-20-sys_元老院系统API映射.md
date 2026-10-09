@@ -400,9 +400,38 @@ doSubmitSenateVotes（投票成功 + 视图刷新后）:
 - 测试：`src/tests/test_api/test_wpgr11_rebellion_canonical_ownership.py`（R11-RBL-01…05；R11-RBL-02/03 走真实入口 `submit_proposal_package` / `auto_submit_proposals`）。
 - 证据：`WP-G-R11/03-da-evidence/R11-S1-A2/`（ATTEMPT-1 报告 + 三层回归）。
 
+### 5.14 WP-G-R12 A1-venue 同步注记（2026-10-09；append-only）
+
+> **权威**：SA-Development-Task-WP-G-R12-A1-Venue（G3 FROZEN）+ Plan Amendment A1 / ODR-R12-01（Owner 2026-10-09 FROZEN，选「移出」）。**PRESENTATION_VENUE_CORRECTION = YES**（呈现位点收窄：起义战移出元老院提案列表）；**GAME_RULE_CHANGE = NO**（authority 矩阵 / 表决 / 否决 / 停火 / 战斗 / 灾难 / 军团恢复 / 舰队经济 / 起义强度·招募·时序 **全部不变**）；**AUTHORITY_CHANGE = NO**；**AI_STRATEGY_REDESIGN = NO**；**Authoritative Product Spec Impact = REQUIRED（本注记即为该同步）**。基线 `6222a5a90d812daf28687d59d5e0cbbce110025b`（`task/gui-beta-r1-wpgr12`）。
+
+**A. 规则（单一 venue 过滤位点）**
+- **唯一行为式：** 元老院 `war_cards`（提案/方案列表）**只列有合法 route 的卡**——`PoliticalSystem.build_war_card_views` 逐卡装配，在 `card["authority_by_mode"] = classify_war_authority(facts)` 之后 `if not card["authority_by_mode"]: continue`（不入 `war_cards`）。
+- **谓词 = route 产物（复用单 owner）：** 只读 `authority_by_mode`（`classify_war_authority` 产物）是否为空；**不**在 QML/API/Store 重推 route / 不据 `classification`/`war_name`/`rebellion_province_id` 二次推断。今天该规则仅命中起义战（`allowed_modes=[]`）。
+- **单 owner 保持：** 起义身份仍单点于 `war_system.py::describe_senate_war`（`rebellion_province_id != None` ⇒ `allowed_modes=[]`，逐字不变）；`build_war_card_views` 消费 `classify_war_authority` 产物，**不新建**第二业务规则（不违 ODR-05 / A2 §4）。
+
+**B. 四通道 parity（同一规则 = venue 成员资格；均在 producer/DTO）**
+- **Human GUI：** `war_cards` 少起义卡 ⇒ `SenateStage` war Repeater（`model: senateWarCards`）自动不渲染（**零 QML diff**；原 `routeReady=false` 死卡面于源头消除——卡不在列表，其误导文案分支永不被触达）。
+- **CLI：** 输出净效果不变（本就因 `allowed_modes=[]` 不列起义）。
+- **AI：** `auto_submit_proposals` 4b′ 本就 skip 起义 ⇒ 不变。
+- **API/手构 submit：** `submit_proposal_package` 经 `_senate_card_wars`（**不改**）+ `classify_war_authority`（不改）⇒ 拒绝码/语义**逐字不变**（`WAR_MODE_INVALID` 为主 / `WAR_NOT_PROPOSABLE` 为备；整包 FAIL 零发布）⇒ **submit fail-closed 不回归**（FC-R12-A1-05）。
+
+**C. 可见性（ODR-05 满足）**
+- 起义战**仍为真实 ACTIVE War**（`is_real_war=True`、`classification=="ongoing"`、`allowed_modes==[]` 逐字不变），且**在战斗阶段（CombatStage / `combat_api.get_combat_view().active_wars`）与广场（Forum 起义警示）可见** ⇒ 无可见缺口（FC-R12-A1-06）。
+
+**D. ★不阻塞（阶段完成与 war_cards 解耦）**
+- 元老院提案步完成**不依赖** `war_cards` 非空；零提案合法路径保持（空批 → `senate_proposal_decision_complete=True` → `finalize_senate_if_ready` 守卫放行 → `results`）；`can_create_proposal`/`can_finish_empty`/`can_advance` 判据**逐字不变**（FC-R12-A1-04；NP-1…4）。
+
+**E. 契约 / 边界 / 证据**
+- 新增 **FC-R12-A1-01…08**（venue 修订层命名空间）；A2 §6.2 no-touch 修订声明 = 本件**唯一**触碰 `PoliticalSystem.build_war_card_views`（其余 no-touch 符号 `describe_senate_war`/`classify_war_authority`/route 表/`_senate_card_wars`/`submit_proposal_package`/边界/retained-effect 等**全部不改**）。
+- 零 QML diff / 零新 DTO 字段（`WarCardView` 键集合逐字不变）/ 零路由语义改 / 不触持久化 / 不改 `_senate_card_wars`（submit 面）。
+- **A2 §7.1 re-supersede 注记：** A2 §7.1「War Card **仍出现**（`_senate_card_wars` 收录…）⇒ 可见」与 ODR-R12-01 冲突 ⇒ 由本件 + G3 修订为「起义卡**不再**出现于元老院提案列表；可见性由**战斗阶段/广场**承担」（见 A2 §7.1 追加注）。
+- 测试：`src/tests/test_api/test_wpgr12_rebellion_war_senate_venue.py`（新增）；`test_wpgr11_rebellion_canonical_ownership.py`（R11-RBL-01 re-supersede）+ `test_wpgr1_s4_takeover_required.py`（`test_rebellion_war_excluded` Test Amendment）。
+- 证据：`WP-G-R12/03-da-evidence/A1-venue/`。
+
 ## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v2.6 | 2026-10-09 | DA Sub-Agent (WP-G-R12 A1-venue) | 新增「§5.14 WP-G-R12 A1-venue 同步注记」——起义战（`rebellion_province_id != None`）**不再**出现在元老院 `war_cards`（提案/方案列表）：`PoliticalSystem.build_war_card_views` 在 `authority_by_mode = classify_war_authority(facts)` 后 `if not authority_by_mode: continue`（唯一 venue 过滤位点；谓词只读 route 产物，单 owner 复用 `describe_senate_war`/`classify_war_authority`）。零 QML diff / 零 DTO 字段 / 零路由语义改；submit fail-closed 逐字不变；起义战仍为真实 ACTIVE War 且在战斗阶段（CombatStage）+ 广场（Forum 起义警示）可见（ODR-05 满足）；元老院提案步不阻塞（零提案合法路径保持）。新增 FC-R12-A1-01…08。PRESENTATION_VENUE_CORRECTION=YES，GAME_RULE_CHANGE=NO，AUTHORITY_CHANGE=NO。见 §5.14 |
 | v2.5 | 2026-10-02 | DA Sub-Agent (WP-G-R11 R11-S1-A2) | 新增「§5.13 WP-G-R11 Amendment A2 同步注记」——起义战 canonical ownership：`WarSystem.describe_senate_war` 对起义战（`rebellion_province_id != None`）产出 `allowed_modes=[]`（单 owner；classification 仍 `ongoing` / `is_real_war=True` ⇒ 卡仍可见）⇒ `classify_war_authority`（route = 能力面 ∩ 表，不改）返回 `{}` ⇒ War Card `authority_by_mode={}` ⇒ Human routeReady=false / CLI 不列 / AI 4b′ skip / 手构 submit 服务端重取 route fail-closed（`WAR_MODE_INVALID`，整包 FAIL 零发布）。唯一 normal owner = 专属起义机制（`governor_designate>governor` + retained `rebellion_assign`）。新增 FC-R11-A2-01…04；与 FC-R11-01/02/04/07 关系冻结为不改。defense = `AutoWarTakeoverDecider` 起义守卫 + server fail-closed（同一 route owner）。零 QML diff / 零新持久化 / 零改 classify·submit·decider·边界。PRODUCER/PARITY CORRECTION=YES，GAME_RULE_CHANGE=NO，AUTHORITY_CHANGE=NO。见 §5.13 |
 | v2.4 | 2026-10-02 | DA Sub-Agent (WP-G-R11 R11-S1) | 新增「§5.12 WP-G-R11 同步注记」——AI proposer `auto_submit_proposals` 补**第三族** Existing/Ongoing → consul_direct command（4b′，置于 4b 停火后 / 4c 总督前）：共享 `build_war_card_views`（`classify_war_authority`）枚举 + `decide_takeover` 保留策略 + 共享候选 producer（Continue/Takeover）+ `reinforcement_range` 内 `random.randint`（与 4a 共享剩余池守恒）；仅 append checked command draft 随 `propose_many` 整包，FROZEN `ConsulWarDecision`（无 proposal_id / 不进 Vote-Veto），仅边界 `advance_senate_phase` 原子执行。**Addendum A1 §4.1 对称守卫**（Continue 产出前 `target ∈ 共享候选集`，否则 omit；FC-R11-04 增补句）。零 QML diff / 零新持久化。PRODUCER PARITY REGRESSION CORRECTION=YES，GAME_RULE_CHANGE=NO。见 §5.12 |
 | v2.3 | 2026-10-02 | DA Sub-Agent (WP-M-R1 R1-S1) | NONE veto 步自动收敛：`GuiSessionStore.doSubmitSenateVotes` 投票完成后 `current_step=="tribune_veto"` 且 `veto_control_mode=="NONE"` → 复用 canonical finalization（`resolve_senate`）自动收敛 → results / canAdvanceSenate；HUMAN/AI 逐字不变；门禁唯一 = resolver-backed NONE（非 `can_resolve`）；零 QML diff / 无新增持久化。REGRESSION_CORRECTION=YES，GAME_RULE_CHANGE=NO。见 §5.11 |

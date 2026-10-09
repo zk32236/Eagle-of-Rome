@@ -1297,6 +1297,12 @@ class PoliticalSystem:
             card = dict(facts)
             card["schema_version"] = WAR_CARD_SCHEMA_VERSION
             card["authority_by_mode"] = classify_war_authority(facts)
+            # WP-G-R12 A1-venue（FC-R12-A1-01/02；ODR-R12-01）：元老院提案（方案）列表只列
+            # 有合法 route 的卡——唯一 venue 规则 = 谓词只读 classify_war_authority 产物
+            # （单 owner）；为空 ⇒ 不入 war_cards（今天唯一命中 = 起义战 allowed_modes=[]）。
+            # 零 QML diff / 零 DTO 字段 / 零路由语义改；不改 _senate_card_wars（submit 面）。
+            if not card["authority_by_mode"]:
+                continue
             card["current_commander_label"] = label
             # R6（SA §D.2，DA-4 B5 R-B4-3）：本会期**冻结** target Commander 完整身份 label
             # （**增量新字段**；不改既有字段机器身份）。提交后卡片只读摘要据此显示完整

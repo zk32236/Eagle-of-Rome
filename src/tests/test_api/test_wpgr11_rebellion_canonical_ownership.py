@@ -7,9 +7,13 @@
 
 本文件覆盖 R11-RBL-01…05（A2 §9.2 / 顾问 §8）：
 
-- R11-RBL-01（DATA）起义作为真实 ACTIVE War **可见**（card 在 war_cards、is_real_war、
-  classification=="ongoing"），但**无普通 command route**（allowed_modes==[] ∧
-  authority_by_mode=={}）。唯一 owner = describe_senate_war。
+- R11-RBL-01（DATA）起义作为真实 ACTIVE War **可见**（`is_real_war` / classification==
+  "ongoing" / `allowed_modes==[]`），但**无普通 command route**（`classify_war_authority=={}`）。
+  唯一 owner = describe_senate_war。
+  **WP-G-R12 A1-venue Test Amendment（ODR-R12-01，2026-10-09）：** 原 DTO 级「卡在
+  war_cards」断言被 re-supersede——起义卡**不再**出现在元老院提案列表（venue 移出）；
+  可见性改由战斗阶段/广场承担（FC-R12-A1-06）。facts 级断言（
+  `is_real_war`/`ongoing`/`allowed_modes==[]`/`classify_war_authority=={}`）保留。
 - R11-RBL-02（PRODUCTION_CHAIN）手构起义 `consul_direct command` 经**真实整包门**
   `submit_proposal_package`（经 `propose_many`）→ fail-closed（WAR_MODE_INVALID）、整包
   FAIL、零发布。禁直调私有函数替代。
@@ -136,7 +140,9 @@ def _card(state, war_id, viewer="player_opt"):
 
 
 # ---------------------------------------------------------------------------
-# R11-RBL-01（DATA）起义卡可见但无普通 command route
+# R11-RBL-01（DATA）起义可见但无普通 command route
+# WP-G-R12 A1-venue re-supersede：起义卡由「在 war_cards」改为「不在 war_cards」
+# （venue 移出）；可见性位点改由战斗阶段/广场承担（ODR-R12-01 / FC-R12-A1-06）。
 # ---------------------------------------------------------------------------
 class TestR11RBL01RebellionVisibleNoRoute(unittest.TestCase):
     def test_rebellion_card_visible_but_no_command_route(self):
@@ -153,13 +159,16 @@ class TestR11RBL01RebellionVisibleNoRoute(unittest.TestCase):
         self.assertEqual(classify_war_authority(facts), {},
                          "起义战无任何合法 authority route")
 
-        # Human GUI 真实视图：卡在 war_cards 且无 route
-        card = _card(state, reb.id)
-        self.assertTrue(card["is_real_war"])
-        self.assertEqual(card["classification"], "ongoing")
-        self.assertEqual(card["allowed_modes"], [])
-        self.assertEqual(card["authority_by_mode"], {},
-                         "起义卡 authority_by_mode 必须为空（routeReady=false）")
+        # WP-G-R12 A1-venue Test Amendment（ODR-R12-01）：Human GUI 真实视图——起义卡
+        # **不再**出现在元老院提案列表（war_cards）。原 DTO 级断言
+        # `card = _card(state, reb.id)` +（is_real_war/ongoing/allowed_modes==[]/
+        # authority_by_mode=={}）即 venue 移出前的死卡面，已由「不在 war_cards」取代；
+        # 可见性改由战斗阶段（CombatStage）/ 广场（Forum 起义警示）承担（FC-R12-A1-06）。
+        # facts 级三断言（上方）保留，无 route 语义不变。
+        data = _view(state)
+        war_ids = [c["war_id"] for c in data["war_cards"]]
+        self.assertNotIn(reb.id, war_ids,
+                         "起义卡不得出现在元老院提案列表（venue 移出）")
 
 
 # ---------------------------------------------------------------------------

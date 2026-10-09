@@ -123,13 +123,21 @@ class TestTr108TakeoverRequiredCore(unittest.TestCase):
 
     def test_rebellion_war_excluded(self):
         """R5（Plan §4.2 L2；SA §2.7 A-I14 / C-M09）：mandatory takeover 退役——起义战争
-        照常投影为卡（无强制接管门）；`takeover_required` 键不再存在。"""
+        无强制接管门；`takeover_required` 键不再存在。
+
+        WP-G-R12 A1-venue Test Amendment（ODR-R12-01，2026-10-09）：原断言「起义战照常投影
+        为卡（`assertIn("war_rebellion", ids)`）」被 A1-venue supersede——起义卡（无合法 route）
+        **移出**元老院提案列表（`build_war_card_views` 空 `authority_by_mode` ⇒ `continue`）；
+        可见性改由战斗阶段（CombatStage）/ 广场（Forum 起义警示）承担（FC-R12-A1-06）。
+        原意图注释保留；mandatory-takeover 退役断言（`assertNotIn("takeover_required")`）保留。
+        """
         state, _consul = _build_senate_state()
         _make_active_war(state, "war_rebellion", commander_id=None, rebellion_province_id=7)
         data = _view(state)
         self.assertNotIn("takeover_required", data)
         ids = [c["war_id"] for c in data["war_cards"]]
-        self.assertIn("war_rebellion", ids)
+        # A1-venue：起义卡移出元老院提案面（原 `assertIn` 已由 ODR-R12-01 取代）
+        self.assertNotIn("war_rebellion", ids)
 
     def test_truce_pending_not_counted(self):
         """P1（TRUCE + pending treaty）→ pending_peace 卡（可选 peace 模式），非强制接管。"""
