@@ -273,13 +273,19 @@ def _build_proposal_options(state: GameState, info: Dict[str, Any]) -> List[Dict
         ))
     politics = _political_system(state)
     vacancies = info.get("governor_vacancies", {}) or {}
+    used_candidate_ids = set()
     for governor_type, provinces in vacancies.items():
         candidates = politics.get_eligible_governor_candidates(governor_type)
-        available = [candidate for candidate in candidates if not politics.is_governor_position_occupied(candidate.id)]
-        candidate = available[0] if available else None
+        available = [
+            candidate for candidate in candidates
+            if not politics.is_governor_position_occupied(candidate.id)
+            and candidate.id not in used_candidate_ids
+        ]
         for province in provinces:
-            if not candidate:
-                continue
+            if not available:
+                break
+            candidate = available.pop(0)
+            used_candidate_ids.add(candidate.id)
             options.append(_proposal_option(
                 f"governor:{province.get('province_id')}", "governor",
                 f"总督任命 — {province.get('province_name', province.get('province_id'))}",

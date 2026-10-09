@@ -977,3 +977,185 @@ class TestLegionOptionsDerivation(unittest.TestCase):
         state._military_system = MilitarySystem(state)
         war = self._add_threat(state)
         self.assertIsNone(senate_api._legion_options_for_war(state, war))
+
+
+class TestWPDR3GovernorDistinctAllocation(unittest.TestCase):
+    """WP-D-R3 (a)：同型多行省 governor 默认候选互异分配 + 候选不足空位（WDR3-AC-01/02/04）。
+
+    证据面 = DATA(PRODUCTION_CHAIN)：直接调 senate_api._build_proposal_options；
+    覆盖 TA 证据矩阵 E1/E2/E3/E4/E5/E8。不改既有断言。
+    """
+
+    def _state_with_consul(self):
+        state = GameState.create_for_testing({})
+        state.turn = GameTurn(turn_number=1, year=-264)
+        faction = Faction(id="optimates", name="Optimates", treasury=50)
+        state.add_faction(faction)
+        consul = Figure(id=1, name="执政官", faction_id="optimates", age=40)
+        consul.office = "consul"
+        consul.class_tier = ClassTier.NOBILE
+        state.add_member(consul)
+        faction.member_ids.append(1)
+        state._players = {
+            "player1": MagicMock(player_id="player1", faction_id="optimates", player_type="human"),
+        }
+        state._current_player_id = "player1"
+        return state, faction
+
+    def _add_candidate(self, state, faction, figure_id, office_type, end_turn):
+        fig = Figure(id=figure_id, name="前官" + str(figure_id), faction_id="optimates", age=60)
+        fig.office = None
+        fig.class_tier = ClassTier.NOBILE
+        fig.office_history.append(
+            type("Term", (), {"office_type": office_type, "end_turn": end_turn})()
+        )
+        state.add_member(fig)
+        faction.member_ids.append(figure_id)
+        return fig
+
+    def _add_province(self, state, province_id, name, governor_type="proconsul"):
+        state.add_province(Province(
+            province_id=province_id, name=name, total_land=1000,
+            conquered=True, governor_type=governor_type,
+        ))
+
+    @staticmethod
+    def _governor_options(state, info):
+        return [o for o in senate_api._build_proposal_options(state, info) if o["type"] == "governor"]
+
+    @staticmethod
+    def _base_info(**overrides):
+        info = {
+            "war_threats": [],
+            "pending_peace_treaties": [],
+            "pending_contracts": [],
+            "governor_vacancies": {},
+        }
+        info.update(overrides)
+        return info
+
+    def test_wpdr3_same_type_multi_province_candidates_distinct(self):
+        # T1 / E1 / FC-R3-01：同型 N>=2 行省 → 各 option 的 params.candidate_id 两两互异
+        state, faction = self._state_with_consul()
+        self._add_candidate(state, faction, 5, "consul", 10)
+        self._add_candidate(state, faction, 6, "consul", 8)
+        self._add_province(state, 10, "西西里")
+        self._add_province(state, 11, "撒丁")
+        info = self._base_info(governor_vacancies={
+            "proconsul": [
+                {"province_id": 10, "province_name": "西西里"},
+                {"province_id": 11, "province_name": "撒丁"},
+            ],
+        })
+        gov_opts = self._governor_options(state, info)
+        self.assertEqual(len(gov_opts), 2)
+        cids = [o["params"]["candidate_id"] for o in gov_opts]
+        self.assertEqual(len(set(cids)), 2)
+        # 确定性（不随机）：卸任倒序取首未用 → 省 10→5(end10)，省 11→6(end8)
+        self.assertEqual(cids, [5, 6])
+
+    def test_wpdr3_insufficient_candidates_yields_vacancy(self):
+        # T2 / E2 / FC-R3-02：可用候选 m < 行省数 n → 仅前 m 行省出选项，其余空位（无挂空卡）
+        state, faction = self._state_with_consul()
+        self._add_candidate(state, faction, 5, "consul", 10)
+        self._add_candidate(state, faction, 6, "consul", 8)
+        for pid, name in ((10, "西西里"), (11, "撒丁"), (12, "科西嘉")):
+            self._add_province(state, pid, name)
+        info = self._base_info(governor_vacancies={
+            "proconsul": [
+                {"province_id": 10, "province_name": "西西里"},
+                {"province_id": 11, "province_name": "撒丁"},
+                {"province_id": 12, "province_name": "科西嘉"},
+            ],
+        })
+        gov_opts = self._governor_options(state, info)
+        self.assertEqual(len(gov_opts), 2)  # == 可用候选数 m
+        cids = [o["params"]["candidate_id"] for o in gov_opts]
+        self.assertEqual(len(set(cids)), 2)
+        self.assertNotIn(None, cids)
+        self.assertEqual([o["params"]["province_id"] for o in gov_opts], [10, 11])
+
+    def test_wpdr3_cross_type_candidates_distinct(self):
+        # T3 / E3 / FC-R3-01(D1)：同一人兼具两型资格 → 共享 used ⇒ 跨型不重复
+        state, faction = self._state_with_consul()
+        dual = Figure(id=5, name="双资历", faction_id="optimates", age=60)
+        dual.office = None
+        dual.class_tier = ClassTier.NOBILE
+        dual.office_history.append(type("Term", (), {"office_type": "consul", "end_turn": 10})())
+        dual.office_history.append(type("Term", (), {"office_type": "praetor", "end_turn": 9})())
+        state.add_member(dual)
+        faction.member_ids.append(5)
+        self._add_candidate(state, faction, 7, "praetor", 8)
+        self._add_province(state, 10, "西西里", "proconsul")
+        self._add_province(state, 20, "近西班牙", "propraetor")
+        info = self._base_info(governor_vacancies={
+            "proconsul": [{"province_id": 10, "province_name": "西西里"}],
+            "praetor": [{"province_id": 20, "province_name": "近西班牙"}],
+        })
+        gov_opts = self._governor_options(state, info)
+        self.assertEqual(len(gov_opts), 2)
+        cids = [o["params"]["candidate_id"] for o in gov_opts]
+        self.assertEqual(len(set(cids)), 2)
+        # proconsul 先处理占用 5；praetor 只能落到 7
+        self.assertEqual(
+            {o["params"]["province_id"]: o["params"]["candidate_id"] for o in gov_opts},
+            {10: 5, 20: 7},
+        )
+
+    def test_wpdr3_submit_multiple_same_type_succeeds(self):
+        # T4 / E4 / FC-R3-05：producer options 构包（同型多行省互异）→ 提交成功，无 GOVERNOR_NOMINATION_DUPLICATE
+        from src.core.systems.political_system import PoliticalSystem
+        state, faction = self._state_with_consul()
+        self._add_candidate(state, faction, 5, "consul", 10)
+        self._add_candidate(state, faction, 6, "consul", 8)
+        self._add_province(state, 10, "西西里")
+        self._add_province(state, 11, "撒丁")
+        info = self._base_info(governor_vacancies={
+            "proconsul": [
+                {"province_id": 10, "province_name": "西西里"},
+                {"province_id": 11, "province_name": "撒丁"},
+            ],
+        })
+        gov_opts = self._governor_options(state, info)
+        proposals = [{"type": "governor", "params": dict(o["params"])} for o in gov_opts]
+        request = {
+            "senate_session_id": "WPDR3-T4",
+            "submit_request_id": "req-wpdr3-t4",
+            "war_drafts": [],
+            "proposals": proposals,
+        }
+        result = PoliticalSystem(state).submit_proposal_package("player1", request)
+        codes = [e.get("code") for e in (result.get("errors") or [])]
+        self.assertNotIn("GOVERNOR_NOMINATION_DUPLICATE", codes)
+        self.assertTrue(result["success"], result.get("errors"))
+
+    def test_wpdr3_non_governor_branches_unchanged(self):
+        # T5 / E5 / FC-R3-06：governor_vacancies 存在与否，peace/budget/land 分支输出逐字一致（零回归）
+        state, _faction = self._state_with_consul()
+        state.add_national_public_land(500)
+        base = self._base_info(
+            pending_peace_treaties=[{"war_id": "w1", "name": "战争一", "indemnity": 50, "duration": 3}],
+            pending_contracts=[{"contract_id": "c1", "name": "公共工程", "type": "public_works",
+                                "base_cost": 100, "expected_profit": 20}],
+        )
+        with_vac = dict(base)
+        with_vac["governor_vacancies"] = {
+            "proconsul": [{"province_id": 10, "province_name": "西西里"}],
+        }
+        no_vac_opts = [o for o in senate_api._build_proposal_options(state, base) if o["type"] != "governor"]
+        with_vac_opts = [o for o in senate_api._build_proposal_options(state, with_vac) if o["type"] != "governor"]
+        self.assertEqual(no_vac_opts, with_vac_opts)
+        self.assertEqual({o["type"] for o in no_vac_opts}, {"peace", "budget", "land"})
+
+    def test_wpdr3_single_province_candidate_index0(self):
+        # T6 / E8 护栏 / FC-R3-01：单行省退化 → candidate_id == 5（= available[0]，与既有基线一致）
+        state, faction = self._state_with_consul()
+        self._add_candidate(state, faction, 5, "consul", 10)
+        self._add_candidate(state, faction, 6, "consul", 8)
+        self._add_province(state, 10, "西西里")
+        info = self._base_info(governor_vacancies={
+            "proconsul": [{"province_id": 10, "province_name": "西西里"}],
+        })
+        gov_opts = self._governor_options(state, info)
+        self.assertEqual(len(gov_opts), 1)
+        self.assertEqual(gov_opts[0]["params"]["candidate_id"], 5)

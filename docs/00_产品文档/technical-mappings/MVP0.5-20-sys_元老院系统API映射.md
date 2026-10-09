@@ -428,9 +428,24 @@ doSubmitSenateVotes（投票成功 + 视图刷新后）:
 - 测试：`src/tests/test_api/test_wpgr12_rebellion_war_senate_venue.py`（新增）；`test_wpgr11_rebellion_canonical_ownership.py`（R11-RBL-01 re-supersede）+ `test_wpgr1_s4_takeover_required.py`（`test_rebellion_war_excluded` Test Amendment）。
 - 证据：`WP-G-R12/03-da-evidence/A1-venue/`。
 
+## 5.15 WP-D-R3 同步注记（GUI-BETA-R1 R 小包，2026-10-10）
+
+> producer/parity 修正：GUI 元老院提案默认候选改为**分配器一致的互异分配**。
+
+- **唯一 owner：** `senate_api._build_proposal_options` governor 分支（`senate_api.py`）。
+- **语义：** 对 `governor_vacancies`，按 `governor_type` 顺序逐行省分配**首个未被占用且未被本次调用消费**的候选——共享 `used_candidate_ids` 集**跨 `governor_type`**（对齐权威分配器 `assign_governors._assign` 的共享 `used`）。同型多行省默认候选**两两互异**；跨型亦互异。
+- **候选耗尽：** 当某型 `available` 耗尽 → 该行省**不生成** governor 选项（空位合法，合 FC-14①）；不挂空卡 / 不复用 / 不加占位文案。
+- **确定性：** 取 `available.pop(0)`（不引入随机），单行省退化为 `available[0]`（与既有基线一致）。
+- **DTO / 界面：** `proposal_options[]` governor 条目键集合不变（`key/type/title/detail/params{province_id,candidate_id}`），仅 `params.candidate_id` **取值**变化；**零 QML diff**。
+- **不改：** `submit_proposal_package`（含 `gov_nominations` 去重 / `_submit_failure`）逐字不变，`GOVERNOR_NOMINATION_DUPLICATE` 保留为纯防御兜底（GUI 路径经本修正后不再可达）；`_populate_proposal` governor 校验 / `assign_governors` / `get_eligible_governor_candidates` / `is_governor_position_occupied` / `build_initial_info` / `_build_governor_appointments` 均不改。
+- **语义对齐：** AI proposer `auto_submit_proposals` 4c 已是共享 `used` 互异（逐字不变）；GUI producer 对齐后 AI/GUI 同型多行省默认互异语义一致。
+- **测试：** `src/tests/test_api/test_senate_api.py::TestWPDR3GovernorDistinctAllocation`（T1–T6）。
+- **性质：** PRODUCER/PARITY CORRECTION=YES；GAME_RULE_CHANGE=NO；AUTHORITY_CHANGE=NO；零新增玩家可见文案。
+
 ## 6. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v2.7 | 2026-10-10 | DA Sub-Agent (WP-D-R3) | 新增「§5.15 WP-D-R3 同步注记」——GUI 元老院 `_build_proposal_options` governor 分支改为**互异分配**：共享 `used_candidate_ids`（跨 `governor_type`，对齐 `assign_governors._assign`）+ 候选耗尽 `break`（空位合法，不挂空卡）。确定性 `pop(0)`；单行省退化 `available[0]`。DTO 键形状不变（仅 `params.candidate_id` 取值变）；零 QML diff；`submit_proposal_package` 去重 / fail-closed 逐字不变（`GOVERNOR_NOMINATION_DUPLICATE` 保留为兜底）。新增测试 T1–T6。PRODUCER/PARITY CORRECTION=YES，GAME_RULE_CHANGE=NO，AUTHORITY_CHANGE=NO。见 §5.15 |
 | v2.6 | 2026-10-09 | DA Sub-Agent (WP-G-R12 A1-venue) | 新增「§5.14 WP-G-R12 A1-venue 同步注记」——起义战（`rebellion_province_id != None`）**不再**出现在元老院 `war_cards`（提案/方案列表）：`PoliticalSystem.build_war_card_views` 在 `authority_by_mode = classify_war_authority(facts)` 后 `if not authority_by_mode: continue`（唯一 venue 过滤位点；谓词只读 route 产物，单 owner 复用 `describe_senate_war`/`classify_war_authority`）。零 QML diff / 零 DTO 字段 / 零路由语义改；submit fail-closed 逐字不变；起义战仍为真实 ACTIVE War 且在战斗阶段（CombatStage）+ 广场（Forum 起义警示）可见（ODR-05 满足）；元老院提案步不阻塞（零提案合法路径保持）。新增 FC-R12-A1-01…08。PRESENTATION_VENUE_CORRECTION=YES，GAME_RULE_CHANGE=NO，AUTHORITY_CHANGE=NO。见 §5.14 |
 | v2.5 | 2026-10-02 | DA Sub-Agent (WP-G-R11 R11-S1-A2) | 新增「§5.13 WP-G-R11 Amendment A2 同步注记」——起义战 canonical ownership：`WarSystem.describe_senate_war` 对起义战（`rebellion_province_id != None`）产出 `allowed_modes=[]`（单 owner；classification 仍 `ongoing` / `is_real_war=True` ⇒ 卡仍可见）⇒ `classify_war_authority`（route = 能力面 ∩ 表，不改）返回 `{}` ⇒ War Card `authority_by_mode={}` ⇒ Human routeReady=false / CLI 不列 / AI 4b′ skip / 手构 submit 服务端重取 route fail-closed（`WAR_MODE_INVALID`，整包 FAIL 零发布）。唯一 normal owner = 专属起义机制（`governor_designate>governor` + retained `rebellion_assign`）。新增 FC-R11-A2-01…04；与 FC-R11-01/02/04/07 关系冻结为不改。defense = `AutoWarTakeoverDecider` 起义守卫 + server fail-closed（同一 route owner）。零 QML diff / 零新持久化 / 零改 classify·submit·decider·边界。PRODUCER/PARITY CORRECTION=YES，GAME_RULE_CHANGE=NO，AUTHORITY_CHANGE=NO。见 §5.13 |
 | v2.4 | 2026-10-02 | DA Sub-Agent (WP-G-R11 R11-S1) | 新增「§5.12 WP-G-R11 同步注记」——AI proposer `auto_submit_proposals` 补**第三族** Existing/Ongoing → consul_direct command（4b′，置于 4b 停火后 / 4c 总督前）：共享 `build_war_card_views`（`classify_war_authority`）枚举 + `decide_takeover` 保留策略 + 共享候选 producer（Continue/Takeover）+ `reinforcement_range` 内 `random.randint`（与 4a 共享剩余池守恒）；仅 append checked command draft 随 `propose_many` 整包，FROZEN `ConsulWarDecision`（无 proposal_id / 不进 Vote-Veto），仅边界 `advance_senate_phase` 原子执行。**Addendum A1 §4.1 对称守卫**（Continue 产出前 `target ∈ 共享候选集`，否则 omit；FC-R11-04 增补句）。零 QML diff / 零新持久化。PRODUCER PARITY REGRESSION CORRECTION=YES，GAME_RULE_CHANGE=NO。见 §5.12 |
