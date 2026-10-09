@@ -335,6 +335,7 @@ UNRAISED / DISBANDED ──[征召]──→ ACTIVE ──[指派]──→ ACTI
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.7 | 2026-10-09 | DA-Execute (WP-J Group D) | §2.3 追加注记：战后军团/停战降级军团**解散反馈**在人口公示框内以权威计数呈现（additive 只读；仅显示，不改解散时机/周期） |
 | v1.6 | 2026-09-05 | DA Sub-Agent (WP-G-R1 B1) | R1-G-02 文档同步（§2.6）：维护集由「get_active_legions()（ACTIVE-only）」改为「ACTIVE + released survivors（AVAILABLE via recall，pending Population retirement）+ RECALLING（vestigial 零写点）；排除 UNRAISED/DISBANDED/DESTROYED」——精确表达 released-survivor provenance（P2-01），不泛化为「所有 AVAILABLE+RECALLING 一概收费」；WP-F R2-02 ACTIVE 段标注保持有效 |
 | v1.5 | 2026-08-31 | DA Sub-Agent (WP-G GD) | DI-3：§2.3 补「战后解散时序 + 共享入口」（G1-14：战争结束 → recall → 下个 Revenue → 下个 Population canonical 解散，GUI/CLI 共享，Veteran 保留，禁立即解散）；§2.5 补「AVAILABLE 为退役前中间态，非立即解散」；版本日志 |
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent J | 初版创建（代码审计完成，含恢复机制/战斗结果/停战草案） |
@@ -350,3 +351,9 @@ UNRAISED / DISBANDED ──[征召]──→ ACTIVE ──[指派]──→ ACTI
 - **§5.3 战斗边界 收口**：原「指挥官已死亡时，战斗跳过（调用 `recall_commander()`）」只描述读侧跳过；**写侧**新增单一权威：非战斗 Mortality 经 `GameState.mark_member_dead → WarSystem.clear_deceased_commander_bindings(member_id)` 清死者现任 War 绑定 + `MilitarySystem.clear_deceased_commander_bindings(member_id)` 清**精确匹配死者**的 Legion 人物镜像，**不**触发 Legion 召回/解散/伤亡/征募。
 - **§2.6 维护费 provenance 保留**：非指挥官死亡不改变 Legion 附着/状态/`is_veteran`/维护口径；维护集仍为 ACTIVE + released survivors（AVAILABLE via recall）+ RECALLING（不含 UNRAISED/DISBANDED/DESTROYED），与 §2.6 原口径一致。
 - **非指挥官死亡**：无关 War/Legion 零变化（精确 id；无自动替补）。Legion 序列化 schema 不变（`commander_id` 可为 None）。
+
+## WP-J Group D 同步注记（2026-10-09，DA-Execute；append-only，目标锚点 §2.3）
+
+> 权威：WP-J Group D SA-Development-Task v1.1（G3 FROZEN）§5.1；FC-D05。解散**时机**零改（①d-2 / WP-G G1-14 冻结，GAME_RULE_CHANGE=NO）。
+
+- **战后军团解散反馈呈现**：人口阶段**既有公示框 `populationAnnouncement` 内**追加行「⚔️ 战后军团：<legions.resolved_wars.total> 支已解散」/「⚔️ 停战降级军团：<legions.deescalated.total> 支已解散」（`sessionStore.populationOutcome` 逐字投影权威 `population_disbandment`）。**仅显示**权威计数；不做 per-war 军团明细（producer 未供）；**不改**解散时机/生命周期。

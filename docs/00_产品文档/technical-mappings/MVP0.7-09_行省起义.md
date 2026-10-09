@@ -21,5 +21,12 @@ CLI `phase_forum._update_civil_unrest()`
 ## 3. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.2 | 2026-10-09 | WP-J Group D：起义事件只读捕获（`_forum_rebellion_events`，镜像 `_forum_war_events`）→ `get_forum_view().rebellion_events` → ForumStage 公告框内警示行（DA-Execute） |
 | v1.1 | 2026-07-26 | 民变检测 CLI→API 下沉：新增 ProvinceUnrestSystem + forum_api |
+
+## WP-J Group D 同步注记（2026-10-09，DA-Execute；append-only）
+
+> 权威：WP-J Group D v1.1 §5.4；对应规格 MVP0.7-09 §1/§2.1 注记。
+
+- **只读捕获链（不变写边界）**：`initialize_forum_turn()` 在 `check_province_unrest()` 之后将权威 `rebellions[]` 写入 `state.set_forum_rebellion_events(...)`（`GameState._forum_rebellion_events` + 访问器 + `_commit_settlement` 同区清理）；**不改**起义创建路径。→ `forum_api.get_forum_view()` 增 `rebellion_events`（additive 只读）→ `session_store.forumRebellionEvents` → `ForumStage.qml` 既有 `announceArea` 框内追加「⚠️ 起义爆发：<province_name>（<name>）」行。
 | v1.0 | 2026-07-12 | 初版 |

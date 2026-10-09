@@ -334,6 +334,7 @@ IF eligible_candidates(office) == 0
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.7 | 2026-10-09 | DA-Execute (WP-J Group D) | §2.4 追加注记：庆典 vs 凯旋仪式**呈现归属分离** + 修正公示框混淆静态行（「今年举行庆典？→ 广场阶段已投票决定」→「人口阶段：庆典赞助（候选人竞选）→投票选举」）；拉票/凯旋机制零改 |
 | v1.6 | 2026-10-08 | DA-Execute (WP-J Group C) | §2.7 新增候选人信息表**显示粒度变更**（每官职只显示最佳 featured 候选；resolved 后=当选者；Owner 授权；投影单一 owner=`session_api.get_population_view`，additive 只读，不改提名集；投票列表仍列全部） |
 | v1.5 | 2026-09-28 | DA-Exec (WP-M M-S1) | §2.8 补 censor 供给政策 B（D7：`forum_rules.veteran_supply` `1/2/1/0.5` → `2/3/2/0.7`，供给质量手段非强制填充；保留资格） |
 | v1.4 | 2026-08-23 | DA-Exec (WP-E Slice 11 PU-04) | 新增 §8：candidate supply 来源补注（E-G7-09 veteran supply，资格契约 REVIEWED-NO-CHANGE）+ Population 转换公示时序（门控 total>0，E-ODR-04） |
@@ -360,3 +361,10 @@ IF eligible_candidates(office) == 0
 - `PopulationStage.qml` 门控由 `populationResolved && total > 0` 改为 `total > 0`：
   战场指挥官转换结果在选举解析前即公示；数据源不变（`begin_population_phase` phase
   result 权威输出）；转换缺失 → 无 fallback 文案（fail-closed）。
+
+## WP-J Group D 同步注记（2026-10-09，DA-Execute；append-only，目标锚点 §2.2.1/§2.2.2/§2.4）
+
+> 权威：WP-J Group D SA-Development-Task v1.1（G3 FROZEN）§5.3；S-2 Owner 确认 #4。机制**零改**（GAME_RULE_CHANGE=NO）。
+
+- **庆典 vs 凯旋仪式 归属分离（呈现层）**：**庆典** = 人口「① 庆典赞助」子环节（候选官员拉票；label 由 Group A FC-04 冻结「🎉 庆典赞助」，不改）；**凯旋仪式** = 战后反馈内容行（人口公示框内，标签逐字「凯旋仪式」）。
+- **修正混淆静态行**：`PopulationStage.qml` 公示框前置静态行由「📢 今年举行庆典？→ 广场阶段已投票决定：是」（把庆典与广场阶段凯旋投票混同）改为「📢 人口阶段：🎉 庆典赞助（候选人竞选）→ 🗳️ 投票选举」；不复制拉票机制、不改庆典/凯旋任何规则。

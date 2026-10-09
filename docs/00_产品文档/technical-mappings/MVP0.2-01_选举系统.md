@@ -295,3 +295,14 @@ load_from_dict(data):
 
 - 空候选集 → `figure_id=0`(ABSTAIN) 全链跳过（继承，无改）；censor 供给增强后仍为合法空缺。
 - 本 WP 不改选举计票/提名顺序/`get_candidates` read-model。
+
+## WP-J Group D 同步注记（2026-10-09，DA-Execute；append-only）
+
+> 权威：WP-J Group D SA-Development-Task v1.1（G3 FROZEN）§5.3；对应规格 MVP0.2-01 §2.4 注记。
+
+- **呈现归属分离（D-2）**：`PopulationStage.qml` **既有 `populationAnnouncement` 框内**前置静态行修正为「📢 人口阶段：🎉 庆典赞助（候选人竞选）→ 🗳️ 投票选举」（未结算）/「✨ 选举已完成！」（结算）；「凯旋仪式」行归属战后反馈（读 `sessionStore.populationOutcome`）。零业务重建（FC-D08）；庆典/凯旋机制零改。
+
+### 版本日志（WP-J Group D）
+| 版本 | 日期 | 摘要 |
+|:--|:--|:--|
+| v1.1 | 2026-10-09 | WP-J Group D：人口公示框内 D-2 混淆静态行修正（庆典 vs 凯旋归属分离；呈现层） |

@@ -104,6 +104,8 @@ def get_forum_view(state: GameState, viewer_player_id: str) -> dict:
             "war_threats": _war_threat_rows(state),
             # WP-E F7（E-G7-14P/06P）：war_events 保留载体 + has_active_war（权威访问器）
             "war_events": state.get_forum_war_events(),
+            # WP-J Group D（FC-D09/FC-D10）：起义警示 additive 只读投影（权威事件 carrier）
+            "rebellion_events": state.get_forum_rebellion_events(),
             "has_active_war": bool(war_system.get_active_wars()) if war_system else False,
             "pending_actions": {
                 "retirements": len(pending.get("retirements", [])),
@@ -246,6 +248,12 @@ def initialize_forum_turn(state: GameState) -> dict:
 
     # ⑤ 民变年度更新（副产物）
     unrest_result = check_province_unrest(state)
+
+    # WP-J Group D（FC-D09）：在 check_province_unrest 之后【只读捕获】本回合权威起义事件
+    # 为载体（镜像 _forum_war_events；不改起义创建/招募/民怨语义）
+    state.set_forum_rebellion_events(
+        (unrest_result.get("data", {}) or {}).get("rebellions", [])
+    )
 
     # 防御性 hero 残留清理（009 跨回合陈旧触发兜底，ODR-04 后保留）
     state.hero_spawned_this_turn = False

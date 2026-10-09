@@ -60,6 +60,36 @@ Rectangle {
         return icons[office] || "🏛"
     }
 
+    // WP-J Group D-Aftermath（J-AC-04a / FC-D08）：只读消费权威 populationOutcome（零业务重建）。
+    function outcomeTriumphs() {
+        var o = sessionStore.populationOutcome
+        return (o && o.triumphs) ? o.triumphs : []
+    }
+    function outcomeResolvedWarsTotal() {
+        var o = sessionStore.populationOutcome
+        return (o && o.legions && o.legions.resolved_wars && o.legions.resolved_wars.total !== undefined)
+            ? o.legions.resolved_wars.total : 0
+    }
+    function outcomeDeescalatedTotal() {
+        var o = sessionStore.populationOutcome
+        return (o && o.legions && o.legions.deescalated && o.legions.deescalated.total !== undefined)
+            ? o.legions.deescalated.total : 0
+    }
+    function outcomeFleets() {
+        var o = sessionStore.populationOutcome
+        return (o && o.fleets) ? o.fleets : []
+    }
+    function hasPopulationAftermath() {
+        return outcomeTriumphs().length + outcomeResolvedWarsTotal()
+            + outcomeDeescalatedTotal() + outcomeFleets().length > 0
+    }
+    function populationAftermathRowCount() {
+        return outcomeTriumphs().length
+            + (outcomeResolvedWarsTotal() > 0 ? 1 : 0)
+            + (outcomeDeescalatedTotal() > 0 ? 1 : 0)
+            + (outcomeFleets().length > 0 ? 1 : 0)
+    }
+
     function factionShort(name) {
         return factionStyle.factionShort(name)
     }
@@ -201,7 +231,9 @@ Rectangle {
             id: announcement
             objectName: "populationAnnouncement"
             Layout.fillWidth: true
-            Layout.preferredHeight: 88
+            // WP-J Group D-Aftermath（FC-D14 / §6.1 L-D1）：框高 additive——基值 88（Group A 兼容），
+            // 有战后反馈行时按权威行数撑高；空 payload 回落 88（FC-D07）。
+            Layout.preferredHeight: 88 + (root.hasPopulationAftermath() ? root.populationAftermathRowCount() * 16 + 5 : 0)
             color: "#FFF9EC"
             radius: 6
             border.color: "#D4A574"
@@ -212,8 +244,63 @@ Rectangle {
                 anchors.margins: 12
                 spacing: 5
 
+                // ---------- ★D-1/D-3 战后反馈行（并入既有公示框；非新框，FC-D07/FC-D08） ----------
+                // v1.2 Δ-6（G7/Q1，2026-10-09）：渲染锚点前移——反馈行渲染于框内★顶部
+                // （Group A 既有首行「✨ 选举已完成！」/「📢 人口阶段：…」之前；对齐规格 Step 0
+                // 公告位点：凯旋/解散先于庆典/选举）。仅位点/顺序变更，数据源/框高/空态不变。
+                ColumnLayout {
+                    objectName: "populationAftermathRows"
+                    visible: root.hasPopulationAftermath()
+                    Layout.fillWidth: true
+                    spacing: 5
+
+                    Repeater {
+                        model: root.outcomeTriumphs()
+                        delegate: Text {
+                            text: "🏛️ 凯旋仪式：" + modelData.commander_name + "（" + modelData.war_name + "）已举行"
+                            color: "#8B2500"
+                            font.pixelSize: 12
+                            font.bold: true
+                            wrapMode: Text.Wrap
+                            Layout.fillWidth: true
+                        }
+                    }
+
+                    Text {
+                        visible: root.outcomeResolvedWarsTotal() > 0
+                        text: "⚔️ 战后军团：" + root.outcomeResolvedWarsTotal() + " 支已解散"
+                        color: "#2C1E12"
+                        font.pixelSize: 12
+                        font.bold: true
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
+
+                    Text {
+                        visible: root.outcomeDeescalatedTotal() > 0
+                        text: "⚔️ 停战降级军团：" + root.outcomeDeescalatedTotal() + " 支已解散"
+                        color: "#2C1E12"
+                        font.pixelSize: 12
+                        font.bold: true
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
+
+                    Text {
+                        visible: root.outcomeFleets().length > 0
+                        text: "⚓ 闲置舰队：" + root.outcomeFleets().length + " 艘已退役"
+                        color: "#2C1E12"
+                        font.pixelSize: 12
+                        font.bold: true
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
+                }
+
                 Text {
-                    text: sessionStore.populationResolved ? "✨ 选举已完成！" : "📢 今年举行庆典？→ 广场阶段已投票决定：是"
+                    // WP-J Group D-2（FC-D06）：修正混淆静态行——「庆典（候选官员拉票）」与
+                    // 「凯旋仪式（战胜将军荣誉）」归属分离；不再把广场阶段投票（实为凯旋投票）混同庆典。
+                    text: sessionStore.populationResolved ? "✨ 选举已完成！" : "📢 人口阶段：🎉 庆典赞助（候选人竞选）→ 🗳️ 投票选举"
                     color: "#2C1E12"
                     font.pixelSize: 13
                     font.bold: sessionStore.populationResolved

@@ -35,6 +35,20 @@ src/api/forum_api.py              # vote_triumph(), resolve_forum()
 - **最小交互提交链（不变）**：单击「赞成」→ `forum_api.vote_triumph(state, player_id, war_id, True)` → `add_forum_action("triumph_votes", (war_id, faction_id, True))`（bool + append 语义**零改**）→ 刷新后行呈「已投」 disabled（重复点击无效）。
 - **单一谓词**：`action.state=="actionable"` iff 权威 `vote_triumph` 在当前态会接受（`_check_player_permission` ∧ `_triumph_eligibility`）∧ 市场子环节窗口开放 ∧ ¬resolved；`reason` 词表 {ok,not_current_player,not_phase,vote_window_closed,resolved} 保留于 DTO、界面不呈现（Owner 16:43）。QML/Store 不得重算（FC-B06）。Q1 = CLOSED（Owner 16:07，不新增窗口强校验）。
 
+## WP-J Group D 同步注记（2026-10-09，DA-Execute；append-only）
+
+> 权威：WP-J Group D SA-Development-Task v1.1（G3 FROZEN）§5.1–§5.2/§9.2；对应规格 MVP0.5-05 §2.5 注记。
+
+- **人口侧链路（J-AC-04a，additive 只读）**：`state.get_phase_result("population_disbandment")`（`war_system.process_triumph_and_disbandment().triumphs` + `legions` + `naval_system.disband_unused_fleets().fleets`）→ `session_api.get_population_view().population_outcome`（FC-D01/FC-D02，shape `{triumphs, legions{resolved_wars.total, deescalated.total}, fleets}`）→ `session_store.populationOutcome`（只读透传，零缓存）→ `PopulationStage.qml` **既有 `populationAnnouncement` 框内**追加行（凯旋仪式已举行 / 战后军团·停战降级军团·闲置舰队计数）。
+- **否决呈现撤销**：`resolve_forum()` **不**新增 `triumph_outcomes`（v1.0 additive 撤销）；写语义 = Group B 冻结原样。
+- **零业务重建**：QML/Store 逐字消费权威值，无重算（FC-D08）。
+
+### WP-J Group D 版本日志（append-only）
+
+| 版本 | 日期 | 修改人 | 修改说明 |
+|------|------|--------|---------|
+| v1.3 | 2026-10-09 | DA-Execute (WP-J Group D) | 人口公示框内战后反馈行读取链路（`population_outcome` → `populationOutcome` → QML 既有框内追加；additive 只读）+ 否决呈现撤销（`resolve_forum()` 零改） |
+
 ## 版本日志（append-only）
 
 | 版本 | 日期 | 修改人 | 修改说明 |

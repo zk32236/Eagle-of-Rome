@@ -317,6 +317,12 @@ Rectangle {
         return output.join("\n")
     }
 
+    // WP-J Group D-Rebellion（FC-D09/FC-D10）：只读起义警示行数（零业务重建；属性缺失容错）。
+    function rebellionEventCount() {
+        var rows = sessionStore.forumRebellionEvents
+        return rows ? rows.length : 0
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 10
@@ -325,7 +331,8 @@ Rectangle {
             id: announceArea
             objectName: "announceArea"
             Layout.fillWidth: true
-            Layout.preferredHeight: sessionStore.forumResolved ? Math.min(138, 58 + Math.max(1, root.forumResolutionLines().length) * 18) : ((sessionStore.forumWarThreats.length > 0 || sessionStore.forumWarEvents.length > 0) ? 60 + Math.min(sessionStore.forumWarThreats.length + sessionStore.forumWarEvents.length, 4) * 16 : 60)
+            // WP-J Group D-Rebellion（§6.1 L-D4）：非 resolved 分支高度公式 additive 纳入 forumRebellionEvents
+            Layout.preferredHeight: sessionStore.forumResolved ? Math.min(138, 58 + Math.max(1, root.forumResolutionLines().length) * 18) : ((sessionStore.forumWarThreats.length > 0 || sessionStore.forumWarEvents.length > 0 || root.rebellionEventCount() > 0) ? 60 + Math.min(sessionStore.forumWarThreats.length + sessionStore.forumWarEvents.length + root.rebellionEventCount(), 4) * 16 : 60)
             color: "#D1FFF9EC"
             border.color: "#85A8753B"
             border.width: 1
@@ -396,12 +403,30 @@ Rectangle {
                     }
                 }
 
+                // ★D-4 起义警示行（并入既有公告框；非新容器，FC-D09/FC-D10/FC-D11）
+                ColumnLayout {
+                    objectName: "announceRebellionRows"
+                    visible: root.rebellionEventCount() > 0
+                    spacing: 2
+                    Repeater {
+                        model: sessionStore.forumRebellionEvents
+                        delegate: Text {
+                            text: "⚠️ 起义爆发：" + modelData.province_name + "（" + modelData.name + "）"
+                            color: "#9A2D0A"
+                            font.pixelSize: 12
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                        }
+                    }
+                }
+
                 Text {
                     objectName: "announceWarThreatsEmpty"
                     // WP-E F7：空态三条件（war_threats 空 && war_events 空 && !has_active_war）——
                     // 权威存在即不再显示「无战争威胁」（06P-01）
                     visible: sessionStore.forumWarThreats.length === 0
                              && sessionStore.forumWarEvents.length === 0
+                             && root.rebellionEventCount() === 0
                              && !sessionStore.forumHasActiveWar
                     text: "\u672c\u56de\u5408\u65e0\u6218\u4e89\u5a01\u80c1"
                     color: "#766652"

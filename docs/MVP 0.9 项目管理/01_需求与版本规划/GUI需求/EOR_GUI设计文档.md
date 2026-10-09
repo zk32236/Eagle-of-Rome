@@ -824,3 +824,15 @@ label.text = i18n.get("ui.treasury.display", amount=142)
 | R6 | 2026-10-09 | DA-Execute (WP-J Group C G7 Test R4 Delta) | G7 Test R4 **回退 + Q1 修正**：§3.5 ①②③+战争卡 行勾选框 **全部移除自定义 `indicator`** ⇒ 回落平台默认样式（系统勾选框；③ 勾选 = 系统 `☑`；**撤回** `FC-C28`/`FC-C29`/`FC-C30`；`FC-C31`）+ §3.5 ② 结果字形口径 **仅反映元老院表决**（`rejected→红✗`；`passed`/`vetoed→绿✓`；②-local `senateResultMark()`；**修订** `FC-C25`；`FC-C32`）+ `FC-C22` 间距**实测重校**（24→15px）；**保留** `FC-C18`/`FC-C15–C17`/`FC-C25` 结果字形/`FC-C33` 证据加固；纯呈现（框式/字形/谓词），状态机与业务语义零改（#3 已放弃，不触数据层） |
 | R7 | 2026-10-09 | DA-Execute (WP-J Group C G7 Test R5 Delta) | G7 Test R5 两修呈现同步：§3.5 ② 结果字形 **表决完成（`tribune_veto`）即显**（源扩展 = `modelData.result` ∪ `voteResultFor().passed`；`FC-C35`，**修订** `FC-C32`）+ §3.5 ② 行勾选框 **非输入态隐藏**（`visible: senate_vote`）+ ② 身份文本承载重构为行内**同级 `Text`**（保 `FC-C15–C17` wrap；**退役** `FC-C22`；`FC-C36`）；**保留** `FC-C18` 行卡 / `FC-C31` 平台默认指示器 / 单一 `ScrollView`；证据含 `tribune_veto`/`results` 步骤相对照断言 + 有头复验（含战争行）；纯呈现（时点/源/承载/可见性），状态机与业务语义零改（不触数据层） |
 | R8 | 2026-10-09 | DA-Execute (WP-J Group C G7 Test R6+R7 Delta) | G7 Test R6/R7 归并：§3.5 ② 元老院表决**支持率口径 = 元老院表决（与否决无关）**、被否决提案**不被清空**（`calculate_vote_result` 解除否决短路清零；`FC-C39`，Owner 裁 C1）+ §3.5 ③ 保民官否决**不渲染支持率**（删 ③ 支持率 `Text`；`FC-C38`）+ §3.5 ② **勾选框可控**（勾选=同意 / 未勾选=否决；默认未勾选；选择集随会期重置；`FC-C41`）+ **提交按玩家选择逐提案记录**（删硬编码全赞成；`FC-C42`）；② 结果字形回退加 `!vr.vetoed` 门（保 `FC-C32`）；数据/UI 语义变更（触及 `political_system` 数据层） |
+
+## 8. WP-J Group D 呈现同步（2026-10-09，DA-Execute；append-only）
+
+> 权威：WP-J Group D SA-Development-Task v1.1（G3 FROZEN）+ G4 写面冻结；只读呈现 + additive 只读投影；业务语义/推进 owner 零改（GAME_RULE_CHANGE=NO）。
+
+- **人口阶段公示框（`populationAnnouncement`，既有框内追加）**：逐字消费权威 `sessionStore.populationOutcome` → 「🏛️ 凯旋仪式：<commander_name>（<war_name>）已举行」+「⚔️ 战后军团：<N> 支已解散」/「⚔️ 停战降级军团：<M> 支已解散」/「⚓ 闲置舰队：<K> 艘已退役」；框高 additive（基值 88；空 payload 回落，FC-D07）。D-2 修正混淆静态行为「📢 人口阶段：🎉 庆典赞助（候选人竞选）→ 🗳️ 投票选举」（庆典 vs 凯旋归属分离）。
+- **广场阶段公告框（`announceArea`，既有框内追加）**：逐字消费权威 `sessionStore.forumRebellionEvents` → 「⚠️ 起义爆发：<province_name>（<name>）」；高度公式/空态条件 additive 纳入 rebellion。
+- **不新增独立容器**（S-2：并入既有框）；QML 零业务重建（J-D02）；不自造生命周期时点（J-D04）。
+
+| 版本 | 日期 | 修改人 | 修改说明 |
+|------|------|--------|---------|
+| R9 | 2026-10-09 | DA-Execute (WP-J Group D) | 人口公示框内战后反馈行（`population_outcome`；凯旋仪式/军团·舰队解散计数；框高 additive 基值88）+ 广场公告框内起义警示行（`rebellion_events`；高度/空态 additive）+ D-2 混淆静态行修正；只读呈现/additive 只读投影，业务语义零改 |

@@ -206,6 +206,54 @@ def _derive_featured_candidate_id(state: GameState, office: str, rows, election_
     return best.get("id")
 
 
+# WP-J Group D-Aftermath（FC-D01/FC-D02）：战后反馈只读投影（单一 owner = 本读模型装配点）。
+def _empty_population_outcome() -> dict:
+    return {
+        "triumphs": [],
+        "legions": {"resolved_wars": {"total": 0}, "deescalated": {"total": 0}},
+        "fleets": [],
+    }
+
+
+def _project_population_outcome(state: GameState, result_data: dict) -> dict:
+    """逐字投影权威战后解散 payload → ``population_outcome``（FC-D02；零重算；空态不造行 FC-D07）。
+
+    数据源：``state.get_phase_result("population_disbandment")``（回退 ``population`` phase
+    result 的 ``data.disbandment``）。仅只读；不新增写语义；QML 零业务重建（FC-D08）。
+    """
+    disbandment = state.get_phase_result("population_disbandment")
+    if not isinstance(disbandment, dict):
+        if isinstance(result_data, dict) and isinstance(result_data.get("disbandment"), dict):
+            disbandment = result_data.get("disbandment")
+        else:
+            disbandment = None
+    if not isinstance(disbandment, dict):
+        return _empty_population_outcome()
+
+    legions = disbandment.get("legions") if isinstance(disbandment.get("legions"), dict) else {}
+    resolved = legions.get("resolved_wars") if isinstance(legions.get("resolved_wars"), dict) else {}
+    deescalated = legions.get("deescalated") if isinstance(legions.get("deescalated"), dict) else {}
+
+    triumphs = []
+    for row in (disbandment.get("triumphs") or []):
+        if isinstance(row, dict):
+            triumphs.append({
+                "war_id": row.get("war_id"),
+                "war_name": row.get("war_name"),
+                "commander_id": row.get("commander_id"),
+                "commander_name": row.get("commander_name"),
+            })
+
+    return {
+        "triumphs": triumphs,
+        "legions": {
+            "resolved_wars": {"total": resolved.get("total", 0)},
+            "deescalated": {"total": deescalated.get("total", 0)},
+        },
+        "fleets": list(disbandment.get("fleets") or []),
+    }
+
+
 def get_population_view(state: GameState, viewer_player_id: str) -> dict:
     """
     返回人口阶段的详细视图，包含候选人、已投票状态、可执行操作。
@@ -323,6 +371,8 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
 
         data = {
             "steps": steps,
+            # WP-J Group D-Aftermath（J-AC-04a / FC-D01/FC-D02）：战后反馈 additive 只读投影
+            "population_outcome": _project_population_outcome(state, result_data),
             "my_figures": my_figures,
             "candidates": featured_candidates,
             "featured_candidate_ids": featured_candidate_ids,

@@ -215,10 +215,20 @@
 > - **Q1（投票窗口）** = Owner 16:07 **CLOSED / NO-CHANGE**（市场子环节；不新增 `vote_triumph` 窗口强校验）。
 > - **写语义零改**：`vote_triumph` bool + append 记录语义不变。
 
+## WP-J Group D 同步注记（2026-10-09，DA-Execute；append-only，目标锚点 §2.5/§4.2/§5.4）
+
+> 权威：WP-J Group D SA-Development-Task v1.1（G3 FROZEN）§5.1–§5.3/§6；S-2 Owner 确认（2026-10-09）。凯旋 share/vote/reward 规则与判定逻辑**零改**（GAME_RULE_CHANGE=NO）；`resolve_forum()` 写语义保持 Group B 冻结原样（**不新增** `triumph_outcomes`）。
+
+- **人口阶段公示框内呈现**：`session_api.get_population_view()` 增 additive 只读字段 `population_outcome`（逐字投影权威 `state.get_phase_result("population_disbandment")`；回退 `population` 结果 `data.disbandment`）→ `session_store.populationOutcome` → `PopulationStage.qml` **既有公示框 `populationAnnouncement` 内**追加行「🏛️ 凯旋仪式：<commander_name>（<war_name>）已举行」（FC-D01/FC-D02/FC-D03）。框高 additive（基值 88，空 payload 回落，FC-D07）。
+- **否决不在人口阶段重复呈现**（S-2 #2）：广场阶段已呈现「凯旋未获批准」；人口阶段仅呈现**已举行**（`triumphs[]` 权威谓词，FC-D03/FC-D04）。⇒ v1.0 拟增的结构化 `triumph_outcomes` **撤销**。
+- **军团/舰队解散以权威计数呈现**（FC-D05）：`legions.resolved_wars.total` / `legions.deescalated.total` / `fleets.length`，仅显示已结束战争军团/闲置舰队行政退役**反馈**，**不改**解散时机（①d-2 / WP-G G1-14 冻结）。
+- **「老兵战利品分配」= ROUTED_OUT（J-D06 / ESC-D-01）**：source-first 核为 producer 未实现的业务/经济语义（无人口阶段扣除 / 无否决回国库）⇒ 不属呈现面，**不呈现、不 QML 自造**。
+
 ## 9. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.3 | 2026-10-09 | DA-Execute (WP-J Group D) | §2.5 追加注记：人口阶段**既有公示框内**呈现权威凯旋「已举行」与军团/舰队解散计数（additive 只读投影 `population_outcome`；框高 additive）+ 否决不重复呈现；「老兵战利品分配」退域（ESC-D-01）；凯旋规则/`resolve_forum()` 写语义零改（GAME_RULE_CHANGE=NO） |
 | v1.2 | 2026-10-06 | DA Sub-Agent (WP-J Group B) | ③ GUI 最小规则同步（FROZEN v1.3 / Owner 16:43）：§2.2 追加注记——凯旋行按钮三态（赞成/已投[灰disabled]/不可投[灰disabled]）、点击后即灰化无重复、不可投统一文案；additive 读模型 `triumph_wars[].action`/`.viewer_vote`；Q1 = CLOSED；`vote_triumph` bool/append 语义零改（GAME_RULE_CHANGE=NO） |
 | v1.1 | 2026-09-09 | DA Sub-Agent (WP-G-R4 B3) | R4 同步（FROZEN v1.7 §4.3）：§2.1/§3.1/§4.3 追加注记——VICTORY/TRIUMPH 均按当前四条件可 eligible（ordinary VICTORY 保留仪式，无 CRT==TRIUMPH 门）；triumph_commander_id=ceremony candidate 非 CRT 证据；战斗身份 carrier 与 legacy unknown 中性事件；Forum 公开 vote/resolve 一次 + share 单次消费（GAME_RULE_CHANGE=NO） |
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent E | 初版创建 |

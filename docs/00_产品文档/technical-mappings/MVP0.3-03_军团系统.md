@@ -28,4 +28,11 @@ src/ui/commands/phase_combat.py, func_military.py, phase_revenue.py
 ### 版本日志（续）
 | 版本 | 日期 | 摘要 |
 |:--|:--|:--|
+| v1.2 | 2026-10-09 | WP-J Group D：战后军团/舰队解散反馈在人口公示框内以权威计数呈现（additive 只读；仅显示，不改解散时机）（DA-Execute） |
 | v1.1 | 2026-09-27 | WP-O O-S3：死亡绑定-only Legion 镜像清理（DA-Execute） |
+
+## WP-J Group D 同步注记（2026-10-09，DA-Execute；append-only）
+
+> 权威：WP-J Group D v1.1 §5.1；对应规格 MVP0.3-03 §2.3 注记。
+
+- **population_outcome 链路**：`state.get_phase_result("population_disbandment")`（`war_system.process_triumph_and_disbandment().legions`）→ `session_api.get_population_view().population_outcome.legions{resolved_wars.total, deescalated.total}` → `session_store.populationOutcome` → `PopulationStage.qml` 既有公示框内追加计数行。零业务重建；不改解散时机。

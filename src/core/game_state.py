@@ -114,6 +114,9 @@ class GameState:
         self._resolution_settlement: Optional[Dict[str, Any]] = None
         # WP-E F7：论坛阶段 war_events 保留载体（initialize_forum_turn 写入；A2 段清除）
         self._forum_war_events: List[str] = []
+        # WP-J Group D（FC-D09）：论坛阶段起义事件只读载体（initialize_forum_turn 捕获；
+        # _commit_settlement 同区清除，镜像 _forum_war_events）
+        self._forum_rebellion_events: List[Dict[str, Any]] = []
 
         # 年度推进重入 guard（FC-04，瞬态，不持久化 FC-10）
         self._year_advance_in_progress: bool = False
@@ -262,6 +265,7 @@ class GameState:
         self._phase_results.clear()
         self._resolution_settlement = None
         self._forum_war_events = []
+        self._forum_rebellion_events = []
         self._year_advance_in_progress = False
 
         # MVP 0.5 重置新增字段
@@ -2051,6 +2055,7 @@ class GameState:
         instance._phase_results = {}
         instance._resolution_settlement = None
         instance._forum_war_events = []
+        instance._forum_rebellion_events = []
         instance._year_advance_in_progress = False
         instance._initialize_mortality_pool()
 
@@ -2579,6 +2584,8 @@ class GameState:
         self._turn_land_sale_total = 0
         # WP-E F7：war_events 保留载体随年度滚轮作废（与 clear_forum_pending 同区）
         self._forum_war_events = []
+        # WP-J Group D（FC-D09）：起义事件只读载体随年度滚轮作废（与 _forum_war_events 同区）
+        self._forum_rebellion_events = []
         # A3+A4：赋 member 衰减目标 + update_influence（确定性重算）
         decay = self._apply_member_decay(plan["member_updates"])
         # A5：合同过期
@@ -2969,6 +2976,20 @@ class GameState:
     def clear_forum_war_events(self) -> None:
         """清除本回合 war_events（_commit_settlement A2 段调用，与 clear_forum_pending 同区）。"""
         self._forum_war_events = []
+
+    # ========== WP-J Group D：论坛起义事件只读载体访问器（FC-D09，镜像 war_events）==========
+
+    def set_forum_rebellion_events(self, events: List[Dict[str, Any]]) -> None:
+        """写入本回合起义事件（initialize_forum_turn 权威产出；deepcopy 防外部突变）。"""
+        self._forum_rebellion_events = copy.deepcopy(list(events or []))
+
+    def get_forum_rebellion_events(self) -> List[Dict[str, Any]]:
+        """读取本回合起义事件（deepcopy）。"""
+        return copy.deepcopy(self._forum_rebellion_events)
+
+    def clear_forum_rebellion_events(self) -> None:
+        """清除本回合起义事件（_commit_settlement A2 段调用，与 clear_forum_war_events 同区）。"""
+        self._forum_rebellion_events = []
 
     # ========== 战争/军事系统 ==========
 

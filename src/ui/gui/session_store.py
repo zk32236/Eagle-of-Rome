@@ -260,6 +260,11 @@ class GuiSessionStore(QObject):
     def populationView(self) -> Dict[str, Any]:
         return self._population_view
 
+    @Property(dict, notify=populationViewChanged)
+    def populationOutcome(self) -> Dict[str, Any]:
+        """WP-J Group D-Aftermath（FC-D01/FC-D02）：战后反馈只读透传（零本地缓存）。"""
+        return self._population_view.get("population_outcome", {})
+
     @Property(list, notify=populationViewChanged)
     def populationCampaigns(self) -> List[Dict[str, Any]]:
         return self._population_view.get("my_campaigns", [])
@@ -691,6 +696,11 @@ class GuiSessionStore(QObject):
     @Property(list, notify=forumViewChanged)
     def forumWarEvents(self) -> list:
         return self._forum_view.get("war_events", [])
+
+    # WP-J Group D-Rebellion（FC-D09/FC-D10）：起义警示只读透传（零本地缓存）
+    @Property(list, notify=forumViewChanged)
+    def forumRebellionEvents(self) -> list:
+        return self._forum_view.get("rebellion_events", [])
 
     @Property(bool, notify=forumViewChanged)
     def forumHasActiveWar(self) -> bool:
