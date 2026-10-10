@@ -244,6 +244,39 @@ Rectangle {
         return parts.join("\uff1b")
     }
 
+    // DEFER-R3-D（FC-DEFERD-02）：公示区「缺席说明」——有总督空缺、但因无可用候选人
+    // 而未生成总督任命卡的行省集合。仅取权威 DTO 的展示层集合差：
+    // governorAppointments.pending_provinces ∖ senateProposalOptions[type=="governor"]。
+    // 纯函数（集合差 + 名称拼接），零业务规则、零状态、无副作用。
+    function governorAbsentProvinces() {
+        var appts = sessionStore.governorAppointments || {}
+        var pending = appts.pending_provinces || []
+        var options = sessionStore.senateProposalOptions || []
+        var covered = {}
+        for (var i = 0; i < options.length; i++) {
+            var o = options[i]
+            if (o && o.type === "governor" && o.params && o.params.province_id !== undefined) {
+                covered[String(o.params.province_id)] = true
+            }
+        }
+        var absent = []
+        for (var j = 0; j < pending.length; j++) {
+            var p = pending[j]
+            if (!p || p.province_id === undefined || p.province_id === null) continue
+            if (!covered[String(p.province_id)]) absent.push(p.name || "")
+        }
+        return absent
+    }
+
+    // DEFER-R3-D（FC-DEFERD-03）：缺席说明文案——玩家可见文案经 i18n key
+    // `senate.governor.absent_provinces`（经 L10n.t 反应式绑定；缺参/缺键不崩）。
+    // 缺席集合为空 ⇒ 返回空串（不渲染，守 FC-14⑤ 精神：非空才显，无空态占位）。
+    function governorAbsentNoticeText() {
+        var names = root.governorAbsentProvinces()
+        if (names.length === 0) return ""
+        return L10n.t("senate.governor.absent_provinces", { provinces: names.join("\u3001") })
+    }
+
     // ---- WP-D AU-6: Public Announcement 渲染（数据来自 authoritative DTO，禁 QML 推导） ----
     function _announcementEnactedText() {
         var rows = (sessionStore.senatePublicAnnouncement || {}).enacted_proposals || []
@@ -1309,6 +1342,21 @@ Rectangle {
                     lineHeight: root.lBody
                 }
                 Text { text: root.seatLineRich(); textFormat: Text.RichText; color: "#9A2D0A"; font.pixelSize: 12; font.bold: true; Layout.fillWidth: true; wrapMode: Text.Wrap; lineHeightMode: Text.FixedHeight; lineHeight: root.lBody }
+
+                // DEFER-R3-D（FC-DEFERD-01）：公示区状态面——因无可用候选人而未生成总督任命卡的
+                // 行省（信息性状态行，恒显于「③ 议事内容」组后；非提案列表、非 public_announcement）。
+                // 缺席集合非空才渲染（空 ⇒ 空串、不显）。
+                Text {
+                    objectName: "senateAnnouncementGovernorAbsentNotice"
+                    visible: root.governorAbsentNoticeText() !== ""
+                    text: root.governorAbsentNoticeText()
+                    color: "#9A2D0A"
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    lineHeightMode: Text.FixedHeight
+                    lineHeight: root.lBody
+                }
 
                 // ④ results 内容（step==results 时于同一 body 追加；不替换主持/席位、不重复造第二框 - L-5）
                 ColumnLayout {

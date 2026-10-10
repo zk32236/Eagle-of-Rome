@@ -338,5 +338,6 @@
     "senate.detail.threat.naval": "威胁 {level} / 需要海战",
     "senate.detail.peace": "赔款 {indemnity} T / {duration} 年",
     "senate.detail.contract": "成本 {cost} T / 预期收益 {profit} T",
-    "senate.leader.count": "{count} 位"
+    "senate.leader.count": "{count} 位",
+    "senate.governor.absent_provinces": "以下行省无可用候选人，未生成总督任命卡：{provinces}"
 }

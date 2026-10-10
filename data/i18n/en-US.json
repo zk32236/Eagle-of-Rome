@@ -193,5 +193,6 @@
     "mortality.confiscate.wealth": "Wealth lost {amount} T (to treasury)",
     "mortality.confiscate.land": "Land lost {amount} C (to treasury)",
     "mortality.action.execute": "Execute Mortality",
-    "mortality.action.done": "Executed"
+    "mortality.action.done": "Executed",
+    "senate.governor.absent_provinces": "No eligible governor candidate for {provinces}; no appointment card generated"
 }
