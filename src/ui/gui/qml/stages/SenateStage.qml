@@ -17,6 +17,8 @@ Rectangle {
     // 勾选 = 同意；未勾选 = 否决（**默认未勾选**）。**随会期重置**（OBS-R7-3，见 syncSenateVoteSelection）。
     property var selectedSenateVoteIds: []
     property string _senateVoteSelectionKey: ""
+    // WP-J-R1（FC-JR1-01）：③ 保民官否决选择集**专属**会期键（**禁**与 ② `_senateVoteSelectionKey` 共用）。
+    property string _vetoSelectionKey: ""
     property bool proposalStepDone: sessionStore.senateCurrentStep !== "proposal"
     // R5（SA §5.1，DA-5）：统一 War Card 草稿暂存（仅本地输入；可编辑真值由 Core 在 Submit 时
     // 重验，QML 不得本地推导分类/N 上限/部署门 —— A-I18/D-SC02/D-SC15）
@@ -542,6 +544,23 @@ Rectangle {
         }
     }
 
+    // WP-J-R1（FC-JR1-01，仿 ② syncSenateVoteSelection；OBS-R7-3 对称补齐）：③ 保民官否决选择集
+    // **随会期重置**——会期提案集（id 集合）变化即清空（新会期 `proposal_id` 可能复用，防 stale id
+    // 残留致 record_veto 全拒 → resolve_senate 不可达死锁）。纯 QML 瞬态状态重置；零后端/零文案。
+    function syncVetoSelection() {
+        var rows = sessionStore.senateSubmittedProposals || []
+        var ids = []
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].id !== undefined && rows[i].id !== null) ids.push(Number(rows[i].id))
+        }
+        ids.sort(function(a, b) { return a - b })
+        var key = ids.join(",")
+        if (key !== _vetoSelectionKey) {
+            _vetoSelectionKey = key
+            selectedVetoProposalIds = []
+        }
+    }
+
     function leaderCountCopy(count) {
         return GuiText.senateLeaderCount(count)
     }
@@ -802,6 +821,8 @@ Rectangle {
         function onSenateViewChanged() {
             // WP-J Group C G7 Test R7 Delta（FC-C41(4)，OBS-R7-3）：② 选择集随会期重置。
             root.syncSenateVoteSelection()
+            // WP-J-R1（FC-JR1-02）：③ 保民官否决选择集随会期重置（邻 ② 调用；仅新增一行）。
+            root.syncVetoSelection()
             // 提案阶段：选项加载完成后同步默认选中并展开（G7「只有法案条目无控件」闭合）
             if (sessionStore.senateCurrentStep === "proposal") {
                 if (selectedProposalKeys.length === 0) root.refreshAccordion()

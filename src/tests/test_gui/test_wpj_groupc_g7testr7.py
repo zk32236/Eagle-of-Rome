@@ -346,6 +346,209 @@ def test_r7_render_live_headed_recheck_recorded():
     assert not display, f"若有 DISPLAY 则应做有头复验（不得伪报）: {display}"
 
 
+# ---------------------------------------------------------------------------
+# WP-J-R1（F1 · FC-JR1-01/02）—— ③ 保民官否决选择集随会期重置（STRUCT + DATA）
+# ---------------------------------------------------------------------------
+
+def test_jr1_source_veto_selection_reset_on_session_change():
+    """FC-JR1-01/02：③ `syncVetoSelection()` 存在且挂于 `onSenateViewChanged`；键源 =
+    `senateSubmittedProposals`；键变 ⇒ 清 `selectedVetoProposalIds`；键属性**专用**
+    （`_vetoSelectionKey`，禁与 ② `_senateVoteSelectionKey` 共用）。仿 ② 断言（`:88-99`）。"""
+    src = _senate()
+    assert "property string _vetoSelectionKey" in src, "③ 专属会期键须存在（FC-JR1-01）"
+    assert "function syncVetoSelection()" in src, "syncVetoSelection 须存在（FC-JR1-01）"
+    fn = src[src.find("function syncVetoSelection()"):]
+    fn = fn[:fn.find("function ", 10)]
+    assert "senateSubmittedProposals" in fn, "键源须 = senateSubmittedProposals（FC-JR1-01）"
+    assert "selectedVetoProposalIds = []" in fn, "键变须清空 ③（FC-JR1-01）"
+    assert "_vetoSelectionKey" in fn, "须写 ③ 专用键（FC-JR1-01）"
+    assert "_senateVoteSelectionKey" not in fn, "③ 键禁与 ② 共用（FC-JR1-01）"
+    conn = src[src.find("function onSenateViewChanged()"):]
+    conn = conn[:conn.find("function expandCheckedBills") if "function expandCheckedBills" in conn else 2000]
+    assert "root.syncVetoSelection()" in conn, "须挂于 onSenateViewChanged（FC-JR1-02）"
+
+
+def _count_resolve(store):
+    """包装 `store._adapter.resolve_senate` 以计数调用（仍执行原实现；不旁路业务链）。"""
+    calls = {"n": 0}
+    orig = store._adapter.resolve_senate
+
+    def _wrap(*args, **kwargs):
+        calls["n"] += 1
+        return orig(*args, **kwargs)
+
+    store._adapter.resolve_senate = _wrap
+    return calls
+
+
+def test_jr1_data_empty_veto_submit_resolves_and_advances():
+    """WJR1-AC-02（派生自 FC-JR1-01）：HUMAN ∧ tribune_veto ∧ ③=空 ⇒
+    `doSubmitSenateVetoes([])` ⇒ `resolve_senate` **被调** + step 推进（破 stale 死锁）。"""
+    store, _state, _viewer, _veto_ids = R._senate_veto_store_with_selection()
+    assert store.senateCurrentStep == "tribune_veto", store.senateCurrentStep
+    calls = _count_resolve(store)
+    fb = store.doSubmitSenateVetoes([])
+    assert fb.get("success"), fb
+    assert calls["n"] == 1, f"空 ③ 须直达 resolve_senate（被调 1 次）：{calls}"
+    assert store.senateCurrentStep == "results", store.senateCurrentStep
+
+
+def test_jr1_data_stale_veto_does_not_resolve():
+    """否证基线（WJR1-AC-02 s2，证根因）：HUMAN ∧ ③=stale（本会期不存在）⇒
+    `doSubmitSenateVetoes([stale])` ⇒ `resolve_senate` **未被调** + step 仍 `tribune_veto`
+    （复现死锁链；对照诊断 §2.2）。"""
+    store, _state, _viewer, veto_ids = R._senate_veto_store_with_selection()
+    stale = max(veto_ids) + 12345
+    calls = _count_resolve(store)
+    fb = store.doSubmitSenateVetoes([stale])
+    assert not fb.get("success"), fb
+    assert calls["n"] == 0, f"stale ③ 不得 resolve（复现死锁）：{calls}"
+    assert store.senateCurrentStep == "tribune_veto", store.senateCurrentStep
+
+
+# ---------------------------------------------------------------------------
+# WP-J-R1（F1 · WJR1-AC-03）—— 显式三会期 DIRECT_PRODUCTION 链（HUMAN→AI→HUMAN）
+# ---------------------------------------------------------------------------
+
+def _jr1_qml_ids(stage_root):
+    """读取 QML `SenateStage` 根 ③ 选择集（`selectedVetoProposalIds`）为 Python list；
+    QJSValue → Python 转换（真实运行期 ③ runtime 状态）。"""
+    val = stage_root.property("selectedVetoProposalIds")
+    if hasattr(val, "toVariant"):
+        val = val.toVariant()
+    return list(val or [])
+
+
+def _jr1_new_session(store, state, viewer_id, n_props):
+    """真 Store 生产链推进到**新会期**的 `tribune_veto` 步：
+    刷新视图 → 提交 N 条 land 法案 → 预录非 viewer 支持票 → 提交表决。
+    返回本会期否决候选 id 集（`senateVetoCandidateIds`）。"""
+    store._refresh_senate_view()
+    plans = [
+        {"type": "land", "params": {
+            "act_type": "sale" if i % 2 == 0 else "distribution",
+            "amount_C": 300 - i * 10,
+        }}
+        for i in range(n_props)
+    ]
+    store.doSubmitSenateProposals(plans)
+    for p in state.get_all_players():
+        if p.player_id != viewer_id:
+            for prop in state.get_senate_proposals():
+                state.record_senate_vote(p.player_id, prop["id"], True)
+    store.doSubmitSenateVotes()
+    return list(store.senateVetoCandidateIds)
+
+
+def test_jr1_data_three_session_chain_no_deadlock():
+    """WJR1-AC-03（DATA(PRODUCTION_CHAIN)，无新 fixture，route=DIRECT_PRODUCTION）：
+    真 Store + 真 QML `SenateStage` 的**连续三会期**链（对照诊断 §5 死锁链）。
+
+    - turn1（HUMAN）：勾选任一「已通过表决」提案 → `doSubmitSenateVetoes([pid])` 成功记录否决
+      ⇒ ③ 残留 stale id（同会期键不变，FC-JR1-03）。
+    - turn2（AI）：真回合推进 ⇒ 会期切换 `senateViewChanged → syncVetoSelection()` 清 ③；
+      `doSubmitSenateVetoes()` 走 AI 分支 ⇒ `resolve_senate` 结算。
+    - turn3（HUMAN）：会期切换 ⇒ ③ 已清（空）；**否证** stale id 提交 ⇒ `record_veto` 全拒 ⇒
+      不 resolve + 仍停 `tribune_veto`（复现死锁）；**正证** 空提交 ⇒ 直达 `resolve_senate`、
+      step `tribune_veto`→`results`（**不再复现死锁**）。
+
+    **不得**直置 `selectedVetoProposalIds` / 不得绕过 `record_veto`：本测试经真 QML
+    `setVetoSelected()`（= ③ 勾选框 `onToggled` 写回路径）与真 Store 命令链达成；`resolve_senate`
+    仅以 `_count_resolve` **同缝观测**（仍执行原实现，不旁路业务）。
+    """
+    from src.api import game_api
+
+    # ---- 会期 1（HUMAN）：真原型 session + 4 法案 ⇒ tribune_veto（viewer 派系持 consul+tribune）----
+    result = session_api.create_gui_prototype_session(start_phase="senate")
+    assert result["success"], result.get("message")
+    state = result["data"]["state"]
+    viewer_id = result["data"]["human_players"][0]
+    viewer = state.get_player(viewer_id)
+    living = list(state.get_living_members())
+    consul = next(f for f in living if f.faction_id == viewer.faction_id)
+    consul.office = "consul"
+    tribune = next(f for f in living
+                   if f.faction_id == viewer.faction_id and f is not consul)
+    tribune.office = "tribune"
+    store = GuiSessionStore(state)
+    store.initialize(viewer_id)
+    store.selectPhase("senate")
+    s1_cands = _jr1_new_session(store, state, viewer_id, 4)
+    assert store.senateCurrentStep == "tribune_veto", store.senateCurrentStep
+    assert store.senateVetoControlMode == "HUMAN", store.senateVetoControlMode
+
+    # ---- 真 QML SenateStage（真实生产链渲染；会期键于首帧视图初始化）----
+    engine, _ = R._create_engine(store)
+    R._capture(engine, os.path.join(
+        EVIDENCE_BASE, _EVID_DIR, "group-c-g7testr7-jr1-three-session-chain.png"), 1280, 720)
+    window = engine.rootObjects()[0]
+    _root, stage_root = R._find_stage_root(window)
+    assert stage_root is not None, "须定位 SenateStage 根（AC-03）"
+    store._refresh_senate_view()          # 应用进入元老院时的会期键初始化（真 signal→handler）
+    calls = _count_resolve(store)
+    key1 = stage_root.property("_vetoSelectionKey")
+
+    # ---- turn1（HUMAN）：勾选 + 成功否决 ⇒ ③ 残留 stale id ----
+    stale = int(s1_cands[-1])
+    stage_root.setVetoSelected(stale, True)       # 真 QML 写回（= ③ 勾选框 onToggled）
+    assert _jr1_qml_ids(stage_root) == [stale], "turn1 勾选后 ③ 须含该 id"
+    fb1 = store.doSubmitSenateVetoes(stage_root.property("selectedVetoProposalIds"))
+    assert fb1.get("success"), fb1
+    assert calls["n"] == 1, f"turn1 否决成功须 resolve 一次：{calls}"
+    assert store.senateCurrentStep == "results", store.senateCurrentStep
+    assert _jr1_qml_ids(stage_root) == [stale], \
+        f"turn1 同会期刷新不得清 ③（FC-JR1-03 键不变；残留 stale id）：{_jr1_qml_ids(stage_root)}"
+
+    # ---- turn2（AI）：会期切换 ⇒ syncVetoSelection 清 ③；AI 分支结算 ----
+    game_api.advance_year(state, viewer_id, force=True)      # 真回合推进（新会期）
+    other_fid = next(p.faction_id for p in state.get_all_players()
+                     if p.faction_id != viewer.faction_id)
+    vf, of = state.get_faction(viewer.faction_id), state.get_faction(other_fid)
+    if tribune.id in vf.member_ids:
+        vf.member_ids.remove(tribune.id)
+    if tribune.id not in of.member_ids:
+        of.member_ids.append(tribune.id)
+    tribune.faction_id = other_fid                            # 保民官不属 viewer 派系 ⇒ AI
+    _jr1_new_session(store, state, viewer_id, 3)
+    assert store.senateCurrentStep == "tribune_veto", store.senateCurrentStep
+    assert store.senateVetoControlMode == "AI", store.senateVetoControlMode
+    key2 = stage_root.property("_vetoSelectionKey")
+    assert key2 != key1, f"会期切换须改键（{key1!r}→{key2!r}）"
+    assert _jr1_qml_ids(stage_root) == [], \
+        f"turn2 会期切换须清 ③（syncVetoSelection）：{_jr1_qml_ids(stage_root)}"
+    fb2 = store.doSubmitSenateVetoes(stage_root.property("selectedVetoProposalIds"))
+    assert fb2.get("success"), fb2
+    assert calls["n"] == 2, f"turn2 AI 分支须 resolve：{calls}"
+    assert store.senateCurrentStep == "results", store.senateCurrentStep
+
+    # ---- turn3（HUMAN）：会期切换 ⇒ ③ 清空；stale 死锁链否证 + 空提交推进 ----
+    game_api.advance_year(state, viewer_id, force=True)
+    if tribune.id in of.member_ids:
+        of.member_ids.remove(tribune.id)
+    if tribune.id not in vf.member_ids:
+        vf.member_ids.append(tribune.id)
+    tribune.faction_id = viewer.faction_id
+    s3_cands = _jr1_new_session(store, state, viewer_id, 2)
+    assert store.senateCurrentStep == "tribune_veto", store.senateCurrentStep
+    assert store.senateVetoControlMode == "HUMAN", store.senateVetoControlMode
+    key3 = stage_root.property("_vetoSelectionKey")
+    assert key3 != key2, f"会期切换须改键（{key2!r}→{key3!r}）"
+    assert _jr1_qml_ids(stage_root) == [], \
+        f"turn3 进入须已清 ③（空）：{_jr1_qml_ids(stage_root)}"
+    assert stale not in s3_cands, f"turn1 stale id 须不在本会期候选：{stale} ∈ {s3_cands}"
+    # 否证：残留 stale id 提交 ⇒ record_veto 全拒 ⇒ 不 resolve + 仍停 tribune_veto（复现死锁）
+    fb_stale = store.doSubmitSenateVetoes([stale])
+    assert not fb_stale.get("success"), fb_stale
+    assert calls["n"] == 2, f"stale id 不得 resolve（复现死锁）：{calls}"
+    assert store.senateCurrentStep == "tribune_veto", store.senateCurrentStep
+    # 正证：真 syncVetoSelection 已清 ③ ⇒ 空提交直达 resolve_senate ⇒ 推进（不再死锁）
+    fb3 = store.doSubmitSenateVetoes(stage_root.property("selectedVetoProposalIds"))
+    assert fb3.get("success"), fb3
+    assert calls["n"] == 3, f"turn3 空提交须 resolve：{calls}"
+    assert store.senateCurrentStep == "results", store.senateCurrentStep
+    R._teardown(engine)
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-v", "-s"]))
