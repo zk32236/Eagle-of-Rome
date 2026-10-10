@@ -184,7 +184,7 @@ Rectangle {
 
                 // Phase title
                 Text {
-                    text: "🃏 " + GuiText.mortalityTitle
+                    text: "🃏 " + L10n.t("mortality.title")
                     color: "#681B07"
                     font.pixelSize: 20
                     font.bold: true
@@ -193,7 +193,11 @@ Rectangle {
 
                 // Phase description
                 Text {
-                    text: sessionStore.selectedPhaseSummary.description || GuiText.mortalityIntro
+                    text: {
+                        var _descKey = sessionStore.selectedPhaseSummary.description_key
+                        var _desc = _descKey ? L10n.t(_descKey) : ""
+                        return (_desc && _desc !== _descKey) ? _desc : GuiText.mortalityIntro
+                    }
                     color: "#766652"
                     font.pixelSize: 13
                     font.italic: true
@@ -714,7 +718,7 @@ Rectangle {
 
                 Text {
                     anchors.centerIn: parent
-                    text: sessionStore.canExecuteMortality ? "⚡ 执行天命" : "✓ 已执行"
+                    text: sessionStore.canExecuteMortality ? ("⚡ " + L10n.t("mortality.action.execute")) : ("✓ " + L10n.t("mortality.action.done"))
                     color: theme.headerText
                     font.pixelSize: 13; font.bold: true
                 }

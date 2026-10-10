@@ -37,43 +37,43 @@ Rectangle {
 
         PhaseRailIcon {
             objectName: "phaseRailIcon_mortality"
-            iconText: "🎴"; label: "天命"
+            iconText: "🎴"; label: L10n.t("phase.mortality.name")
             state: sessionStore.selectedPhaseId === "mortality" ? "current" : (sessionStore.currentPhaseIndex > 0 ? "done" : "todo")
             onClicked: sessionStore.selectPhase("mortality")
         }
         PhaseRailIcon {
             objectName: "phaseRailIcon_revenue"
-            iconText: "💰"; label: "收入"
+            iconText: "💰"; label: L10n.t("phase.revenue.name")
             state: sessionStore.selectedPhaseId === "revenue" ? "current" : (sessionStore.currentPhaseIndex > 1 ? "done" : "todo")
             onClicked: sessionStore.selectPhase("revenue")
         }
         PhaseRailIcon {
             objectName: "phaseRailIcon_forum"
-            iconText: "🏛️"; label: "广场"
+            iconText: "🏛️"; label: L10n.t("phase.forum.name")
             state: sessionStore.selectedPhaseId === "forum" ? "current" : (sessionStore.currentPhaseIndex > 2 ? "done" : "todo")
             onClicked: sessionStore.selectPhase("forum")
         }
         PhaseRailIcon {
             objectName: "phaseRailIcon_population"
-            iconText: "⚖️"; label: "人口"
+            iconText: "⚖️"; label: L10n.t("phase.population.name")
             state: sessionStore.selectedPhaseId === "population" ? "current" : (sessionStore.currentPhaseIndex > 3 ? "done" : "todo")
             onClicked: sessionStore.selectPhase("population")
         }
         PhaseRailIcon {
             objectName: "phaseRailIcon_senate"
-            iconText: "🏺"; label: "元老院"
+            iconText: "🏺"; label: L10n.t("phase.senate.name")
             state: sessionStore.selectedPhaseId === "senate" ? "current" : (sessionStore.currentPhaseIndex > 4 ? "done" : "todo")
             onClicked: sessionStore.selectPhase("senate")
         }
         PhaseRailIcon {
             objectName: "phaseRailIcon_combat"
-            iconText: "⚔️"; label: "战斗"
+            iconText: "⚔️"; label: L10n.t("phase.combat.name")
             state: sessionStore.selectedPhaseId === "combat" ? "current" : (sessionStore.currentPhaseIndex > 5 ? "done" : "todo")
             onClicked: sessionStore.selectPhase("combat")
         }
         PhaseRailIcon {
             objectName: "phaseRailIcon_resolution"
-            iconText: "📊"; label: "决算"
+            iconText: "📊"; label: L10n.t("phase.resolution.name")
             state: sessionStore.selectedPhaseId === "resolution" ? "current" : (sessionStore.currentPhaseIndex > 6 ? "done" : "todo")
             onClicked: sessionStore.selectPhase("resolution")
         }

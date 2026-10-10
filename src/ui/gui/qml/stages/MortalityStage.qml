@@ -64,7 +64,7 @@ Rectangle {
                 anchors.fill: parent
                 anchors.margins: 13
                 // WP-F S3-1（007-01）：删除伪事件预告「事件类型：猝死」，保留通用随机事件引导（007-02，R-11）
-                text: "🎴 点击下方「执行天命」按钮，触发一个随机事件。"
+                text: "🎴 " + L10n.t("mortality.prompt.body")
                 color: "#2E251B"
                 font.pixelSize: theme.bodySize
                 wrapMode: Text.Wrap
@@ -215,7 +215,7 @@ Rectangle {
                                         Layout.alignment: Qt.AlignVCenter
                                     }
                                     Text {
-                                        text: "（" + (modelData.faction_name || "无派系") + "）"
+                                        text: L10n.t("mortality.death.faction_suffix", { faction: modelData.faction_name || L10n.t("mortality.faction.none") })
                                         color: "#766652"
                                         font.pixelSize: theme.smallSize
                                         Layout.alignment: Qt.AlignVCenter
@@ -225,7 +225,7 @@ Rectangle {
                                 // FC-15：归公财富（T）子行（仅 ≥ 1）。
                                 Text {
                                     visible: _showWealth
-                                    text: "💰 损失财富 " + _wealth + " T（收归国库）"
+                                    text: "💰 " + L10n.t("mortality.confiscate.wealth", { amount: _wealth })
                                     color: "#8B2500"
                                     font.pixelSize: theme.smallSize
                                     Layout.alignment: Qt.AlignVCenter
@@ -233,7 +233,7 @@ Rectangle {
                                 // FC-15：归公土地（C）子行（仅 ≥ 1）。
                                 Text {
                                     visible: _showLand
-                                    text: "🏞️ 损失土地 " + _land + " C（收归国库）"
+                                    text: "🏞️ " + L10n.t("mortality.confiscate.land", { amount: _land })
                                     color: "#2E6B2E"
                                     font.pixelSize: theme.smallSize
                                     Layout.alignment: Qt.AlignVCenter

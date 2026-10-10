@@ -1,1 +1,2 @@
 singleton GuiText 1.0 GuiText.qml
+singleton L10n 1.0 L10n.qml

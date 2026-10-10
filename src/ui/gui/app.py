@@ -13,6 +13,7 @@ from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, qmlRegisterType
 
 from src.core.game_state import GameState
 from src.ui.gui.session_store import GuiSessionStore
+from src.ui.gui.localization import gui_localization
 from src.ui.gui.controllers.population_controller import PopulationController
 from src.ui.gui.models.figure_list_model import FigureListModel
 from src.ui.gui.models.candidate_list_model import CandidateListModel
@@ -78,6 +79,7 @@ class GuiApp(QObject):
 
         # 设置上下文属性（QML 可直接访问）
         self._engine.rootContext().setContextProperty("sessionStore", self._store)
+        self._engine.rootContext().setContextProperty("localization", gui_localization)
         self._engine.rootContext().setContextProperty("guiApp", self)
 
         # 加载主 QML

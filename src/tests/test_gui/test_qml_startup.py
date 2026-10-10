@@ -239,16 +239,27 @@ def test_shell_text_catalog_labels_treasury():
     with open(gui_text_path, "r", encoding="utf-8") as fh:
         gui_text = fh.read()
 
-    assert 'treasuryPrefix: "国库 "' in gui_text
-    assert 'factionTreasuryPrefix: "派系金库 "' in gui_text
-    assert 'executeMortality: "执行天命"' in gui_text
-    assert 'advanceMortality: "进入收入阶段"' in gui_text
-    assert 'senateReadonlyBadge: "只读状态"' in gui_text
-    assert 'senateActionsDisabled: "政治行动暂未开放"' in gui_text
-    assert 'bottomQueryBarTitle: "全局查询"' in gui_text
-    assert 'queryGameStatus: "游戏状态"' in gui_text
-    assert 'queryLegionStatus: "军团状态"' in gui_text
-    assert 'closeQueryResult: "关闭"' in gui_text
+    import json
+
+    zh_path = os.path.join(PROJECT_ROOT, "data", "i18n", "zh-CN.json")
+    with open(zh_path, "r", encoding="utf-8-sig") as fh:
+        catalog = json.load(fh)
+
+    bound = {
+        "treasuryPrefix": ("shell.treasury.prefix", "国库 "),
+        "factionTreasuryPrefix": ("shell.faction_treasury.prefix", "派系金库 "),
+        "executeMortality": ("mortality.action.execute", "执行天命"),
+        "advanceMortality": ("mortality.advance", "进入收入阶段"),
+        "senateReadonlyBadge": ("senate.badge.readonly", "只读状态"),
+        "senateActionsDisabled": ("senate.actions_disabled", "政治行动暂未开放"),
+        "bottomQueryBarTitle": ("query.bar.title", "全局查询"),
+        "queryGameStatus": ("query.game_status.title", "游戏状态"),
+        "queryLegionStatus": ("query.legion_status.title", "军团状态"),
+        "closeQueryResult": ("query.result.close", "关闭"),
+    }
+    for prop, (key, value) in bound.items():
+        assert f'{prop}: I18n.L10n.t("{key}")' in gui_text, prop
+        assert catalog.get(key) == value, key
 
 
 def test_senate_stage_detail_copy_uses_gui_text_catalog():
@@ -270,9 +281,20 @@ def test_senate_stage_detail_copy_uses_gui_text_catalog():
     assert "senatePeaceDetail" in senate_stage
     assert "senateContractDetail" in senate_stage
     assert "senateLeaderCount" in senate_stage
-    assert 'senateInfluenceLabel: "影响力"' in gui_text
-    assert 'senateNavalRequiredLabel: "需要海战"' in gui_text
-    assert 'senateExpectedProfitLabel: "预期收益"' in gui_text
+    import json
+
+    zh_path = os.path.join(PROJECT_ROOT, "data", "i18n", "zh-CN.json")
+    with open(zh_path, "r", encoding="utf-8-sig") as fh:
+        catalog = json.load(fh)
+
+    bound = {
+        "senateInfluenceLabel": ("senate.label.influence", "影响力"),
+        "senateNavalRequiredLabel": ("senate.label.naval_required", "需要海战"),
+        "senateExpectedProfitLabel": ("senate.label.expected_profit", "预期收益"),
+    }
+    for prop, (key, value) in bound.items():
+        assert f'{prop}: I18n.L10n.t("{key}")' in gui_text, prop
+        assert catalog.get(key) == value, key
 
 
 def test_opc_shell_boundary_and_i18n_scans():

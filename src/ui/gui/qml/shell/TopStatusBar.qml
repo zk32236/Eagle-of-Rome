@@ -83,7 +83,7 @@ Rectangle {
             Layout.fillHeight: true
             iconText: "💰"
             statValue: sessionStore.treasury !== undefined ? sessionStore.treasury : "--"
-            statLabel: "国库"
+            statLabel: L10n.t("topStatusBar.stat.treasury")
         }
 
         // ---- 派系 ----
@@ -92,7 +92,7 @@ Rectangle {
             Layout.fillHeight: true
             iconText: "👛"
             statValue: sessionStore.factionTreasury !== undefined ? sessionStore.factionTreasury : "--"
-            statLabel: "派系"
+            statLabel: L10n.t("topStatusBar.stat.faction")
         }
 
         // ---- 影响力 ----
@@ -101,7 +101,7 @@ Rectangle {
             Layout.fillHeight: true
             iconText: "⚖️"
             statValue: sessionStore.factionInfluence !== undefined ? sessionStore.factionInfluence : "--"
-            statLabel: "影响力"
+            statLabel: L10n.t("topStatusBar.stat.influence")
         }
 
         // ---- 稳定度 — 始终显示；Store 字段或安全占位 ----
@@ -111,7 +111,7 @@ Rectangle {
             Layout.fillHeight: true
             iconText: "🏛️"
             statValue: sessionStore.stability !== undefined ? (sessionStore.stability + "%") : "--"
-            statLabel: "稳定度"
+            statLabel: L10n.t("topStatusBar.stat.stability")
         }
 
         // ---- 战争 — 始终显示；缺值显示 -- ----
@@ -121,7 +121,7 @@ Rectangle {
             Layout.fillHeight: true
             iconText: "⚔️"
             statValue: sessionStore.warCount !== undefined ? sessionStore.warCount : "--"
-            statLabel: "战争"
+            statLabel: L10n.t("topStatusBar.stat.war")
         }
 
         // ---- Round Info (rightmost standalone pill) ----
@@ -149,7 +149,7 @@ Rectangle {
                     font.pixelSize: 14
                 }
                 Text {
-                    text: "回合 " + (sessionStore.turnNumber || 1)
+                    text: L10n.t("topStatusBar.turn", { turn: sessionStore.turnNumber || 1 })
                     color: theme.headerText
                     font.pixelSize: 14
                     font.bold: true
