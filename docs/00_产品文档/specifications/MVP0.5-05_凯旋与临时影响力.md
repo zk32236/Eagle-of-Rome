@@ -224,10 +224,18 @@
 - **军团/舰队解散以权威计数呈现**（FC-D05）：`legions.resolved_wars.total` / `legions.deescalated.total` / `fleets.length`，仅显示已结束战争军团/闲置舰队行政退役**反馈**，**不改**解散时机（①d-2 / WP-G G1-14 冻结）。
 - **「老兵战利品分配」= ROUTED_OUT（J-D06 / ESC-D-01）**：source-first 核为 producer 未实现的业务/经济语义（无人口阶段扣除 / 无否决回国库）⇒ 不属呈现面，**不呈现、不 QML 自造**。
 
+## ESC-WPJ-G7Q1-01 同步注记（2026-10-10，DA-Execute；append-only，目标锚点 §2.5）
+
+> 权威：SA-Development-Task-ESC-WPJ-G7Q1-01（G3 FROZEN）/ FC-ESC-01..06。凯旋 share/vote/reward 规则与判定逻辑**零改**（GAME_RULE_CHANGE=NO）。
+
+- **GUI 面凯旋式执行时点对齐阶段入口（Step 0）**：GUI 人口阶段入口 `session_api.get_population_view()` 现于阶段门控块内调用 canonical `population_api.process_population_disbandments()`（§2.5 canonical；FC-ESC-01）⇒ 凯旋「已举行」与军团/舰队解散反馈在**进入人口阶段的一瞬间**（庆典之前）即可见，与 CLI `phase_population._handle_step_0` 同序。
+- 结算侧调用**保留**为幂等安全网（marker `population_disbandment`）⇒ exactly-once；本件**不新增/不改**玩家可见文案，复用既有呈现行（FC-ESC-05）。
+
 ## 9. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.4 | 2026-10-10 | DA-Execute (ESC-WPJ-G7Q1-01) | §2.5 追加注记：GUI 面凯旋式执行/显示时点对齐阶段入口 Step 0（`get_population_view` 门控块，先于 `begin_population_phase`），与 CLI `_handle_step_0` 同序；结算侧幂等安全网保留；凯旋规则/文案零改（GAME_RULE_CHANGE=NO） |
 | v1.3 | 2026-10-09 | DA-Execute (WP-J Group D) | §2.5 追加注记：人口阶段**既有公示框内**呈现权威凯旋「已举行」与军团/舰队解散计数（additive 只读投影 `population_outcome`；框高 additive）+ 否决不重复呈现；「老兵战利品分配」退域（ESC-D-01）；凯旋规则/`resolve_forum()` 写语义零改（GAME_RULE_CHANGE=NO） |
 | v1.2 | 2026-10-06 | DA Sub-Agent (WP-J Group B) | ③ GUI 最小规则同步（FROZEN v1.3 / Owner 16:43）：§2.2 追加注记——凯旋行按钮三态（赞成/已投[灰disabled]/不可投[灰disabled]）、点击后即灰化无重复、不可投统一文案；additive 读模型 `triumph_wars[].action`/`.viewer_vote`；Q1 = CLOSED；`vote_triumph` bool/append 语义零改（GAME_RULE_CHANGE=NO） |
 | v1.1 | 2026-09-09 | DA Sub-Agent (WP-G-R4 B3) | R4 同步（FROZEN v1.7 §4.3）：§2.1/§3.1/§4.3 追加注记——VICTORY/TRIUMPH 均按当前四条件可 eligible（ordinary VICTORY 保留仪式，无 CRT==TRIUMPH 门）；triumph_commander_id=ceremony candidate 非 CRT 证据；战斗身份 carrier 与 legacy unknown 中性事件；Forum 公开 vote/resolve 一次 + share 单次消费（GAME_RULE_CHANGE=NO） |

@@ -334,6 +334,7 @@ IF eligible_candidates(office) == 0
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.8 | 2026-10-10 | DA-Execute (ESC-WPJ-G7Q1-01) | §2.2 追加注记：GUI 面军团/舰队解散处理时点前移至人口阶段入口 Step 0（`session_api.get_population_view` 门控块，先于 `begin_population_phase`），对齐 CLI `phase_population._handle_step_0`；既有 §2.2.5「转换时机」注记与结算侧幂等安全网保留；相位/实质规则/文案零改 |
 | v1.7 | 2026-10-09 | DA-Execute (WP-J Group D) | §2.4 追加注记：庆典 vs 凯旋仪式**呈现归属分离** + 修正公示框混淆静态行（「今年举行庆典？→ 广场阶段已投票决定」→「人口阶段：庆典赞助（候选人竞选）→投票选举」）；拉票/凯旋机制零改 |
 | v1.6 | 2026-10-08 | DA-Execute (WP-J Group C) | §2.7 新增候选人信息表**显示粒度变更**（每官职只显示最佳 featured 候选；resolved 后=当选者；Owner 授权；投影单一 owner=`session_api.get_population_view`，additive 只读，不改提名集；投票列表仍列全部） |
 | v1.5 | 2026-09-28 | DA-Exec (WP-M M-S1) | §2.8 补 censor 供给政策 B（D7：`forum_rules.veteran_supply` `1/2/1/0.5` → `2/3/2/0.7`，供给质量手段非强制填充；保留资格） |
@@ -368,3 +369,11 @@ IF eligible_candidates(office) == 0
 
 - **庆典 vs 凯旋仪式 归属分离（呈现层）**：**庆典** = 人口「① 庆典赞助」子环节（候选官员拉票；label 由 Group A FC-04 冻结「🎉 庆典赞助」，不改）；**凯旋仪式** = 战后反馈内容行（人口公示框内，标签逐字「凯旋仪式」）。
 - **修正混淆静态行**：`PopulationStage.qml` 公示框前置静态行由「📢 今年举行庆典？→ 广场阶段已投票决定：是」（把庆典与广场阶段凯旋投票混同）改为「📢 人口阶段：🎉 庆典赞助（候选人竞选）→ 🗳️ 投票选举」；不复制拉票机制、不改庆典/凯旋任何规则。
+
+## ESC-WPJ-G7Q1-01 同步注记（2026-10-10，DA-Execute；append-only，目标锚点 §2.2）
+
+> 权威：SA-Development-Task-ESC-WPJ-G7Q1-01（G3 FROZEN）/ FC-ESC-01..06；Owner 2026-10-10 窄范围解冻。**G1-14 实质规则逐字不变**。
+
+- **GUI 面军团/舰队解散处理时点 = 阶段入口 Step 0（对齐 CLI）**：GUI 人口阶段入口读模型刷新 `session_api.get_population_view()` 现于阶段门控块内、`begin_population_phase` **之前**调用 canonical `population_api.process_population_disbandments()`（FC-ESC-01）⇒ 凯旋/解散反馈在**进入人口阶段的一瞬间**（Step 0 / 庆典之前）即可见；与 CLI `phase_population._handle_step_0` 同序（本节 §2.2.1/§2.2.2 所述 Step 0 公告为真实执行）。
+- **既有 §2.2.5「转换时机」注记保持不变**：战场指挥官转换（FUNC-09）GUI 面仍在 resolve；本件**仅**前移「解散」触发符号，**不改**转换时点、相位、DTO 形状、玩家可见文案（FC-ESC-03/05）。
+- 结算侧 `resolve_population_slice` 的 canonical 调用**保留**为幂等安全网（marker `population_disbandment`）⇒ exactly-once、零二次 mutation（FC-ESC-02/06）。

@@ -113,14 +113,16 @@ def _load_population(store, width=1440, height=900):
     return engine, root
 
 
-def _session_store(start_phase="population"):
+def _session_store(start_phase="population", pre_init=None):
     result = session_api.create_gui_prototype_session(start_phase=start_phase)
     assert result["success"], result.get("message")
     state = result["data"]["state"]
     viewer = result["data"]["human_players"][0]
     state.set_current_player(viewer)
+    if pre_init is not None:                 # CS03B A2/A3：入口前就绪态（war 先就绪）
+        pre_init(state)
     store = GuiSessionStore(state)
-    store.initialize(viewer)
+    store.initialize(viewer)                 # ← 入口刷新即处理（真实生产动作）
     store.selectPhase("population")
     return store, state, viewer
 
@@ -164,10 +166,13 @@ def test_source_anchor_precedes_group_a_header():
 # ---------------------------------------------------------------------------
 
 def test_render_aftermath_rows_above_group_a_header():
-    store, state, _viewer = _session_store()
-    commander = next(m for m in state.get_living_members())
-    _attach_resolved_war(state, commander.id, legion_numbers=(1, 2))
-    population_api.process_population_disbandments(state)   # 真实生产动作
+    # CS03B A2（仅编排修订）：war 于 store.initialize（入口刷新）之前就绪 ⇒ 入口即处理（M1）。
+    #   生产时序：resolved war 恒于 Population 阶段入口前（前一轮 combat）已就绪。
+    #   AC-01 RENDER 入口帧：入口刷新即渲染后效行（无显式 process / 无 resolve）。
+    def _prep(state):
+        commander = next(m for m in state.get_living_members())
+        _attach_resolved_war(state, commander.id, legion_numbers=(1, 2))
+    store, state, _viewer = _session_store(pre_init=_prep)   # 入口即处理（真实生产动作）
     store._refresh_population_view()
 
     assert store.populationOutcome.get("triumphs"), "store 必须透传权威 outcome"

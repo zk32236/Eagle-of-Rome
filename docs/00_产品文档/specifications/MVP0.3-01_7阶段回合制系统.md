@@ -335,10 +335,18 @@ if self.state.is_phase_executed("senate"):
   `GameState.mark_member_dead` 转账/CLI print **同源**（`mark_member_dead` `bool` 返回契约不变）；
   GUI 仅渲染（存在且 ≥1 渲染；缺/0 不渲染；QML 禁重算）。
 
+## ESC-WPJ-G7Q1-01 同步注记（2026-10-10，DA-Execute；append-only，目标锚点 §2.1）
+
+> 权威：SA-Development-Task-ESC-WPJ-G7Q1-01（G3 FROZEN）；Owner 2026-10-10 窄范围解冻。**仅 append「GUI 触发符号」说明，不改本节 G1-14 实质规则正文**；相位不变（GAME_RULE_CHANGE=NO）。
+
+- **GUI 首次处理点前移至阶段入口（触发符号更新）**：§2.1「军事生命周期时序」原述 GUI 侧由 `session_api.resolve_population_slice` 调用 canonical；现时 GUI **首次**处理点 = 阶段入口 `session_api.get_population_view()` 门控块（先于 `begin_population_phase`），`resolve_population_slice` 侧调用**保留**为幂等安全网（marker `population_disbandment`）⇒ 恒为幂等命中、exactly-once。
+- **实质规则不变**：解散仍**发生在 Population 阶段**；**下一 Revenue 收最后维护**；**不在停战/元老院阶段执行**；GUI/CLI 共享同一 canonical（对齐 CLI `phase_population._handle_step_0`）；`PHASE_SEQUENCE` 与阶段状态机零改。
+
 ## 9. 版本日志
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.8 | 2026-10-10 | DA-Execute (ESC-WPJ-G7Q1-01) | §2.1 追加注记：GUI 首次处理点前移至阶段入口 `get_population_view`（触发符号更新），resolve 侧保留幂等安全网；G1-14 实质规则/相位/状态机零改（GAME_RULE_CHANGE=NO） |
 | v1.7 | 2026-10-06 | DA-Execute (WP-J Group A R1) | 追加「WP-J Group A R1 同步注记」：步骤条紧凑左对齐 + `gapStep=7px`（J-AC-12）+ 战斗步骤 `max(3,N)` 占位→实名/无 advance（J-AC-14，修订 FC-04/FC-05）+ 死亡归公生产者按人供数（J-AC-13）；业务语义/推进 owner/持久化零改（GAME_RULE_CHANGE=NO） |
 | v1.6 | 2026-10-06 | DA-Execute (WP-J Group A) | 追加「WP-J Group A 同步注记」：六阶段权威 `steps` 子环节读模型（J-AC-10）+ Mortality 死亡影响行呈现修复（J-AC-09，呈现层）+ 广场子环节操作按钮滚动可及性（J-AC-11）；阶段业务语义/推进/持久化零改（GAME_RULE_CHANGE=NO） |
 | v1.5 | 2026-09-09 | DA Sub-Agent (WP-G-R4 B3) | R4 同步（O5/OD-R4-06，FROZEN v1.7 §2）：Senate-War 生命周期注记——显式 Senate→Combat advance = Takeover 部署唯一边界（Submit 锁 commitment 零部署、执政官留城、部署原子/exactly-once/fail-closed）；phase transition 非 GUI-lazy（R4-23）；CLI 尾部经 advance 推进（GAME_RULE_CHANGE=NO） |

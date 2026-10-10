@@ -267,6 +267,12 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
         # （设计 02 §2.2；G3 Q3）。阶段门：仅当当前阶段为 population 才执行
         # （session_store.initialize 会在非人口阶段预刷新本视图，见偏离 D-6）。
         if _infer_current_phase_id(state) == "population":
+            # ESC-WPJ-G7Q1-01 / ESC-S1：Step-0 战后处理（凯旋举行 + 军团/舰队解散）
+            # 前移至人口阶段入口（对齐规格 §2.2 / CLI phase_population._handle_step_0），
+            # 使反馈在进入人口阶段的一瞬间即可见（FC-ESC-01）。canonical 幂等
+            # （marker "population_disbandment"）⇒ 结算侧 resolve_population_slice 恒为
+            # 幂等命中（安全网保留，FC-ESC-06）⇒ exactly-once、零二次 mutation。
+            population_api.process_population_disbandments(state)
             population_api.begin_population_phase(state)
 
         # 本派系可操作人物

@@ -95,7 +95,14 @@ def test_projection_falls_back_to_population_phase_result_disbandment():
         "success": True, "message": "Election resolved",
         "data": {"election_results": [], "disbandment": fallback},
     })
-    outcome = _view(state, viewer)["population_outcome"]
+    # CS03B A1（仅入径修订）：FC-D02 回退分支 = marker 缺席 → 回退 population.data.disbandment。
+    # 【修订】不经 get_population_view（其人口阶段入口现必经 M1，置位空 marker
+    #   ⇒ 回退分支被遮蔽）；直调投影（与 get_population_view 同一入参
+    #   result_data = 相位 result 的 data）。断言逐条不变，无弱化。
+    assert state.get_phase_result("population_disbandment") is None, \
+        "本测试前提：marker 缺席（FC-D02 fallback 分支方可达）"
+    result_data = state.get_phase_result("population").get("data", {})
+    outcome = session_api._project_population_outcome(state, result_data)
     assert outcome["triumphs"][0]["war_name"] == "皮洛士战争", "回退 population.data.disbandment（FC-D02）"
     assert outcome["legions"]["resolved_wars"]["total"] == 1
 
