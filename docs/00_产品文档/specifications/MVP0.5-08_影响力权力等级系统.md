@@ -214,7 +214,7 @@ influence = base + family_bonus + office_bonus + temp_influence + war_reward_inf
 
 | 场景 | 结果 |
 |------|------|
-| 人物无土地、无老兵、无人气、无家族、无官职 | influence = 0 |
+| 人物无土地、无老兵、无人气、无家族、无官职，**且**无临时影响力任务、无持久战争奖励项（`temp_influence=0` 且 `war_reward_influence=0`） | influence = 0（**基础分项均为 0 且无持久战争奖励项时成立，与 §3.1 一致**） |
 | 人物官职不在 `OFFICE_RANK` 中 | rank = 0 |
 | 人物官职不在 `OFFICE_INFLUENCE_BONUS` 中 | office_bonus = 0（字典 `.get(office, 0)`） |
 | `decay_temp_influence_tasks()` 时所有任务都已过期 | `_temp_influence_tasks` 清空 |
@@ -268,6 +268,7 @@ influence = base + family_bonus + office_bonus + temp_influence + war_reward_inf
 | v1.1 | 2026-09-28 | DA-Exec (WP-M M-S1) | §3.3 拆为「权力顺序」+「升级顺序」两表（修正 stale 单表）；§3.2 声明影响力加成为独立轴（A1·R4）；新增 §3.3 双排序常量（`OFFICE_PROMOTION_ORDER`/`OFFICE_CURSUS_PREREQUISITE`） |
 | v1.2 | 2026-10-11 | DA-Exec (EOR20261009-03 WRRI) | OD-05/FC-07：影响力公式增持久项 `war_reward_influence`（`Figure._war_reward_influence`，`_compute_influence` 第 7 参数，默认 0）；`figure_api.get_figure_info` 不再声称五项完整等式（改总值 + 战争奖励来源 + 基础分项）。GAME_RULE_CHANGE=YES（Owner OD-05） |
 | v1.3 | 2026-10-11 | DA-Exec (EOR20261009-03 WRRI · ATTEMPT-5 R03) | §5.1 同步：无官职公式更正为 `base + family_bonus + temp_influence + war_reward_influence`，与 §3.1 一致（移除 stale 的"仅基于三项"表述；修复 G5 R03 文档语义矛盾） |
+| v1.4 | 2026-10-11 | DA-Exec (EOR20261009-03 WRRI · ATTEMPT-6 R04) | §5.2 边界表「无土地/无老兵/无人气/无家族/无官职」行补加限定：明确须「基础分项均为 0 且无临时影响力项、无持久战争奖励项（`temp_influence=0` 且 `war_reward_influence=0`）」方得 `influence = 0`，消除与 §3.1/§5.1 的语义矛盾（G5 R04；纯文档层） |
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent B | 初版创建 |
 
 > **维护规则：** 本文件为活文档，每次修改规格说明正文或技术映射时，必须在版本日志中追加新条目。版本号递增规则：大功能修改升主版本（v1→v2），小修小改升次版本（v1.0→v1.1）。
