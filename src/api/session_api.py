@@ -932,6 +932,7 @@ def _build_resolution_preview(state: GameState) -> dict:
                 m.family_prestige,
                 m.get_office_influence_bonus(),
                 temp_after,
+                getattr(m, "_war_reward_influence", 0),
             )
         delta = after_total - before_total
         faction_influence.append({

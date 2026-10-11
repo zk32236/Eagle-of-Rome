@@ -9,7 +9,9 @@ from typing import Any, Dict, List, Optional
 
 from src.api import api_response
 from src.core.game_state import GameState
-from src.core.entities.war import War, WarStatus
+from src.core.entities.war import (
+    War, WarStatus, validate_reward_receipt, is_persisted_receipt_shape,
+)
 from src.core.entities.fleet import FleetStatus
 
 
@@ -220,6 +222,119 @@ def _war_card(war: War, state: GameState) -> Dict[str, Any]:
     }
 
 
+def _reward_view(war: War, state: GameState, ws, result: str) -> Dict[str, Any]:
+    """EOR20261009-03（FC-16/§5.2）：DTO 奖励字段（DTO 必须消费 owner/receipt，不自算）。
+
+    - 有有效 receipt（committed）→ 读 receipt 快照（committed 真值）。
+    - defeat/disaster/rebellion → not_eligible。
+    - 历史已结束但无 receipt → history_unrecorded（null，禁重算）。
+    - 否则（scout/未结算/draw）→ projected（PLAN 投影，committed loot=0）。
+    """
+    receipt = war.reward_receipt
+    # EOR20261009-03（FC-16/§5.3；ATTEMPT-3 R01 / ATTEMPT-4 R01）：fail-closed——present receipt 只有通过
+    # 完整校验（validate_reward_receipt）才认 committed；present-but-malformed（含
+    # {"committed":true} 缺字段/错 war_id/schema 不符）原不该被当作 committed，也**绝不**
+    # 直接下标取值（旧实现 receipt["total_monetary"] 会 KeyError）→ 一律 history_unrecorded +
+    # 结构化 WARNING，不猜默认历史金额、不重算、不补发。
+    # ATTEMPT-4：**非 dict** 的持久化 malformed 回执（如 `[]`/字符串，经存档载入）同样在公共读
+    # 边界 fail-closed（旧实现 `isinstance(receipt, dict)` 会漏过它们，让 ACTIVE/TRUCE 的
+    # victory/draw 落入 PLAN/projected，违反 §5.3；G5 F01.1）。opaque 内存 sentinel（mock）
+    # 不是持久值，保持缺席语义（不回归 legacy mock 测试）。
+    if isinstance(receipt, dict):
+        if validate_reward_receipt(receipt, war.id):
+            return {
+                "reward_status": "committed",
+                "committed": True,
+                "projected": False,
+                "loot": receipt["total_monetary"],
+                "treasury_share": receipt["treasury_part"],
+                "faction_share": receipt["faction_part"],
+                "commander_share": receipt["commander_part"],
+                "soldier_share": receipt["pool_part"],
+                "projected_loot": None,
+                "projected_shares": None,
+                "actual_recipients": receipt.get("actual_recipients"),
+            }
+        state.log_event(
+            f"奖励 receipt 校验失败（history_unrecorded）: {war.name}",
+            level=logging.WARNING,
+            extra={
+                "type": "reward_receipt_invalid",
+                "war_id": war.id,
+                "receipt_keys": sorted(receipt.keys()),
+            },
+        )
+        return {
+            "reward_status": "history_unrecorded", "committed": False, "projected": False,
+            "loot": None, "treasury_share": None, "faction_share": None,
+            "commander_share": None, "soldier_share": None, "projected_loot": None,
+            "projected_shares": None, "actual_recipients": None,
+        }
+    if receipt is not None and is_persisted_receipt_shape(receipt):
+        # 持久化非 dict malformed 回执（list/str/int/...）→ 公共/DTO 读边界 fail-closed，
+        # 不得回落 PLAN/projected（addendum §1.4(4) / §3.2 E-SECC-5）。
+        state.log_event(
+            f"奖励 receipt 校验失败（history_unrecorded）: {war.name}",
+            level=logging.WARNING,
+            extra={
+                "type": "reward_receipt_invalid",
+                "war_id": war.id,
+                "receipt_type": type(receipt).__name__,
+            },
+        )
+        return {
+            "reward_status": "history_unrecorded", "committed": False, "projected": False,
+            "loot": None, "treasury_share": None, "faction_share": None,
+            "commander_share": None, "soldier_share": None, "projected_loot": None,
+            "projected_shares": None, "actual_recipients": None,
+        }
+    if result in ("defeat", "disaster") or war.rebellion_province_id is not None:
+        return {
+            "reward_status": "not_eligible", "committed": False, "projected": False,
+            "loot": 0, "treasury_share": 0, "faction_share": 0, "commander_share": 0,
+            "soldier_share": 0, "projected_loot": None, "projected_shares": None,
+            "actual_recipients": None,
+        }
+    if result in ("victory", "triumph") and war.status == WarStatus.RESOLVED:
+        # §5.3：旧结束战争无有效 receipt → history_unrecorded/null，禁从当前 state 重算。
+        return {
+            "reward_status": "history_unrecorded", "committed": False, "projected": False,
+            "loot": None, "treasury_share": None, "faction_share": None,
+            "commander_share": None, "soldier_share": None, "projected_loot": None,
+            "projected_shares": None, "actual_recipients": None,
+        }
+    plan = ws.compute_reward_settlement(war, result, state) if ws is not None else None
+    if plan is None:
+        return {
+            "reward_status": "projected", "committed": False, "projected": True,
+            "loot": 0, "treasury_share": 0, "faction_share": 0, "commander_share": 0,
+            "soldier_share": 0, "projected_loot": 0,
+            "projected_shares": {"treasury_share": 0, "faction_share": 0,
+                                 "commander_share": 0, "soldier_share": 0},
+            "actual_recipients": None,
+        }
+    if result == "draw":
+        projected_loot = plan["base"]["treasury"]
+        eff = state.config.get_reward_share_snapshot()["effective"]
+        t = int(projected_loot * eff["treasury"])
+        f = int(projected_loot * eff["faction"])
+        c = int(projected_loot * eff["commander"])
+        projected_shares = {"treasury_share": t, "faction_share": f, "commander_share": c,
+                            "soldier_share": projected_loot - t - f - c}
+    else:
+        projected_loot = plan["total_monetary"]
+        projected_shares = {"treasury_share": plan["treasury_part"],
+                            "faction_share": plan["faction_part"],
+                            "commander_share": plan["commander_part"],
+                            "soldier_share": plan["pool_part"]}
+    return {
+        "reward_status": "projected", "committed": False, "projected": True,
+        "loot": 0, "treasury_share": 0, "faction_share": 0, "commander_share": 0,
+        "soldier_share": 0, "projected_loot": projected_loot,
+        "projected_shares": projected_shares, "actual_recipients": None,
+    }
+
+
 def _build_battle_result(
     war: War,
     state: GameState,
@@ -231,8 +346,13 @@ def _build_battle_result(
     losses: int,
     triumph: bool,
     casualty_numbers: Optional[List[int]] = None,
+    reward: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Build a battle_result DTO."""
+    """Build a battle_result DTO.
+
+    EOR20261009-03（FC-01/AC-01）：奖励字段不再硬编码 50/25/15/残差；由 `reward`
+    （owner/receipt 派生，见 `_reward_view`）提供。
+    """
     label_map = {
         "triumph": "🏆 大胜！",
         "victory": "⚔️ 胜利",
@@ -242,11 +362,13 @@ def _build_battle_result(
     }
     result_label = label_map.get(result, result)
 
-    # Compute loot shares using standard formula
-    treasury_share = int(loot * 0.50)
-    faction_share = int(loot * 0.25)
-    commander_share_value = int(loot * 0.15)
-    soldier_share = loot - treasury_share - faction_share - commander_share_value
+    if reward is None:
+        reward = {
+            "reward_status": "not_eligible", "committed": False, "projected": False,
+            "loot": 0, "treasury_share": 0, "faction_share": 0, "commander_share": 0,
+            "soldier_share": 0, "projected_loot": None, "projected_shares": None,
+            "actual_recipients": None,
+        }
 
     return {
         "war_id": war.id,
@@ -262,11 +384,18 @@ def _build_battle_result(
         # `losses` 字段语义不变 = 伤亡数，CombatStage.qml 零改）
         "casualty_numbers": list(casualty_numbers) if casualty_numbers else [],
         "triumph": triumph,
-        "loot": loot,
-        "treasury_share": treasury_share,
-        "commander_share": commander_share_value,
-        "faction_share": faction_share,
-        "soldier_share": soldier_share,
+        "loot": reward["loot"],
+        "treasury_share": reward["treasury_share"],
+        "commander_share": reward["commander_share"],
+        "faction_share": reward["faction_share"],
+        "soldier_share": reward["soldier_share"],
+        # EOR20261009-03（FC-16/§5.2）：reward 权威/projected 语义（进 land 与顶层 alias）
+        "reward_status": reward["reward_status"],
+        "committed": reward["committed"],
+        "projected": reward["projected"],
+        "projected_loot": reward["projected_loot"],
+        "projected_shares": reward["projected_shares"],
+        "actual_recipients": reward["actual_recipients"],
     }
 
 
@@ -376,7 +505,9 @@ def _v2_land_executed_stage(flat: Dict[str, Any]) -> Dict[str, Any]:
     }
     for key in ("result", "result_label", "dice", "total_attack", "enemy_defence",
                 "total_score", "losses", "casualty_numbers", "triumph", "loot",
-                "treasury_share", "faction_share", "commander_share", "soldier_share"):
+                "treasury_share", "faction_share", "commander_share", "soldier_share",
+                "reward_status", "committed", "projected", "projected_loot",
+                "projected_shares", "actual_recipients"):
         if key in flat:
             stage[key] = flat[key]
     return stage
@@ -418,7 +549,8 @@ def _v2_finalize_land_envelope(
     # 兼容窗口：顶层旧 land 字段纯 alias（值逐项相同）——供旧测试/消费者
     for key in ("dice", "total_attack", "enemy_defence", "total_score", "losses",
                 "casualty_numbers", "triumph", "loot", "treasury_share", "faction_share",
-                "commander_share", "soldier_share"):
+                "commander_share", "soldier_share", "reward_status", "committed",
+                "projected", "projected_loot", "projected_shares", "actual_recipients"):
         if key in flat:
             envelope[key] = flat[key]
     return envelope
@@ -539,16 +671,13 @@ def _compute_combat_result(
     elif result == "defeat":
         losses = N - N // 2  # = ceil(N/2)（G1-06：1→1, 2→1, 3→2, 4→2, 5→3, 6→3）
 
-    # Loot (only for non-disaster)
+    # EOR20261009-03（FC-02/AC-01）：移除独立 ×1.5 与硬编码份额；loot 由单一权威 owner
+    # PLAN 派生（DTO 实际消费 receipt/PLAN，见 `_reward_view`）。
+    triumph = (result == "triumph")
     loot = 0
-    triumph = False
-    if result != "disaster" and result != "defeat":
-        rewards = war.calculate_rewards()
-        loot = rewards.get("treasury", 0)
-        if result == "triumph":
-            triumph = True
-            # Triumph gives bonus loot
-            loot = int(loot * 1.5)
+    ws = state.get_war_system()
+    if ws is not None:
+        loot = ws.compute_reward_settlement(war, result, state)["total_monetary"]
 
     return {
         "result": result,
@@ -713,6 +842,55 @@ def _build_war_slots(
 # Public API
 # ════════════════════════════════════════════════════════════════════════
 
+# EOR20261009-03（ATTEMPT-4 R01 / addendum §1.4(4) / §3.2 E-SECC-5）：公共读边界回执对账。
+# 载入的陈旧「committed」结果 DTO 若与 war 的权威 receipt（缺失/无效）不符，必须在
+# **公共读边界**降级为 history_unrecorded，不得让玩家可见的 committed 正 loot 残留（G5 F01.2）。
+_REWARD_DTO_FIELDS = (
+    "reward_status", "committed", "projected", "loot", "treasury_share",
+    "faction_share", "commander_share", "soldier_share", "projected_loot",
+    "projected_shares", "actual_recipients",
+)
+
+
+def _history_unrecorded_fields() -> Dict[str, Any]:
+    return {
+        "reward_status": "history_unrecorded", "committed": False, "projected": False,
+        "loot": None, "treasury_share": None, "faction_share": None,
+        "commander_share": None, "soldier_share": None, "projected_loot": None,
+        "projected_shares": None, "actual_recipients": None,
+    }
+
+
+def _normalize_stored_result(state: GameState, ws, result: Any) -> Any:
+    """公共读边界 receipt 对账（§5.3；addendum §1.4(4) / §3.2 E-SECC-5）。
+
+    仅当存储的结果**声称 committed** 而对应 war 的权威 receipt 缺失/无效时，将 reward 字段
+    降级为 history_unrecorded（顶层 alias + 嵌套 `land` stage 同步）。
+    **非 mutation**：调用方提供的是私有深拷贝（`GameState.get_phase_result` 已 deep-copy）。
+    """
+    if not isinstance(result, dict):
+        return result
+    land = result.get("land")
+    claims_committed = (result.get("committed") is True)
+    if isinstance(land, dict) and land.get("committed") is True:
+        claims_committed = True
+    if not claims_committed:
+        return result
+    war_id = result.get("war_id")
+    war = ws.get_war_by_id(war_id) if ws is not None else None
+    if war is not None and war.has_valid_receipt():
+        return result
+    patch = _history_unrecorded_fields()
+    for key, value in patch.items():
+        if key in result:
+            result[key] = value
+    if isinstance(land, dict):
+        for key, value in patch.items():
+            if key in land:
+                land[key] = value
+    return result
+
+
 def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
     """Return read-only combat stage DTO."""
     if not state:
@@ -754,6 +932,16 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
             resolved_wars = phase_data.get("resolved_wars", [])
             pending_result = phase_data.get("pending_result", {})
             war_results = phase_data.get("war_results", {})
+            # EOR20261009-03（ATTEMPT-4 R01；addendum §1.4(4)）：公共读边界 fail-closed。
+            # 载入的陈旧 committed 结果与 war 权威 receipt（缺失/无效）对账后再透出。
+            # `get_phase_result` 已返回私有深拷贝 → 可安全就地归一。
+            if isinstance(pending_result, dict) and pending_result:
+                pending_result = _normalize_stored_result(state, ws, pending_result)
+            if isinstance(war_results, dict):
+                war_results = {
+                    _wid: _normalize_stored_result(state, ws, _res)
+                    for _wid, _res in war_results.items()
+                }
         else:
             selected_war_id = ""
             resolved_wars = []
@@ -992,6 +1180,7 @@ def do_combat_action(
                 loot=preview_result["loot"],
                 losses=preview_result["losses"],
                 triumph=preview_result["triumph"],
+                reward=_reward_view(war, state, ws, preview_result["result"]),
             )
             data["deprecated"] = True
             return api_response(
@@ -1140,6 +1329,7 @@ def do_combat_action(
             losses=result_data["losses"],
             triumph=result_data["triumph"],
             casualty_numbers=casualty_numbers,
+            reward=_reward_view(war, state, ws, result),
         )
 
         # WP-G GC（S7）：本场曾触发海军门且获控（TRIUMPH/VICTORY）→ 陆战继续路径标注

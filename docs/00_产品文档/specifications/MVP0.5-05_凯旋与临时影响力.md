@@ -39,12 +39,12 @@
 
 1. 从 `_forum_pending["triumph_votes"]` 提取投票数据，按战争分组
 2. 对每场符合条件的 resolved 战争：
-   - 指挥官已死亡 → 清空 `soldier_share`，标记凯旋失效
-   - 无有效投票 → 清空 `soldier_share`，标记凯旋失效
+   - 指挥官已死亡 → 清空 `soldier_share`，标记凯旋失效（**全池回罗马国库**，OD-04）
+   - 无有效投票 → 清空 `soldier_share`，标记凯旋失效（**全池回罗马国库**，OD-04）
    - 有投票 → 计算各派系总影响力，计算支持率（支持影响力 / 总影响力）
    - 支持率 > 50% → **凯旋批准**，执行 2.4
-   - 支持率 ≤ 50% → **凯旋否决**，输出否决信息
-3. 无论批准与否，结算后清空 `war.soldier_share = 0`
+   - 支持率 ≤ 50% → **凯旋否决**，输出否决信息（**全池回罗马国库**，OD-04）
+3. 结算后清空 `war.soldier_share = 0`（每条清池路径均**守恒**：转为临时政治影响力 或 回罗马国库）
 
 ### 2.4 凯旋批准后的效果（临时影响力）
 
@@ -54,8 +54,11 @@
 2. 计算每回合临时影响力：
    - `duration = config["combat_rules.triumph_veteran_duration"]`（默认 5 回合）
    - `per_turn = war.soldier_share // duration`
-   - 如果 `per_turn > 0`，调用 `commander.add_temp_influence_task(per_turn, duration)`
+   - 如果 `per_turn > 0`，调用 `commander.add_temp_influence_task(per_turn, duration)`；**取整余项 `pool − per_turn×duration` 回罗马国库**（OD-04，FC-15）
+   - 如果 `per_turn == 0`（`pool < duration`）→ **全池回罗马国库**
 3. 临时影响力在后续回合自动衰减，5 回合后归零
+
+> **EOR20261009-03（OD-04，FC-15）守恒计量：** 凯旋通过 → `per_turn×duration + refund == pool`；否决/无票/失效/小池 → `refund == pool`。池 = **抽象士兵/老兵政治支持**（非现金）；域概念名 `veteran_support_pool`（别名 `soldier_share`）。
 
 ### 2.5 凯旋式执行（人口阶段·公告环节）
 
@@ -149,7 +152,7 @@
 | all_resolved 无适合凯旋的战争 | 市场环节不显示凯旋信息 |
 | 指挥官在结算时已死亡 | 清空 soldier_share，标记凯旋失效 |
 | 无任何派系投票 | 清空 soldier_share，标记凯旋失效 |
-| `per_turn = 0`（soldier_share < duration） | 不添加临时影响力任务 |
+| `per_turn = 0`（soldier_share < duration） | 不添加临时影响力任务；**全池回罗马国库**（OD-04，守恒） |
 | 手动模式尝试投票给非凯旋战争 | API 返回错误 `error_not_triumph_war` |
 | 战争不存在 | API 返回错误 `war_not_found` |
 
@@ -222,7 +225,8 @@
 - **人口阶段公示框内呈现**：`session_api.get_population_view()` 增 additive 只读字段 `population_outcome`（逐字投影权威 `state.get_phase_result("population_disbandment")`；回退 `population` 结果 `data.disbandment`）→ `session_store.populationOutcome` → `PopulationStage.qml` **既有公示框 `populationAnnouncement` 内**追加行「🏛️ 凯旋仪式：<commander_name>（<war_name>）已举行」（FC-D01/FC-D02/FC-D03）。框高 additive（基值 88，空 payload 回落，FC-D07）。
 - **否决不在人口阶段重复呈现**（S-2 #2）：广场阶段已呈现「凯旋未获批准」；人口阶段仅呈现**已举行**（`triumphs[]` 权威谓词，FC-D03/FC-D04）。⇒ v1.0 拟增的结构化 `triumph_outcomes` **撤销**。
 - **军团/舰队解散以权威计数呈现**（FC-D05）：`legions.resolved_wars.total` / `legions.deescalated.total` / `fleets.length`，仅显示已结束战争军团/闲置舰队行政退役**反馈**，**不改**解散时机（①d-2 / WP-G G1-14 冻结）。
-- **「老兵战利品分配」= ROUTED_OUT（J-D06 / ESC-D-01）**：source-first 核为 producer 未实现的业务/经济语义（无人口阶段扣除 / 无否决回国库）⇒ 不属呈现面，**不呈现、不 QML 自造**。
+- **「老兵战利品分配」退域历史（J-D06 / ESC-D-01，append-only）**：WP-J Group D 时点 source-first 核为 producer 未实现的业务/经济语义（无人口阶段扣除 / 无否决回国库）⇒ 当时不属呈现面，不呈现、不 QML 自造。
+- **【EOR20261009-03 修订（OD-04，2026-10-11）】** 上述退域事实保留为历史；**新 Owner 决定**（OD-04=B + 追加规则）冻结：`soldier_share` = 抽象士兵/老兵政治支持池（域概念名 `veteran_support_pool`），**凯旋被否决/无票/指挥官失效/小池/余项 → 该池金额回罗马国库**（守恒）；经济 owner 实现 = `forum_api.resolve_forum` 结算侧新增写入（不改投票 REST/交互语义）。
 
 ## ESC-WPJ-G7Q1-01 同步注记（2026-10-10，DA-Execute；append-only，目标锚点 §2.5）
 
@@ -237,6 +241,7 @@
 |------|------|--------|---------|
 | v1.4 | 2026-10-10 | DA-Execute (ESC-WPJ-G7Q1-01) | §2.5 追加注记：GUI 面凯旋式执行/显示时点对齐阶段入口 Step 0（`get_population_view` 门控块，先于 `begin_population_phase`），与 CLI `_handle_step_0` 同序；结算侧幂等安全网保留；凯旋规则/文案零改（GAME_RULE_CHANGE=NO） |
 | v1.3 | 2026-10-09 | DA-Execute (WP-J Group D) | §2.5 追加注记：人口阶段**既有公示框内**呈现权威凯旋「已举行」与军团/舰队解散计数（additive 只读投影 `population_outcome`；框高 additive）+ 否决不重复呈现；「老兵战利品分配」退域（ESC-D-01）；凯旋规则/`resolve_forum()` 写语义零改（GAME_RULE_CHANGE=NO） |
+| v1.4 | 2026-10-11 | DA-Execute (EOR20261009-03 WRRI) | OD-04：`soldier_share`/`veteran_support_pool` 语义澄清 = 抽象政治支持；**否决/无票/失效/小池/余项 → 全池/余项回罗马国库**（守恒，FC-15）；保留 WP-J 退域历史（append-only）；变更 `resolve_forum` 结算侧写语义（不改投票交互）；GAME_RULE_CHANGE=YES（Owner OD-04） |
 | v1.2 | 2026-10-06 | DA Sub-Agent (WP-J Group B) | ③ GUI 最小规则同步（FROZEN v1.3 / Owner 16:43）：§2.2 追加注记——凯旋行按钮三态（赞成/已投[灰disabled]/不可投[灰disabled]）、点击后即灰化无重复、不可投统一文案；additive 读模型 `triumph_wars[].action`/`.viewer_vote`；Q1 = CLOSED；`vote_triumph` bool/append 语义零改（GAME_RULE_CHANGE=NO） |
 | v1.1 | 2026-09-09 | DA Sub-Agent (WP-G-R4 B3) | R4 同步（FROZEN v1.7 §4.3）：§2.1/§3.1/§4.3 追加注记——VICTORY/TRIUMPH 均按当前四条件可 eligible（ordinary VICTORY 保留仪式，无 CRT==TRIUMPH 门）；triumph_commander_id=ceremony candidate 非 CRT 证据；战斗身份 carrier 与 legacy unknown 中性事件；Forum 公开 vote/resolve 一次 + share 单次消费（GAME_RULE_CHANGE=NO） |
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent E | 初版创建 |

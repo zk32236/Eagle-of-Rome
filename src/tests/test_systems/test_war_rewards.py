@@ -139,7 +139,7 @@ class TestWarRewards:
         assert war.status == WarStatus.RESOLVED
 
     def test_victory_commander_no_faction(self, state, war_system, war, commander):
-        """测试指挥官无派系（派系部分归士兵，指挥官部分正常分配）"""
+        """EOR20261009-03 AC-05（OD-03）：指挥官无派系 → faction_part 归罗马国库（守恒）。"""
         commander.faction_id = None
         war_system._active_wars.append(war)
 
@@ -154,13 +154,12 @@ class TestWarRewards:
         commander_part = int(total * 0.15)
         soldier_part = total - treasury_part - faction_part - commander_part
 
-        # 国库增加
-        assert state.treasury == treasury_before + treasury_part
+        # 国库获得 treasury_part + faction_part（无派系 → 归国库，守恒）
+        assert state.treasury == treasury_before + treasury_part + faction_part
         # 指挥官财富增加
         assert commander.wealth == commander_wealth_before + commander_part
-        # 士兵份额应包含派系部分（即派系部分被士兵吸收）
+        # 士兵份额 = 残差（不含 faction_part）
         assert war.soldier_share == soldier_part
-        # 派系资金应保持不变（但我们没有派系对象可检查，可忽略）
 
     def test_defeat_no_rewards(self, state, war_system, war, commander, faction):
         """测试失败时不应分配奖励"""
@@ -185,11 +184,11 @@ class TestWarRewards:
 
     def test_configurable_shares(self, state, war_system, war, commander, faction):
         """测试分配比例可从配置读取"""
-        # 修改配置为自定义比例
-        state.config._config["combat_rules"]["treasury_share"] = 0.4
-        state.config._config["combat_rules"]["faction_share"] = 0.3
-        state.config._config["combat_rules"]["commander_share"] = 0.2
-        state.config._config["combat_rules"]["soldier_share"] = 0.1
+        # EOR20261009-03（FC-11/§5.4）：公开内存赋值（非 private _config 绕过）。
+        state.config.combat_rules.treasury_share = 0.4
+        state.config.combat_rules.faction_share = 0.3
+        state.config.combat_rules.commander_share = 0.2
+        state.config.combat_rules.soldier_share = 0.1
 
         war_system._active_wars.append(war)
 

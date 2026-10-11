@@ -161,14 +161,16 @@ class TestCLICombatFeatures(unittest.TestCase):
         self.assertEqual(self.war1.status, WarStatus.RESOLVED)
 
     def test_cli_apply_triumph_increases_commander_influence(self):
-        """TRIUMPH → 指挥官影响力 +10"""
+        """EOR20261009-03（FC-07/OD-05）：TRIUMPH → 指挥官影响力 +rewards.influence（权威源；
+        legacy 硬编码 +10 已移除）。"""
         legions = self.state._military_system.get_legions_for_battle("test_war_1")
+        self.war1._rewards["influence"] = 30
         initial = self.commander.influence
         self.cmd._apply_battle_result(
             self.state._war_system, self.war1, self.commander,
             "TRIUMPH", MagicMock(), self.state._military_system, legions, 8
         )
-        self.assertEqual(self.commander.influence, initial + 10)
+        self.assertEqual(self.commander._war_reward_influence, 30)
 
     def test_cli_apply_victory_promotes_legions(self):
         """VICTORY → 全部幸存参战者晋升老兵 + 召回（AVAILABLE，Veteran 保留；G1-22，S5 收敛）"""
@@ -191,14 +193,16 @@ class TestCLICombatFeatures(unittest.TestCase):
         self.assertEqual(self.war1.status, WarStatus.RESOLVED)
 
     def test_cli_apply_victory_increases_commander_influence(self):
-        """VICTORY → 指挥官影响力 +5"""
+        """EOR20261009-03（FC-07/OD-05）：VICTORY → 指挥官影响力 +rewards.influence（权威源；
+        legacy 硬编码 +5 已移除）。"""
         legions = self.state._military_system.get_legions_for_battle("test_war_1")
+        self.war1._rewards["influence"] = 30
         initial = self.commander.influence
         self.cmd._apply_battle_result(
             self.state._war_system, self.war1, self.commander,
             "VICTORY", MagicMock(), self.state._military_system, legions, 8
         )
-        self.assertEqual(self.commander.influence, initial + 5)
+        self.assertEqual(self.commander._war_reward_influence, 30)
 
     def test_cli_apply_defeat_causes_legion_losses(self):
         """DEFEAT → ceil(N/2)=2 随机 DESTROYED；幸存保持 ACTIVE+assigned（G1-05/06/07，S5 收敛）"""

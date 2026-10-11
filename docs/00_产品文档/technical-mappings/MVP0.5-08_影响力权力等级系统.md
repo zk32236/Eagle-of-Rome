@@ -6,9 +6,13 @@ src/core/entities/figure.py  # Figure: influence, rank, update_influence(), temp
 ```
 
 ## 2. 核心公式
-influence = base + family_bonus + office_bonus + temp_influence
+influence = base + family_bonus + office_bonus + temp_influence + war_reward_influence
 base = land_private×10 + veterans×10 + popularity
 family_bonus = family_prestige×10
+
+> **EOR20261009-03（2026-10-11，OD-05/FC-07）：** `_compute_influence` 新增**第 7 参数**
+> `war_reward_influence:int=0`（持久来源 `Figure._war_reward_influence`）；`update_influence()` 与
+> resolution preview 派系聚合均显式传第 7 参数；`Figure.to_dict/from_dict` 增键 `_war_reward_influence`。
 
 > **WP-E-G7R（2026-08-24）：公式已提取为模块级纯函数**
 > `figure._compute_influence(land_private, veterans, popularity, family_prestige, office_bonus, temp_influence) -> int`
@@ -41,5 +45,6 @@ family_bonus = family_prestige×10
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
 | v1.2 | 2026-09-28 | DA-Exec (WP-M M-S1) | §3.1 双排序显式分离：`OFFICE_PROMOTION_ORDER`/`OFFICE_CURSUS_PREREQUISITE` 新增（行为等价重构），`OFFICE_RANK` 数值不变（D1） |
+| v1.3 | 2026-10-11 | DA-Exec (EOR20261009-03 WRRI) | §2：`_compute_influence` 增第 7 参数 `war_reward_influence`；`Figure._war_reward_influence` 持久化；preview 与 update 均传第 7 参数（FC-07） |
 | v1.1 | 2026-08-24 | DA-Exec (WP-E-G7R) | §2/§3：update_influence 公式提取为 _compute_influence 纯函数（行为零变化）；preview 派系聚合复用（R-23） |
 | v1.0 | 2026-07-12 | — | 初版 |

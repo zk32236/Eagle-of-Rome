@@ -96,16 +96,21 @@ def _compute_influence(
     family_prestige: int,
     office_bonus: int,
     temp_influence: int,
+    war_reward_influence: int = 0,
 ) -> int:
     """计算人物影响力（纯函数，零变异）。
 
     WP-E-G7R（D3 §3.1 方案 A）：从 update_influence 提取的只读公式——
     update_influence 与 resolution preview 派系聚合共用同一实现，杜绝第二套公式（R-23）。
     仅做算术，不触碰任何状态；调用方负责传入目标值。
+
+    EOR20261009-03（FC-07/OD-05）：新增第 7 参数 `war_reward_influence`（持久战争奖励
+    来源）——所有 production 消费者（update_influence / session_api preview）必须显式传
+    第 7 参数；旧六参调用保持兼容（default 0）。
     """
     base = land_private * 10 + veterans * 10 + popularity
     family_bonus = family_prestige * 10
-    return base + family_bonus + office_bonus + temp_influence
+    return base + family_bonus + office_bonus + temp_influence + war_reward_influence
 
 
 @dataclass
@@ -241,6 +246,8 @@ class Figure:
     _project_profit: int = 0
     _influence: int = field(default=0, init=False)
     _temp_influence_tasks: List[Dict] = field(default_factory=list)
+    # EOR20261009-03（FC-07/OD-05）：持久战争奖励影响力来源（默认 0，兼容载入）。
+    _war_reward_influence: int = field(default=0, init=False)
     _state = None  # 新增
 
     # ==================== 核心方法 ====================
@@ -282,6 +289,7 @@ class Figure:
             self.family_prestige,
             office_bonus,
             temp_influence,
+            self._war_reward_influence,
         )
         old_influence = self._influence
         self._influence = new_influence
@@ -755,6 +763,7 @@ class Figure:
             "_project_profit": self._project_profit,
             "_influence": self._influence,
             "_temp_influence_tasks": self._temp_influence_tasks.copy(),
+            "_war_reward_influence": self._war_reward_influence,
         }
 
     @classmethod
@@ -822,6 +831,8 @@ class Figure:
         figure._project_profit = data.get("_project_profit", 0)
         figure._influence = data.get("_influence", figure._influence)
         figure._temp_influence_tasks = data.get("_temp_influence_tasks", []).copy()
+        # EOR20261009-03（FC-07/FC-10）：旧档缺键 → 0（不补历史奖励）。
+        figure._war_reward_influence = data.get("_war_reward_influence", 0)
         figure.is_hero = data.get("is_hero", False)
         figure.hero_type = data.get("hero_type")
 

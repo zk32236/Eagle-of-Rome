@@ -851,10 +851,37 @@ Rectangle {
             font.pixelSize: compact ? theme.smallSize : theme.bodySize
             Layout.fillWidth: true
         }
+        // EOR20261009-03（FC-16/§8.2）：reward 权威呈现——committed（已结算）/ projected
+        // （预计，0 亦可见）/ history_unrecorded（未记录）。不读 loot>0 决定可见性。
         Text {
-            visible: landExecuted && hasField(land, "loot") && land.loot > 0
-            text: "📦 战利品: " + valueText(land, "loot", " T")
-                  + (hasField(land, "soldier_share") ? "（士兵份额 " + land.soldier_share + "）" : "")
+            visible: landExecuted && hasField(land, "reward_status") && land.reward_status === "committed"
+            text: "📦 战利品: " + valueText(land, "loot", " T") + "（已结算）"
+            color: "#766652"
+            font.pixelSize: compact ? theme.smallSize : theme.bodySize
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+        }
+        Text {
+            visible: landExecuted && hasField(land, "reward_status") && land.reward_status === "committed"
+            text: "🎖️ 老兵政治支持池: " + valueText(land, "soldier_share")
+            color: "#766652"
+            font.pixelSize: compact ? theme.smallSize : theme.bodySize
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+        }
+        Text {
+            visible: landExecuted && hasField(land, "reward_status") && land.reward_status === "projected"
+                     && land.projected === true && land.committed === false
+            text: "📦 预计战利品: "
+                  + (hasField(land, "projected_loot") ? String(land.projected_loot) : "0") + " T（未结算）"
+            color: "#766652"
+            font.pixelSize: compact ? theme.smallSize : theme.bodySize
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+        }
+        Text {
+            visible: landExecuted && hasField(land, "reward_status") && land.reward_status === "history_unrecorded"
+            text: "📦 战利品: 未记录"
             color: "#766652"
             font.pixelSize: compact ? theme.smallSize : theme.bodySize
             Layout.fillWidth: true

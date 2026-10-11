@@ -144,3 +144,18 @@ CRT 判定: combat_total = 2d6 + commander.martial + sum(legion_strengths) - war
 | 版本 | 日期 | 摘要 |
 |:--|:--|:--|
 | v1.9 | 2026-10-11 | WP-K S5：4a 宣战军团数敌强匹配 + 与 4b′ 增援统一到单一 producer（去 random）；`senate_war_legions` 人类语义不变 |
+
+## EOR20261009-03 WRRI 同步注记（2026-10-11，DA-Execute；append-only，目标锚点 §3 核心算法）
+
+> 权威：`SA-Development-Task.md` v3.0（G3 FROZEN）FC-01…FC-16；对应规格 `specifications/MVP0.3-02_战争系统.md` §2.5/§3.4。
+
+- **单一权威结算 owner**：`src/core/systems/war_system.py::WarSystem.compute_reward_settlement(war,result,state)`（PLAN，纯计算、零 mutation）→ `WarSystem.resolve_war`（唯一 mutation writer）消费 PLAN 并生成 **commit receipt**（`War._reward_receipt`，持久键 `reward_receipt`，`committed=True`，含 `identity_capture`）。
+- **DTO 消费 receipt**：`src/api/combat_api.py::_reward_view()` 读 receipt 快照（committed）/ PLAN 投影（projected）；`_build_battle_result` 移除硬编码 `50/25/15/残差` 与 `×1.5`；新 reward 字段进 `envelope.land`（扩 whitelist）与顶层 alias。
+- **无派系 → 国库**：`faction_target="treasury"`；`actual_recipients` 分列 nominal/actual（FC-13/FC-14）。
+- **config shares**：`src/core/config.py::Config.get_reward_share_snapshot()`（raw/effective/identity）；`WarSystem.get_reward_shares()` 仅消费 `snapshot.effective`。
+- **QML**：`CombatStage.qml` StageResultBlock 按 `land.reward_status` 呈现 committed/projected（零 loot 可见）/history_unrecorded。
+
+### 版本日志（WRRI）
+| 版本 | 日期 | 摘要 |
+|:--|:--|:--|
+| v1.10 | 2026-10-11 | EOR20261009-03 WRRI：compute_reward_settlement/receipt + DTO 消费 receipt + envelope.land reward 字段 + config snapshot（FC-01…FC-16） |

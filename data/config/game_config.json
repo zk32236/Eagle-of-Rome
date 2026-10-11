@@ -155,7 +155,11 @@
     "triumph_veteran_duration": 5,
     "triumph_approval_chance": 0.5,
     "rebellion_strength": 5,
-    "war_takeover_chance": 1.0
+    "war_takeover_chance": 1.0,
+    "treasury_share": 0.50,
+    "faction_share": 0.25,
+    "commander_share": 0.15,
+    "soldier_share": 0.10
   },
   "economic_rules": {
     "faction_stipend": 5,

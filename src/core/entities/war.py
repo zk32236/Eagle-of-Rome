@@ -2,6 +2,172 @@
 
 from typing import List, Optional, Dict, Any,Tuple
 from enum import Enum
+import copy
+import math
+
+
+# EOR20261009-03（FC-16/§5.1；ATTEMPT-3 R01）：权威 commit receipt 的**单一**校验器。
+# 同时被 `WarSystem.resolve_war`（生成时）与 `combat_api._reward_view`（DTO 读取时）调用，
+# 保证"committed = 有效完整 receipt 且 committed==True"的唯一定义（FC-06/FC-16）。
+# fail-closed：任一 schema/war_id/类型/组合/守恒不满足 → False（调用方不得以此 receipt 宣称 committed）。
+_RECEIPT_TOP_KEYS = (
+    "schema_version", "war_id", "result", "result_identity_source", "result_multiplier",
+    "base_snapshot", "total_monetary", "treasury_part", "faction_part", "commander_part",
+    "pool_part", "faction_target", "land", "family_prestige", "influence_granted",
+    "committed", "identity_capture", "actual_recipients",
+)
+_RECEIPT_BASE_KEYS = ("treasury", "land", "family_prestige", "influence")
+_RECEIPT_IDENTITY_KEYS = (
+    "commander_id_at_commit", "office_at_commit", "faction_id_at_commit",
+    "shares_effective", "config_version",
+)
+_RECEIPT_SHARE_KEYS = ("treasury", "faction", "commander", "soldier")
+_RECEIPT_ACTUAL_KEYS = (
+    "treasury_delta", "faction_delta", "commander_delta",
+    "faction_id", "commander_id", "pool_held",
+)
+_RECEIPT_SHARE_SUM_TOLERANCE = 1e-9
+
+# EOR20261009-03（ATTEMPT-4 R01/F01）：持久化（JSON）可承载的回执值形状。
+# 一个「present」的 receipt 若属于这些形状却不是合法 dict receipt，必须在读模型
+# fail-closed；opaque 的内存 sentinel（如测试 mock）不是持久值，保持「缺席」语义。
+_PERSISTED_RECEIPT_TYPES = (dict, list, str, int, float, bool)
+
+
+def is_persisted_receipt_shape(receipt: Any) -> bool:
+    """True 当且仅当 receipt 是持久化层可承载的值（JSON scalar/container），
+    即一个候选持久回执。内存 opaque 对象（mock 等）返回 False。"""
+    return isinstance(receipt, _PERSISTED_RECEIPT_TYPES)
+
+
+def receipt_present_and_invalid(receipt: Any, war_id: str) -> bool:
+    """present-but-invalid 判定（读模型 fail-closed 前置）：
+    存在（非 None）的持久形状 receipt 但未通过 `validate_reward_receipt` → True。
+    None 或 opaque sentinel → False（视为缺席，保持 legacy 语义）。
+    """
+    if receipt is None or not is_persisted_receipt_shape(receipt):
+        return False
+    return not validate_reward_receipt(receipt, war_id)
+
+
+def _is_nonneg_int(v: Any) -> bool:
+    """整数、非 bool、非负（Python 中 bool 是 int 子类，必须显式排除）。"""
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def _is_finite_share(v: Any) -> bool:
+    """有限数值、非 bool、∈ [0,1]（NaN/Inf/bool/字符串一律 False）。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    fv = float(v)
+    return math.isfinite(fv) and 0.0 <= fv <= 1.0
+
+
+def validate_reward_receipt(receipt: Any, war_id: str) -> bool:
+    """校验权威 commit receipt（FC-16/§5.1）。返回 True 当且仅当 receipt 完整有效。
+
+    覆盖：顶层键集合 / schema_version==1 / war_id 相符 / committed is True /
+    result↔(source,multiplier) 组合 / base_snapshot 四键非负 int /
+    整数 parts 非 bool 非负且 sum(parts)==total_monetary / identity_capture 五键类型 /
+    shares_effective 四键 finite 非 bool ∈[0,1] 且 sum≈1.0 / actual_recipients 六键
+    且 delta 非负 int 且 sum==total_monetary / faction_target 枚举。
+    """
+    try:
+        if not isinstance(receipt, dict):
+            return False
+        if set(receipt.keys()) != set(_RECEIPT_TOP_KEYS):
+            return False
+        # EOR20261009-03（ATTEMPT-4 R01/F01.3）：schema_version 必须是非 bool 整数且 ==1
+        # （Python 中 `True == 1`，旧的 `!= 1` 比较会错误接受 bool）。
+        if not _is_nonneg_int(receipt.get("schema_version")) \
+                or receipt.get("schema_version") != 1:
+            return False
+        if receipt.get("war_id") != war_id:
+            return False
+        if receipt.get("committed") is not True:
+            return False
+
+        # result ↔ (identity_source, multiplier) 组合（非独立成员检查）
+        result = receipt.get("result")
+        source = receipt.get("result_identity_source")
+        multiplier = receipt.get("result_multiplier")
+        # EOR20261009-03（ATTEMPT-4 R01/F01.3）：乘子必须是非 bool 数值（`True == 1.0` 会
+        # 错误通过 victory 乘子检查）。
+        if isinstance(multiplier, bool) or not isinstance(multiplier, (int, float)):
+            return False
+        if result == "triumph":
+            if multiplier != 1.5 or source != "explicit_crt":
+                return False
+        elif result == "victory":
+            if multiplier != 1.0 or source not in ("explicit_crt", "legacy_unspecified"):
+                return False
+        else:
+            return False
+
+        if receipt.get("faction_target") not in ("faction", "treasury"):
+            return False
+
+        # 金额整数（非 bool 非负）
+        for key in ("total_monetary", "treasury_part", "faction_part", "commander_part",
+                    "pool_part", "land", "family_prestige", "influence_granted"):
+            if not _is_nonneg_int(receipt.get(key)):
+                return False
+        if (receipt["treasury_part"] + receipt["faction_part"]
+                + receipt["commander_part"] + receipt["pool_part"]) != receipt["total_monetary"]:
+            return False
+
+        # base_snapshot：完整四键 + 非负 int
+        base = receipt.get("base_snapshot")
+        if not isinstance(base, dict) or set(base.keys()) != set(_RECEIPT_BASE_KEYS):
+            return False
+        for key in _RECEIPT_BASE_KEYS:
+            if not _is_nonneg_int(base[key]):
+                return False
+
+        # identity_capture：五键 + 类型
+        ic = receipt.get("identity_capture")
+        if not isinstance(ic, dict) or set(ic.keys()) != set(_RECEIPT_IDENTITY_KEYS):
+            return False
+        cid = ic.get("commander_id_at_commit")
+        if cid is not None and not _is_nonneg_int(cid):
+            return False
+        office = ic.get("office_at_commit")
+        if office is not None and not isinstance(office, str):
+            return False
+        fid = ic.get("faction_id_at_commit")
+        if fid is not None and not isinstance(fid, str):
+            return False
+        if not isinstance(ic.get("config_version"), str):
+            return False
+        shares_eff = ic.get("shares_effective")
+        if not isinstance(shares_eff, dict) or set(shares_eff.keys()) != set(_RECEIPT_SHARE_KEYS):
+            return False
+        for key in _RECEIPT_SHARE_KEYS:
+            if not _is_finite_share(shares_eff[key]):
+                return False
+        if abs(sum(float(shares_eff[k]) for k in _RECEIPT_SHARE_KEYS) - 1.0) > _RECEIPT_SHARE_SUM_TOLERANCE:
+            return False
+
+        # actual_recipients：六键 + delta 非负 int + 守恒
+        ar = receipt.get("actual_recipients")
+        if not isinstance(ar, dict) or set(ar.keys()) != set(_RECEIPT_ACTUAL_KEYS):
+            return False
+        for key in ("treasury_delta", "faction_delta", "commander_delta", "pool_held"):
+            if not _is_nonneg_int(ar[key]):
+                return False
+        if (ar["treasury_delta"] + ar["faction_delta"] + ar["commander_delta"]
+                + ar["pool_held"]) != receipt["total_monetary"]:
+            return False
+        ar_cid = ar.get("commander_id")
+        if ar_cid is not None and not _is_nonneg_int(ar_cid):
+            return False
+        ar_fid = ar.get("faction_id")
+        if ar_fid is not None and not isinstance(ar_fid, str):
+            return False
+        return True
+    except (KeyError, TypeError, ValueError):
+        return False
+
 
 class WarStatus(Enum):
     INACTIVE = "inactive"
@@ -88,6 +254,9 @@ class War:
         self._soldier_share: int = 0
         self._triumph_commander_id: Optional[int] = None
         self._triumph_approved: bool = False
+        # EOR20261009-03（FC-16）：权威 commit receipt（唯一 committed 权威）。
+        # None = 未结算；dict = 有效完整 receipt（含 committed=True）。持久键 = reward_receipt。
+        self._reward_receipt: Optional[Dict[str, Any]] = None
         self._original_commander_id: Optional[int] = None
         self._commander_assigned_turn: Optional[int] = None
         self._peace_treaty: Optional[Dict] = None
@@ -301,6 +470,29 @@ class War:
     @property
     def soldier_share(self) -> int:
         return self._soldier_share
+
+    @property
+    def veteran_support_pool(self) -> int:
+        """EOR20261009-03（FC-15/OD-04）：veteran support pool 域概念名——
+        与兼容别名 soldier_share 同底层存储（不另存第二个金额键）。"""
+        return self._soldier_share
+
+    @property
+    def reward_receipt(self) -> Optional[Dict[str, Any]]:
+        """EOR20261009-03（FC-16）：权威 commit receipt（只读，含 present-but-malformed）。"""
+        return self._reward_receipt
+
+    def set_reward_receipt(self, receipt: Optional[Dict[str, Any]]) -> None:
+        """设置权威 commit receipt（唯一写入者 = WarSystem.resolve_war）。"""
+        self._reward_receipt = receipt
+
+    def has_valid_receipt(self) -> bool:
+        """FC-16/§5.1：receipt present 且通过完整校验（fail-closed）。
+
+        `committed` 唯一权威 = 该值（**不得**仅凭 result 资格置 True）；present-but-invalid
+        receipt 返回 False → DTO/守卫按 history_unrecorded 处理，不崩溃、不补发。
+        """
+        return validate_reward_receipt(self._reward_receipt, self._id)
 
     @property
     def triumph_commander_id(self) -> Optional[int]:
@@ -544,6 +736,9 @@ class War:
             "soldier_share": self._soldier_share,
             "triumph_commander_id": self._triumph_commander_id,
             "triumph_approved": self._triumph_approved,
+            # EOR20261009-03（ATTEMPT-3 R01）：present-but-malformed / 空 dict 也原键保留
+            # （`is not None`；不再把 falsy {} 塌缩为 None），保留 raw-present 诊断区分。
+            "reward_receipt": copy.deepcopy(self._reward_receipt) if self._reward_receipt is not None else None,
             "original_commander_id": self._original_commander_id,
             "commander_assigned_turn": self._commander_assigned_turn,
             "peace_treaty": self._peace_treaty.copy() if self._peace_treaty else None,
@@ -621,6 +816,11 @@ class War:
         war._soldier_share = data.get("soldier_share", 0)
         war._triumph_commander_id = data.get("triumph_commander_id")
         war._triumph_approved = data.get("triumph_approved", False)
+        # EOR20261009-03（FC-10/FC-16；ATTEMPT-3 R01）：receipt 原键逐字恢复（旧档缺键 → None）。
+        # present-but-malformed / 空 dict {} 亦保留（`is not None`）——committed 有效性由
+        # `validate_reward_receipt` 判定（DTO/守卫 fail-closed），不在 load 期静默补默认。
+        receipt = data.get("reward_receipt")
+        war._reward_receipt = copy.deepcopy(receipt) if receipt is not None else None
         war._original_commander_id = data.get("original_commander_id")
         war._commander_assigned_turn = data.get("commander_assigned_turn")
         war._peace_treaty = data.get("peace_treaty")

@@ -87,6 +87,10 @@ Config 配置管理系统为整个游戏提供统一的配置查询接口，将�
     "combat_rules": {
         "triumph_threshold": 12,
         "victory_threshold": 6,
+        "treasury_share": 0.50,
+        "faction_share": 0.25,
+        "commander_share": 0.15,
+        "soldier_share": 0.10,
         ...
     },
     "terminology_preset": "original"
@@ -116,6 +120,13 @@ Config 配置管理系统为整个游戏提供统一的配置查询接口，将�
 - 空字符串 → 返回 `default`
 - 中间节点不是字典 → 返回 `default`
 - 路径中任一级别 key 不存在 → 返回 `default`
+
+### 3.6 奖励份额 snapshot（EOR20261009-03 / OD-06，FC-11）
+
+- 奖励份额四键（raw）`treasury_share`/`faction_share`/`commander_share`/`soldier_share`，单一来源 = `game_config.json` + `src/core/config.py` DEFAULTS，默认 **50/25/15/10（sum=1.0）**。
+- 新增只读 `Config.get_reward_share_snapshot()` → deep-copy `{source,raw,effective,valid,reason,config_version}`（raw 仅四 share 键）。
+- **缺键检测在 raw JSON 层**（不取深合并后的 merged `get()`）；校验：四键存在、finite 非 bool、`[0,1]`、sum 容差 `1e-9`；任一失败 → 整组冻结默认 + `reason`∈ missing/invalid_type/nonfinite/out_of_range/sum_mismatch/load_failed。
+- 公开内存赋值（`Config.__setattr__` / 属性代理对 combat_rules 四键）同步 raw + 重校验 + identity（source=memory）；`reload()` 失败 → 原 `_config` + metadata（含 hash）全部保留。`config_version` = `reward-shares/v1:` + SHA256(canonical JSON)。
 
 ## 4. 输入、输出与依赖
 
@@ -206,5 +217,6 @@ Config 配置管理系统为整个游戏提供统一的配置查询接口，将�
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent C | 初版创建 |
+| v1.1 | 2026-10-11 | DA-Execute (EOR20261009-03 WRRI) | OD-06/FC-11：`combat_rules` 默认结构增四份额键（50/25/15/10）；新增 §3.6 奖励份额 snapshot（raw/effective/identity、raw 层缺键检测、公开内存赋值同步、reload 失败保留）。GAME_RULE_CHANGE=YES（Owner OD-06） |
 
 > **维护规则：** 本文件为活文档，每次修改规格说明正文或技术映射时，必须在版本日志中追加新条目。版本号递增规则：大功能修改升主版本（v1→v2），小修小改升次版本（v1.0→v1.1）。

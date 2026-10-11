@@ -1,10 +1,11 @@
 # src/core/systems/war_system.py
 import json
+import copy
 import random
 import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Any, TYPE_CHECKING
-from src.core.entities.war import War, WarStatus, WarType
+from src.core.entities.war import War, WarStatus, WarType, validate_reward_receipt
 from src.core.localization import TerminologyService
 
 if TYPE_CHECKING:
@@ -521,6 +522,127 @@ class WarSystem:
         )
         return True
 
+    def get_reward_shares(self, state) -> Dict[str, float]:
+        """单一来源 reward shares（FC-11/FC-12, §5.4）：只消费 Config snapshot.effective；
+        invalid → 冻结默认（已在 snapshot 内）+ 结构化 WARNING。返回
+        {treasury,faction,commander,soldier}。不重读 JSON。"""
+        snapshot = state.config.get_reward_share_snapshot()
+        if not snapshot.get("valid", False):
+            state.log_event(
+                "奖励份额配置非法/缺键，使用冻结默认 50/25/15/10",
+                level=logging.WARNING,
+                extra={
+                    "type": "reward_share_fallback",
+                    "reason": snapshot.get("reason"),
+                    "raw": snapshot.get("raw"),
+                    "effective": snapshot.get("effective"),
+                },
+            )
+        return snapshot["effective"]
+
+    def compute_reward_settlement(self, war: War, result: Optional[str], state) -> Dict[str, Any]:
+        """单一权威 reward-settlement **PLAN**（FC-16）：纯计算、零 mutation。
+
+        result ∈ {triumph,victory,draw,defeat,disaster,None}（None = legacy bool-only 成功
+        → 归一 victory/legacy_unspecified/乘子 1.0，不伪造 CRT triumph，FC-02）。
+        返回冻结 PLAN read-model（含 committed=False、plan_identity）。
+        """
+        if result is None:
+            canon = "victory"
+            identity_source = "legacy_unspecified"
+        else:
+            canon = str(result).strip().lower()
+            identity_source = "explicit_crt"
+        if canon == "triumph":
+            multiplier = 1.5
+        elif canon == "victory":
+            multiplier = 1.0
+        else:
+            multiplier = 0.0
+
+        rewards = war.calculate_rewards()
+        base = {
+            "treasury": int(rewards.get("treasury", 0) or 0),
+            "land": int(rewards.get("land", 0) or 0),
+            "family_prestige": int(rewards.get("family_prestige", 0) or 0),
+            "influence": int(rewards.get("influence", 0) or 0),
+        }
+        total = int(base["treasury"] * multiplier)
+
+        shares = self.get_reward_shares(state)
+        treasury_part = int(total * shares["treasury"])
+        faction_part = int(total * shares["faction"])
+        commander_part = int(total * shares["commander"])
+        pool_part = total - treasury_part - faction_part - commander_part
+
+        commander = self.get_live_current_commander(war)
+        faction_id = getattr(commander, "faction_id", None) if commander else None
+        # FC-14：有指挥官但无有效派系（空/不存在）→ faction_part 归国库。
+        valid_faction = (
+            commander is not None
+            and bool(faction_id)
+            and self.state.get_faction(faction_id) is not None
+        )
+        faction_target = "faction" if valid_faction else "treasury"
+
+        snapshot = state.config.get_reward_share_snapshot()
+        plan_identity = {
+            "commander_id": commander.id if commander else None,
+            "office": getattr(commander, "office", None) if commander else None,
+            "faction_id": faction_id if valid_faction else None,
+            "shares_effective": {
+                "treasury": float(shares["treasury"]),
+                "faction": float(shares["faction"]),
+                "commander": float(shares["commander"]),
+                "soldier": float(shares["soldier"]),
+            },
+            "config_version": snapshot["config_version"],
+        }
+
+        if multiplier == 0.0:
+            return {
+                "war_id": war.id,
+                "result": canon,
+                "result_identity_source": identity_source,
+                "result_multiplier": multiplier,
+                "base": base,
+                "total_monetary": 0,
+                "treasury_part": 0,
+                "faction_part": 0,
+                "commander_part": 0,
+                "pool_part": 0,
+                "faction_target": faction_target,
+                "land": 0,
+                "family_prestige": 0,
+                "influence": 0,
+                "committed": False,
+                "plan_identity": plan_identity,
+            }
+        return {
+            "war_id": war.id,
+            "result": canon,
+            "result_identity_source": identity_source,
+            "result_multiplier": multiplier,
+            "base": base,
+            "total_monetary": total,
+            "treasury_part": treasury_part,
+            "faction_part": faction_part,
+            "commander_part": commander_part,
+            "pool_part": pool_part,
+            "faction_target": faction_target,
+            "land": base["land"],
+            "family_prestige": base["family_prestige"],
+            "influence": base["influence"],
+            "committed": False,
+            "plan_identity": plan_identity,
+        }
+
+    def _validate_reward_receipt(self, receipt: Dict[str, Any], war: War) -> bool:
+        """校验生成的 receipt（FC-16/§5.1；ATTEMPT-3 R01）：委托**单一**校验器
+        `war.validate_reward_receipt`（result↔source↔multiplier 组合、base_snapshot 完整、
+        shares finite 非 bool ∈[0,1] 且 sum≈1.0、identity/actual 键类型、守恒）。任一失败 → 不制造 receipt。"""
+        return validate_reward_receipt(receipt, war.id)
+
     def resolve_war(self, war_id: str, victory: bool, *, combat_result: Optional[str] = None) -> Dict[str, Any]:
         """War 终结 resolver（WP-G-R4 §4.2，R4-G-04）：保留 victory 名称/位置兼容
         `resolve_war(id, True)`/`victory=True`；追加显式 keyword-only combat_result 身份。
@@ -534,6 +656,28 @@ class WarSystem:
         war = self.get_war_by_id(war_id)
         if not war:
             return {}
+        # EOR20261009-03（FC-04/FC-06；ATTEMPT-3 R01）：core 层历史已结束守卫——已 RESOLVED、
+        # 退役 DEFEATED、已在 `_war_discard`（历史 ended membership）、或携带任何非 null
+        # receipt（有效或 present-but-malformed）的 war → 确定性 no-op（零货币写入；不重发、
+        # 不回到 PLAN）。历史结束记录**绝不**因「无 receipt」而重新具备结算资格（§5.3）。
+        if (war.status in (WarStatus.RESOLVED, WarStatus.DEFEATED)
+                or war.reward_receipt is not None
+                or war in self._war_discard):
+            self.state.log_event(
+                f"resolve_war no-op（已结算）: {war.name}",
+                level=logging.DEBUG,
+                extra={"type": "resolve_war_noop", "war_id": war.id},
+            )
+            return {
+                'war_name': war.name,
+                'victory': victory,
+                'duration': war.duration,
+                'rewards': {},
+                'penalties_applied': [],
+                'no_op': True,
+                'combat_result': combat_result,
+                'result_identity_source': 'already_settled',
+            }
         # WP-G-R4 §4.2：显式 CRT 身份校验先行（坏值零 mutation，不吞坏值统一成功）
         cr = None
         if combat_result is not None:
@@ -631,21 +775,15 @@ class WarSystem:
                 rewards = war.calculate_rewards()
                 result['rewards'] = rewards
 
-                # 从配置读取分配比例
-                treasury_share = self.state.config.get("combat_rules.treasury_share", 0.5)
-                faction_share = self.state.config.get("combat_rules.faction_share", 0.25)
-                commander_share = self.state.config.get("combat_rules.commander_share", 0.15)
-                soldier_share = self.state.config.get("combat_rules.soldier_share", 0.15)
+                # EOR20261009-03（FC-16）：单一权威 PLAN owner（纯计算）→ 应用写入 → receipt。
+                plan = self.compute_reward_settlement(war, cr, state=self.state)
+                total_treasury = plan["total_monetary"]
+                treasury_part = plan["treasury_part"]
+                faction_part = plan["faction_part"]
+                commander_part = plan["commander_part"]
+                soldier_part = plan["pool_part"]
 
-                total_treasury = rewards.get('treasury', 0)
-
-                # 计算各项份额（取整）
-                treasury_part = int(total_treasury * treasury_share)
-                faction_part = int(total_treasury * faction_share)
-                commander_part = int(total_treasury * commander_share)
-                soldier_part = total_treasury - treasury_part - faction_part - commander_part
-
-                # 打印战利品分配
+                # 打印战利品分配（呈现保持）
                 print(f"\n      📦 战利品分配 ({war.name}):")
                 print(f"        总额: {total_treasury} 塔兰特")
                 print(f"        国库: +{treasury_part}")
@@ -653,59 +791,138 @@ class WarSystem:
                     commander = self.state.get_living_member(live_commander_id)
                     commander_name = commander.name if commander else "未知"
                     print(f"        指挥官 {commander_name} 私库: +{commander_part}")
-                    if commander and commander.faction_id:
+                    if commander and commander.faction_id and self.state.get_faction(commander.faction_id):
                         faction = self.state.get_faction(commander.faction_id)
-                        if faction:
-                            print(f"        派系 {faction.name} 金库: +{faction_part}")
-                        else:
-                            print(f"        派系金库: +{faction_part} (无派系)")
+                        print(f"        派系 {faction.name} 金库: +{faction_part}")
                     else:
-                        print(f"        派系金库: +{faction_part} (指挥官无派系)")
+                        print(f"        派系金库: +{faction_part} (无派系→国库)")
                 else:
                     print(f"        指挥官私库部分 (无指挥官) 归国库: +{commander_part + faction_part}")
                 print(f"        士兵份额: {soldier_part} (将转换为老兵支持)")
 
-                # 实际分配
+                # 实际分配（FC-13/FC-14：守恒；无派系→国库）
+                actual_treasury_delta = 0
+                actual_faction_delta = 0
+                actual_commander_delta = 0
+                actual_faction_id = None
+                influence_granted = 0
                 if live_commander_id is None:
+                    # 生产不可达（FC-03/FC-14②）——显式声明策略分支，不写防御守卫。
                     self.state.add_treasury(total_treasury)
+                    actual_treasury_delta = total_treasury
                     self.state.log_event(f"战争 {war.name} 战利品: 国库 +{total_treasury}（无指挥官）")
                     war.set_soldier_share(0)
                 else:
-                    if treasury_part > 0:
-                        self.state.add_treasury(treasury_part)
-                        self.state.log_event(f"战争 {war.name} 战利品: 国库 +{treasury_part}")
+                    commander = self.state.get_living_member(live_commander_id)
+                    faction = None
+                    if commander and commander.faction_id:
+                        faction = self.state.get_faction(commander.faction_id)
 
-                    if faction_part > 0:
-                        commander = self.state.get_living_member(live_commander_id)
-                        if commander and commander.faction_id:
-                            faction = self.state.get_faction(commander.faction_id)
-                            if faction:
-                                faction.treasury += faction_part
-                                self.state.log_event(f"战争 {war.name} 战利品: 派系 {faction.name} +{faction_part}")
+                    treasury_delta = treasury_part + (faction_part if faction is None else 0)
+                    if treasury_delta > 0:
+                        self.state.add_treasury(treasury_delta)
+                        self.state.log_event(f"战争 {war.name} 战利品: 国库 +{treasury_delta}")
+                    actual_treasury_delta = treasury_delta
 
-                    if commander_part > 0:
-                        commander = self.state.get_living_member(live_commander_id)
-                        if commander:
-                            commander.wealth += commander_part
-                            self.state.log_event(f"战争 {war.name} 战利品: 指挥官 {commander.name} +{commander_part}")
+                    if faction is not None and faction_part > 0:
+                        faction.treasury += faction_part
+                        actual_faction_delta = faction_part
+                        actual_faction_id = faction.id
+                        self.state.log_event(f"战争 {war.name} 战利品: 派系 {faction.name} +{faction_part}")
+
+                    if commander_part > 0 and commander:
+                        commander.wealth += commander_part
+                        actual_commander_delta = commander_part
+                        self.state.log_event(f"战争 {war.name} 战利品: 指挥官 {commander.name} +{commander_part}")
 
                     if soldier_part > 0:
                         war.set_soldier_share(soldier_part)
                         self.state.log_event(f"战争 {war.name} 战利品: 士兵份额 {soldier_part} 待凯旋分配")
 
+                    # OD-05/FC-07：持久战争奖励影响力（授予指挥官；在 receipt 生成之前）
+                    inf_reward = int(rewards.get('influence', 0) or 0)
+                    if commander is not None and inf_reward > 0:
+                        commander._war_reward_influence += inf_reward
+                        commander.update_influence()
+                        influence_granted = inf_reward
+                        self.state.log_event(
+                            f"战争 {war.name} 影响力: {commander.name} +{inf_reward}（持久）",
+                            level=logging.DEBUG,
+                            extra={
+                                "type": "war_reward_influence",
+                                "war_id": war.id,
+                                "figure_id": commander.id,
+                                "influence": inf_reward,
+                            },
+                        )
+
                 # 土地奖励
-                land_reward = rewards.get('land', 0)
+                land_reward = plan["land"]
                 if land_reward > 0:
                     self.state.add_national_public_land(land_reward)
                     self.state.log_event(f"战争 {war.name} 土地: 国家公地 +{land_reward}")
 
                 # 家族声望
-                prestige_reward = rewards.get('family_prestige', 0)
+                prestige_reward = plan["family_prestige"]
                 if prestige_reward > 0 and live_commander_id is not None:
                     commander = self.state.get_living_member(live_commander_id)
                     if commander:
                         commander.family_prestige += prestige_reward
                         self.state.log_event(f"战争 {war.name} 家族声望: {commander.name} +{prestige_reward}")
+
+                # EOR20261009-03（FC-16）：权威 commit receipt（在 commander 清理之前生成，
+                # 捕获 identity；土地/声望/影响力已应用）。
+                receipt = {
+                    "schema_version": 1,
+                    "war_id": war.id,
+                    "result": plan["result"],
+                    "result_identity_source": plan["result_identity_source"],
+                    "result_multiplier": plan["result_multiplier"],
+                    "base_snapshot": copy.deepcopy(plan["base"]),
+                    "total_monetary": total_treasury,
+                    "treasury_part": treasury_part,
+                    "faction_part": faction_part,
+                    "commander_part": commander_part,
+                    "pool_part": soldier_part,
+                    "faction_target": plan["faction_target"],
+                    "land": plan["land"],
+                    "family_prestige": plan["family_prestige"],
+                    "influence_granted": influence_granted,
+                    "committed": True,
+                    "identity_capture": {
+                        "commander_id_at_commit": plan["plan_identity"]["commander_id"],
+                        "office_at_commit": plan["plan_identity"]["office"],
+                        "faction_id_at_commit": plan["plan_identity"]["faction_id"],
+                        "shares_effective": dict(plan["plan_identity"]["shares_effective"]),
+                        "config_version": plan["plan_identity"]["config_version"],
+                    },
+                    "actual_recipients": {
+                        "treasury_delta": actual_treasury_delta,
+                        "faction_delta": actual_faction_delta,
+                        "commander_delta": actual_commander_delta,
+                        "faction_id": actual_faction_id,
+                        "commander_id": live_commander_id,
+                        "pool_held": soldier_part,
+                    },
+                }
+                if self._validate_reward_receipt(receipt, war):
+                    war.set_reward_receipt(receipt)
+                    self.state.log_event(
+                        f"战争 {war.name} 结算 receipt 生成（committed）",
+                        level=logging.DEBUG,
+                        extra={
+                            "type": "war_reward_receipt",
+                            "war_id": war.id,
+                            "total_monetary": total_treasury,
+                            "faction_target": plan["faction_target"],
+                        },
+                    )
+                else:
+                    self.state.log_event(
+                        f"战争 {war.name} receipt 校验失败，不制造 receipt",
+                        level=logging.WARNING,
+                        extra={"type": "war_reward_receipt_invalid", "war_id": war.id},
+                    )
 
                 # 占领行省
                 if war.unlocked_provinces:

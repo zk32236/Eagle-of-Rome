@@ -612,6 +612,33 @@ def transact_land(state: GameState, player_id: str, seller_id: int, buyer_id: in
     return api_response(True, message, data={"seller": seller_id, "buyer": buyer_id, "land": land, "price": price})
 
 
+def _settle_veteran_pool(state: GameState, war, refund: int, reason: str) -> None:
+    """EOR20261009-03（FC-15/OD-04）：清空 veteran support pool——`refund` 回罗马国库，
+    池归零。分母（凯旋通过=per_turn×duration + 余项；其余=全额）在调用方保证守恒：
+    `per_turn×duration + refund == pool`（通过）/ `refund == pool`（其余）。
+    """
+    pool = war.soldier_share
+    if refund > 0:
+        state.add_treasury(refund)
+        state.log_event(
+            f"老兵支持池处置: {war.name} 回罗马国库 +{refund}",
+            level=logging.DEBUG,
+            extra={
+                "type": "veteran_pool_refund",
+                "war_id": war.id,
+                "refund": refund,
+                "pool": pool,
+                "reason": reason,
+            },
+        )
+    war.set_soldier_share(0)
+
+
+def _refund_veteran_pool_to_treasury(state: GameState, war) -> None:
+    """否决/无票/失效路径：全池回罗马国库，池归零（FC-15）。"""
+    _settle_veteran_pool(state, war, war.soldier_share, reason="full_refund")
+
+
 def resolve_forum(state: GameState) -> dict:
     """
     公示结算：根据收集的操作执行实际游戏逻辑，返回汇总结果。
@@ -952,14 +979,16 @@ def resolve_forum(state: GameState) -> dict:
             eligibility = _triumph_eligibility(state, war)
             if not eligibility["eligible"]:
                 if eligibility["reason"] in ("commander_dead", "commander_missing"):
-                    war.set_soldier_share(0)
+                    # FC-15/OD-04：指挥官失效 → 全池回罗马国库。
+                    _refund_veteran_pool_to_treasury(state, war)
                     results.append(f"⚠️ 战争 {war.name} 指挥官已死，凯旋失效")
                 continue
 
             commander = state.get_member(war.triumph_commander_id)
             votes = votes_by_war.get(war.id, [])
             if not votes:
-                war.set_soldier_share(0)
+                # FC-15：无有效投票 → 全池回国库。
+                _refund_veteran_pool_to_treasury(state, war)
                 results.append(f"⚠️ 战争 {war.name} 无有效投票")
                 continue
 
@@ -979,17 +1008,23 @@ def resolve_forum(state: GameState) -> dict:
                 support_rate = votes_for / total_influence
                 if support_rate > 0.5:
                     duration = state.config.get("combat_rules.triumph_veteran_duration", 5)
-                    per_turn = war.soldier_share // duration
+                    pool = war.soldier_share
+                    per_turn = (pool // duration) if duration > 0 else 0
+                    refund = pool
                     if per_turn > 0:
                         commander.add_temp_influence_task(per_turn, duration)
+                        # FC-15 计量不变量：per_turn×duration + 余项 == pool
+                        refund = pool - per_turn * duration
+                    _settle_veteran_pool(state, war, refund, reason="approval_residual")
                     war.set_triumph_approved(True)
                     results.append(f"✅ 战争 {war.name} 的凯旋仪式获得批准（支持率 {support_rate:.1%}）")
                 else:
+                    # FC-15/OD-04：否决 → 全池回罗马国库。
+                    _refund_veteran_pool_to_treasury(state, war)
                     results.append(f"❌ 战争 {war.name} 的凯旋仪式被否决（支持率 {support_rate:.1%}）")
             else:
+                _refund_veteran_pool_to_treasury(state, war)
                 results.append(f"⚠️ 战争 {war.name} 无有效投票")
-
-            war.set_soldier_share(0)
 
     state.clear_forum_pending()
 

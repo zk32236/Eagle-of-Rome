@@ -32,6 +32,11 @@ _war_discard (RESOLVED/DEFEATED)
 
 当 JSON 加载失败时创建 3 个默认测试战争（Gallic Raiders/Pirate Fleet/Provincial Revolt）。
 
+### 2.4 战争卡 `rewards` 与 `rewards.influence` 处置（EOR20261009-03 / OD-05）
+
+- 战争卡 `rewards` 字典（`treasury`/`land`/`family_prestige`/`influence`）是**权威基础奖励来源**（`War.calculate_rewards()` 逐字副本）。
+- `rewards.influence` = **ACTIVE**（OD-05）：成功战争（TRIUMPH/VICTORY）结算时授予指挥官**持久**影响力（`Figure._war_reward_influence`，经 `_compute_influence` 第 7 参数）；无消费路径的「休眠」描述已废止。
+
 ## 3. 技术架构映射
 
 - [Technical Mapping](../technical-mappings/MVP0.7-10_战争卡大规模战争.md)
@@ -41,3 +46,4 @@ _war_discard (RESOLVED/DEFEATED)
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
 | v1.0 | 2026-07-12 | Document Officer Worker K | 初版创建 |
+| v1.1 | 2026-10-11 | DA-Execute (EOR20261009-03 WRRI) | OD-05：`rewards.influence` = **ACTIVE**（成功战争授予指挥官持久影响力；废止「无消费路径/休眠」）；新增 §2.4 权威基础奖励与 influence 处置。GAME_RULE_CHANGE=YES（Owner OD-05） |

@@ -21,6 +21,10 @@
 > `_compute_influence(land_private, veterans, popularity, family_prestige, office_bonus, temp_influence)`；
 > `update_influence()` 内部改为调用纯函数后再写 `_influence`（对外行为零变化）；
 > resolution preview 派系聚合复用同一纯函数做只读重算（R-23 无第二套公式）。
+>
+> **EOR20261009-03（2026-10-11，OD-05/FC-07）：** 公式新增**第 7 参数** `war_reward_influence`（默认 0，旧六参调用兼容）——
+> 持久战争奖励来源 `Figure._war_reward_influence`（成功战争 `rewards.influence`）；**所有 production 消费者**
+> （`update_influence` + `session_api` resolution preview 派系聚合）**必须**显式传第 7 参数（否则 preview≠commit）。
 
 ### 2.2 系统行为（影响力输出）
 
@@ -53,7 +57,7 @@
 ### 3.1 影响力计算公式
 
 ```
-influence = base + family_bonus + office_bonus + temp_influence
+influence = base + family_bonus + office_bonus + temp_influence + war_reward_influence
 ```
 
 | 组件 | 公式 | 说明 |
@@ -62,6 +66,7 @@ influence = base + family_bonus + office_bonus + temp_influence
 | **family_bonus** | `family_prestige × 10` | 家族声望加成（仅贵族） |
 | **office_bonus** | `get_office_influence_bonus()` | 现任/前任官职加成 |
 | **temp_influence** | `get_temp_influence()` | 临时影响力（任务总和） |
+| **war_reward_influence** | `Figure._war_reward_influence` | **持久**战争奖励影响力来源（EOR20261009-03 / OD-05，`_compute_influence` **第 7 参数**，默认 0） |
 
 ### 3.2 官职影响力加成
 
@@ -261,6 +266,7 @@ influence = base + family_bonus + office_bonus + temp_influence
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
 | v1.1 | 2026-09-28 | DA-Exec (WP-M M-S1) | §3.3 拆为「权力顺序」+「升级顺序」两表（修正 stale 单表）；§3.2 声明影响力加成为独立轴（A1·R4）；新增 §3.3 双排序常量（`OFFICE_PROMOTION_ORDER`/`OFFICE_CURSUS_PREREQUISITE`） |
+| v1.2 | 2026-10-11 | DA-Exec (EOR20261009-03 WRRI) | OD-05/FC-07：影响力公式增持久项 `war_reward_influence`（`Figure._war_reward_influence`，`_compute_influence` 第 7 参数，默认 0）；`figure_api.get_figure_info` 不再声称五项完整等式（改总值 + 战争奖励来源 + 基础分项）。GAME_RULE_CHANGE=YES（Owner OD-05） |
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent B | 初版创建 |
 
 > **维护规则：** 本文件为活文档，每次修改规格说明正文或技术映射时，必须在版本日志中追加新条目。版本号递增规则：大功能修改升主版本（v1→v2），小修小改升次版本（v1.0→v1.1）。

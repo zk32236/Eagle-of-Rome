@@ -54,3 +54,4 @@ src/api/forum_api.py              # vote_triumph(), resolve_forum()
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
 | v1.2 | 2026-10-06 | DA Sub-Agent (WP-J Group B) | ③ 行 action/viewer_vote 读取链路 + 最小交互提交链（WP-J Group B / J-AC-03；additive read-model，写语义零改） |
+| v1.4 | 2026-10-11 | DA-Exec (EOR20261009-03 WRRI) | OD-04/FC-15：`resolve_forum()` 池清空守恒——凯旋通过余项 / 否决 / 无票 / 指挥官失效 / 小池 → 回罗马国库（`_settle_veteran_pool`/`_refund_veteran_pool_to_treasury`）；池域概念名 `veteran_support_pool`；投票交互语义零改 |

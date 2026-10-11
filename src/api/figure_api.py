@@ -81,7 +81,13 @@ def get_figure_info(state: GameState, figure_id: Optional[int] = None) -> dict:
         vet_inf = fig.veterans * 10
         fam_inf = fig.family_prestige * 10
         off_bonus = fig.get_office_influence_bonus()
-        influence_detail = f"{fig.influence} = 私地{land_inf} + 老兵{vet_inf} + 人气{fig.popularity} + 家族{fam_inf} + 公职{off_bonus}"
+        war_reward_inf = getattr(fig, "_war_reward_influence", 0)
+        # EOR20261009-03（FC-07/§15）：不再声称五项完整等式（基础分项未含持久战争奖励/临时
+        # 影响力）；改为总值 + 战争奖励来源 + 基础分项冒号式描述（不扩大 temp 历史修复）。
+        influence_detail = (
+            f"{fig.influence}（含战争奖励 {war_reward_inf}）；基础分项："
+            f"私地{land_inf} + 老兵{vet_inf} + 人气{fig.popularity} + 家族{fam_inf} + 公职{off_bonus}"
+        )
         lines.append(i18n.get("figure_detail_line", label=i18n.get("figure_detail_influence"), value=influence_detail))
         lines.append(i18n.get("figure_detail_line", label=i18n.get("figure_detail_rank"), value=fig.rank))
         lines.append(i18n.get("figure_detail_line", label=i18n.get("figure_detail_zeal"), value=fig.zeal))

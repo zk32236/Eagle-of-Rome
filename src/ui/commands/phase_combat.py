@@ -438,7 +438,8 @@ class CombatCommand(Command):
         if result == "TRIUMPH":
             print(f"\n      {emoji} RESULT: TRIUMPH (0 losses)")
             print(f"      🎉 {terms.triumph}! {commander.name} returns in glory!")
-            commander.influence += 10
+            # EOR20261009-03（FC-07/OD-05）：移除 legacy CLI 硬编码 +10（权威影响力授予
+            # 收敛到 resolve_war 的 rewards.influence 持久源）。
 
             for legion in legions:
                 legion.promote_to_veteran()
@@ -450,7 +451,7 @@ class CombatCommand(Command):
         elif result == "VICTORY":
             print(f"\n      {emoji} RESULT: VICTORY (0 losses)")
             print(f"      ✓ Victory! {war.name} concluded, but enemy not destroyed.")
-            commander.influence += 5
+            # EOR20261009-03（FC-07/OD-05）：移除 legacy CLI 硬编码 +5（同上）。
 
             # S5（G1-22 / §11.4，WP-G GB）：VICTORY = 战争结束——晋升统一在
             # resolve_war victory 分支（先于召回）→ RESOLVED → recall→AVAILABLE（Veteran 保留）；

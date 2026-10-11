@@ -73,13 +73,13 @@
 ### 2.5 战斗结果处理
 
 **TRIUMPH（大胜）：**
-- 指挥官影响力 +10
+- 权威货币奖励 = `base × 1.5`（OD-01；EOR20261009-03 权威结算）；指挥官影响力提升 = 战争卡 `rewards.influence`（持久来源 `Figure._war_reward_influence`，OD-05；legacy CLI 硬编码 +10 已移除）
 - **全部幸存参战军团晋级老兵（G1-22）** 并召回
 - 战争胜利结算（`resolve_war(victory=True)` → RESOLVED，T9）
 - 不生成停战草案（直接解决战争）
 
 **VICTORY（小胜）：**
-- 指挥官影响力 +5
+- 权威货币奖励 = `base`（乘子 1.0）；指挥官影响力提升 = 战争卡 `rewards.influence`（OD-05；legacy 硬编码 +5 已移除）
 - **全部幸存参战军团晋级老兵（G1-22）**
 - 战争结束（→ RESOLVED，T10）→ 召回 → AVAILABLE（Veteran 保留）
 - 不生成条约（G1-08）
@@ -144,7 +144,7 @@ STALEMATE → 赔款 = 0（无赔款）※ 实际唯一生成入口
    - 国库份额（默认 50%）
    - 派系金库份额（默认 25%，指挥官所属派系）
    - 指挥官私库份额（默认 15%）
-   - 士兵份额（默认 15%，存入 war.soldier_share）
+   - 士兵份额（默认 10%，存入 war.soldier_share；OD-04：= 抽象士兵/老兵政治支持池，非现金，域概念名 `veteran_support_pool`）
 4. **土地奖励：** 增加国家公地
 5. **家族声望：** 指挥官 family_prestige 增加
 6. **行省占领：** 如果 war.unlocked_provinces 非空，占领对应行省
@@ -203,8 +203,8 @@ STALEMATE → 赔款 = 0（无赔款）※ 实际唯一生成入口
 | 结果 | 触发条件 | 军团影响 | 指挥官影响 | 战争影响 |
 |------|---------|---------|-----------|---------|
 | DISASTER | 骰子在 disaster_numbers | **全部实际参战 DESTROYED** | 阵亡 | 持续（ACTIVE，无条约） |
-| TRIUMPH | total >= 12 | **全部幸存参战者晋级老兵 + 召回** | 影响力+10 | 胜利解决（RESOLVED） |
-| VICTORY | total >= 6 | **全部幸存参战者晋级老兵** | 影响力+5 | 结束（→RESOLVED，不生成条约） |
+| TRIUMPH | total >= 12 | **全部幸存参战者晋级老兵 + 召回** | 影响力 +`rewards.influence`（权威，OD-05） | 胜利解决（RESOLVED） |
+| VICTORY | total >= 6 | **全部幸存参战者晋级老兵** | 影响力 +`rewards.influence`（权威，OD-05） | 结束（→RESOLVED，不生成条约） |
 | STALEMATE | 骰子在 standoff_numbers 或 -3<=total<6 | 无损 | 无损 | 持续，**生成 pending treaty（G1-08）** |
 | DEFEAT | total < -3 | **随机 ceil(N/2) 实际参战 DESTROYED**（G1-05/06/07） | 随机逃走/被俘/受伤 | 持续（ACTIVE，无条约） |
 
@@ -265,7 +265,9 @@ Reinforcement N（新征召军团数）= 新 Consul 唯一决策量（取代 Tar
 | 国库 | 50% | `combat_rules.treasury_share` |
 | 指挥官派系金库 | 25% | `combat_rules.faction_share` |
 | 指挥官私库 | 15% | `combat_rules.commander_share` |
-| 士兵份额 | 15% | `combat_rules.soldier_share` |
+| 士兵/老兵政治支持池 | 10% | `combat_rules.soldier_share` |
+
+> **EOR20261009-03（OD-06，FC-11/FC-12）冻结：** 四键为**单一来源**（`game_config.json` + `src/core/config.py` DEFAULTS），默认 **50/25/15/10（sum=1.0）**（完整性修正，非 rebalance）；校验 raw 缺键 / finite 非 bool / `[0,1]` / sum 容差 `1e-9`；货币三项 `int()` floor，士兵/老兵池份额 = **残差**（保守恒）；非法配置 → 确定性 fail-safe =冻结默认 + 结构化 WARNING。**无派系 → faction_part 归罗马国库**（OD-03，守恒）。
 
 ### 3.5 军团战力构成
 
@@ -511,6 +513,7 @@ ACTIVE（no valid commander）──T15（Takeover P2）──▶ ACTIVE（新 C
 | v1.7 | 2026-09-09 | DA Sub-Agent (WP-G-R4 B3) | R4 同步（FROZEN v1.7 §2/§3/§4/§5）：Takeover 决策/承诺与物理部署分离（O5）；互斥/单 commitment/pending-aware M；§2.3 readiness 前置（NAVAL_NOT_READY 非 DEFEAT、就绪后可重试）；§2.7 resolve_war 显式 combat_result 载体 + legacy unknown 中性事件；dual-stage v2 envelope（未执行无统计/海权 stage 快照）——GAME_RULE_CHANGE=NO |
 | v1.6 | 2026-09-01 | DA Sub-Agent (WP-G G3C) | Treaty Lifecycle 修正（Owner Correction 2026-09-01 / DC-TREATY-LIFECYCLE-CORRECTION-01）：**approved = TEMPORARY TRUCE（撤销 v1.3 的 approved=RESOLVED）**——War 保持 TRUCE + truce_end_turn + Commander 返回 + Legion/Fleet 释放 + Revenue 最后维护 + Population DISBANDED；到期 → THREAT（threat_level=1，禁直接 ACTIVE / 旧绑定恢复，Sea Control 保持）→ 自动升级 → ACTIVE；TRIUMPH/VICTORY = RESOLVED 独立；ODR-CAND-01 修复 = enqueue-then-clear（_legions_to_disband 双入残留消除） |
 | v1.10 | 2026-10-06 | DA-Execute (WP-J Group A R1) | 追加「WP-J Group A R1 同步注记」：战斗步骤条槽数 = `max(3,N)` 可执行战争「占位→实名」进度（N 含无指挥官自动跳过者；N>3 不封顶；无 advance；下一空槽 current）；与 `resolved_wars`（执行序）+ `_actionable_wars` 对账一致；面板/游戏结束业务语义不变。GAME_RULE_CHANGE=NO（仅步骤条读模型） |
+| v1.11 | 2026-10-11 | DA-Execute (EOR20261009-03 WRRI) | 战争奖励权威完整性（OD-01…OD-06 / FC-01…FC-16）：单一权威结算 owner `WarSystem.compute_reward_settlement`(PLAN) + `resolve_war` commit receipt（`War._reward_receipt`，committed 权威）；TRIUMPH 权威 = base×1.5；STALEMATE/DEFEAT/DISASTER 不结算；**无派系 → faction_part 归罗马国库**；四份额键默认 50/25/15/10（sum=1.0，配置诚实化非 rebalance）；`rewards.influence` = ACTIVE（持久 `_war_reward_influence` 第 7 参数；legacy CLI +10/+5 移除）；士兵/老兵池名 `veteran_support_pool`（别名 soldier_share），否决/失效/余项 → 国库（守恒）。GAME_RULE_CHANGE=YES（Owner OD 裁定） |
 | v1.9 | 2026-09-20 | DA Sub-Agent (WP-G-R7) | Direct Action 提交后连续可见性 + 校验失败恢复 UX（R7-A/R7-B）：新增「WP-G-R7 同步注记」（引 MVP0.5-20 §5.7.1）——冻结 direct 决策按 `item_ref` 会期连续只读可见 / 不进 Vote-Veto / 边界前零军事 mutation；校验失败 = bounded dialog + 精确卡/N/Commander 高亮 + 草稿保留 + 零发布 + 就地重提。GAME_RULE_CHANGE=NO（纯展示层） |
 | v1.8 | 2026-09-19 | DA Sub-Agent (WP-G-R6) | 平局语义显式化同步（Advisor 最终结论 Option C = ACCEPT / Owner 2026-09-19 确认）：新增「WP-G-R6 同步注记」——`TRUCE + pending` 正式定义为临时军事冻结；pending 期间军团/舰队/指挥官驻留 + 维护费照付 + 不产生到期与赔款；Peace 未获批 ⇒ `TRUCE → ACTIVE` 且下一回合正常开战；`ongoing_war_count = ACTIVE + TRUCE`（计入失败条件）；跨阶段消费者不变量 A–F。GAME_RULE_CHANGE=NO（仅文档显式化） |
 
