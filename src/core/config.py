@@ -87,6 +87,15 @@ class Config:
             "tax_contract_profit_rate": 0.2,  # 保留原利润比例（可沿用，但阶段3将基于实际利润）
             "faction_initial_treasury": 10,  # 派系初始资金
             "faction_tax_rate": 0.1,  # 派系抽成比例（从成员收入中扣除）
+            # WP-K（OD-K-01/02/03）新增/接线键（frozen 默认值；镜像 game_config.json）
+            "legion_strength_base": 2,  # S1：AI 军团增援敌强匹配单位战力 u（默认 2）
+            "project_bid_discount_min": 0.05,  # S2：竞价折扣下界
+            "project_bid_discount_max": 0.20,  # S2：竞价折扣上界
+            "project_bid_profit_rate_min": 0.05,  # S2：竞价利润率下界
+            "project_bid_profit_rate_max": 0.20,  # S2：竞价利润率上界
+            "tax_bid_increment_min": 0.05,  # S2：包税加价率下界
+            "tax_bid_increment_max": 0.20,  # S2：包税加价率上界
+            "public_work_budget_margin_range": [0.05, 0.20],  # S4：AI 建造预算加成 margin 区间
         },
         "combat_rules": {
             "triumph_threshold": 12,

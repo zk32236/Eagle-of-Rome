@@ -94,6 +94,10 @@ PENDING ──[元老院审批通过]──→ BUDGETED ──[竞标中标]─�
 - 最高出价者中标（`max(amount)`）
 - 中标后直接扣除骑士财富
 
+> **WP-K S2（2026-10-11，OD-K-02）**：AI 包税竞价加价率 `r`（`amount = int(base_cost×(1+r))`）经 config
+> `economic_rules.tax_bid_increment_min/max` 驱动（默认 `0.05/0.20`，与现状字面量逐字等价，零漂移）；
+> 缺键回退现状字面量；**单 draw 单用**（加价语义不变）。消费方 = `AutoBidDecider.decide_tax_bid`。
+
 ### 3.4 年收益结算
 
 年收益 = `expected_profit // duration_years`
@@ -193,4 +197,5 @@ PENDING ──[元老院审批通过]──→ BUDGETED ──[竞标中标]─�
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.1 | 2026-10-11 | DA-Execute (WP-K S2) | AI 包税竞价加价率 config 化（`tax_bid_increment_min/max`，默认不变，零漂移）；§3.3 附注 |
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent G | 初版创建 |

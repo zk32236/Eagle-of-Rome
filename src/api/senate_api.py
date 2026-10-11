@@ -8,6 +8,7 @@ import copy
 import hashlib
 import json
 import logging
+import math
 import random
 import uuid
 from typing import Any, Dict, List, Optional
@@ -186,6 +187,35 @@ def _budget_range_for_contract(state: GameState, contract) -> Optional[Dict[str,
     return {"min": mn, "max": mx, "step": step, "default": base}
 
 
+def public_work_budget_margin_bounds(state: GameState) -> tuple:
+    """S4 AI 建造预算加成 margin 可接受域校验 + fail-safe（WP-K，FC-K-24/29）。
+
+    可接受域 = 恰 **2 元素有序序列** ``[min, max]``，元素为**有限实数**（``int``/``float``；
+    ``bool`` 显式拒绝——``bool`` 是 ``int`` 子类），且 ``0 ≤ min ≤ max ≤ 0.5``。
+    任一校验失败（含**缺键** / 畸形 / 越界 / 非二元 / 非有限（NaN·Inf）/ 非数值 / ``None`` /
+    标量）→ **fail-safe**: ``(min, max) := (0.05, 0.20)``（默认），记 warning，继续产提案
+    （**不崩溃、不回退 ``randint``、不 fail-closed**）。选择 = fail-safe（非 fail-closed）。
+
+    单一权威读取点：``economic_rules.public_work_budget_margin_range``（§4d 消费）。
+    """
+    default = (0.05, 0.20)
+    raw = state.config.get("economic_rules.public_work_budget_margin_range", None)
+    if isinstance(raw, (list, tuple)) and len(raw) == 2:
+        lo, hi = raw[0], raw[1]
+        lo_numeric = isinstance(lo, (int, float)) and not isinstance(lo, bool)
+        hi_numeric = isinstance(hi, (int, float)) and not isinstance(hi, bool)
+        if lo_numeric and hi_numeric:
+            lo_f, hi_f = float(lo), float(hi)
+            if (math.isfinite(lo_f) and math.isfinite(hi_f)
+                    and 0.0 <= lo_f <= hi_f <= 0.5):
+                return lo_f, hi_f
+    state.log_event(
+        f"自动预算提案: public_work_budget_margin_range 非法（{raw!r}）→ fail-safe {default}",
+        level=logging.WARNING,
+    )
+    return default
+
+
 def _legion_options_for_war(state: GameState, war) -> Optional[Dict[str, Any]]:
     """authoritative legion value range for a war proposal (ODR-ED-02).
 
@@ -237,6 +267,44 @@ def reinforcement_range(state: GameState, war) -> Optional[Dict[str, Any]]:
 # `_takeover_reserved_offset`）整体退役——不再存在 commanderless 驱动的 Senate 门禁
 # （SA §2.7 A-I14：commanderless/legionless 为合法军事状态，不阻止政治结算）。
 
+
+
+def reinforcement_n_target(state: GameState, war, remaining: int, pool: int) -> Optional[int]:
+    """AI 军团增援 N 的敌强匹配确定值（WP-K S1 / OD-K-01，FC-K-02/03/04/05/06/07）。
+
+    敌强口径（Owner S-2=A）= ``war.get_total_strength()``（陆战敌强，与陆战 CRT 同源）；
+    单位战力 u = config ``economic_rules.legion_strength_base``（默认 2；防御 ≥1，禁除零）。
+
+    ``N_target = ceil(E / u) = (E + u - 1) // u``（E 下限 0）；
+    clamp：``pool == 0 ⇒ 0``；``remaining < 1 ⇒ 0``；否则
+    ``N = clamp(N_target, 1, min(remaining, pool))``（可用不足 = 招满，不拒绝/不跳过）。
+
+    返回 ``None`` = 敌强源不可读 → 调用方跳过该战（防御，B-09；生产路径恒有值）。
+    确定性：不调用 random（FC-K-07）。单一 owner：本函数为 4b′ N 唯一生产者。
+    """
+    if pool <= 0:
+        return 0
+    hi = min(remaining, pool)
+    if hi < 1:
+        return 0
+    try:
+        u = int(state.get_economic_rule("legion_strength_base", 2))
+    except (TypeError, ValueError):
+        u = 2
+    if u < 1:
+        u = 1
+    try:
+        enemy = war.get_total_strength()
+    except (AttributeError, TypeError):
+        return None  # 敌强口径不可得 → 跳过（不造伪敌强）
+    try:
+        enemy = int(enemy)
+    except (TypeError, ValueError):
+        enemy = 0
+    if enemy < 0:
+        enemy = 0
+    target = (enemy + u - 1) // u  # ceil(E/u)
+    return max(1, min(target, hi))
 
 
 def _build_proposal_options(state: GameState, info: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1259,12 +1327,11 @@ def auto_submit_proposals(
             rng = reinforcement_range(state, war)
             if rng is None:
                 continue  # 值域不可得（防御；生产 config 存在）
-            lo = rng["min"]
-            hi = min(remaining, rng["max"])  # 与 4a 共享剩余池（ΣN ≤ 实际池守恒）
-            if hi < lo:
-                n = 0  # 残余池不足 → N=0（仍绑定 Commander；REINFORCEMENT N≥0 合法）
-            else:
-                n = random.randint(lo, hi)  # 镜像 4a 宣战随机口径（同一 randint 机制）
+            # WP-K S1（OD-K-01，FC-K-04/05/06/07）：N = clamp(ceil(E/u), 1, min(remaining, pool))，
+            # 确定性（去 random）——敌强 E 与单位战力 u 见 reinforcement_n_target。
+            n = reinforcement_n_target(state, war, remaining, rng["max"])
+            if n is None:
+                continue  # 敌强源不可读 → 跳过该战（不造伪值，B-09）
             remaining -= n
             war_drafts.append({
                 "war_id": wid, "checked": True, "mode": "command",
@@ -1342,15 +1409,17 @@ def auto_submit_proposals(
         for contract in budget_proposals:
             kwargs = {"contract_id": contract.id}
             if contract.contract_type == ContractType.PUBLIC_WORKS:
-                # P1-a: 值域改由 _budget_range_for_contract（config 派生）提供，不再读 code-default margin
-                budget_range = _budget_range_for_contract(state, contract)
-                if budget_range is None:
-                    modified_budget = contract.base_cost
-                else:
-                    modified_budget = random.randint(budget_range["min"], budget_range["max"])
+                # WP-K S4（OD-K-03，FC-K-23/24/26/29）：AI 建造预算加成 = 规格 MVP0.5-03 §2.7——
+                # modified_budget = int(base_cost × (1 + r))，r ~ U(margin_min, margin_max)；
+                # margin 由 economic_rules.public_work_budget_margin_range 驱动，经 admissible 域
+                # 校验 + fail-safe（缺键/畸形/越界 → [0.05, 0.20]；FC-K-29）。单一取值点（§4d）；
+                # 人类可填值域（_budget_range_for_contract）不变，仅改 AI 取值策略。
+                margin_min, margin_max = public_work_budget_margin_bounds(state)
+                r = random.uniform(margin_min, margin_max)
+                modified_budget = int(contract.base_cost * (1 + r))
                 kwargs["modified_budget"] = modified_budget
                 state.log_event(
-                    f"自动预算提案: 合同 {contract.name} 值域 [{budget_range['min'] if budget_range else contract.base_cost},{budget_range['max'] if budget_range else contract.base_cost}] → {modified_budget}",
+                    f"自动预算提案: 合同 {contract.name} margin 区间 [{margin_min},{margin_max}] → {modified_budget}",
                     level=logging.DEBUG,
                 )
             non_war_proposals.append({"type": "budget", "params": dict(kwargs)})

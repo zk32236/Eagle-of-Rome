@@ -27,7 +27,12 @@ class AutoBidDecider(BidDecider):
             )
             return None
         knight = random.choice(knights)
-        r = random.uniform(0.05, 0.20)
+        # WP-K S2（OD-K-02 · F-2，FC-K-10/13/17）：tax 加价率 r 经 config 驱动
+        # （键 tax_bid_increment_min/max，默认 0.05/0.20 = 现状字面量，零漂移）；
+        # 缺键 → 回退现状字面量。单 draw 单用（加价，语义不变）。
+        inc_min = state.get_economic_rule("tax_bid_increment_min", 0.05)
+        inc_max = state.get_economic_rule("tax_bid_increment_max", 0.20)
+        r = random.uniform(inc_min, inc_max)
         amount = int(contract.base_cost * (1 + r))
         extra.update({
             "knight_id": knight.id,
@@ -67,19 +72,27 @@ class AutoBidDecider(BidDecider):
             )
             return None
         knight = random.choice(knights)
-        r = random.uniform(0.05, 0.20)
-        amount = int(contract.base_cost * (1 - r))
+        # WP-K S2 + S3（OD-K-02c，FC-K-10/12/13/18/19）：折扣读 project_bid_discount_min/max、
+        # 利润率读 project_bid_profit_rate_min/max（默认 0.05/0.20 = 现状字面量）；
+        # 两者为两次独立 draw（不复用 —— 旧单一 r 双驱动缺陷），折扣定中标额 C，利润率定实际成本 D。
+        disc_min = state.get_economic_rule("project_bid_discount_min", 0.05)
+        disc_max = state.get_economic_rule("project_bid_discount_max", 0.20)
+        prof_min = state.get_economic_rule("project_bid_profit_rate_min", 0.05)
+        prof_max = state.get_economic_rule("project_bid_profit_rate_max", 0.20)
+        works_discount = random.uniform(disc_min, disc_max)
+        amount = int(contract.base_cost * (1 - works_discount))
 
         # 获取原始基准成本（合同生成时的预算）
         original_budget = getattr(contract, '_original_budget', contract.base_cost)
-        actual_cost = int(amount * (1 - r))
+        profit_rate = random.uniform(prof_min, prof_max)
+        actual_cost = int(amount * (1 - profit_rate))
         cost_ratio = actual_cost / original_budget if original_budget > 0 else 1.0
 
         theoretical_construction = state.get_economic_rule("project_theoretical_construction", 3)
         theoretical_warranty = state.get_economic_rule("project_theoretical_warranty", 10)
 
-        # 实际成本 = 中标金额 * (1 - r)
-        actual_cost = int(amount * (1 - r))
+        # 实际成本 = 中标金额 * (1 - profit_rate)
+        actual_cost = int(amount * (1 - profit_rate))
         # 实际工期 = 理论工期 * (基准成本 / 实际成本)
         if actual_cost > 0:
             actual_construction = int(theoretical_construction * original_budget / actual_cost)
@@ -98,7 +111,7 @@ class AutoBidDecider(BidDecider):
             level=logging.DEBUG
         )
 
-        return knight, amount, r, actual_construction, actual_warranty
+        return knight, amount, profit_rate, actual_construction, actual_warranty
 
     def decide_fleet_bid(self, contract, knights, state):
         extra = {
@@ -125,9 +138,15 @@ class AutoBidDecider(BidDecider):
             approved_budget = getattr(contract, "base_cost", 0) or 0
         # 两次独立 draw（R3-10）：bid_discount 定 C；profit_rate 第二次独立 uniform——不复用
         # bid_discount（旧单一 r 双驱动缺陷）。边际范围/整数截断/Eques 选择保持（R3-11 零重平衡）。
-        bid_discount = random.uniform(0.05, 0.20)
+        # WP-K S2（FC-K-10/12/13）：折扣读 project_bid_discount_min/max、利润率读
+        # project_bid_profit_rate_min/max（默认 0.05/0.20 = 现状字面量，零漂移）。
+        disc_min = state.get_economic_rule("project_bid_discount_min", 0.05)
+        disc_max = state.get_economic_rule("project_bid_discount_max", 0.20)
+        prof_min = state.get_economic_rule("project_bid_profit_rate_min", 0.05)
+        prof_max = state.get_economic_rule("project_bid_profit_rate_max", 0.20)
+        bid_discount = random.uniform(disc_min, disc_max)
         amount = int(approved_budget * (1 - bid_discount))
-        profit_rate = random.uniform(0.05, 0.20)
+        profit_rate = random.uniform(prof_min, prof_max)
         extra.update({
             "knight_id": knight.id,
             "knight_name": knight.name,

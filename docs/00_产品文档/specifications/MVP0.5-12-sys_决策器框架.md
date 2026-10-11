@@ -61,10 +61,15 @@ class SenateCommand(Command):
 | 文件 | 行数 | 接口 |
 |------|------|------|
 | `bid_decider.py` | 39 | `BidDecider` — 三种出价方法（tax/works/fleet） |
-| `impl/auto_bid_decider.py` | 135 | 自动竞标：根据财富、利润率计算出价 |
+| `impl/auto_bid_decider.py` | 135 | 自动竞标：折扣·利润率/加价率经 config 驱动（`project_bid_discount_min/max`、`project_bid_profit_rate_min/max`、`tax_bid_increment_min/max`；默认 0.05/0.20）|
 | `manual_bid_decider.py` | 33 | 手动骨架（返回 None） |
 
 **用途：** 广场阶段（Forum Phase）包税/工程/舰队合同竞标。
+
+> **WP-K S2/S3（2026-10-11，OD-K-02/02c）**：`decide_fleet_bid` / `decide_tax_bid` / `decide_works_bid` 的
+> 折扣/利润率/加价率区间**读 config**（`state.get_economic_rule`；缺键回退现状字面量）；fleet/tax 默认**零漂移**；
+> works 折扣与利润率为**两次独立 draw**（解耦，镜像 fleet），返回第 3 项 = `profit_rate`（GAME_RULE_CHANGE=YES）。
+> §7 #4「AutoBidDecider 根据财富和利润率出价 → 出价不超过财富」**已 stale**（实际 ceiling = Senate B/`bid_ceiling()`，不读财富）。
 
 ### 3.3 土地法案决策器
 
@@ -237,7 +242,7 @@ always_pass = state.config.get("testing.budget_always_pass", False)
 | 1 | `AutoPeaceTreatyDecider` 在 VICTORY 时返回正赔款 | 赔款公式正确 |
 | 2 | `AutoLandProposalDecider` 按配置概率触发 | 概率和比例范围从配置读取 |
 | 3 | `AutoSenateVoteDecider` 提案发起派系自动支持 | 返回 True |
-| 4 | `AutoBidDecider` 根据财富和利润率出价 | 出价不超过财富 |
+| 4 | ~~`AutoBidDecider` 根据财富和利润率出价~~ **（stale；见 §3.2 WP-K 注）** | 出价 ceiling = Senate B（`bid_ceiling()`）；不读财富 |
 | 5 | `AutoRetirementDecider` 选择最弱人物淘汰 | 返回非领袖/非执政官人物 |
 | 6 | `AutoFleetDisbandDecider` 无海战需求时解散 | 所有非建造中舰队被解散 |
 
@@ -258,6 +263,7 @@ always_pass = state.config.get("testing.budget_always_pass", False)
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.2 | 2026-10-11 | DA-Execute (WP-K S2/S3) | 竞标决策器折扣·利润率/加价率 config 化（`project_bid_discount_*`/`project_bid_profit_rate_*`/`tax_bid_increment_*`）；works 单 r 双驱动解耦（独立 draw，返回第 3 项 = profit_rate）；§7 #4 标 stale |
 | v1.0 | 2026-07-13 | Document Officer (DA) | 初版创建 |
 | v1.1 | 2026-07-13 | Audit Subagent (DS) | 审计修正：更新 AutoVoteDecider 算法描述（从 class_tier/martial/popularity 改为 influence）；修正行数统计（基类 296/自动 892/手动 75，合计 35 文件 1263 行）；修正注入点路径（src/ui/commands/）和决策器清单；修正 testing.auto_senate 为 auto_forum/budget_always_pass/war_always_pass；修正注入分布表 |
 

@@ -6,6 +6,7 @@
 import pytest
 import sys
 import os
+import random
 
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 if project_root not in sys.path:
@@ -523,6 +524,38 @@ class TestContractFixes:
         assert len(pending["contract_bids"]) == 1
         _, _, _, _, profit_rate, _, _, _ = pending["contract_bids"][0]
         assert profit_rate == 0.2
+
+    def test_wpk_s3_works_decoupling_persisted_d(self, basic_state):
+        """WP-K S3 DVC（FC-K-19/20）：works 折扣·利润率两次独立 draw；D 取 place_bid 持久化（commit-side）。
+
+        正例（d≠p）：amount=int(base×(1−d))；persisted D=int(amount×(1−p))；第 3 项 = profit_rate。
+        若实现仍复用同一 r（旧缺陷），persisted D 将 = int(180×0.90)=162 ≠ 126 → 失败。
+        """
+        from src.core.deciders.impl.auto_bid_decider import AutoBidDecider
+
+        _rng_state = random.getstate()
+        try:
+            state, knight, consul, province = basic_state
+            contract = create_public_works_contract(state, province.province_id)
+            contract.base_cost = 200
+
+            decider = AutoBidDecider()
+            with patch('random.choice', return_value=knight):
+                with patch('random.uniform', side_effect=[0.10, 0.30]):
+                    result = decider.decide_works_bid(contract, [knight], state)
+            assert result is not None
+            _knight, amount, profit_rate, _construction, _warranty = result
+            assert amount == int(200 * (1 - 0.10))       # 折扣定 C = 180
+            assert profit_rate == 0.30                    # 第 3 项 = profit_rate（FC-K-20）
+
+            # commit-side oracle：经真实 place_bid 持久化的 D（8 元组 index 7）
+            bid = forum_api.place_bid(state, "player1", knight.id, contract.id, amount, profit_rate)
+            assert bid["success"], bid.get("message")
+            row = state.get_forum_pending()["contract_bids"][0]
+            persisted_d = row[7]
+            assert persisted_d == int(amount * (1 - profit_rate))   # int(180×0.70)=126
+        finally:
+            random.setstate(_rng_state)  # 不扰动全局 random（防影响顺序敏感测试）
 
     def test_fleet_contract_multiple_ships(self, basic_state):
         """测试多舰队建造合同的战斗力调整（按总成本比例统一调整）"""

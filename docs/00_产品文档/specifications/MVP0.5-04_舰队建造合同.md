@@ -103,6 +103,11 @@ needed_ships = max(1, (deficit + base_strength - 1) // base_strength)
 > PUBLIC_WORKS**（舰队与普通公共工程同口径，普通公共工程不再仅为 rate 派生）；普通公共工程细则见
 > MVP0.5-03 §2.4。舰队下游差异（生成 Fleet 实体 / build_time 工期 / 无质保）保持不变。
 
+> **WP-K S2 交叉引用附注（2026-10-11，OD-K-02 · F-2；本小节 §2.2/§2.3/§2.4 无 Fleet 语义变更）**：
+> AI 舰队竞价 `decide_fleet_bid` 的折扣·利润率经 config 驱动（`economic_rules.project_bid_discount_min/max`、
+> `project_bid_profit_rate_min/max`；默认 0.05/0.20 ⇒ **同函数入口 RNG state 级零漂移**，FC-K-11/30）；
+> 以上 A/B/C/D 四权威 / bid ceiling = B / D≤C 校验**逐字不变**（FC-K-16）。权威：SA-Development-Task-WP-K-v1.4。
+
 ### 2.5 中标后的舰队建造
 
 1. `NavalSystem.on_contract_awarded(contract, winner_id)` 步骤（R3-G-03/04 冻结）：
@@ -446,6 +451,7 @@ commander_bonus       = Σ 每 Fleet War Commander martial（每 Fleet 加一次
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.6 | 2026-10-11 | DA-Execute (WP-K S2) | AI 舰队竞价折扣·利润率 config 化（`project_bid_discount_min/max`、`project_bid_profit_rate_min/max`；默认 0.05/0.20 ⇒ 同函数入口 RNG state 级零漂移，FC-K-11/30）；§2.2/§2.3/§2.4 交叉引用附注（A/B/C/D 四权威/bid ceiling=B/D≤C 逐字不变，FC-K-16）；权威 SA-Development-Task-WP-K-v1.4 |
 | v1.5 | 2026-10-02 | DA Sub-Agent (WP-L L2) | **WP-L L2 维护/解散政策（FC-L2-01…13，GAME_RULE_CHANGE=YES）**：§1 删除「国库不足解散舰队」；§2.2 建造生成「非摧毁→非摧毁/非解散(DISBANDED)」；§2.9/§5.6 维护短款改**全额扣费+零解散+国库可负**（DTO 退化常量、无 treasury_shortfall 事件、失败交既有破产条件）；§2.10 decider 收窄（无相关海战战争→保留；保留 resolved-target + approved-TRUCE 退役）；§3.2/§5.3 状态机/生命周期去「国库不足」退役路径；§5.2/§5.5 DISBANDED 不阻断 THREAT 建造预算；§6 行 6/16 更新 |
 | v1.4 | 2026-10-02 | DA Sub-Agent (WP-L L1) | 强度展示契约（FC-L1-11 / ODR-L-03）：显示值 = 权威读模型字段、QML 只渲染不重算；展示面 = 战争卡 post-build（竞标对话框预览行按 G2 ③ 撤回）；四权威 + 显式 D + quality=D/A 推广至全部 PUBLIC_WORKS（交叉引用 MVP0.5-03） |
 | v1.3 | 2026-09-05 | DA Sub-Agent (WP-G-R3 B3) | **Owner 2026-09-05 superseding 裁决同步（R3-G-02/03/04，GAME_RULE_CHANGE=NO）：** §2.3 补充合同 required/usable/committed 全改 nominal——删旧「竞标折价 true deficit=可补」语义（quality/experience/martial 不决定 hull 数，R3 §4.3）；§2.4 增 A/B/C/D 四权威（A 基线生成冻结不可被 Senate 改写、B 批准、C 中标、D 实际成本，bid ceiling=B，A280/B350/C300/D240/gross60）；§2.5 award 改 quality 持久（n_i nominal 快照 + q=D/A 精确整数比 + package_id，不再 per-fleet round/floor）；§2.9/§2.10/§5.3/§5.6 维护短款累计解散含 ON_MISSION + charged 唯一实扣 + 多战退役窄修（resolved 战专属 released AVAILABLE 不由他战保留）+ `naval_maintenance`/`naval_fleet_disbanded` 事件 schema；§3.3 补四权威/nominal/quality/package 持久字段（serializer 含 `_target_war_id`/`_fleet_type`/`_build_time`）；§3.5 删 per-fleet lower floor=1 → Owner 选项 B（纯 raw package 舍入、D=0 不 fallback、upper cap 落 package 级 min(raw,2×nominal)）+ oracle 表（21→18、D28→2、D0→0、cap42、混合 round10）；§4.1 输入 C+D；§5.2.1 增强度读模型字段；§6 验收表补 R3 行 13–16。历史折价表述 append-only，不改为「当时已 nominal」（R3 设计 §11.2）。 |

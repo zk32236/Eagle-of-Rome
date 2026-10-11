@@ -79,6 +79,12 @@ _standard_warranty: int = 0        # 标准质保年限
 > `equesBidOptions().length>0` 谓词）；对话框可进入、骑士下拉为空、**无专用提示**；确认未选人时仅触发
 > 既有通用校验「请选择竞标骑士」。资格真值仍以 DTO `can_bid`（Eques）为唯一来源。
 
+> **WP-K S3 works AI 竞价 margin 契约（2026-10-11，OD-K-02c；GAME_RULE_CHANGE=YES）**：AI `decide_works_bid`
+> 折扣·利润率由 config 驱动且**解耦为两次独立 draw**（不再单一 r 双驱动 legacy 缺陷）：折扣读
+> `economic_rules.project_bid_discount_min/max`（定中标额 C）、利润率读 `project_bid_profit_rate_min/max`
+> （定实际成本 D）；返回第 3 项 = profit_rate（ABI 不变）。**不改**本节竞标/中标结算与 D≤C 校验。
+> 权威：SA-Development-Task-WP-K-v1.4（FC-K-18…22）。
+
 ### 2.5 施工结算
 
 每年在收入阶段（Revenue Phase）由 `EconomicService._settle_public_works_contract()` 处理结算。最终调用 `Contract.mark_complete(current_turn)` 标记完工：
@@ -120,14 +126,51 @@ def advance_warranty(self) -> int:
 
 ### 2.7 AI自动预算加成
 
-AI执政官自动提案时，对公共工程合同（含舰队建造合同）进行随机预算加成：
+AI执政官自动提案时，对公共工程合同（含舰队建造合同）进行随机预算加成。加成率 `r` 的取值区间
+由 `economic_rules.public_work_budget_margin_range` 配置驱动；读取点**必须先经** helper
+`senate_api.public_work_budget_margin_bounds` 做 admissible 域校验（`FC-K-29`），**再**以解析后的
+`(margin_min, margin_max)` 进行 draw：
 
 ```python
 if contract.contract_type == ContractType.PUBLIC_WORKS:
-    margin_range = self.state.config.get("economic_rules.public_work_budget_margin_range", [0.05, 0.20])
-    r = random.uniform(margin_range[0], margin_range[1])
+    # 唯一取值点：senate_api.auto_submit_proposals §4d。
+    # public_work_budget_margin_bounds 先做 admissible 域校验 + fail-safe（FC-K-29），
+    # 返回「已解析、已保证在 admissible 域内」的 (margin_min, margin_max)；
+    # 不得直接消费经济配置原值 margin_range[0]/margin_range[1]。
+    margin_min, margin_max = public_work_budget_margin_bounds(state)
+    r = random.uniform(margin_min, margin_max)
     modified_budget = int(contract.base_cost * (1 + r))
 ```
+
+**FC-K-29 — `public_work_budget_margin_range` admissible 域 + fail-safe（冻结）：**
+
+- **可接受域**：配置值必须为**恰 2 元素的序列 `[min, max]`**，两元素均为**有限实数**
+  （`int` / `float`；**`bool` 显式拒绝**——`bool` 是 `int` 子类），且满足
+  **`0 ≤ min ≤ max ≤ 0.5`**。
+- **全部非法类（任一命中 ⇒ fail-safe）**：
+  - **缺键**（`public_work_budget_margin_range` 不存在）；
+  - **畸形**（非 2 元素：过少 `[0.05]` / 过多 `[0.05, 0.1, 0.2]`；或整个值是**标量**而非序列）；
+  - **越界**（`min < 0` 或 `max > 0.5`，如 `[0.6, 0.8]` / `[-0.5, -0.2]`）；
+  - **反序**（`min > max`，如 `[0.20, 0.05]`）；
+  - **非有限**（`NaN` / `Inf`，如 `[float('nan'), 0.2]` / `[0.05, float('inf')]`）；
+  - **非数值**（`str` / `None` / 嵌套，如 `["a", "b"]` / `[None, 0.2]`）；
+  - **`bool`**（`[True, False]`）。
+- **fail-safe 行为**：任一校验失败 ⇒ 取默认区间 **`(min, max) := (0.05, 0.20)`**，
+  记 **warning** 日志，**继续产出预算提案**（**不崩溃、不回退旧 `randint`、不 fail-closed**）。
+  选择 = **fail-safe（非 fail-closed）**。
+- **范围包含**：fail-safe 后区间恒落 admissible 域内，故对任意 `r ∈ [min, max]` 有
+  `base_cost ≤ int(base_cost×(1+r)) ≤ int(base_cost×1.5)`，即 AI 结果恒落人类合法可填范围
+  `[1, int(base_cost×1.5)]`（ODR-ED-01），并经 `_populate_proposal('budget')` 权威校验通过。
+  **域内取值（含 `[0, 0.5]`）使用原值，不 fail-safe。**
+
+> **WP-K S4 实现对齐（2026-10-11，OD-K-03；GAME_RULE_CHANGE=YES）**：上述模型（含 FC-K-29
+> admissible 域 + fail-safe）为唯一权威实现，落点 = `senate_api.auto_submit_proposals` §4d
+> （单一取值点）+ `senate_api.public_work_budget_margin_bounds`（唯一解析/校验 helper）。
+> 默认 ⇒ AI 建造预算分布由均匀 `[1, base×1.5]`（旧 `randint`）→ `[1.05×base, 1.20×base]`
+> （更贴近造价）。`public_work_budget_margin_range` **缺键/畸形/越界/反序/NaN·Inf/非数值/bool
+> 一律 fail-safe 回退 `[0.05, 0.20]`（FC-K-29）**。**人类可填范围 `[1, int(base×1.5)]`
+> （ODR-ED-01）不变**；仅改 AI 取值策略；AI 结果恒落人类合法范围并经 `_populate_proposal` 校验通过。
+> 结算 A/B/C/D 语义与 tax 路径不变（不触 WP-L）。
 
 ## 3. 核心规则
 
@@ -231,7 +274,7 @@ if contract.contract_type == ContractType.PUBLIC_WORKS:
 | 4 | 施工付款 | 每年国库支出 base_cost/duration，状态到期变 COMPLETED |
 | 5 | 质保递减 | COMPLETED 后递减 warranty_remaining，期满变 EXPIRED |
 | 6 | 非 BUDGETED 合同禁止中标 | 非 BUDGETED 状态调用 mark_winner 抛出 ValueError |
-| 7 | AI预算加成 | 公共工程合同自动预算加成在配置范围内随机 |
+| 7 | AI预算加成 | 公共工程合同自动预算加成在配置范围内随机（`int(base_cost×(1+r))`，`r~U(min,max)`）；缺键/畸形/越界/反序/NaN·Inf/非数值/bool ⇒ fail-safe `[0.05,0.20]`（FC-K-29） |
 
 ## 7. 历史演化与证据
 
@@ -248,6 +291,8 @@ if contract.contract_type == ContractType.PUBLIC_WORKS:
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.5 | 2026-10-11 | DA Sub-Agent (WP-K S4 ATTEMPT-3) | §2.7 FC-K-29 文档同步（G5 SPEC_DRIFT 收尾）：明写 `public_work_budget_margin_range` 的 admissible 域（恰 2 元素有限实数、显式拒 bool、`0≤min≤max≤0.5`）+ 全部非法类（缺键/畸形/越界/反序/NaN·Inf/非数值/bool）+ fail-safe `[0.05,0.20]`（warning，不崩溃/不回退 randint）；示例改为经 `public_work_budget_margin_bounds` 解析后再 draw |
+| v1.4 | 2026-10-11 | DA Sub-Agent (WP-K S4) | AI 建造预算加成实现对齐 §2.7（OD-K-03，GAME_RULE_CHANGE=YES）：§4d 单一取值点改 `modified_budget=int(base_cost×(1+r))`、`r~U(public_work_budget_margin_range 默认[0.05,0.20])`；键接线 `game_config.json`+`config.py DEFAULTS`；人类值域不变 |
 | v1.3 | 2026-10-02 | DA Sub-Agent (WP-L L1) | 基建统一为舰队式经济模型（ODR-L-01/§3b，GAME_RULE_CHANGE=YES）：A 生成即设恒有值；B 由 Senate PASS 写入且 A 不被覆盖；显式 D（construction_cost）入队 8 元组；bid ceiling=B；quality=D/A 同口径驱动既有工期/质保；结算成本尾差守恒 D；无骑士非阻塞 UI；四权威注由「Fleet 限定」推广至全部 PUBLIC_WORKS |
 | v1.2 | 2026-09-05 | DA Sub-Agent (WP-G-R3 B3) | Fleet 建造合同限定注（R3-G-03，GAME_RULE_CHANGE=NO）：§2.4 增 A/B/C/D 四权威 + bid ceiling=B + base_cost 兼容投影说明（award 前 A/B、后 = C，非历史 B 权威）+ 8 元组 pending；§5.4 补 Fleet 显式成本 D≤C/gross≥0 边界；普通工程/税规则不重写 |
 | v1.0 | 2026-07-12 | Document Officer Worker L | 初版创建 |

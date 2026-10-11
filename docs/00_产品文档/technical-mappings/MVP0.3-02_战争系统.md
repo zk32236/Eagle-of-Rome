@@ -108,3 +108,20 @@ CRT 判定: combat_total = 2d6 + commander.martial + sum(legion_strengths) - war
 | 版本 | 日期 | 摘要 |
 |:--|:--|:--|
 | v1.7 | 2026-10-06 | WP-J Group A R1：combat `steps` = `max(3,N)` 可执行战争占位→实名进度（只读派生；与 `resolved_wars`/`_actionable_wars` 同源） |
+
+## WP-K S1 同步注记（2026-10-11，DA-Execute WP-K S1；append-only，目标锚点 §3 核心算法）
+
+> 权威：SA-Development-Task-WP-K-v1.4（FC-K-01…09）；对应规格 `specifications/MVP0.3-02_战争系统.md` §3.3/§3.5。
+
+- **AI 军团增援 N 生产（单一 owner）**：`src/api/senate_api.py::reinforcement_n_target(state, war, remaining, pool)`——
+  `N = clamp((E+u−1)//u, 1, min(remaining, pool))`；`pool==0 → 0`；`remaining<1 → 0`；
+  敌强源不可读 → 返回 `None`（调用方跳过该战）。调用点 = `auto_submit_proposals` 4b′（consul_direct command）。
+- **输入键**：`war.get_total_strength()`（`war.py`，陆战敌强）；`economic_rules.legion_strength_base`
+  （`game_config.json` + `config.py DEFAULTS`，默认 2）。确定性（无 `random`）。
+- **不变**：`reinforcement_range`（值域）/ `_validate_reinforcement_n`（fail-closed）/ 4a 宣战军团数
+  （`senate_war_legions`）/ `commit_war_resolution` 唯一原子军事执行。
+
+### 版本日志（S1）
+| 版本 | 日期 | 摘要 |
+|:--|:--|:--|
+| v1.8 | 2026-10-11 | WP-K S1：AI 军团增援 N 敌强匹配（`reinforcement_n_target`；去 random）；键 `legion_strength_base` |

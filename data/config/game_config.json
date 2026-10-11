@@ -1,6 +1,6 @@
 {
   "terminology_preset": "original",
-  "language": "en-US",
+  "language": "zh-CN",
   "enable_threats": true,
   "testing": {
     "always_declare": false,
@@ -201,7 +201,10 @@
     "project_theoretical_warranty": 10,
     "project_bid_discount_min": 0.05,
     "project_bid_discount_max": 0.20,
+    "project_bid_profit_rate_min": 0.05,
+    "project_bid_profit_rate_max": 0.20,
     "default_bid_profit_rate": 0.2,
+    "public_work_budget_margin_range": [0.05, 0.20],
 
     "faction_initial_treasury": 10,
     "faction_tax_rate": 0.1,
@@ -232,6 +235,7 @@
     "default_fleet_type": "trireme",
     "fleet_construction_contract_duration": 1,
     "legion_strength_polybian": 2,
+    "legion_strength_base": 2,
     "legion_maintenance_polybian": 2,
     "legion_strength_marian": 4,
     "legion_maintenance_marian": 5,

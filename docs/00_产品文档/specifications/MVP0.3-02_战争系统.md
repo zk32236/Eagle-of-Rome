@@ -245,6 +245,15 @@ Reinforcement N（新征召军团数）= 新 Consul 唯一决策量（取代 Tar
 值域 API = senate_api.reinforcement_range(state, war)（GA 统一暴露，GB/GC/GD 消费）
 ```
 
+> **WP-K S1 敌强匹配（2026-10-11，OD-K-01；GAME_RULE_CHANGE=YES）**：AI 新征召军团数 N 由
+> 「随机 1..pool」改为**敌强匹配（确定性）**：`N = clamp(ceil(E/u), 1, min(remaining, pool))`，
+> 其中敌强 `E = war.get_total_strength()`（陆战敌强，Owner S-2=A）、单位战力
+> `u = config economic_rules.legion_strength_base`（默认 2，镜像 `legion.get_combat_strength()`）。
+> **零池 → N=0**；**可用军团不足（min(remaining,pool) < target）→ 招满可用，不拒绝/不跳过**；
+> 敌强=0 且池>0 → N=1；多战场共享池 `ΣN ≤ pool`；确定性（不再依赖 RNG）。单一生产 owner =
+> `senate_api.reinforcement_n_target`（4b′）；值域 `reinforcement_range` 与校验
+> `_validate_reinforcement_n` 不变。4a 宣战军团数（`senate_war_legions`）**不变**。
+
 ### 3.4 战利品分配比例（可配置）
 
 | 接收方 | 默认比例 | 配置键 |
@@ -266,6 +275,10 @@ N            = len(参战集)
 ```
 
 > **镜像字段退役（N 件 / R-17）：** `war.legions_assigned` / `war.legion_numbers` 仅兼容 debug 读取，不再作参与者/战力/伤亡权威（GUI canonical 路径已收敛至 live 实体，WP-G GB S1/S2）。
+
+> **WP-K S1 军团战力单位（2026-10-11，OD-K-01）**：AI 增援 N 的敌强匹配分母 `u` = config
+> `economic_rules.legion_strength_base`（默认 2）——**镜像**本节 `legion.get_combat_strength()` 非老兵口径
+> （分母常量，不改本病力构成；战斗/伤亡权威逐字不变）。参见 §3.3 WP-K S1 敌强匹配注。
 
 ## 4. 输入、输出与依赖
 
@@ -481,6 +494,7 @@ ACTIVE（no valid commander）──T15（Takeover P2）──▶ ACTIVE（新 C
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
+| v1.12 | 2026-10-11 | DA Sub-Agent (WP-K S1) | 军团增援 N 敌强匹配（OD-K-01，GAME_RULE_CHANGE=YES）：§3.3 增冻结规则 `N = clamp(ceil(E/u),1,min(remaining,pool))`（E=`war.get_total_strength()`；u=config `legion_strength_base` 默认 2）；零池=0/不足=招满/敌强=0→1/多战场 ΣN≤pool/确定性；单一 producer `senate_api.reinforcement_n_target`；4a 宣战军团数不变 |
 | v1.11 | 2026-09-26 | DA Sub-Agent (WP-G-R9) | R9 同步（SLICE-R9-01 文档义务）：新增「WP-G-R9 同步注记」（引 MVP0.5-20 §5.7.3）——终结态 War（TRIUMPH/VICTORY → RESOLVED）不出现在任何玩家可见可操作面（含冻结 ConsulDirect 投影）；作用域收敛 = 会期身份（canonical 仅由有效 PackageRecord 证明，不解析 session ID 文本）；同会期 Results 只读历史例外附支持边界（有效 current-turn PackageRecord；无包/坏包统一排除、不 fallback）。GAME_RULE_CHANGE=NO（零规则变更，仅投影作用域收敛） |
 | v1.10 | 2026-09-20 | DA Sub-Agent (WP-G-R8) | R8 同步（SLICE-R8-01/02/03）：生命周期文案时点（配置→决定）/ 执行边界（边界前禁「已执行」）/ 诊断零 raw（去 machine + 人话 + Store 薄封装）/ 三面板几何不变量（`Hrow=min(460,max(360,U.h−28))`）/ Panel1 主 body scroll ownership / 结果区 bounded 132 / Dialog L-D envelope。新增「WP-G-R8 同步注记」。GAME_RULE_CHANGE=NO（纯展示层） |
 | v1.0 | 2026-07-12 | Document Officer Worker K | 初版创建 |

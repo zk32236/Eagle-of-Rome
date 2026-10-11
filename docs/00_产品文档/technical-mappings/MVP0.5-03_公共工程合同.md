@@ -44,6 +44,12 @@ CLI phase_forum._generate_contracts()
 - **config：** `economic_rules.senate_budget` → `public_works_min=1`（绝对 1T）/ `public_works_max_ratio=1.5`（max=base_cost×150%）/ `step=1`；default=base_cost（沿用现状）。
 - **派生：** `senate_api._budget_range_for_contract(state, contract)` 产出 per-contract `{min, max, step, default}`；SenateStage FC-03 Slider from/to/stepSize/value 读 `budget_range`（config 缺 key → 禁用+「值域待定义」，不伪造 20-200）。
 - **谓词：** `political_system._populate_proposal` budget 分支权威拒绝（非 int / <min / >max / step 不齐）；affordability 不拦截（提交期无国库限制，决算期破产链不变）。
+- **AI 加成路径（WP-K S4，2026-10-11，OD-K-03；FC-K-23/24/29）：** 与人类值域区分——`senate_api.auto_submit_proposals` §4d 对 `PUBLIC_WORKS`（fleet + 基建）提案预算 = `int(base_cost×(1+r))`，`r ~ U(margin_min, margin_max)`，margin = `economic_rules.public_work_budget_margin_range`（默认 `[0.05, 0.20]`）。单一取值点。
+  - **解析/校验点（F-01/FC-K-29）：** 不得直接消费经济配置原值；§4d 先经 **`senate_api.public_work_budget_margin_bounds(state)`** 做 admissible 域校验，再以返回的 `(margin_min, margin_max)` draw。
+  - **admissible 域：** 恰 2 元素序列 `[min, max]`，两元素为有限实数（`int`/`float`，**`bool` 显式拒**），且 `0 ≤ min ≤ max ≤ 0.5`。
+  - **全部非法类：** 缺键 / 畸形（非 2 元素、标量）/ 越界（`<0` 或 `>0.5`）/ 反序（`min>max`）/ NaN·Inf（非有限）/ 非数值（`str`/`None`/嵌套）/ `bool`。
+  - **fail-safe：** 任一校验失败 ⇒ 回退默认 `(0.05, 0.20)` + warning，继续产提案（不崩溃、不回退旧 `randint`、不 fail-closed）；域内值（含 `[0, 0.5]`）原值使用。
+  - 人类值域 `_budget_range_for_contract` 不变（AI 结果恒落其中，经 `_populate_proposal` 校验通过）。
 
 ### 3.4 Fleet 建造合同四权威流（R3-G-03，2026-09-05）
 ```
@@ -81,6 +87,8 @@ post_init__ 另有 create_public_works() 显式 _original_budget=budget
 ## 4. 版本日志
 | 版本 | 日期 | 摘要 |
 |:-----|:-----|:------|
+| v1.7 | 2026-10-11 | WP-K S4/FC-K-29 文档同步：登记 AI 加成 margin 的 admissible 域（2 元素有限实数非 bool，`0≤min≤max≤0.5`）+ 全部非法类 + fail-safe `[0.05,0.20]`；读取点 = `public_work_budget_margin_bounds`（§3.3） |
+| v1.6 | 2026-10-11 | WP-K S4：AI 预算加成回归规格 §2.7（`public_work_budget_margin_range` → §4d `int(base_cost×(1+r))`；单一取值点）；人类值域不变 |
 | v1.5 | 2026-10-02 | WP-L L1：基建统一（A 生成即设 / B=PASS 写 / 显式 D 8 元组 / ceiling=B / quality=D/A / 成本尾差守恒）；无骑士非阻塞 UI（FC-L1-09/10） |
 | v1.4 | 2026-09-05 | R3-G-03 同步：Fleet 四权威流（Senate B ceiling / A 不可重写 / 8-tuple 兼容 / 独立 AI rate / C-D 结算工期尾差，DA-R3-B3） |
 | v1.3 | 2026-08-23 | GUI-BETA-R1 WP-E（Slice 11 PU-04）：`place_bid` 防重（E-G7-07）——同 (contract_id, figure_id) 已出价 → 显式拒绝「该人物已对本合同出价」（pending 恰一条，恰一次契约；双路反馈已存在） |
