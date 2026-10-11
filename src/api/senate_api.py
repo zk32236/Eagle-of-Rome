@@ -1244,17 +1244,22 @@ def auto_submit_proposals(
                         continue
 
                 if always_declare or random.random() < propose_chance:
-                    legion_options = _legion_options_for_war(state, war)
-                    if legion_options is None or remaining < 1:
-                        continue  # 无权威值域 / 可用军团不足 → 跳过宣战（防御）
+                    # WP-K S5（K-D03，FC-K-34/35/36/37/38/43）：4a 宣战军团数改由**统一 producer**
+                    # 敌强匹配产生——与 4b′ 增援共用同一 module-level owner
+                    # `reinforcement_n_target`（单一 producer；`random.randint(lo,hi)` 退役）。
+                    # pool 实参 = `reinforcement_range(state, war)["max"]`（FC-K-34 冻结落点；
+                    # 数值等价于 len(get_available_legions())）。调用点守卫 `N < 1` ⇒ 跳过宣战
+                    # （不产 draft；`_populate_proposal('war')` 拒 legions<1，FC-K-35/38）。
+                    # 确定性（无 random，FC-K-43）。
+                    rng = reinforcement_range(state, war)
+                    if rng is None or remaining < 1:
+                        continue  # 值域不可得 / 可用军团不足 → 跳过宣战（防御，FC-K-38①）
                     target = _pick_ai_commander()
                     if target is None:
                         continue  # 无合法 Commander（唯一性）→ 跳过，避免整包 Claim 冲突
-                    lo = legion_options["min"]
-                    hi = min(remaining, legion_options["max"])
-                    if hi < lo:
-                        continue
-                    legions = random.randint(lo, hi)
+                    legions = reinforcement_n_target(state, war, remaining, rng["max"])
+                    if legions is None or legions < 1:
+                        continue  # 敌强源不可读 / 零池·剩余不足（N<1）→ 跳过宣战（不产 draft，FC-K-38①⑤）
                     war_drafts.append({
                         "war_id": war.id, "checked": True, "mode": "command",
                         "target_commander_id": target, "reinforcement_n": legions,

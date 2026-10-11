@@ -7,8 +7,10 @@
 - Targeted：`senate_api.reinforcement_n_target`（module-level 单一 producer）。
 - PRODUCTION_CHAIN：`senate_api.auto_submit_proposals` 4b′ → consul_direct decision
   payload `reinforcement_n`（真实入口，不 monkeypatch 被测生产者）。
-- LC-K-05（F-08 / FC-K-31）：4a no-touch 负测 + 混合 4a（宣战）+ 4b′（增援）包 `ΣN ≤ pool`
-  经真实 `_legion_options_for_war` / `random.randint`（4a 自有 draw）+ `propose_many`/`submit_proposal_package` 聚合校验。
+- LC-K-05（F-08；**re-based by WP-K S5**，FC-K-40/42）：混合 4a（宣战）+ 4b′（增援）包 `ΣN ≤ pool`
+  经真实 4a **统一 producer**（敌强匹配，确定性，与 4b′ 同一 owner）+ `propose_many`/
+  `submit_proposal_package` 聚合校验。（FC-K-31「4a 自有 random draw 不变」子句已由 S5 supersede，
+  见 FC-K-40/43；S5 完整覆盖见 `test_wpk_s5_declaration.py`。）
 - §9.1 No Test-Assisted Transition（N-01）：本文件全部经真实生产 owner（`auto_submit_proposals`），
   禁直调 `_validate_reinforcement_n`/`commit_war_resolution` 冒充生产链。
 
@@ -336,11 +338,11 @@ class TestS1LongChainLifecycle(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# LC-K-05（F-08 / FC-K-31 / K-AC-08.8）— 4a no-touch 负测 + 混合 4a+4b′ 聚合包
+# LC-K-05（F-08；re-based by WP-K S5 / FC-K-40/42）— 混合 4a+4b′ 聚合包 + 人类值域不变
 # ---------------------------------------------------------------------------
 class TestS1LongChain4aNoTouch(unittest.TestCase):
     def test_4a_options_unchanged(self):
-        """B-10 / FC-K-31：S1 不改 4a 值域——`_legion_options_for_war` 输出不变。"""
+        """K-AC-13.8 / FC-K-39：S5 不动 4a 人类值域——`_legion_options_for_war` 输出不变。"""
         state = _build_state()
         pool = len(state.get_military_system().get_available_legions())
         threat = _add_threat_war(state)
@@ -350,8 +352,12 @@ class TestS1LongChain4aNoTouch(unittest.TestCase):
         self.assertEqual(options["default"], min(4, pool))
         self.assertEqual(options["allowed"], list(range(1, pool + 1)))
 
-    def test_4a_random_draw_preserved(self):
-        """B-10 / FC-K-31：4a 宣战军团数仍用自有 `random.randint`（不经敌强匹配）。"""
+    def test_4a_enemy_matched_no_random(self):
+        """K-AC-13.1/13.6 / FC-K-34/43（S5 re-base）：4a 宣战军团数改由统一 producer 敌强匹配。
+
+        旧断言（FC-K-31「4a 自有 random draw 不变」）已被 S5 supersede：将 `random.randint`
+        patch 为 7，4a 不再消费该值——E=5,u=2 ⇒ N=ceil(5/2)=3（确定性，不经 random）。
+        """
         state = _build_state({
             "combat_rules": {"war_takeover_chance": 1.0},
             "testing": {"always_declare": True},
@@ -362,16 +368,17 @@ class TestS1LongChain4aNoTouch(unittest.TestCase):
         self.assertTrue(result["success"], result.get("message"))
         declared = [p for p in result["data"]["proposals"] if p["type"] == "war"]
         self.assertEqual(len(declared), 1, result["data"].get("proposals"))
-        self.assertEqual(declared[0]["legions"], 7)  # 4a 自有 random draw 未被替换
-        self.assertTrue(mri.called, "4a 宣战路径须仍调用 random.randint")
+        self.assertEqual(declared[0]["legions"], 3)  # 敌强匹配（非 patched random 7）
+        self.assertFalse(mri.called, "4a 宣战路径不得再调用 random.randint")
         decisions = state.get_consul_war_decisions(state.get_senate_session())
         self.assertEqual(len(decisions), 0)
 
     def test_mixed_4a_and_4bp_package_pool_invariant(self):
-        """LC-K-05：同 run 含 4a（宣战）+ 4b′（增援）；混合包聚合池校验 `ΣN ≤ pool` 且 submit 成功。
+        """LC-K-05（re-based）：同 run 含 4a（宣战）+ 4b′（增援）；混合包聚合池校验 `ΣN ≤ pool` 且 submit 成功。
 
         production owner = `auto_submit_proposals`（4a + 4b′ 同 run）→ `propose_many` →
         `submit_proposal_package` 聚合校验（LEGION_POOL_EXCEEDED 门）。证据路径 = PRODUCTION_CHAIN。
+        S5 后 4a N 亦为**确定性敌强匹配值**（与 4b′ 同 producer），非随机。
         """
         state = _build_state({
             "combat_rules": {"war_takeover_chance": 1.0},
@@ -380,19 +387,20 @@ class TestS1LongChain4aNoTouch(unittest.TestCase):
         pool = len(state.get_military_system().get_available_legions())
         _add_threat_war(state, strength=5)      # 4a 宣战（senate_vote 路径）
         _add_active_war(state, strength=5)      # 4b′ 增援（consul_direct 路径）
-        with patch('random.randint', return_value=7):
-            result = senate_api.auto_submit_proposals(state, land_proposal_deciders=[])
+        result = senate_api.auto_submit_proposals(state, land_proposal_deciders=[])
         self.assertTrue(result["success"], result.get("message"))
         declared = [p for p in result["data"]["proposals"] if p["type"] == "war"]
         by_war = {p["war_id"]: p["legions"] for p in declared}
-        # 4a：宣战（w_threat）legions == 7（自有 random draw）
-        self.assertEqual(by_war.get("w_threat"), 7, declared)
-        # 4b′：增援（w1）N = ceil(5/2) = 3（敌强匹配）
+        # 4a：宣战（w_threat）legions == ceil(5/2) == 3（敌强匹配，确定性）
+        self.assertEqual(by_war.get("w_threat"), 3, declared)
+        # 4b′：增援（w1）N = ceil(5/2) = 3（同 producer，敌强匹配）
         self.assertEqual(by_war.get("w1"), 3, declared)
         decisions = state.get_consul_war_decisions(state.get_senate_session())
         self.assertEqual(len(decisions), 1, list(decisions))
         reinforce_n = list(decisions.values())[0]["payload"]["reinforcement_n"]
         self.assertEqual(reinforce_n, 3)
+        # 4a 与 4b′ 同 producer ⇒ 同敌强 E 同 N（统一）
+        self.assertEqual(by_war["w_threat"], reinforce_n)
         # 聚合池不变量：ΣN ≤ pool（混合 4a+4b′ 包经真实 submit 校验通过）
         self.assertLessEqual(by_war["w_threat"] + reinforce_n, pool)
 

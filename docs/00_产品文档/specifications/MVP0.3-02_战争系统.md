@@ -252,7 +252,11 @@ Reinforcement N（新征召军团数）= 新 Consul 唯一决策量（取代 Tar
 > **零池 → N=0**；**可用军团不足（min(remaining,pool) < target）→ 招满可用，不拒绝/不跳过**；
 > 敌强=0 且池>0 → N=1；多战场共享池 `ΣN ≤ pool`；确定性（不再依赖 RNG）。单一生产 owner =
 > `senate_api.reinforcement_n_target`（4b′）；值域 `reinforcement_range` 与校验
-> `_validate_reinforcement_n` 不变。4a 宣战军团数（`senate_war_legions`）**不变**。
+> `_validate_reinforcement_n` 不变。**[WP-K S5，2026-10-11，K-D03] 4a 宣战军团数亦已由随机改为敌强匹配**：
+> 4a 与 4b′ 增援共用**同一 producer** `senate_api.reinforcement_n_target`（`N = clamp(ceil(E/u),1,min(remaining,pool))`，
+> 确定性；4a 调用点 pool 源 = `reinforcement_range(state,war)["max"]`；`N<1` ⇒ 跳过宣战）；
+> `senate_war_legions` **保留为人类/GUI 宣战值域 + API 校验权威**（人类 min/max/default 不变），
+> **AI 4a 不再从此键 draw**。
 
 ### 3.4 战利品分配比例（可配置）
 
@@ -494,7 +498,8 @@ ACTIVE（no valid commander）──T15（Takeover P2）──▶ ACTIVE（新 C
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
-| v1.12 | 2026-10-11 | DA Sub-Agent (WP-K S1) | 军团增援 N 敌强匹配（OD-K-01，GAME_RULE_CHANGE=YES）：§3.3 增冻结规则 `N = clamp(ceil(E/u),1,min(remaining,pool))`（E=`war.get_total_strength()`；u=config `legion_strength_base` 默认 2）；零池=0/不足=招满/敌强=0→1/多战场 ΣN≤pool/确定性；单一 producer `senate_api.reinforcement_n_target`；4a 宣战军团数不变 |
+| v1.13 | 2026-10-11 | DA-Execute (WP-K S5) | AI 宣战（4a）军团数敌强匹配 + 与增援统一（K-D03，GAME_RULE_CHANGE=YES）：4a 退役 `random.randint`，改由**单一 producer** `senate_api.reinforcement_n_target`（与 4b′ 同 owner）产 `N = clamp(ceil(E/u),1,min(remaining,pool))`（E=`war.get_total_strength()` 陆战敌强；u=`legion_strength_base` 默认 2；pool 源=`reinforcement_range(state,war)["max"]`）；`N<1` ⇒ 跳过宣战；零池/剩余不足跳过、超池招满、敌强=0→1、多战场/混合共享 `remaining` 顺序消费 `ΣN≤pool`、确定性；`senate_war_legions` 保留为人类/GUI 值域 + 校验权威（人类 min/max/default 不变，AI 不再 draw）；删 4a draw ⇒ 下游 RNG 序列移位（登记 GAME_RULE_CHANGE）。§3.3/§3.5 + 技术映射同步 |
+| v1.12 | 2026-10-11 | DA Sub-Agent (WP-K S1) | 军团增援 N 敌强匹配（OD-K-01，GAME_RULE_CHANGE=YES）：§3.3 增冻结规则 `N = clamp(ceil(E/u),1,min(remaining,pool))`（E=`war.get_total_strength()`；u=config `legion_strength_base` 默认 2）；零池=0/不足=招满/敌强=0→1/多战场 ΣN≤pool/确定性；单一 producer `senate_api.reinforcement_n_target`；4a 宣战军团数不变（→ 由 WP-K S5 v1.13 取代） |
 | v1.11 | 2026-09-26 | DA Sub-Agent (WP-G-R9) | R9 同步（SLICE-R9-01 文档义务）：新增「WP-G-R9 同步注记」（引 MVP0.5-20 §5.7.3）——终结态 War（TRIUMPH/VICTORY → RESOLVED）不出现在任何玩家可见可操作面（含冻结 ConsulDirect 投影）；作用域收敛 = 会期身份（canonical 仅由有效 PackageRecord 证明，不解析 session ID 文本）；同会期 Results 只读历史例外附支持边界（有效 current-turn PackageRecord；无包/坏包统一排除、不 fallback）。GAME_RULE_CHANGE=NO（零规则变更，仅投影作用域收敛） |
 | v1.10 | 2026-09-20 | DA Sub-Agent (WP-G-R8) | R8 同步（SLICE-R8-01/02/03）：生命周期文案时点（配置→决定）/ 执行边界（边界前禁「已执行」）/ 诊断零 raw（去 machine + 人话 + Store 薄封装）/ 三面板几何不变量（`Hrow=min(460,max(360,U.h−28))`）/ Panel1 主 body scroll ownership / 结果区 bounded 132 / Dialog L-D envelope。新增「WP-G-R8 同步注记」。GAME_RULE_CHANGE=NO（纯展示层） |
 | v1.0 | 2026-07-12 | Document Officer Worker K | 初版创建 |

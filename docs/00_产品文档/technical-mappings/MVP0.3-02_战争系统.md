@@ -118,10 +118,29 @@ CRT 判定: combat_total = 2d6 + commander.martial + sum(legion_strengths) - war
   敌强源不可读 → 返回 `None`（调用方跳过该战）。调用点 = `auto_submit_proposals` 4b′（consul_direct command）。
 - **输入键**：`war.get_total_strength()`（`war.py`，陆战敌强）；`economic_rules.legion_strength_base`
   （`game_config.json` + `config.py DEFAULTS`，默认 2）。确定性（无 `random`）。
-- **不变**：`reinforcement_range`（值域）/ `_validate_reinforcement_n`（fail-closed）/ 4a 宣战军团数
-  （`senate_war_legions`）/ `commit_war_resolution` 唯一原子军事执行。
+- **不变**：`reinforcement_range`（值域）/ `_validate_reinforcement_n`（fail-closed）/
+  `commit_war_resolution` 唯一原子军事执行。（原「4a 宣战军团数不变」子句由 WP-K S5 取代，见下。）
 
 ### 版本日志（S1）
 | 版本 | 日期 | 摘要 |
 |:--|:--|:--|
 | v1.8 | 2026-10-11 | WP-K S1：AI 军团增援 N 敌强匹配（`reinforcement_n_target`；去 random）；键 `legion_strength_base` |
+
+## WP-K S5 同步注记（2026-10-11，DA-Execute WP-K S5；append-only，目标锚点 §3 核心算法）
+
+> 权威：SA-Development-Task-WP-K-v1.6（FC-K-34…44）；对应规格 `specifications/MVP0.3-02_战争系统.md` §3.3。
+
+- **宣战 N 与增援 N 统一（单一 producer）**：`src/api/senate_api.py::reinforcement_n_target(state, war, remaining, pool)`
+  = **4a（宣战，`active_declaration`）与 4b′（增援，consul_direct command）共用的唯一 producer**。
+  4a 调用点退役 `random.randint`，改 `N = clamp((E+u−1)//u, 1, min(remaining, pool))`（确定性）；
+  **4a 调用点 pool 实参 = `reinforcement_range(state, war)["max"]`**（= `len(get_available_legions())`）；
+  4a 调用点守卫 `N < 1 ⇒ 跳过宣战`（不产 draft）。边界（FC-K-38）：零池/剩余不足 ⇒ 跳过；超池 ⇒ 招满；
+  敌强=0 且池>0 ⇒ 1；多战场/混合 4a+4b′ 共享 `remaining` 顺序消费 `ΣN ≤ pool`；敌强不可读 ⇒ 跳过。
+- **不变**：值域 `reinforcement_range` / fail-closed `_validate_reinforcement_n` / `commit_war_resolution`
+  唯一原子军事执行；`senate_war_legions` 保留为**人类/GUI 值域 + API 校验权威**（人类 min/max/default 不变；
+  AI 4a 不再从此键 draw）。删 4a draw ⇒ 下游全局 RNG 序列移位（登记 GAME_RULE_CHANGE，FC-K-43）。
+
+### 版本日志（S5）
+| 版本 | 日期 | 摘要 |
+|:--|:--|:--|
+| v1.9 | 2026-10-11 | WP-K S5：4a 宣战军团数敌强匹配 + 与 4b′ 增援统一到单一 producer（去 random）；`senate_war_legions` 人类语义不变 |
