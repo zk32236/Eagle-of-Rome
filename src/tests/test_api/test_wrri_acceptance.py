@@ -1166,40 +1166,54 @@ def _capture_events(state):
     return captured
 
 
-# ---- F01.1 (ATTEMPT-4): non-dict persisted receipt fail-closed on the DTO boundary ----
+# ---- F01.1 (ATTEMPT-4, made PUBLIC in ATTEMPT-5 / R01): non-dict receipt fail-closed ----
 
 @pytest.mark.parametrize("bad", [[], "garbage", 5, True])
 def test_non_dict_persisted_receipt_fail_closed_public_read(bad):
-    """F01/addendum §1.4(4): a persisted NON-dict malformed receipt on an ACTIVE (unsettled)
-    war must fail-closed to history_unrecorded at the DTO read boundary; it must NOT fall
-    through to PLAN/projected (the pre-fix bug G5 F01.1)."""
-    state = _make_state()
-    ws = WarSystem(state)
-    state._war_system = ws
-    war = War(id="w_bad", name="Bad", strength=5, rewards={"treasury": 500})
-    war.status = WarStatus.ACTIVE
-    ws._active_wars.append(war)
+    """F01/addendum §1.4(4)/E-SECC-5 (R01): a persisted NON-dict malformed receipt on an
+    ACTIVE (unsettled) war must fail-closed to history_unrecorded at the PUBLIC combat
+    boundary (`do_combat_action` seam); it must NOT fall through to PLAN/projected (the
+    pre-fix bug G5 F01.1). Public seam — not the private `_reward_view` helper."""
+    state, war, commander, faction, pid = _attack_state(force="triumph", base_treasury=500)
     war.set_reward_receipt(bad)          # present, persisted-shape, invalid
     assert war.has_valid_receipt() is False
-    view = combat_api._reward_view(war, state, ws, "victory")
-    assert view["reward_status"] == "history_unrecorded"
-    assert view["committed"] is False and view["projected"] is False
-    assert view["loot"] is None
-    assert any("receipt 校验失败" in m for m in state._event_log)
+    t0, f0, c0 = state.treasury, faction.treasury, commander.wealth
+    res = combat_api.do_combat_action(state, pid, war.id, "scout")
+    assert res["success"], res.get("message")
+    data = res["data"]
+    assert data["reward_status"] == "history_unrecorded"      # NOT projected (F01.1)
+    assert data["committed"] is False and data["projected"] is False
+    assert data["loot"] is None and data["projected_loot"] is None
+    assert (state.treasury, faction.treasury, commander.wealth) == (t0, f0, c0)
+    assert war.reward_receipt == bad     # verbatim (raw preserved, not rewritten)
+    assert war.status == WarStatus.ACTIVE
 
 
-def test_non_dict_persisted_receipt_survives_load_then_fail_closed(ctx):
-    """F01: a JSON-list persisted receipt round-trips verbatim (raw-preserved for audit) but
-    is never authoritative; DTO fails closed."""
-    state, ws, war, commander, faction = ctx
-    d = war.to_dict()
-    d["reward_receipt"] = []
-    clone = War.from_dict(d)
-    assert clone.reward_receipt == []          # verbatim
-    assert clone.has_valid_receipt() is False
-    view = combat_api._reward_view(clone, state, ws, "victory")
-    assert view["reward_status"] == "history_unrecorded"
-    assert view["loot"] is None
+def test_non_dict_persisted_receipt_survives_load_then_fail_closed():
+    """F01 (R01): a JSON-list persisted receipt round-trips verbatim through a real attack
+    → `GameState.to_dict` → `GameState.load_from_dict` (raw preserved for audit) but is
+    never authoritative; the PUBLIC `get_combat_view` boundary fails closed."""
+    state, war, commander, faction, pid = _attack_state(force="triumph", base_treasury=500)
+    _real_attack(state, war, pid)
+    data = state.to_dict()
+    for wd in data["_war_system"]["_war_discard"]:
+        if wd["id"] == war.id:
+            wd["reward_receipt"] = []
+    restored = GameState.create_for_testing({})
+    restored.load_from_dict(data)
+    restored.set_current_player(pid)
+    rws = restored.get_war_system()
+    rwar = rws.get_war_by_id(war.id)
+    assert rwar.reward_receipt == []          # verbatim
+    assert rwar.has_valid_receipt() is False
+    t0 = restored.treasury
+    view = combat_api.get_combat_view(restored, pid)
+    assert view["success"], view.get("message")
+    assert restored.treasury == t0
+    card = next(c for c in view["data"]["resolved_war_cards"] if c["war_id"] == war.id)
+    land = card["result"]["land"]
+    assert land["reward_status"] == "history_unrecorded"
+    assert land["committed"] is False and land["loot"] is None
 
 
 # ---- F01.2 (ATTEMPT-4): public read boundary downgrades stale committed results ----
@@ -1332,19 +1346,44 @@ def test_bb03_loaded_history_no_receipt_public_history_unrecorded_core_noop():
 
 # ---- BB04 (AC-01,15): malformed / wrong-war_id receipt fail-closed, zero write ----
 
-def test_bb04_malformed_wrong_war_id_receipt_public_fail_closed(ctx):
-    """BB04/§5.3: malformed / wrong-war_id receipt survives load verbatim but is never
-    committed at the public/DTO boundary (no crash, no projected fall-through)."""
-    state, ws, war, commander, faction = ctx
-    d = war.to_dict()
-    d["reward_receipt"] = {"committed": True, "war_id": "other"}
-    clone = War.from_dict(d)
-    assert clone.reward_receipt == {"committed": True, "war_id": "other"}
-    assert clone.has_valid_receipt() is False
-    view = combat_api._reward_view(clone, state, ws, "victory")
-    assert view["reward_status"] == "history_unrecorded"
-    assert view["committed"] is False and view["loot"] is None
-    assert any("receipt 校验失败" in m for m in state._event_log)
+def test_bb04_malformed_wrong_war_id_receipt_public_fail_closed():
+    """BB04/§5.3 (R01): a MALFORMED / wrong-war_id authoritative receipt, persisted through
+    a real attack → `GameState.to_dict` → receipt corrupted → `GameState.load_from_dict`,
+    must fail-closed (history_unrecorded, zero write, no crash) at the PUBLIC
+    `get_combat_view` boundary — NOT via the private `_reward_view` helper, and with no
+    PLAN/projected fall-through (addendum §1.4(4)/E-SECC-5)."""
+    state, war, commander, faction, pid = _attack_state(force="triumph", base_treasury=500)
+    _real_attack(state, war, pid)
+    data = state.to_dict()
+    for wd in data["_war_system"]["_war_discard"]:
+        if wd["id"] == war.id:
+            wd["reward_receipt"] = {"committed": True, "war_id": "other"}
+    restored = GameState.create_for_testing({})
+    restored.load_from_dict(data)
+    restored.set_current_player(pid)
+    rws = restored.get_war_system()
+    rwar = rws.get_war_by_id(war.id)
+    assert rwar is not None
+    assert rwar.reward_receipt == {"committed": True, "war_id": "other"}   # raw preserved
+    assert rwar.has_valid_receipt() is False
+    # core resolve stays a no-op (no re-issue / no monetary write)
+    t0 = restored.treasury
+    assert rws.resolve_war(war.id, True, combat_result="victory").get("no_op") is True
+    assert restored.treasury == t0
+    # PUBLIC read boundary via `get_combat_view` (NOT the private `_reward_view` helper)
+    t_view = restored.treasury
+    view = combat_api.get_combat_view(restored, pid)
+    assert view["success"], view.get("message")
+    assert restored.treasury == t_view                       # read-only: zero mutation
+    card = next(c for c in view["data"]["resolved_war_cards"] if c["war_id"] == war.id)
+    land = card["result"]["land"]
+    assert land["reward_status"] == "history_unrecorded"
+    assert land["committed"] is False and land["projected"] is False
+    assert land["loot"] is None
+    for b in view["data"]["battle_results"]:
+        if b.get("war_id") == war.id:
+            assert b["land"]["reward_status"] == "history_unrecorded"
+            assert b["committed"] is False and b["land"]["loot"] is None
 
 
 # ---- BB06 (AC-06,07,10): raw missing share key → default + structured WARNING ----
@@ -1382,9 +1421,11 @@ def test_bb06_raw_missing_share_key_default_and_structured_warning(tmp_path):
 # ---- AC-10 (modified shares): public consumer + confirm through get_combat_view ----
 
 def test_ac10_modified_shares_public_consumer_and_confirm():
-    """AC-10/§5.2: public combat_rules share assignment (0.40/0.30/0.20/0.10) → real attack
-    → public `get_combat_view` committed DTO reflects the modified shares (no independent
-    recompute; the load-bearing seam is the public view, not a private helper)."""
+    """AC-10/§5.2 (LC-02, R02): public combat_rules share assignment (0.40/0.30/0.20/0.10) →
+    real attack → public `get_combat_view` committed DTO reflects the modified shares →
+    public `confirm_battle_result` → the post-confirm resolved card still carries the
+    UNCHANGED original committed values (no independent recompute; the load-bearing seams
+    are the public view + confirm, not a private helper)."""
     state, war, commander, faction, pid = _attack_state(force="triumph", base_treasury=500)
     cfg = state.config
     cfg.combat_rules.treasury_share = 0.40
@@ -1409,6 +1450,26 @@ def test_ac10_modified_shares_public_consumer_and_confirm():
     assert land["loot"] == 750 and land["committed"] is True
     card = next(c for c in view["data"]["resolved_war_cards"] if c["war_id"] == war.id)
     assert card["result"]["land"]["loot"] == 750
+
+    # ---- R02 (ATTEMPT-5): the named test MUST actually traverse the public CONFIRM ----
+    # LC-02 chain = modified config → attack → receipt → public view/**confirm** → card with
+    # UNCHANGED original values. A draw-only confirm does not prove the triumph/modified chain.
+    rec_snapshot = copy.deepcopy(war.reward_receipt)
+    conf = combat_api.confirm_battle_result(state, pid)
+    assert conf["success"], conf.get("message")
+    assert conf["data"]["all_resolved"] is True
+    view2 = combat_api.get_combat_view(state, pid)
+    assert view2["success"], view2.get("message")
+    assert view2["data"]["battle_results"] == []          # pending cleared by the real confirm
+    card2 = next(c for c in view2["data"]["resolved_war_cards"] if c["war_id"] == war.id)
+    land2 = card2["result"]["land"]
+    assert land2["reward_status"] == "committed" and land2["committed"] is True
+    assert (land2["treasury_share"], land2["faction_share"],
+            land2["commander_share"], land2["soldier_share"]) == (300, 225, 150, 75)
+    assert land2["loot"] == 750
+    # post-confirm: the committed modified-share snapshot is NOT rewritten
+    assert war.reward_receipt == rec_snapshot
+    assert war.soldier_share == 75
 
 
 # ---- AC-09 (public draw confirm): projected DTO survives public confirm ----

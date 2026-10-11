@@ -205,7 +205,7 @@ influence = base + family_bonus + office_bonus + temp_influence + war_reward_inf
 
 ### 5.1 正常状态
 
-- 无官职时 `influence` 仅基于 `base + family_bonus + temp_influence`
+- 无官职时 `influence` 基于 `base + family_bonus + temp_influence + war_reward_influence`（持久战争奖励来源见 §3.1；不再"仅基于"三项）
 - 有官职时额外叠加 `office_bonus`
 - 卸任后（office 变为 `ex-xxx`）使用 `EX_OFFICE_INFLUENCE_BONUS` 表
 - 影响力可为 0（基本不存在负值场景，所有分项非负）
@@ -267,6 +267,7 @@ influence = base + family_bonus + office_bonus + temp_influence + war_reward_inf
 |------|------|--------|---------|
 | v1.1 | 2026-09-28 | DA-Exec (WP-M M-S1) | §3.3 拆为「权力顺序」+「升级顺序」两表（修正 stale 单表）；§3.2 声明影响力加成为独立轴（A1·R4）；新增 §3.3 双排序常量（`OFFICE_PROMOTION_ORDER`/`OFFICE_CURSUS_PREREQUISITE`） |
 | v1.2 | 2026-10-11 | DA-Exec (EOR20261009-03 WRRI) | OD-05/FC-07：影响力公式增持久项 `war_reward_influence`（`Figure._war_reward_influence`，`_compute_influence` 第 7 参数，默认 0）；`figure_api.get_figure_info` 不再声称五项完整等式（改总值 + 战争奖励来源 + 基础分项）。GAME_RULE_CHANGE=YES（Owner OD-05） |
+| v1.3 | 2026-10-11 | DA-Exec (EOR20261009-03 WRRI · ATTEMPT-5 R03) | §5.1 同步：无官职公式更正为 `base + family_bonus + temp_influence + war_reward_influence`，与 §3.1 一致（移除 stale 的"仅基于三项"表述；修复 G5 R03 文档语义矛盾） |
 | v1.0 | 2026-07-12 | Document Officer Sub-Agent B | 初版创建 |
 
 > **维护规则：** 本文件为活文档，每次修改规格说明正文或技术映射时，必须在版本日志中追加新条目。版本号递增规则：大功能修改升主版本（v1→v2），小修小改升次版本（v1.0→v1.1）。
