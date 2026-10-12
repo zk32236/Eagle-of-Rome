@@ -24,6 +24,21 @@ class GuiApiAdapter:
     LEGACY_ERROR_CODE = "LEGACY_ERROR"
     UNKNOWN_ERROR_CODE = "UNKNOWN_ERROR"
 
+    # Fixed safe failure enum (A3/F6). A malformed/legacy failure envelope may
+    # only be forwarded after its first error code is validated against this set;
+    # otherwise it is rebuilt as the fixed safe ``query_failed`` shell.
+    _SAFE_FAILURE_CODES = frozenset({
+        "state_unavailable",
+        "viewer_unavailable",
+        "unknown_query",
+        "invalid_request",
+        "system_unavailable",
+        "record_unavailable",
+        "query_failed",
+        "query_unavailable",
+        "not_implemented",
+    })
+
     def __init__(self, state: GameState, refresh_callback: Optional[Callable] = None):
         self._state = state
         self._refresh_callback = refresh_callback
@@ -429,24 +444,99 @@ class GuiApiAdapter:
         from src.api import combat_api
         return self.call(combat_api.advance_combat, self._state, player_id)
 
-    def get_global_query_result(self, viewer_id: str, query_id: str) -> Dict[str, Any]:
+    def get_global_query_result(
+        self, viewer_id: str, query_id: str, filter_text: str = "", record_id: str = ""
+    ) -> Dict[str, Any]:
+        """Mirror the read seam ``gui_query_api.get_global_query_result`` (A05-01).
+
+        Returns the typed safe QueryDTO. The Adapter retains the API truth and
+        **always** sanitizes: a false envelope or malformed/unvalidated payload is
+        mapped to a fixed safe failure shell with a whitelisted enum code and
+        redacted copy. Raw backend text (``message`` / error strings / unknown
+        codes / unsafe params) is **never** forwarded into the DTO (A05-02, F6).
+        """
         from src.api import gui_query_api
-        result = gui_query_api.get_global_query_result(self._state, viewer_id, query_id)
-        if result.get("success"):
-            return result.get("data", {})
-        logger.error(f"Global query failed: {result.get('message')}")
-        return {
-            "id": query_id,
-            "title": query_id,
-            "title_key": query_id,
-            "status": "placeholder",
-            "message": result.get("message", ""),
-            "message_key": "query.error",
-            "message_params": {},
-            "items": [],
-            "summary": {},
-            "errors": result.get("errors", []),
-        }
+        try:
+            result = gui_query_api.get_global_query_result(
+                self._state, viewer_id, query_id, filter_text, record_id
+            )
+        except Exception:  # pragma: no cover - defensive fail-closed
+            logger.exception("Global query exception: %s", query_id)
+            return gui_query_api.build_failure_dto(
+                query_id, "ERROR", gui_query_api.ERR_QUERY_FAILED
+            )
+        if not isinstance(result, dict):
+            return gui_query_api.build_failure_dto(
+                query_id, "ERROR", gui_query_api.ERR_QUERY_FAILED
+            )
+        data = result.get("data")
+        success = bool(result.get("success", False))
+        if not isinstance(data, dict):
+            # Legacy/malformed failure with data=None -> fixed safe shell only;
+            # NEVER forward a raw backend message through the DTO (F6).
+            return gui_query_api.build_failure_dto(
+                query_id, "ERROR", gui_query_api.ERR_QUERY_FAILED,
+            )
+        if success:
+            if data.get("result_state") in ("OK", "EMPTY") \
+                    and self._valid_success_dto(data, query_id):
+                return data
+            logger.error("Global query malformed success envelope for query: %s", query_id)
+            return gui_query_api.build_failure_dto(
+                query_id, "ERROR", gui_query_api.ERR_QUERY_FAILED
+            )
+        # -- failure envelope: validated safe enum + redacted copy (F6) --------
+        code = self._safe_failure_code(data)
+        if code is None:
+            logger.error("Global query malformed failure envelope for query: %s", query_id)
+            return gui_query_api.build_failure_dto(
+                query_id, "ERROR", gui_query_api.ERR_QUERY_FAILED
+            )
+        safe_state = "DENIED" if data.get("result_state") == "DENIED" else "ERROR"
+        return gui_query_api.build_failure_dto(query_id, safe_state, code)
+
+    @staticmethod
+    def _valid_success_dto(data: Dict[str, Any], query_id: str) -> bool:
+        """Schema check for a claimed success DTO (id / state / items / summary /
+        capabilities must be present and well-typed)."""
+        if data.get("id") not in ("", query_id):
+            return False
+        if data.get("result_state") not in ("OK", "EMPTY"):
+            return False
+        if not isinstance(data.get("items"), list):
+            return False
+        if not isinstance(data.get("summary"), dict):
+            return False
+        if not isinstance(data.get("capabilities"), dict):
+            return False
+        return True
+
+    @classmethod
+    def _safe_failure_code(cls, data: Dict[str, Any]):
+        """Validate a failure envelope's enum + error schema. Returns the fixed
+        safe code, or ``None`` when the payload is malformed/unsafe (→ the caller
+        rebuilds ``query_failed``); raw ``message`` text is never read here.
+
+        A4/F6: the code is **type-validated before** the frozenset membership test.
+        A non-``str`` code (list/dict/int/None) can never be hashable-safe against
+        the enum, so it is rejected here (returns ``None``) rather than raising
+        ``TypeError`` outside the caller's protective try. Malformed sanitisation
+        is therefore TOTAL and never raises.
+        """
+        if data.get("result_state") not in ("DENIED", "ERROR"):
+            return None
+        errors = data.get("errors")
+        if not isinstance(errors, (list, tuple)) or not errors:
+            return None
+        first = errors[0]
+        if not isinstance(first, dict):
+            return None
+        code = first.get("code")
+        if not isinstance(code, str):
+            return None
+        if code in cls._SAFE_FAILURE_CODES:
+            return code
+        return None
 
     # -----------------------------------------------------------------------
     # Resolution stage API

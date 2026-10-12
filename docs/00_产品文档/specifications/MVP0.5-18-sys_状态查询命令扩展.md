@@ -71,7 +71,7 @@ API 层是 CLI 命令层与核心游戏逻辑之间的中间层，设计目标�
 1. **UI/游戏逻辑分离**：CLI 命令（`src/ui/commands/`）和 GUI（`src/api/session_api.py` + `gui_query_api.py`）均通过 API 层访问游戏逻辑，不直接操作 `GameState` 私有字段
 2. **统一响应格式**：所有 API 函数返回 `{"success": bool, "message": str, "data": Any, "errors": List[str]}` 字典
 3. **业务域划分**：按业务域（游戏全局、人物、派系、行省、合同、人口、元老院、战斗、收入、天命、广场、玩家、会话、GUI 查询）分散到独立模块
-4. **权限检查**：修改类 API（如 `execute_phase`、`next_player`）检查 `is_current_player()`，查询类 API 不检查权限
+4. **权限检查**：修改类 API（如 `execute_phase`、`next_player`）检查 `is_current_player()`；CLI/传统只读查询 API（`get_*`）不做当前玩家（mutation）权限检查。**例外——GUI 只读查询**（`gui_query_api.get_global_query_result()`）：只读 **≠** 免授权，须先通过**合格 viewer 资格核验**（HUMAN/AI + 有效派系），再按 `viewer × 领域 × 字段 × 记录` 做 viewer 作用域投影（详见 §6.3(7) 与 `MVP0.7-20_多玩家信息隔离`）
 5. **日志记录**：关键操作通过 `state.log_event()` 记录游戏事件日志
 6. **GUI 安全过滤**：`session_api.py` 提供按 viewer 玩家的派系过滤的信息快照，防止信息泄露
 
@@ -80,7 +80,7 @@ API 层是 CLI 命令层与核心游戏逻辑之间的中间层，设计目标�
 #### 2.1 系统行为（通用 API 规则）
 
 - 每个 API 模块接受 `GameState` 实例作为第一个参数
-- 查询类 API 无权限检查，只读返回
+- 查询类 API 只读返回，不做当前玩家（mutation）权限检查；但 **GUI 只读查询**（`gui_query_api`）例外——须先通过 viewer 资格核验（合格 HUMAN/AI + 有效派系），再按 viewer 作用域投影字段/记录（见 §6.3(7) 与 `MVP0.7-20_多玩家信息隔离`）。只读不等于免授权
 - 修改类 API 检查 `player_id == state._current_player_id`（测试模式可通过 `testing.bypass_player_check` 跳过）
 - 所有 API 函数返回 `api_response()` 标准格式
 - 异常捕获：健壮的 API 函数（特别是 `session_api.py`、`senate_api.py`、`combat_api.py`）在顶层用 `try/except Exception` 包裹，返回含 `errors` 的失败响应，避免 GUI 崩溃
@@ -114,7 +114,7 @@ API 层是 CLI 命令层与核心游戏逻辑之间的中间层，设计目标�
 | **mortality_api** | `src/api/mortality_api.py` | `get_mortality_view()`, `execute_mortality_phase()`, `advance_mortality_phase()` | 查询 + 修改 |
 | **revenue_api** | `src/api/revenue_api.py` | `get_revenue_view()`, `execute_revenue_phase()`, `advance_revenue_phase()` | 查询 + 修改 |
 | **session_api** | `src/api/session_api.py` | `create_gui_prototype_session()`, `get_session_snapshot()`, `get_population_view()`, `complete_population_player()`, `resolve_population_slice()` | 查询 + 修改 |
-| **gui_query_api** | `src/api/gui_query_api.py` | `get_global_query_result()`（支持 game_status / faction_info / war_list / legion_status 4 种完整查询 + 8 种占位查询） | 查询 |
+| **gui_query_api** | `src/api/gui_query_api.py` | `get_global_query_result()`（GUI 底栏 12 入口的**真实只读查询**，**12/12 已实现、无占位**：`faction_info` / `figure_search` / `game_status` / `faction_treasury` / `public_land` / `private_land` / `contract_status` / `province_info` / `war_list` / `legion_status` / `fleet_status` / `help`；详见 §6.3） | 查询 |
 
 ### 3. 核心规则
 
@@ -135,7 +135,7 @@ def api_response(success: bool, message: str = "", data: Any = None,
 
 | API 类别 | 权限检查 | 例外 |
 |----------|----------|------|
-| 只读查询 API（`get_*`） | 不检查 | 所有查询（包括 `get_players()`、`get_faction_info()` 等）均允许任意调用 |
+| 只读查询 API（`get_*`） | 不做当前玩家（mutation）检查 | CLI/传统只读查询（含 `get_players()`、`get_faction_info()` 等）按既有可见性规则返回，不做 mutation 权限检查；**GUI 只读查询例外**——`gui_query_api.get_global_query_result()` 须经合格 viewer（HUMAN/AI）+ 有效派系核验，并按 viewer 作用域投影字段/记录（见 §6.3(7) 与 `MVP0.7-20_多玩家信息隔离`） |
 | 全局修改 API（`execute_phase`、`execute_turn`、`advance_year`、`next_player`） | `is_current_player()` | `testing.bypass_player_check` 配置可跳过 |
 | 阶段内修改 API（`campaign`、`vote`、`retire_figure`、`recruit_figure` 等） | `is_current_player()` + 人物派系归属检查 | 各函数额外检查 `bypass_permission` 参数 |
 | 阶段结算 API（`resolve_forum`、`resolve_election`、`resolve_senate`） | 无玩家权限检查 | 仅检查阶段未结算 |
@@ -191,7 +191,7 @@ API 层内部依赖：
 | `mortality_api` | `GameState`, `MortalityService` |
 | `revenue_api` | `GameState`, `EconomicService` |
 | `session_api` | `GameState`, `ScenarioLoader`, `population_api`, `player_api`, `faction_api`, `figure_api`, `AutoPlayerProcessor` + 各 `Auto*Decider` |
-| `gui_query_api` | `GameState`, 无其他 API 模块依赖 |
+| `gui_query_api` | `GameState`；经局部导入复用 canonical 只读源——`game_api`（`_build_public_land` → `game_api.get_public_land_info()`）、`figure_api`（`_build_private_land` → `figure_api.get_private_land_info()`）；无 CLI 命令依赖，不改变状态 |
 
 ### 5. 状态与边界
 
@@ -236,7 +236,19 @@ API 层内部依赖：
 #### 6.2 API 层架构
 
 1. **AC-A01**：所有 API 函数通过 `api_response()` 返回统一格式
-2. **AC-A08**：`gui_query_api.get_global_query_result()` 支持 4 种完整查询 + 8 种占位查询
+2. **AC-A08**：`gui_query_api.get_global_query_result()` 为 GUI 底栏 **12 个入口全部**提供真实、可用的**只读**查询（**12/12 已实现，无占位**）：`faction_info`、`figure_search`、`game_status`、`faction_treasury`、`public_land`、`private_land`、`contract_status`、`province_info`、`war_list`、`legion_status`、`fleet_status`、`help`。每个入口返回统一的类型化只读 DTO（`success` 布尔 + `result_state ∈ {OK, EMPTY}`；失败为类型化 `DENIED`/`ERROR` 外壳，**绝不** placeholder-as-success），并按既有能力支持列表、按名筛选与单项详情；服务端在构建 DTO **之前**按 `viewer × 领域 × 字段 × 记录` 做 allowlist 投影（QML 隐藏不计入隔离）。
+
+#### 6.3 GUI 只读查询读模型（冻结契约摘要）
+
+> 本节把 GUI 底栏查询的**当前公开**字段与能力冻结值固化为产品语义；来源 = G2 契约（v1.2 §§3–5）与两份 erratum（`WAR-S5-01` / `LEGION-S5-01`）。列出的键均为**既有当前公开**字段，**非**新增隐私授权。
+
+1. **入口固定**：底栏 12 个查询入口与其**顺序/标签容器**固定，不新增第 13 个按钮。
+2. **只读不变量**：所有入口为只读，不改变任何状态、不触发 RNG、不产生交易/投票/执行。
+3. **`war_list` 公共战争读模型（权威 18 键）**：每个可见战争以如下 18 个公共键投影——`id`、`name`、`status`、`threat_level`、`naval_required`、`commander_id`、`commander_name`、`legions_assigned`、`assigned_fleet_count`、`fleets_assigned`、`naval_ready`、`assigned_fleet_ids`、`fleet_nominal_strength`、`fleet_quality_adjusted_base`、`fleet_experience_bonus`、`fleet_commander_bonus`、`fleet_effective_combat_strength`、`fleet_strength_packages`。其中 `fleet_strength_packages` 的每个 package **仅**含 `package_id`、`fleet_ids`、`nominal`、`q_numerator`、`q_denominator`、`raw`、`capped`、`rounded`。授权的分组计数为 `active` / `threat` / `truce` / `resolved`；条目元数据 `war_id`、`status` 保留于既有 DTO 作用域。指挥官引用仅 `living-only`（无效/死亡/缺失 → `commander_id=None`、空名）。
+4. **`legion_status` 公共军团投影（九字段）**：按既有可见性/资格核验后，每个军团记录按下述**有序九字段**投影（present-when-present，保留 typed `null`/`false`/`0`）——`number`、`name`、`status`、`is_veteran`、`war_id`、`assigned`、`strength`、`cost`、`destroyed_turn`；授权计数为 `total` / `active` / `available` / `assigned` / `destroyed`（原 canonical 分组）。军团指挥官（`commander_id`/`commander`/`commander_name`）、`experience`、`status_emoji`、`battles_*`、历史/`legion_type` 及一切未列字段**缺席**。缺必需部署/强度源 → fail-closed（非 identity-only 接受、不伪造零）。
+5. **`fleet_status`（收窄维持五字段）**：独立舰队公共记录**恰好** `number`、`name`、`fleet_type`、`status`、`is_veteran`；`strength`、`commander`（含指挥官引用）、`assigned_war_id`、`mission` 及一切未列字段对**任何关系**缺席。（per-war 的 `fleet_*` 联动强度键仅属 `war_list` 的 query-local 读模型，**不**授予独立舰队字段。）
+6. **`land price` = OUT/DEFER**：独立“土地单价/公地价格查询”能力本范围**不做**（OUT/DEFER），不计入首轮验收。（`public_land` 概览中展示既有公地快照的单价值，**不**等于单独的价格查询能力。）
+7. **viewer 隔离（维持 `MVP0.7-20`）**：国家公开数据可公开；本派系成员/资源私密详情只归本派系；他派系仅获规则明确允许的公开字段；投影在 DTO 构建前递归完成，未列字段**缺席而非留空**。
 
 ### 7. 技术架构映射
 
@@ -247,3 +259,5 @@ API 层内部依赖：
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
 | v1.0 | 2026-07-17 | 系统 | 初始创建 |
+| v1.1 | 2026-10-13 | DA-Execute（EOR20261011-01 DocSync） | AC-A08 由「4 种完整查询 + 8 种占位查询」更新为 **12/12 真实只读查询**；同步 §2.3 `gui_query_api` 描述；新增 §6.3 GUI 只读查询读模型（war 权威 18 键 / legion 九字段 / fleet 收窄五字段 / `land price` OUT-DEFER），与冻结契约及 `WAR-S5-01`/`LEGION-S5-01` erratum 一致。 |
+| v1.2 | 2026-10-13 | DA-Execute（EOR20261011-01 DocSync ATTEMPT-2） | 窄修正（G5 RETURN F1+F2）：第二部分 §1 项 4 / §2.1 / §3.2 权限表中「查询类 API 无权限检查」限定为「不做当前玩家（mutation）检查」，并补 **GUI 只读查询异常**（合格 viewer + 有效派系 + viewer 作用域投影；引 §6.3(7) 与 `MVP0.7-20`）；§4.4 依赖表 `gui_query_api` 行据实更正为复用 `game_api`（`get_public_land_info`）与 `figure_api`（`get_private_land_info`），无 CLI 依赖。 |

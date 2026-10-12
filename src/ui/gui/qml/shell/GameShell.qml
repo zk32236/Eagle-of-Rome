@@ -36,6 +36,35 @@ Rectangle {
         handoffOverlay.show(nextPlayerId)
     }
 
+    // EOR20261011-01 S1：query shell routing (v1.2 ④.1). Only routing opens the
+    // overlay; queryResultChanged is a data notification, not an implicit open.
+    function hasQueryErrorCode(data, code) {
+        if (!data || !data.errors) return false
+        for (var i = 0; i < data.errors.length; i++) {
+            if (data.errors[i] && data.errors[i].code === code) return true
+        }
+        return false
+    }
+
+    function handleQueryRequest(queryId, filterText, recordId) {
+        var result = sessionStore.doGlobalQuery(queryId || "",
+                                                filterText || "",
+                                                recordId || "")
+        var data = result ? result.data : null
+        var state = data ? (data.result_state || "") : ""
+        if (result && result.success) {
+            queryResultOverlay.open()
+        } else if (state === "DENIED" && hasQueryErrorCode(data, "record_unavailable")) {
+            // Fresh generic denial overlay (never existence-dependent).
+            queryResultOverlay.open()
+        } else {
+            // Localised safe failure copy (F6/F7): resolve the DTO message_key,
+            // never a raw/hardcoded backend string.
+            var msg = GuiText.queryMessage(data)
+            showFeedback("error", msg ? msg : GuiText.queryErrorFallback)
+        }
+    }
+
     // ============================================================
     // A - TopStatusBar
     // x=10, y=10, w=1420, h=62
@@ -105,12 +134,7 @@ Rectangle {
         anchors.bottomMargin: 14
         height: 46
         onQueryRequested: function(queryId) {
-            var result = sessionStore.doGlobalQuery(queryId)
-            if (result.success) {
-                queryResultOverlay.open()
-            } else {
-                showFeedback("error", result.message)
-            }
+            handleQueryRequest(queryId, "", "")
         }
 
     }
@@ -862,5 +886,17 @@ Rectangle {
         id: queryResultOverlay
         objectName: "queryResultOverlay"
         anchors.fill: parent
+        onQueryRequested: function(queryId, filterText, recordId) {
+            handleQueryRequest(queryId, filterText, recordId)
+        }
+    }
+
+    // EOR20261011-01 S1：synchronous same-thread invalidation receiver
+    // (v1.2 §2.1 step 2). Local-only; never recursively calls Store clear.
+    Connections {
+        target: sessionStore
+        function onQueryInvalidated(keepOpen) {
+            queryResultOverlay.resetForInvalidation(keepOpen)
+        }
     }
 }

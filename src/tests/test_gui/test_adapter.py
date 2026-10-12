@@ -415,11 +415,12 @@ class TestGuiApiAdapter:
         faction_info = store.doGlobalQuery("faction_info")
         assert faction_info["success"]
         assert store.globalQueryResult["status"] == "readonly"
-        assert store.globalQueryResult["items"][0]["value"] == store.viewerFactionName
+        assert store.viewerFactionName in [item["value"] for item in store.globalQueryResult["items"]]
 
         war_list = store.doGlobalQuery("war_list")
         assert war_list["success"]
-        assert store.globalQueryResult["status"] == "readonly"
+        assert store.globalQueryResult["result_state"] in ("OK", "EMPTY")
+        assert store.globalQueryResult["status"] in ("readonly", "empty")
 
         legion_status = store.doGlobalQuery("legion_status")
         assert legion_status["success"]

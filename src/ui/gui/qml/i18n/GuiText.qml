@@ -99,6 +99,15 @@ QtObject {
     readonly property string queryStatusConnected: I18n.L10n.t("stage.short.connected")
     readonly property string queryStatusReadonly: I18n.L10n.t("stage.mode.readonly")
     readonly property string queryStatusPlaceholder: I18n.L10n.t("stage.mode.placeholder")
+    readonly property string queryStatusEmpty: I18n.L10n.t("query.status.empty")
+    readonly property string queryStatusDenied: I18n.L10n.t("query.status.denied")
+    readonly property string queryStatusError: I18n.L10n.t("query.status.error")
+    readonly property string queryFilterPlaceholder: I18n.L10n.t("query.filter.placeholder")
+    readonly property string queryActionBack: I18n.L10n.t("query.action.back")
+    readonly property string queryActionClear: I18n.L10n.t("query.action.clear")
+    readonly property string queryRecordDenied: I18n.L10n.t("query.record.denied")
+    readonly property string querySummaryShown: I18n.L10n.t("query.summary.shown")
+    readonly property string querySummaryFactions: I18n.L10n.t("query.summary.factions")
     readonly property string queryGameStatus: I18n.L10n.t("query.game_status.title")
     readonly property string queryFactionInfo: I18n.L10n.t("query.faction_info.title")
     readonly property string queryWarList: I18n.L10n.t("query.war_list.title")
@@ -111,6 +120,13 @@ QtObject {
     readonly property string queryProvinceInfo: I18n.L10n.t("query.province_info.title")
     readonly property string queryFleetStatus: I18n.L10n.t("query.fleet_status.title")
     readonly property string queryHelp: I18n.L10n.t("query.help.title")
+    // Neutral fallback for an enum/bool value whose i18n key is missing — never
+    // show a raw enum or hardcoded Chinese (F7 / contract ⑤).
+    readonly property string queryValueUnknown: I18n.L10n.t("query.value.unknown")
+    readonly property string queryListSeparator: I18n.L10n.t("query.list.separator")
+    // Safe generic failure copy used when a DTO carries no resolvable message key
+    // (never a raw backend message; F6/F7).
+    readonly property string queryErrorFallback: I18n.L10n.t("feedback.query.failed")
 
     function turnText(turnNumber) {
         return I18n.L10n.t("topStatusBar.turn", { turn: turnNumber || 1 })
@@ -209,5 +225,88 @@ QtObject {
 
     function senateLeaderCount(count) {
         return I18n.L10n.t("senate.leader.count", { count: count })
+    }
+
+    // -- EOR20261011-01 S1 query shell i18n resolution (F7 / contract ⑤) -------
+    // Title: resolve dto.title_key; never render dto.title (hardcoded Chinese).
+    function queryTitle(dto) {
+        if (dto && dto.title_key) {
+            var t = I18n.L10n.t(dto.title_key)
+            if (t !== dto.title_key) return t
+        }
+        return queryResultTitle
+    }
+
+    // Message: resolve dto.message_key (with safe params). There is NO
+    // raw-message fallback (F6/F7): backend copy never reaches the UI; a missing
+    // key resolves to the neutral empty status copy.
+    function queryMessage(dto) {
+        if (dto && dto.message_key) {
+            var t = I18n.L10n.t(dto.message_key, dto.message_params || ({}))
+            if (t !== dto.message_key) return t
+        }
+        return ""
+    }
+
+    // Value: resolve item/field.value_key (recursively resolving key-ref params,
+    // including arrays such as office_history) so bool/enum displays relabel on
+    // locale switch. Never show a raw enum.
+    function queryValue(item) {
+        if (!item) return ""
+        if (item.value_key) {
+            var params = {}
+            var vp = item.value_params || {}
+            for (var k in vp) {
+                if (vp.hasOwnProperty(k)) {
+                    params[k] = queryValueParam(vp[k])
+                }
+            }
+            var resolved = I18n.L10n.t(item.value_key, params)
+            if (resolved !== item.value_key) return resolved
+            return queryValueUnknown
+        }
+        if (item.value !== undefined && item.value !== null) return item.value
+        return ""
+    }
+
+    // Per-query filter-row label (contract ⑤ / FC-21): resolve
+    // ``query.<id>.filter_label``; a missing key resolves to "" so the label is
+    // hidden while the input still fills the row.
+    function queryFilterLabel(queryId) {
+        if (!queryId) return ""
+        var key = "query." + queryId + ".filter_label"
+        var t = I18n.L10n.t(key)
+        return (t !== key) ? t : ""
+    }
+
+    // Resolve one value param: a {key: "..."} ref (with optional nested params), a
+    // list of refs (joined by the localized list separator), or a plain scalar
+    // passed through unchanged.
+    function queryValueParam(value) {
+        if (value === null || value === undefined) return ""
+        if (value instanceof Array) {
+            var parts = []
+            for (var i = 0; i < value.length; i++) {
+                parts.push(queryValueParam(value[i]))
+            }
+            return parts.join(queryListSeparator)
+        }
+        if (typeof value === "object" && value.key) {
+            var params = {}
+            for (var k in value) {
+                if (k !== "key" && value.hasOwnProperty(k)) {
+                    params[k] = queryValueParam(value[k])
+                }
+            }
+            var t = I18n.L10n.t(value.key, params)
+            return (t !== value.key) ? t : queryValueUnknown
+        }
+        return value
+    }
+
+    function queryValueKey(key) {
+        if (!key) return ""
+        var t = I18n.L10n.t(key)
+        return (t !== key) ? t : queryValueUnknown
     }
 }

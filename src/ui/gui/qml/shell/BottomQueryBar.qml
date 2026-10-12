@@ -38,7 +38,7 @@ Rectangle {
 
     property var queryButtons: [
         { "id": "faction_info", "icon": "📋", "label": GuiText.queryFactionInfo, "status": "readonly" },
-        { "id": "figure_search", "icon": "👤", "label": GuiText.queryFigureSearch, "status": "placeholder" },
+        { "id": "figure_search", "icon": "👤", "label": GuiText.queryFigureSearch, "status": "readonly" },
         { "id": "game_status", "icon": "📊", "label": GuiText.queryGameStatus, "status": "connected" },
         { "id": "faction_treasury", "icon": "💰", "label": GuiText.queryFactionTreasury, "status": "placeholder" },
         { "id": "public_land", "icon": "🌾", "label": GuiText.queryPublicLand, "status": "placeholder" },
@@ -64,6 +64,7 @@ Rectangle {
             model: root.queryButtons
             delegate: Rectangle {
                 id: btn
+                objectName: "queryButton_" + modelData.id
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 radius: 8

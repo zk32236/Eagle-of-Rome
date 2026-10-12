@@ -38,6 +38,10 @@ class GuiSessionStore(QObject):
     resolutionViewChanged = Signal()
     resolutionAdvancingChanged = Signal()
     queryResultChanged = Signal()
+    # EOR20261011-01 S1：viewer/handoff/reset invalidation barrier（v1.2 §2.1）。
+    # 单一 boolean 载荷 = 安全 shell 策略（keep_open），无 viewer/record/private payload。
+    queryInvalidated = Signal(bool)  # keep_open
+    queryGuardChanged = Signal()
     currentPlayerChanged = Signal()
     phaseChanged = Signal()
     phaseStepsChanged = Signal()  # WP-J J-AC-10：选中相位的权威步骤读模型 notify
@@ -86,6 +90,14 @@ class GuiSessionStore(QObject):
         self._selected_phase_id: str = ""
         self._selected_phase_summary: Dict[str, Any] = {}
         self._global_query_result: Dict[str, Any] = {}
+        # EOR20261011-01 S1 query shell protocol state（只读查询壳）
+        self._query_guard: bool = False
+        self._query_guard_depth: int = 0
+        self._query_epoch: int = 0
+        self._query_open: bool = False
+        self._query_active_id: str = ""
+        self._pending_auto_refresh: Optional[str] = None
+        self._viewer_txn: Optional[Dict[str, Any]] = None
         self._feedback_queue: List[Dict[str, str]] = []
         self._forum_ai_processed = False
         self._last_reset_turn: int = 0
@@ -104,21 +116,38 @@ class GuiSessionStore(QObject):
         # R6（SA §D.1，DA-4 B2）：自动 finalization 失败 warning 文本（Submit 回包携带）
         self._senate_finalization_warning: str = ""
 
+        # EOR20261011-01 S1（v1.2 §2.1 step 3，A3/F2）：**真实** receiver 完成见证。
+        # 真实 QML receiver（Overlay.resetForInvalidation）在**完成本地/绑定模型清空
+        # 之后**同步回写 ack（= 当时的 epoch）到 `ackQueryInvalidation`。Store 在
+        # `_set_viewer` 发布新 viewer 前读取/校验该校验；未收到匹配 ack → fail
+        # closed，不发布新 viewer、不写新 viewer。自证「Store dict 已空」**不**通过。
+        # `had_content == False`（无可泄漏旧内容）时无清空义务，视为已投递。
+        self._query_invalidation_ack: int = -1
+        self._query_receiver_verified: bool = True
+        # A4（F2 残留收口）：**持久**的接收清除义务。任一未被真实 receiver ack
+        # 解除的清除（Close / 失败切换 / 失败关闭）都会置位；在义务未解除前，后续
+        # 切人**不得**以「Store 空态 + CLOSED」冒充接收完成见证（须真实 ack 解除）。
+        self._receiver_clear_outstanding: bool = False
+
     # -----------------------------------------------------------------------
     # 初始化
     # -----------------------------------------------------------------------
     def initialize(self, viewer_id: str):
         """初始化，设置 viewer 并加载第一帧快照"""
-        self._viewer_id = viewer_id
-        self._refresh_snapshot()
-        self._refresh_faction_style_map()
-        self._refresh_mortality_view()
-        self._refresh_population_view()
-        self._refresh_senate_view()
-        self._refresh_revenue_view()
-        self._refresh_forum_view()
-        self._refresh_combat_view()
-        self._refresh_resolution_view()
+        self._begin_viewer_transaction()
+        try:
+            self._set_viewer(viewer_id)
+            self._refresh_snapshot()
+            self._refresh_faction_style_map()
+            self._refresh_mortality_view()
+            self._refresh_population_view()
+            self._refresh_senate_view()
+            self._refresh_revenue_view()
+            self._refresh_forum_view()
+            self._refresh_combat_view()
+            self._refresh_resolution_view()
+        finally:
+            self._end_viewer_transaction()
 
     # -----------------------------------------------------------------------
     # QML 可访问属性
@@ -846,6 +875,31 @@ class GuiSessionStore(QObject):
     def globalQueryResult(self) -> Dict[str, Any]:
         return self._global_query_result
 
+    @Property(bool, notify=queryGuardChanged)
+    def queryGuarded(self) -> bool:
+        """viewer/handoff/reset invalidation barrier 是否持有（数据操作禁用）。"""
+        return self._query_guard
+
+    @Property(int, notify=queryGuardChanged)
+    def queryInvalidationEpoch(self) -> int:
+        """当前 invalidation epoch。真实 receiver 完成 reset 后须回写该值作为 ack
+        （v1.2 §2.1 step 3，A3/F2）。"""
+        return self._query_epoch
+
+    @Slot(int)
+    def ackQueryInvalidation(self, epoch: int) -> None:
+        """Receiver-completion ack（真实 QML Overlay.resetForInvalidation 完成后调用）。
+
+        仅当回写 epoch == 当前 epoch 时记为有效；stale / queued / 无 receiver 的
+        ack 一律忽略（_query_invalidation_ack 保持 -1）→ Store 侧 fail closed。
+        """
+        try:
+            epoch = int(epoch)
+        except (TypeError, ValueError):
+            return
+        if epoch == self._query_epoch:
+            self._query_invalidation_ack = epoch
+
     # -----------------------------------------------------------------------
     # Resolution stage properties
     # -----------------------------------------------------------------------
@@ -1002,6 +1056,8 @@ class GuiSessionStore(QObject):
             return self._feedback(False, "投票正在提交，请稍候", "warning")
         self._population_vote_submitting = True
         self.populationVoteSubmittingChanged.emit()
+        self._begin_viewer_transaction()
+        txn_ok = False
         try:
             feedback = self._adapter.submit_population_votes(self._viewer_id, dict(selections))
             self._raise_feedback(feedback)
@@ -1009,15 +1065,17 @@ class GuiSessionStore(QObject):
                 data = feedback.get("data", {}) or {}
                 awaiting = data.get("awaiting_player_id")
                 if awaiting:
-                    self._viewer_id = awaiting
+                    self._set_viewer(awaiting)
                     self.handoffRequired.emit(awaiting)
                 self._refresh_snapshot()
                 self._refresh_population_view()
                 self.phaseChanged.emit()
+                txn_ok = True
             else:
                 self._refresh_population_view()
             return feedback
         finally:
+            self._end_viewer_transaction(txn_ok)
             self._population_vote_submitting = False
             self.populationVoteSubmittingChanged.emit()
 
@@ -1028,28 +1086,35 @@ class GuiSessionStore(QObject):
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
 
-        all_humans_complete = self._adapter.all_human_population_votes_complete()
+        self._begin_viewer_transaction()
+        txn_ok = False
+        try:
+            all_humans_complete = self._adapter.all_human_population_votes_complete()
 
-        if all_humans_complete:
-            # 最后一个 HUMAN 完成后，进入唯一 resolution 入口。
-            feedback = self._adapter.resolve_election()
+            if all_humans_complete:
+                # 最后一个 HUMAN 完成后，进入唯一 resolution 入口。
+                feedback = self._adapter.resolve_election()
+                self._raise_feedback(feedback)
+                self._refresh_snapshot()
+                self._refresh_population_view()
+                self._refresh_senate_view()
+                txn_ok = bool(feedback.get("success"))
+                return feedback
+
+            # 仍有 HUMAN 未完成：只在人类之间 handoff。
+            feedback = self._adapter.next_player(self._viewer_id)
             self._raise_feedback(feedback)
-            self._refresh_snapshot()
-            self._refresh_population_view()
-            self._refresh_senate_view()
+            if feedback.get("success"):
+                new_id = feedback.get("data", {}).get("new_player_id")
+                if new_id:
+                    self._set_viewer(new_id)
+                    self.handoffRequired.emit(new_id)
+                self._refresh_snapshot()
+                self._refresh_population_view()
+                txn_ok = True
             return feedback
-
-        # 仍有 HUMAN 未完成：只在人类之间 handoff。
-        feedback = self._adapter.next_player(self._viewer_id)
-        self._raise_feedback(feedback)
-        if feedback.get("success"):
-            new_id = feedback.get("data", {}).get("new_player_id")
-            if new_id:
-                self._viewer_id = new_id
-                self.handoffRequired.emit(new_id)
-            self._refresh_snapshot()
-            self._refresh_population_view()
-        return feedback
+        finally:
+            self._end_viewer_transaction(txn_ok)
 
     @Slot(result=dict)
     def doResolveElection(self) -> dict:
@@ -1341,7 +1406,16 @@ class GuiSessionStore(QObject):
     # Cache Reset Helper
     # -----------------------------------------------------------------------
     def _reset_phase_caches(self) -> None:
-        """清除所有阶段缓存字段。幂等——适用于年度推进、观众切换和初始化。"""
+        """清除所有阶段缓存字段。幂等——适用于年度推进、观众切换和初始化。
+
+        EOR20261011-01 S1：barrier 为第一动作（v1.2 §2.1）；嵌套在 viewer 事务内时
+        继承其 keep_open 意图，不丢失待处理 query ID/open 意图。
+        """
+        self._guard_enter()
+        try:
+            self._invalidate_global_query("reset", keep_open=False)
+        finally:
+            self._guard_exit()
         self._forum_result = {}
         self._forum_step_override = ""
         self._forum_ai_processed = False
@@ -1904,30 +1978,328 @@ class GuiSessionStore(QObject):
                 self._executeResolution()
         return feedback
 
+    # -----------------------------------------------------------------------
+    # EOR20261011-01 S1 — shared read-only query shell
+    # -----------------------------------------------------------------------
     @Slot(str, result=dict)
-    def doGlobalQuery(self, query_id: str) -> dict:
-        """Run a safe read-only global query for the OPC bottom bar."""
+    @Slot(str, str, str, result=dict)
+    def doGlobalQuery(self, query_id: str, filter_text: str = "", record_id: str = "") -> dict:
+        """Run a safe read-only global query for the OPC bottom bar.
+
+        Qt overloads: 1-string (legacy) and 3-string (id, filter, record).
+        Every request clears the old DTO + notifies before the synchronous read
+        (v1.1 §5.1 / v1.2 ④.1) and returns feedback.success == API truth.
+        """
         if not self._viewer_id:
             feedback = self._feedback(False, gui_text("feedback.query.not_initialized"), "error")
             self._raise_feedback(feedback)
             return feedback
+        if self._query_guard:
+            # Read during an invalidation barrier fails closed (no stale rows).
+            from src.api import gui_query_api
+            dto = gui_query_api.build_failure_dto(
+                query_id, "ERROR", gui_query_api.ERR_QUERY_UNAVAILABLE
+            )
+            feedback = self._feedback(False, dto["message"], "error", data=dto)
+            self._raise_feedback(feedback)
+            return feedback
 
-        result = self._adapter.get_global_query_result(self._viewer_id, query_id)
-        self._global_query_result = result
-        self.queryResultChanged.emit()
-        feedback_type = "success" if result.get("status") in {"connected", "readonly"} else "warning"
-        feedback = self._feedback(
-            True,
-            gui_text("feedback.query.selected", title=result.get("title", query_id)),
-            feedback_type,
-            data=result,
-        )
+        result = self._run_global_query(query_id, filter_text, record_id, keep_open=False)
+        success = result.get("result_state") in ("OK", "EMPTY")
+        if success:
+            feedback = self._feedback(
+                True,
+                gui_text("feedback.query.selected", title=result.get("title", query_id)),
+                "success",
+                data=result,
+            )
+        else:
+            feedback = self._feedback(
+                False,
+                str(result.get("message") or gui_text("feedback.query.failed")),
+                "error",
+                data=result,
+            )
         self._raise_feedback(feedback)
         return feedback
 
     @Slot(result=dict)
+    def clearGlobalQuery(self) -> dict:
+        """Public close: clear/notify then local reset/close. No Core write."""
+        self._guard_enter()
+        try:
+            self._invalidate_global_query("close", keep_open=False)
+            self._query_open = False
+            self._query_active_id = ""
+            self._pending_auto_refresh = None
+        finally:
+            self._guard_exit()
+        feedback = self._feedback(True, gui_text("feedback.query.closed"), "info")
+        self._raise_feedback(feedback)
+        return feedback
+
+    def _capture_query_context(self) -> Dict[str, Any]:
+        """Capture ONLY {was_open, query_id}; never filter/record/title/rows."""
+        if self._query_open and self._query_active_id:
+            return {"was_open": True, "query_id": self._query_active_id}
+        return {"was_open": False, "query_id": ""}
+
+    def _guard_enter(self) -> None:
+        self._query_guard_depth += 1
+        if not self._query_guard:
+            self._query_guard = True
+            self.queryGuardChanged.emit()
+
+    def _guard_exit(self) -> None:
+        self._query_guard_depth = max(0, self._query_guard_depth - 1)
+        if self._query_guard_depth == 0 and self._query_guard:
+            self._query_guard = False
+            self.queryGuardChanged.emit()
+
+    def _receiver_ack_verified(self, had_content: bool) -> bool:
+        """**真实** receiver 完成见证（v1.2 §2.1 step 3，A4/F2 残留收口）。
+
+        仅当同步同线程 receiver **已完成**本次/未决 invalidations 的本地清空（并通过
+        ``ackQueryInvalidation`` 回写了与当前 epoch 匹配的 ack）时返回 True。
+        receiver 缺失 / 未响应 / queued（Qt.QueuedConnection，emit 同步返回时尚未
+        执行 receiver）→ ack 不等于当前 epoch → False → fail closed。
+        **自证「Store dict 已空」不当作完成。**
+
+        A4（F2 残留）：一次**未被确认**的清除（Close / 失败切换 / 失败关闭）会留下
+        **持久接收清除义务** ``_receiver_clear_outstanding``。该义务**仅能由真实
+        receiver ack（当前 epoch）解除**；义务未解除前，Store 空态 + CLOSED **不再**
+        充当见证 —— “关闭/失败后再切人”“失败切换后重试”“僵尸/queued 持续不响应”一律
+        fail-closed，不会以空态冒充接收完成。
+
+        例外：真正 pristine 的预绑定 CLOSED 初始化（清空前 Store 无内容且**无**未决
+        义务）无清空义务，缺失 receiver 安全（保证 CLOSED→viewer 初始化路径不被误阻）。
+        """
+        if self._query_invalidation_ack == self._query_epoch:
+            # A REAL receiver ack discharges ANY outstanding obligation.
+            self._receiver_clear_outstanding = False
+            self._query_receiver_verified = True
+            return True
+        if had_content or self._receiver_clear_outstanding:
+            # Unacknowledged clear (content present, or an obligation already
+            # outstanding) -> PRESERVE the obligation; empty Store is NOT proof.
+            self._receiver_clear_outstanding = True
+            self._query_receiver_verified = False
+            return False
+        # Pristine pre-binding CLOSED state: no content, no prior obligation.
+        self._query_receiver_verified = True
+        return True
+
+    def _invalidate_global_query(self, reason: str, keep_open: bool = False) -> None:
+        """Ordered synchronous clear-before-publish barrier (v1.1 §7 / v1.2 §2.1).
+
+        Sets non-reentrant guard, advances the epoch, empties the Store DTO, then
+        emits queryResultChanged followed by the boolean queryInvalidated. The
+        same-thread GameShell receiver resets all local models synchronously.
+
+        An explicit ``close`` reason cancels any retained OPEN/refresh intent of
+        the active viewer transaction and never auto-reopens (F3). Nested reset /
+        viewer-change inside a transaction inherits the outer OPEN intent.
+
+        Returns the REAL receiver-completion witness (v1.2 §2.1 step 3，A4/F2):
+        ``True`` iff the synchronous same-thread receiver acknowledged this epoch
+        after clearing, or there was genuinely no content **and** no persistent
+        outstanding receiver-clear obligation. Only ``_set_viewer`` uses it to
+        authorise publishing a new viewer.
+        """
+        txn = self._viewer_txn
+        if txn is not None:
+            if reason == "close":
+                # Explicit Close cancels pending OPEN/refresh intent (F3).
+                txn["cancelled"] = True
+                txn["was_open"] = False
+                txn["query_id"] = ""
+                self._pending_auto_refresh = None
+                keep_open = False
+            else:
+                keep_open = bool(txn.get("was_open"))
+                txn["invalidated"] = True
+                if keep_open and txn.get("query_id"):
+                    self._query_active_id = txn["query_id"]
+        had_content = bool(self._global_query_result) or self._query_open
+        self._query_epoch += 1
+        # Invalidate any prior ack; the receiver must re-ack this exact epoch
+        # AFTER it completes the local reset (emit below runs it synchronously).
+        self._query_invalidation_ack = -1
+        self._global_query_result = {}
+        self._query_open = bool(keep_open)
+        if not keep_open:
+            self._query_active_id = ""
+        self.queryResultChanged.emit()
+        # Same-thread receiver (Overlay.resetForInvalidation) clears every
+        # local/bound model then acks this exact epoch synchronously.
+        self.queryInvalidated.emit(bool(keep_open))
+        return self._receiver_ack_verified(had_content)
+
+    def _begin_viewer_transaction(self) -> None:
+        """Open the shared viewer/handoff barrier. Captures the safe intent BEFORE
+        any viewer assignment or snapshot refresh (v1.2 §2.1 step 1)."""
+        if self._viewer_txn is not None:
+            return
+        ctx = self._capture_query_context()
+        ctx["invalidated"] = False
+        self._viewer_txn = ctx
+        self._guard_enter()
+
+    def _set_viewer(self, new_id: str) -> None:
+        """Internal owner of the viewer write (never a test acceptance entry)."""
+        ctx = self._viewer_txn if self._viewer_txn is not None else self._capture_query_context()
+        ack_ok = self._invalidate_global_query(
+            "viewer_change", keep_open=ctx.get("was_open", False)
+        )
+        # v1.2 §2.1 step 3 (A4/F2): assert Store/model is empty AND the REAL
+        # synchronous same-thread receiver completed (wrote the matching epoch
+        # ack) BEFORE the new viewer identity can be observed. Otherwise fail
+        # closed and do NOT publish the new viewer. Self-ack is not sufficient;
+        # a persistent outstanding receiver-clear obligation (unacknowledged
+        # Close/failure) is NOT discharged by the now-empty Store.
+        if self._global_query_result != {} or not ack_ok:
+            self._query_open = False
+            self._query_active_id = ""
+            self._pending_auto_refresh = None
+            if self._viewer_txn is not None:
+                self._viewer_txn["failed"] = True
+            return
+        self._query_open = bool(ctx.get("was_open"))
+        self._query_active_id = ctx.get("query_id", "") if ctx.get("was_open") else ""
+        self._viewer_id = new_id
+        if ctx.get("was_open") and ctx.get("query_id"):
+            self._pending_auto_refresh = ctx["query_id"]
+        else:
+            self._pending_auto_refresh = None
+
+    def _end_viewer_transaction(self, success: bool = True) -> None:
+        """Release the guard and, iff the transaction succeeded, mutation and
+        snapshot publication completed and the window was OPEN, automatically
+        reread the same recognized query unfiltered for the NEW viewer
+        (v1.2 §2.1 step 5). Success/failure gated (F4): a failed mutation/snapshot
+        or an explicit Close leaves the window empty and CLOSED with no old-data
+        restore and no auto-reopen.
+        """
+        if self._viewer_txn is None:
+            return
+        txn = self._viewer_txn
+        cancelled = bool(txn.get("cancelled"))
+        failed = bool(txn.get("failed")) or not success
+        pending = self._pending_auto_refresh
+        if pending is None and txn.get("was_open") and txn.get("invalidated"):
+            pending = txn.get("query_id") or None
+        self._pending_auto_refresh = None
+        self._viewer_txn = None
+        self._guard_exit()
+        if failed or cancelled:
+            self._close_query_window()
+            if failed and not cancelled:
+                # Safe shell failure feedback; no old DTO restoration (F4).
+                self._raise_feedback(self._feedback(
+                    False, gui_text("feedback.query.failed"), "error"))
+            return
+        if pending:
+            result = self._run_global_query(pending, "", "", keep_open=True)
+            # F4: a failed automatic refresh (invalid viewer / system / shell
+            # failure) closes the now-empty window and routes safe query-error
+            # feedback (never a silent failure or restored old data).
+            if not self._result_opens(result):
+                self._raise_feedback(self._feedback(
+                    False, self._safe_error_message(result), "error"))
+
+    @staticmethod
+    def _result_opens(result: Dict[str, Any]) -> bool:
+        """True iff the DTO is a publishable overlay outcome (v1.2 ②).
+
+        ``OK``/``EMPTY`` or a record-scoped ``DENIED record_unavailable`` keep the
+        query window OPEN; every other failure leaves it empty + CLOSED (F4).
+        """
+        if not isinstance(result, dict):
+            return False
+        state = result.get("result_state")
+        codes = {err.get("code") for err in (result.get("errors") or [])
+                 if isinstance(err, dict)}
+        return state in ("OK", "EMPTY") or (
+            state == "DENIED" and "record_unavailable" in codes
+        )
+
+    @staticmethod
+    def _safe_error_message(result: Dict[str, Any]) -> str:
+        """Resolve a safe localized failure copy from a DTO's ``message_key``
+        (never a raw backend string; falls back to the generic query-error copy)."""
+        if isinstance(result, dict):
+            key = result.get("message_key") or ""
+            if key:
+                text = gui_text(key)
+                if text != key:
+                    return text
+        fallback = gui_text("feedback.query.failed")
+        return fallback if fallback != "feedback.query.failed" else ""
+
+    def _close_query_window(self) -> None:
+        """Force the retained-open query window empty and CLOSED (F4).
+        No old DTO/model restoration; emits a synchronous close invalidation."""
+        self._guard_enter()
+        try:
+            self._invalidate_global_query("failure", keep_open=False)
+            self._query_open = False
+            self._query_active_id = ""
+            self._pending_auto_refresh = None
+        finally:
+            self._guard_exit()
+
+    def _run_global_query(
+        self, query_id: str, filter_text: str = "", record_id: str = "", keep_open: bool = False
+    ) -> Dict[str, Any]:
+        """Synchronous clear-before-read + publish of one safe DTO.
+
+        Captures viewer/epoch before the read and discards a stale result whose
+        viewer/epoch changed during the synchronous read (F2). A non-opening
+        outcome empties and CLOSES the window with no visible overlay and no
+        old-data restore (F4).
+        """
+        self._guard_enter()
+        try:
+            self._invalidate_global_query("query", keep_open=keep_open)
+            viewer = self._viewer_id
+            epoch = self._query_epoch
+            result = self._adapter.get_global_query_result(
+                self._viewer_id, query_id, filter_text, record_id
+            )
+            # F2: reject a stale result bound to an older viewer/epoch.
+            if self._query_epoch != epoch or self._viewer_id != viewer:
+                return {}
+            if not isinstance(result, dict):
+                result = {}
+            result_state = result.get("result_state")
+            opens = self._result_opens(result)
+            if opens:
+                self._global_query_result = result
+                self._query_open = True
+                self._query_active_id = query_id
+                self.queryResultChanged.emit()
+            else:
+                # Failure / unavailable: EMPTY cache + CLOSED — never a retained
+                # ERROR/DENIED DTO in the Store/bound model — and no visible
+                # overlay / old-data restore (F4). The safe failure DTO is still
+                # returned to the caller for feedback + evidence.
+                self._global_query_result = {}
+                self._query_open = False
+                self._query_active_id = ""
+                self.queryResultChanged.emit()
+                self.queryInvalidated.emit(False)
+            return result
+        finally:
+            self._guard_exit()
+
+    @Slot(result=dict)
     def refreshSnapshot(self) -> dict:
         """Refresh the shell snapshot from authoritative API DTO."""
+        self._guard_enter()
+        try:
+            self._invalidate_global_query("refresh", keep_open=False)
+        finally:
+            self._guard_exit()
         self._refresh_snapshot()
         self._refresh_mortality_view()
         self._refresh_population_view()
@@ -1940,20 +2312,26 @@ class GuiSessionStore(QObject):
         self._raise_feedback(feedback)
         return feedback
 
-    @Slot(result=bool)
+    @Slot(str, result=bool)
     def switchViewer(self, new_viewer_id: str) -> bool:
         """切换 viewer（用于玩家交接遮罩确认后）"""
-        self._reset_phase_caches()
-        self._viewer_id = new_viewer_id
-        self._refresh_snapshot()
-        self._refresh_mortality_view()
-        self._refresh_population_view()
-        self._refresh_senate_view()
-        self._refresh_revenue_view()
-        self._refresh_forum_view()
-        self._refresh_combat_view()
-        self._refresh_resolution_view()
-        self.currentPlayerChanged.emit()
+        self._begin_viewer_transaction()
+        txn_ok = False
+        try:
+            self._reset_phase_caches()
+            self._set_viewer(new_viewer_id)
+            self._refresh_snapshot()
+            self._refresh_mortality_view()
+            self._refresh_population_view()
+            self._refresh_senate_view()
+            self._refresh_revenue_view()
+            self._refresh_forum_view()
+            self._refresh_combat_view()
+            self._refresh_resolution_view()
+            self.currentPlayerChanged.emit()
+            txn_ok = True
+        finally:
+            self._end_viewer_transaction(txn_ok)
         return True
 
     @Slot(str)
@@ -1965,7 +2343,12 @@ class GuiSessionStore(QObject):
     # 内部刷新
     # -----------------------------------------------------------------------
     def _on_refresh(self):
-        """API 操作成功后自动刷新"""
+        """API 操作成功后自动刷新。"""
+        self._guard_enter()
+        try:
+            self._invalidate_global_query("refresh", keep_open=False)
+        finally:
+            self._guard_exit()
         self._refresh_snapshot()
         # Belt-and-suspenders: detect year advance outside normal path
         if not self._state.get_phase_result("mortality"):
