@@ -912,28 +912,51 @@ Rectangle {
                                 model: sessionStore.forumTriumphWars
 
                                 delegate: MarketActionRow {
-                                    // WP-J Group B ③ (J-AC-03 / FC-B04/B06/B18): 逐字消费权威 producer
-                                    // 投影（FC-B01）；QML 零业务重建（禁 marketUnlocked/canExecuteForum/
-                                    // forumResolved 重算）。三态（FC-B04）：
-                                    //   viewer_vote!=null → 灰化 disabled「已投」（重复点击无效；FC-B18）
-                                    //   actionable       → enabled「赞成」→ 既有 doVoteTriumph(war_id,true)
-                                    //   readonly         → 灰化 disabled 统一「不可投」（不解释原因）
+                                    // WP-J Group B ③ (J-AC-03 / FC-B04/B06/B18) + EOR20261012-01 (FC-13):
+                                    // 逐字消费权威 producer 投影（FC-B01）；QML 零业务重建（禁 marketUnlocked/
+                                    // canExecuteForum/forumResolved 重算）。FC-13 决策顺序（已投优先；互斥穷尽）：
+                                    //   viewer_vote===true  → 灰化 disabled「已投·赞成」
+                                    //   viewer_vote===false → 灰化 disabled「已投·反对」
+                                    //   null ∧ actionable   → 两动作 [赞成][反对]（均复用既有 bool 写槽）
+                                    //   null ∧ readonly     → 灰化 disabled 统一「不可投」（不解释原因）
                                     readonly property bool rowActionable: modelData.action !== undefined
                                         && modelData.action !== null
                                         && modelData.action.state === "actionable"
                                     readonly property bool rowVoted: modelData.viewer_vote !== null
                                         && modelData.viewer_vote !== undefined
+                                    readonly property bool rowVoteFor: modelData.viewer_vote === true
+                                    // EOR20261012-01 (R-02 / FC-13 异常 DTO fail-closed)：区分「未投」(key 存在，
+                                    // 值 null/undefined) 与「契约异常」(key 缺失 / 非 bool 值)。仅当前者 ∧
+                                    // actionable 才开放动作；异常 → 等同不可投，**不得**误判为「反对」。
+                                    readonly property bool rowVoteKeyPresent: ("viewer_vote" in modelData)
+                                    readonly property bool rowVoteDefined: rowVoteKeyPresent
+                                        && (modelData.viewer_vote === undefined
+                                            || modelData.viewer_vote === null
+                                            || modelData.viewer_vote === true
+                                            || modelData.viewer_vote === false)
+                                    readonly property bool rowDualAction: rowActionable && !rowVoted && rowVoteDefined
                                     label: modelData.name + " · " + modelData.commander_name
                                     labelColor: modelData.commander_faction_id ? factionStyle.factionColor(modelData.commander_faction_id) : "#2E251B"
                                     value: "士兵份额 " + modelData.soldier_share
-                                    actionText: rowVoted ? "已投" : (rowActionable ? "赞成" : "不可投")
-                                    enabledAction: rowActionable && !rowVoted
+                                    actionText: (rowVoted && rowVoteDefined) ? (rowVoteFor ? "已投·赞成" : "已投·反对") : (rowDualAction ? "赞成" : "不可投")
+                                    enabledAction: rowActionable && !rowVoted && rowVoteDefined
+                                    secondActionText: "反对"
+                                    secondActionVisible: rowDualAction
+                                    enabledSecondAction: rowDualAction
                                     onTriggered: {
                                         // WP-I-R2 D2.3 纵深守卫保留（无对话框，inline 早返回）；
                                         // 权威可用性由 producer action 投影驱动（enabledAction）。
                                         if (rowVoted) { return }
                                         if (!rowActionable) { return }
+                                        if (!rowVoteDefined) { return }
                                         root.callAndReport(sessionStore.doVoteTriumph(modelData.war_id, true))
+                                    }
+                                    onTriggeredSecondary: {
+                                        // FC-13：显式「反对」动作 → 既有 vote_triumph bool 写槽（False）。
+                                        if (rowVoted) { return }
+                                        if (!rowActionable) { return }
+                                        if (!rowVoteDefined) { return }
+                                        root.callAndReport(sessionStore.doVoteTriumph(modelData.war_id, false))
                                     }
                                 }
                             }
@@ -1452,8 +1475,14 @@ Rectangle {
         property string value: ""
         property string actionText: ""
         property bool enabledAction: false
+        // EOR20261012-01 (FC-13)：可选第二动作槽。默认空/隐藏 ⇒ 既有消费者
+        // （公地认购行 / 占位行）逐字不变。
+        property string secondActionText: ""
+        property bool secondActionVisible: false
+        property bool enabledSecondAction: false
         property color labelColor: "#2E251B"
         signal triggered()
+        signal triggeredSecondary()
 
         Layout.fillWidth: true
         Layout.leftMargin: 12
@@ -1505,6 +1534,32 @@ Rectangle {
                     enabled: enabledAction
                     cursorShape: Qt.PointingHandCursor
                     onClicked: triggered()
+                }
+            }
+
+            Rectangle {
+                // EOR20261012-01 (FC-13)：第二动作（反对）；仅当 secondActionVisible
+                // （actionable ∧ 未投）时可见，与主「赞成」并排。
+                visible: secondActionVisible
+                width: secondActionText.length > 3 ? 58 : 48
+                height: 22
+                radius: 4
+                color: enabledSecondAction ? "#84250A" : "#D6B985"
+                opacity: enabledSecondAction ? 1.0 : 0.65
+
+                Text {
+                    anchors.centerIn: parent
+                    text: secondActionText
+                    color: enabledSecondAction ? "#F7D778" : "#766652"
+                    font.pixelSize: 10
+                    font.bold: true
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    enabled: enabledSecondAction
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: triggeredSecondary()
                 }
             }
         }

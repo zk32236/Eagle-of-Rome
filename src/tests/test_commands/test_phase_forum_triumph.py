@@ -143,13 +143,29 @@ class TestForumTriumph:
         commander.is_dead = False
         return war, commander
 
+    def set_influence(self, test_state, totals):
+        """R-01：按新口径（分母 = 全体注册派系）重定 fixture 影响力，保持断言强度。
+
+        `totals` = {faction_id: 派系影响力总和}；均匀分配到该派系所有成员。
+        """
+        for faction_id, total in totals.items():
+            members = [test_state.get_member(mid)
+                       for mid in test_state.get_faction(faction_id).member_ids]
+            assert members and total % len(members) == 0, (faction_id, total, len(members))
+            per = total // len(members)
+            for member in members:
+                member.influence = per
+
     def test_triumph_approved(self, test_state, mock_deciders):
         """凯旋批准：支持率 > 50% 时批准，并添加临时影响力"""
         war, commander = self.setup_for_triumph(test_state, soldier_share=50, commander_id=1)
+        # R-01：新口径分母 = 全体注册派系 f1+f2+f3=150；f1 支持 120 → 支持率 80.0% > 50%。
+        # f3 未投 → 计入分母（未投=反对）；分母含 f3 由 80.0%（非 120/138≈87.0%）证明。
+        self.set_influence(test_state, {"f1": 120, "f2": 18, "f3": 12})
         # 添加投票数据（支持率 > 50%）
         test_state._forum_pending["triumph_votes"] = [
-            ("war1", "f1", True),  # 影响力较高
-            ("war1", "f2", False),
+            ("war1", "f1", True),  # 支持
+            ("war1", "f2", False),  # 反对
         ]
 
         retirement, recruitment, bid, land_trade, triumph = mock_deciders
@@ -163,6 +179,8 @@ class TestForumTriumph:
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
         assert "凯旋仪式获得批准" in result["message"]
+        # 分母含未投的 f3（分母全注册派系影响力之和）：120 / (120+18+12) = 80.0%
+        assert "80.0%" in result["message"]
         # 验证临时影响力添加（50 // 5 = 10）
         assert len(commander._temp_influence_tasks) == 1
         # 临时任务以字典形式存储，键名为 per_turn
@@ -171,13 +189,14 @@ class TestForumTriumph:
     def test_triumph_rejected(self, test_state, mock_deciders):
         """凯旋否决：支持率 <= 50% 时否决，不添加临时影响力"""
         war, commander = self.setup_for_triumph(test_state, soldier_share=50, commander_id=1)
-        # 添加投票数据（支持率 = 50%）
+        # R-01：新口径分母 = f1+f2+f3=150；仅 f2 支持 18 → 支持率 12.0% ≤ 50% → 否决。
+        self.set_influence(test_state, {"f1": 120, "f2": 18, "f3": 12})
+        # 添加投票数据（支持率 ≤ 50%）
         test_state._forum_pending["triumph_votes"] = [
             ("war1", "f1", False),  # 反对
-            ("war1", "f2", True),   # 支持，影响力可能较低，使支持率 <=50%
+            ("war1", "f2", True),   # 支持（影响力较低）
         ]
-        # 实际影响力分布：f1 总影响力 = 人物1(?) + 人物2(?) ，f2 总影响力 = 人物7(?) + ...
-        # 为了确保支持率 <=50%，可以手动设置影响力，但暂不处理，相信真实数据
+        # 实际影响力分布：f1 120 / f2 18 / f3 12（f3 未投 → 计入分母=反对）
 
         retirement, recruitment, bid, land_trade, triumph = mock_deciders
         cmd = ForumCommand(test_state,
@@ -190,6 +209,8 @@ class TestForumTriumph:
         result = forum_api.resolve_forum(test_state)
         assert result["success"] is True
         assert "被否决" in result["message"]
+        # 分母含未投的 f3：18 / (120+18+12) = 12.0%
+        assert "12.0%" in result["message"]
         assert len(commander._temp_influence_tasks) == 0
 
     def test_commander_dead(self, test_state, mock_deciders):
@@ -224,6 +245,7 @@ class TestForumTriumph:
         war_system = test_state.get_war_system()
         war_system._war_discard = [war1, war2]
 
+        self.set_influence(test_state, {"f1": 120, "f2": 18, "f3": 12})
         test_state._forum_pending["triumph_votes"] = [
             ("war1", "f1", True),
             ("war1", "f2", False),
@@ -249,3 +271,190 @@ class TestForumTriumph:
         # 检查 soldier_share 被清零
         assert war1.soldier_share == 0
         assert war2.soldier_share == 0
+
+
+class TestTvasTallyAcceptance:
+    """EOR20261012-01 ATTEMPT-3 — mandatory acceptance AC-04 / AC-06 / AC-11 / AC-12.
+
+    Independent oracle over the PUBLIC chain (``vote_triumph`` -> ``get_forum_view`` ->
+    ``resolve_forum``). Adds coverage; does NOT weaken existing assertions; does NOT change
+    the frozen threshold (FC-04 ``> 0.5``) or any frozen value/number.
+    """
+
+    def _zero_influence(self, state):
+        for faction in state.factions.values():
+            for mid in faction.member_ids:
+                member = state.get_member(mid)
+                if member is not None:
+                    member.influence = 0
+
+    def _set(self, state, mapping):
+        """Exact per-member influence oracle: ``mapping = {member_id: influence}``."""
+        self._zero_influence(state)
+        for mid, value in mapping.items():
+            state.get_member(mid).influence = value
+
+    def _war(self, state, war_id="war1", name="Test War", soldier_share=100, commander_id=1):
+        war = War(id=war_id, name=name)
+        war._status = WarStatus.RESOLVED
+        war._soldier_share = soldier_share
+        war._triumph_commander_id = commander_id
+        commander = state.get_member(commander_id)
+        if commander is not None:
+            commander.is_dead = False
+        return war
+
+    def _viewer_vote(self, state, player_id="p1", war_id="war1"):
+        view = forum_api.get_forum_view(state, player_id)
+        assert view["success"], view.get("message")
+        rows = {r["war_id"]: r for r in view["data"]["triumph_wars"]}
+        assert war_id in rows, (war_id, list(rows))
+        return rows[war_id]["viewer_vote"]
+
+    # -------- AC-04: threshold boundary (exactly 0.5 reject; > 0.5 approve) --------
+
+    def test_ac04_exactly_half_is_rejected(self, test_state):
+        war = self._war(test_state)
+        test_state.get_war_system()._war_discard = [war]
+        self._set(test_state, {1: 50, 7: 50})   # denom=100; f1 True=50 -> 50.0%
+        assert forum_api.vote_triumph(test_state, "p1", "war1", True)["success"]
+        before = test_state.treasury
+        result = forum_api.resolve_forum(test_state)
+        assert result["message"] == "❌ 战争 Test War 的凯旋仪式被否决（支持率 50.0%）", result["message"]
+        assert war.triumph_approved is False
+        assert war.soldier_share == 0
+        assert test_state.treasury == before + 100     # full pool refund
+
+    def test_ac04_just_above_half_is_approved(self, test_state):
+        war = self._war(test_state)
+        test_state.get_war_system()._war_discard = [war]
+        self._set(test_state, {1: 51, 7: 49})   # denom=100; f1 True=51 -> 51.0%
+        assert forum_api.vote_triumph(test_state, "p1", "war1", True)["success"]
+        result = forum_api.resolve_forum(test_state)
+        assert result["message"] == "✅ 战争 Test War 的凯旋仪式获得批准（支持率 51.0%）", result["message"]
+        assert war.triumph_approved is True
+        commander = test_state.get_member(1)
+        assert len(commander._temp_influence_tasks) == 1
+        assert commander._temp_influence_tasks[0]["per_turn"] == 20   # 100 // 5
+
+    # -------- AC-06: deterministic fallback + four complete messages --------
+
+    def test_ac06_positive_denominator_zero_records_is_zero_percent_reject(self, test_state):
+        war = self._war(test_state)
+        test_state.get_war_system()._war_discard = [war]
+        self._set(test_state, {1: 120, 7: 18, 13: 12})   # denom=150; zero records
+        before = test_state.treasury
+        result = forum_api.resolve_forum(test_state)
+        assert result["message"] == "❌ 战争 Test War 的凯旋仪式被否决（支持率 0.0%）", result["message"]
+        assert war.triumph_approved is False
+        assert war.soldier_share == 0
+        assert test_state.treasury == before + 100
+
+    def test_ac06_all_false_is_zero_percent_reject(self, test_state):
+        war = self._war(test_state)
+        test_state.get_war_system()._war_discard = [war]
+        self._set(test_state, {1: 120, 7: 18, 13: 12})
+        test_state._forum_pending["triumph_votes"] = [
+            ("war1", "f1", False), ("war1", "f2", False), ("war1", "f3", False)]
+        result = forum_api.resolve_forum(test_state)
+        assert result["message"] == "❌ 战争 Test War 的凯旋仪式被否决（支持率 0.0%）", result["message"]
+        assert war.soldier_share == 0
+
+    def test_ac06_zero_denominator_no_valid_vote(self, test_state):
+        war = self._war(test_state)
+        test_state.get_war_system()._war_discard = [war]
+        self._zero_influence(test_state)        # every faction 0 influence -> denom=0
+        before = test_state.treasury
+        result = forum_api.resolve_forum(test_state)
+        assert result["message"] == "⚠️ 战争 Test War 无有效投票", result["message"]
+        assert war.soldier_share == 0
+        assert test_state.treasury == before + 100
+
+    def test_ac06_commander_dead_message_and_refund(self, test_state):
+        war = self._war(test_state)
+        test_state.get_war_system()._war_discard = [war]
+        self._set(test_state, {1: 120, 7: 18, 13: 12})
+        test_state.get_member(1).is_dead = True
+        before = test_state.treasury
+        result = forum_api.resolve_forum(test_state)
+        assert result["message"] == "⚠️ 战争 Test War 指挥官已死，凯旋失效", result["message"]
+        assert war.soldier_share == 0
+        assert test_state.treasury == before + 100
+
+    def test_ac06_commander_missing_message_and_refund(self, test_state):
+        war = self._war(test_state, commander_id=999999)   # no such member -> commander_missing
+        test_state.get_war_system()._war_discard = [war]
+        self._set(test_state, {1: 120, 7: 18, 13: 12})
+        before = test_state.treasury
+        result = forum_api.resolve_forum(test_state)
+        assert result["message"] == "⚠️ 战争 Test War 指挥官已死，凯旋失效", result["message"]
+        assert war.soldier_share == 0
+        assert test_state.treasury == before + 100
+
+    # -------- AC-11: candidate neutrality (no-candidate faction still in denominator) --------
+
+    def test_ac11_no_candidate_faction_still_counts_in_denominator(self, test_state):
+        war = self._war(test_state, commander_id=1)     # candidate = f1 (member 1)
+        test_state.get_war_system()._war_discard = [war]
+        # A = candidate faction f1, weight 40, votes True; B = f2, NO candidate, weight 60,
+        # does not vote -> denominator 100, numerator 40 -> 40.0% (B must NOT be zeroed).
+        self._set(test_state, {1: 40, 7: 60})
+        assert forum_api.vote_triumph(test_state, "p1", "war1", True)["success"]
+        result = forum_api.resolve_forum(test_state)
+        assert result["message"] == "❌ 战争 Test War 的凯旋仪式被否决（支持率 40.0%）", result["message"]
+        assert war.triumph_approved is False
+
+    # -------- AC-12: latest-ballot merge via public API + cross-war/faction isolation --------
+
+    def _ac12_setup(self, test_state):
+        war = self._war(test_state)
+        test_state.get_war_system()._war_discard = [war]
+        self._set(test_state, {1: 60, 7: 40})   # A(f1)=60 votes; B(f2)=40 unvoted
+        return war
+
+    def test_ac12_true_then_false_zero_reject(self, test_state):
+        self._ac12_setup(test_state)
+        assert forum_api.vote_triumph(test_state, "p1", "war1", True)["success"]
+        assert forum_api.vote_triumph(test_state, "p1", "war1", False)["success"]
+        assert self._viewer_vote(test_state) is False
+        result = forum_api.resolve_forum(test_state)
+        assert result["message"] == "❌ 战争 Test War 的凯旋仪式被否决（支持率 0.0%）", result["message"]
+
+    def test_ac12_false_then_true_60_approve(self, test_state):
+        self._ac12_setup(test_state)
+        assert forum_api.vote_triumph(test_state, "p1", "war1", False)["success"]
+        assert forum_api.vote_triumph(test_state, "p1", "war1", True)["success"]
+        assert self._viewer_vote(test_state) is True
+        result = forum_api.resolve_forum(test_state)
+        assert result["message"] == "✅ 战争 Test War 的凯旋仪式获得批准（支持率 60.0%）", result["message"]
+
+    def test_ac12_true_then_true_counts_faction_once(self, test_state):
+        self._ac12_setup(test_state)
+        assert forum_api.vote_triumph(test_state, "p1", "war1", True)["success"]
+        assert forum_api.vote_triumph(test_state, "p1", "war1", True)["success"]
+        assert self._viewer_vote(test_state) is True
+        result = forum_api.resolve_forum(test_state)
+        # 60.0% (not 120%): latest-ballot merge counts each faction once
+        assert result["message"] == "✅ 战争 Test War 的凯旋仪式获得批准（支持率 60.0%）", result["message"]
+
+    def test_ac12_false_then_false_zero_reject(self, test_state):
+        self._ac12_setup(test_state)
+        assert forum_api.vote_triumph(test_state, "p1", "war1", False)["success"]
+        assert forum_api.vote_triumph(test_state, "p1", "war1", False)["success"]
+        assert self._viewer_vote(test_state) is False
+        result = forum_api.resolve_forum(test_state)
+        assert result["message"] == "❌ 战争 Test War 的凯旋仪式被否决（支持率 0.0%）", result["message"]
+
+    def test_ac12_no_cross_war_or_faction_leakage(self, test_state):
+        war1 = self._war(test_state, war_id="war1", name="War One", commander_id=1)
+        war2 = self._war(test_state, war_id="war2", name="War Two", commander_id=7)
+        test_state.get_war_system()._war_discard = [war1, war2]
+        self._set(test_state, {1: 60, 7: 40})
+        # f1 (viewer) votes ONLY on war2 -> war1 no votes (0%); war2 = 60%.
+        assert forum_api.vote_triumph(test_state, "p1", "war2", True)["success"]
+        assert self._viewer_vote(test_state, war_id="war2") is True
+        assert self._viewer_vote(test_state, war_id="war1") is None
+        result = forum_api.resolve_forum(test_state)
+        msg = result["message"]
+        assert "❌ 战争 War One 的凯旋仪式被否决（支持率 0.0%）" in msg, msg
+        assert "✅ 战争 War Two 的凯旋仪式获得批准（支持率 60.0%）" in msg, msg

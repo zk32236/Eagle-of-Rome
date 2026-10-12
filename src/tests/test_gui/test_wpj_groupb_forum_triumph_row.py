@@ -68,6 +68,38 @@ def _button_mousearea(text_item):
     return None
 
 
+def _row_of_action(text_item):
+    """EOR20261012-01 SA §1.4.3：沿 parentItem 上溯到凯旋行容器 MarketActionRow。
+
+    以组件独有属性 ``secondActionText``（值「反对」）标识行容器；避免依赖
+    className（内联组件可能不携带 QML 类型名）。
+    """
+    cur = text_item.parentItem() if text_item is not None else None
+    while cur is not None:
+        try:
+            if cur.property("secondActionText") == "反对":
+                return cur
+        except Exception:
+            pass
+        cur = cur.parentItem()
+    return None
+
+
+def _row_has_visible_against(row):
+    """EOR20261012-01 SA §1.4.3：行容器内是否存在**可见**的「反对」第二动作。
+
+    第二动作槽 Text 恒存在（`text: secondActionText`），其可见性由父 Rectangle 的
+    ``visible: secondActionVisible`` 决定；故必须按行作用域 + 控件可见性判定，
+    不得用全局 `_find_text(root, "反对") is None`（SA §1.4.4 = 必然失败）。
+    """
+    for item in _all_items(row):
+        if item.property("text") == "反对":
+            box = item.parentItem()
+            if box is not None and box.property("visible"):
+                return True
+    return False
+
+
 class _TriumphForumStore(QObject):
     """最小 mock：ForumStage 凯旋消费面（真实 additive DTO 形状）。"""
 
@@ -85,6 +117,14 @@ class _TriumphForumStore(QObject):
             {"war_id": "w3", "name": "战争三", "commander_name": "丙",
              "commander_faction_id": "f1", "soldier_share": 2,
              "action": {"state": "readonly", "reason": "vote_window_closed"}, "viewer_vote": None},
+            # EOR20261012-01 SA §1.4.2：覆盖 §6.1 第 3 行（actionable ∧ viewer_vote=False）
+            # 与 readonly+已投重叠反例（已投优先）。
+            {"war_id": "w4", "name": "战争四", "commander_name": "丁",
+             "commander_faction_id": "f1", "soldier_share": 4,
+             "action": {"state": "actionable", "reason": "ok"}, "viewer_vote": False},
+            {"war_id": "w5", "name": "战争五", "commander_name": "戊",
+             "commander_faction_id": "f1", "soldier_share": 1,
+             "action": {"state": "readonly", "reason": "resolved"}, "viewer_vote": True},
         ]
 
     @Property(list, notify=forumViewChanged)
@@ -242,16 +282,29 @@ def test_three_states_render_text_and_enabled():
     store = _TriumphForumStore()
     _engine, root = _load_forum(store)
 
-    approve = _find_text(root, "赞成")
-    voted = _find_text(root, "已投")
-    blocked = _find_text(root, "不可投")
+    # EOR20261012-01 SA §1.4.1（AMEND，语义不变、强度提升）：已投态由中性「已投」
+    # 细化为区分立场的「已投·赞成」/「已投·反对」（FC-13；`·` = U+00B7）。
+    approve = _find_text(root, "赞成")            # w1: actionable ∧ viewer_vote=None
+    voted = _find_text(root, "已投·赞成")         # w2/w5: actionable|readonly ∧ viewer_vote=True (FC-13)
+    blocked = _find_text(root, "不可投")          # w3: readonly ∧ viewer_vote=None
     assert approve is not None, "actionable+未投 应渲染「赞成」"
-    assert voted is not None, "viewer_vote!=null 应渲染「已投」"
+    assert voted is not None, "actionable+已投(True) 应渲染「已投·赞成」（FC-13）"
     assert blocked is not None, "readonly 应渲染「不可投」"
 
     assert _button_mousearea(approve).property("enabled") is True, "「赞成」应 enabled（可点）"
-    assert _button_mousearea(voted).property("enabled") is False, "「已投」应 disabled"
+    assert _button_mousearea(voted).property("enabled") is False, "「已投·赞成」应 disabled"
     assert _button_mousearea(blocked).property("enabled") is False, "「不可投」应 disabled"
+
+    # EOR20261012-01 SA §1.4.2：actionable ∧ viewer_vote=False → disabled「已投·反对」
+    voted_against = _find_text(root, "已投·反对")  # w4
+    assert voted_against is not None, "actionable+已投(False) 应渲染「已投·反对」（FC-13）"
+    assert _button_mousearea(voted_against).property("enabled") is False, "「已投·反对」应 disabled"
+
+    # EOR20261012-01 SA §1.4.3：已投行不得渲染可见第二动作（反对）——行作用域/可见性判定，
+    # 非全局空匹配（SA §1.4.4 AMBIGUITY-CORRECTION-1：`_find_text(root,"反对") is None` 必然失败）。
+    voted_row = _row_of_action(voted)
+    assert voted_row is not None, "应能定位「已投·赞成」所在行容器（MarketActionRow）"
+    assert not _row_has_visible_against(voted_row), "已投行不得渲染可见「反对」（FC-13）"
 
 
 def test_no_dead_actionable_appearance_for_readonly():

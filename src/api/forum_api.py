@@ -985,27 +985,25 @@ def resolve_forum(state: GameState) -> dict:
                 continue
 
             commander = state.get_member(war.triumph_commander_id)
-            votes = votes_by_war.get(war.id, [])
-            if not votes:
-                # FC-15：无有效投票 → 全池回国库。
-                _refund_veteran_pool_to_treasury(state, war)
-                results.append(f"⚠️ 战争 {war.name} 无有效投票")
-                continue
-
-            votes_for = 0
-            votes_against = 0
-            total_influence = 0
-            for faction_id, vote in votes:
-                faction = state.get_faction(faction_id)
-                if faction:
-                    influence = sum(m.influence for m in faction.get_members(state))
-                    total_influence += influence
-                    if vote:
-                        votes_for += influence
-                    else:
-                        votes_against += influence
-            if total_influence > 0:
-                support_rate = votes_for / total_influence
+            # EOR20261012-01（FC-14）：本 war 的规范选票 = 每 (str(war_id), faction_id)
+            # 按 pending append 顺序取**最后一条**合法 bool 记录生效；每注册派系只计一次。
+            # 只读归并（与 `_viewer_triumph_vote` 同源）；不新增 writer / 缓存 / 持久化。
+            latest_votes: Dict[str, bool] = {}
+            for faction_id, vote in votes_by_war.get(war.id, []):
+                latest_votes[faction_id] = bool(vote)
+            # EOR20261012-01（FC-01/FC-02/FC-12）：支持率分母 = **全体注册派系**
+            # （`state.factions`）存活成员影响力之和；**未投派系计入分母**（未投=反对，无弃权）。
+            # FC-12 等价声明：`state.factions` 与 `state.get_active_factions()` 在计票结果上
+            # 逐字等价（无存活成员派系求和为 0），设计取注册全集（不引入「活跃」依赖）。
+            denom = 0
+            num = 0
+            for faction in state.factions.values():
+                influence = sum(m.influence for m in faction.get_members(state))
+                denom += influence
+                if latest_votes.get(faction.id) is True:
+                    num += influence
+            if denom > 0:
+                support_rate = num / denom
                 if support_rate > 0.5:
                     duration = state.config.get("combat_rules.triumph_veteran_duration", 5)
                     pool = war.soldier_share

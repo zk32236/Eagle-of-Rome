@@ -49,9 +49,17 @@ src/api/forum_api.py              # vote_triumph(), resolve_forum()
 |------|------|--------|---------|
 | v1.3 | 2026-10-09 | DA-Execute (WP-J Group D) | 人口公示框内战后反馈行读取链路（`population_outcome` → `populationOutcome` → QML 既有框内追加；additive 只读）+ 否决呈现撤销（`resolve_forum()` 零改） |
 
+## EOR20261012-01 同步注记（2026-10-12，DA-Execute；append-only；替代边界）
+
+> 权威：SA-Development-Task EOR20261012-01 v1.1（G3 FROZEN）FC-01..FC-14 + S-2（Owner 显式二选）+ PM Erratum E1。**GAME_RULE_CHANGE=YES**。本注记**替代**上文 WP-J Group B 注记中的计票口径与「三态（已投）」按钮文本（其余（写面 bool/append、投影 producer、单一谓词）仍有效）。
+
+- **计票链路（FC-01/02/05/12/14）**：`forum_api.resolve_forum()` 凯旋块——分母 = Σ **全体注册派系**（`state.factions`）存活成员影响力之和（**未投派系计入分母**）；分子 = 最新有效票为 `True` 的派系影响力之和（每 `(war_id, faction_id)` 取 append 最后一条 bool）；`support_rate = num/denom`；`> 0.5` 批准。旧 `if not votes` early exit **移除**，改为**分母=0 兜底**（无有效投票）；正分母零赞成 → 支持率 0% → 否决。无新增 writer/缓存/持久化（结算侧只读归并）。
+- **GUI 链路（FC-13）**：`ForumStage.qml` 凯旋行 `MarketActionRow`——`actionable ∧ viewer_vote===null` → **[赞成][反对]** 两动作（`session_store.doVoteTriumph(war_id, true/false)` → `api_adapter.vote_triumph(player_id, war_id, bool)` → `forum_api.vote_triumph`）；`viewer_vote===true` → disabled「已投·赞成」、`===false` → disabled「已投·反对」（已投优先）；`null ∧ readonly` → disabled「不可投」。`MarketActionRow` 增可选第二动作槽（默认隐藏，其它消费者零变）；写面 bool/append 零改；Q1 仍 CLOSED。
+
 ## 版本日志（append-only）
 
 | 版本 | 日期 | 修改人 | 修改说明 |
 |------|------|--------|---------|
 | v1.2 | 2026-10-06 | DA Sub-Agent (WP-J Group B) | ③ 行 action/viewer_vote 读取链路 + 最小交互提交链（WP-J Group B / J-AC-03；additive read-model，写语义零改） |
+| v1.5 | 2026-10-12 | DA-Exec (EOR20261012-01) | 计票口径：分母 = 全体注册派系（未投=反对）+ FC-14 最新有效票归并 + early-exit 替代（分母=0 兜底 / 正分母零赞成 → 0% 否决）；GUI 显式二选（赞成/反对）+ 已投·赞成/已投·反对；写面 bool/append 零改；GAME_RULE_CHANGE=YES |
 | v1.4 | 2026-10-11 | DA-Exec (EOR20261009-03 WRRI) | OD-04/FC-15：`resolve_forum()` 池清空守恒——凯旋通过余项 / 否决 / 无票 / 指挥官失效 / 小池 → 回罗马国库（`_settle_veteran_pool`/`_refund_veteran_pool_to_treasury`）；池域概念名 `veteran_support_pool`；投票交互语义零改 |
