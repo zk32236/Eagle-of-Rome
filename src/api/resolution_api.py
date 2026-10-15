@@ -13,11 +13,13 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from src.api import api_response
+from src.api import session_access
 from src.core.game_state import GameState
 
 logger = logging.getLogger("EOR-RESOLUTION")
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="execute_resolution")
 def execute_resolution(
     state: GameState,
     player_id: Optional[str] = None,

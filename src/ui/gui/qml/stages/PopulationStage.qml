@@ -585,6 +585,10 @@ Rectangle {
 
                         Rectangle {
                             id: campaignButton
+                            // S-D alias registry (G2-R5 §6): the mandatory
+                            // population festival/campaign operation control
+                            // previously had no objectName.
+                            objectName: "populationCampaignSubmitButton"
                             property bool hovered: false
                             property bool buttonEnabled: sessionStore.canCampaign && !campaignSubmitted()
                             anchors.left: parent.left

@@ -29,6 +29,19 @@ class ScenarioLoader:
             print(f"⚠️ 配置文件不存在: {file_path}，使用默认配置")
         if config is None:
             config = ScenarioLoader._get_default_config()
+        # 历史入口：文件获取/回退完成后，交由共享 config→state 应用体。
+        ScenarioLoader._apply_scenario_config(state, config)
+
+    @staticmethod
+    def _apply_scenario_config(state: GameState, config: dict) -> None:
+        """共享 config→state 应用体（历史入口 + 校验快照入口共用）。
+
+        仅消费一个已完全解析的 config dict，**不含**任何场景文件获取、也**不含**
+        整场景内置默认：本 helper 与 ``initialize_validated_scenario`` 都无法拿到
+        场景文件或回退配置（structurally closed source graph）。逐字段 schema 默认
+        （如年份/人物数量缺省）仍由既有 Core 规则处理——字段默认 ≠ 替换整场景。
+        province 卡片是独立来源资源；其失败向上传播，绝不以别的场景修复。
+        """
         start_year = config.get("start_year", -264)
         state.turn = GameTurn(turn_number=1, year=start_year)
         ScenarioLoader._load_factions(state, config)
@@ -73,6 +86,27 @@ class ScenarioLoader:
             italy._conquered = True  # 直接设置私有字段，或通过 setter（如果有）
         ScenarioLoader._assign_initial_governors(state)
         ScenarioLoader._create_players_from_factions(state)
+
+    @staticmethod
+    def initialize_validated_scenario(state: GameState, snapshot) -> None:
+        """有界新入口：仅消费校验器签发的 ``ValidatedScenarioSnapshot`` 信封。
+
+        场景来源 = 快照内已校验捕获的配置；本入口**不**按文件名重读、**不**调用
+        ``load_scenario`` / ``_get_default_config``，也不做任何回退重试。reset 恰好
+        一次（在应用之前，保持历史 reset-before-apply 次序与 RNG 调用序）。
+
+        准入**不**仅凭 ``isinstance``：由 ``is_usable_snapshot`` 强制校验器来源
+        （registry 签发）与元数据/字节完整性，故外部伪造的同类实例、被重绑定/换芯的
+        实例、文件名/裸 dict/报告/None 均被拒绝。
+        """
+        from src.core.scenario_validation import is_usable_snapshot
+        if not is_usable_snapshot(snapshot):
+            raise TypeError(
+                "initialize_validated_scenario requires a validator-issued, immutable "
+                f"ValidatedScenarioSnapshot envelope, got {type(snapshot).__name__}")
+        config = snapshot.config_copy()  # 私有深解冻：来自已校验捕获，唯一来源
+        state.reset()
+        ScenarioLoader._apply_scenario_config(state, config)
 
     @staticmethod
     def _create_players_from_factions(state: GameState):

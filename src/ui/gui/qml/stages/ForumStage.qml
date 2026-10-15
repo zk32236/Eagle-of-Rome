@@ -580,6 +580,9 @@ Rectangle {
 
                                     Rectangle {
                                         id: retireButton
+                                        // S-D alias registry (G2-R5 §6): mandatory
+                                        // forum figure-retire control (grForumRetire).
+                                        objectName: "forumRetireButton"
                                         anchors.right: parent.right
                                         anchors.rightMargin: 8
                                         anchors.verticalCenter: parent.verticalCenter
@@ -613,6 +616,9 @@ Rectangle {
                     }
 
                     Rectangle {
+                        // S-D alias registry (G2-R5 §6): mandatory forum retirement
+                        // finish / market-open control (grForumFinishRetirement).
+                        objectName: "forumFinishRetirementButton"
                         Layout.fillWidth: true
                         Layout.leftMargin: 12
                         Layout.rightMargin: 12
@@ -782,6 +788,9 @@ Rectangle {
 
                                         Rectangle {
                                             id: recruitActionButton
+                                            // S-D alias registry (G2-R5 §6): mandatory
+                                            // forum recruit action control (grForumRecruit).
+                                            objectName: "forumRecruitButton"
                                             Layout.preferredWidth: 48
                                             height: 22
                                             radius: 4
@@ -829,6 +838,10 @@ Rectangle {
                                 model: sessionStore.forumPendingContracts
 
                                 delegate: MarketActionRow {
+                                    // S-D alias registry (G2-R5 §6): mandatory forum
+                                    // contract/fleet bid action control
+                                    // (grForumBid / grForumFleetBid).
+                                    objectName: "forumContractBidRow"
                                     label: modelData.name
                                     value: {
                                         var bid = root.viewerBidForContract(modelData.id)
@@ -912,6 +925,9 @@ Rectangle {
                                 model: sessionStore.forumTriumphWars
 
                                 delegate: MarketActionRow {
+                                    // S-D alias registry (G2-R5 §6): mandatory forum
+                                    // triumph-vote action control (grForumTriumphVote).
+                                    objectName: "forumTriumphVoteRow"
                                     // WP-J Group B ③ (J-AC-03 / FC-B04/B06/B18) + EOR20261012-01 (FC-13):
                                     // 逐字消费权威 producer 投影（FC-B01）；QML 零业务重建（禁 marketUnlocked/
                                     // canExecuteForum/forumResolved 重算）。FC-13 决策顺序（已投优先；互斥穷尽）：
@@ -1052,6 +1068,9 @@ Rectangle {
 
     Dialog {
         id: recruitDialog
+        // S-D alias registry (G2-R5 §6): mandatory forum recruit dialog control
+        // (grForumRecruit action surface).
+        objectName: "recruitDialog"
         modal: true
         focus: true
         dim: true

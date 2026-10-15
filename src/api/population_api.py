@@ -10,11 +10,14 @@ from typing import List, Dict, Any, Optional
 
 from src.core.game_state import GameState
 from src.api import api_response
+from src.api import session_access
 from src.core.i18n import i18n
 from src.core.entities.figure import Figure, ClassTier, OfficeTerm
 from src.core.service.population_service import check_and_commit
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="campaign",
+                        viewer_param="player_id")
 def campaign(
     state: GameState,
     player_id: str,
@@ -71,6 +74,8 @@ def campaign(
     return api_response(True, message, data={"figure_id": figure_id, "amount": amount})
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="batch_campaign",
+                        viewer_param="player_id")
 def batch_campaign(
     state: GameState,
     player_id: str,
@@ -366,11 +371,15 @@ def batch_campaign(
 
 VALID_OFFICES = frozenset({"consul", "censor", "praetor", "quaestor", "tribune"})
 
+@session_access.guarded(session_access.OP_MUTATE, command="batch_vote",
+                        viewer_param="player_id")
 def batch_vote(
     state: GameState,
     player_id: str,
     entries: List[Dict[str, Any]],
-    bypass_permission: bool = False
+    bypass_permission: bool = False,
+    *,
+    caller_context: Optional[session_access.HotseatContext] = None,
 ) -> dict:
     """
     WP-02b v2.1 批量投票提交——JSON 验证 → DTO 校验 → 业务校验 → Core 原子提交。
@@ -500,7 +509,7 @@ def batch_vote(
             continue
 
         # figure 是该 office 的合法候选人
-        cand_result = get_candidates(state)
+        cand_result = _get_candidates_impl(state)
         candidates = cand_result.get("data", {}) if cand_result.get("success") else {}
         cand_ids = {c["id"] for c in candidates.get(office, [])}
         if figure_id not in cand_ids:
@@ -787,12 +796,16 @@ def _normalize_entries(entries: List[Dict]) -> List[Dict]:
     return sorted(normalized, key=lambda e: e["figure_id"])
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="vote",
+                        viewer_param="player_id")
 def vote(
     state: GameState,
     player_id: str,
     office: str,
     figure_id: int,
-    bypass_permission: bool = False
+    bypass_permission: bool = False,
+    *,
+    caller_context: Optional[session_access.HotseatContext] = None,
 ) -> dict:
     """
     为指定公职的候选人投票。
@@ -819,7 +832,7 @@ def vote(
         return api_response(False, i18n.get("figure_not_found", id=figure_id))
 
     # 检查候选人资格
-    cand_result = get_candidates(state)
+    cand_result = _get_candidates_impl(state)
     if cand_result["success"]:
         candidates = cand_result["data"].get(office, [])
         if not any(c["id"] == figure_id for c in candidates):
@@ -841,7 +854,17 @@ def vote(
     return api_response(True, message, data={"office": office, "figure_id": figure_id})
 
 
-def get_candidates(state: GameState) -> dict:
+@session_access.guarded(session_access.OP_READ_PHASE_VIEW)
+def get_candidates(state: GameState, *, caller_context=None) -> dict:
+    """Public guarded candidate read boundary (D1 direct-call coverage).
+
+    Presents/validates the service handle (DG-01); the internal ``_get_candidates_impl``
+    is used by already-authorized internal continuations.
+    """
+    return _get_candidates_impl(state)
+
+
+def _get_candidates_impl(state: GameState) -> dict:
     """
     获取所有公职的候选人列表（结构化数据）。
     按官职优先级从高到低处理，每个官职从所有符合资格且未被更高官职录用的人选中选出前N名。
@@ -943,7 +966,9 @@ def _format_candidates_message(data: Dict[str, List[Dict]]) -> str:
         return "\n   📋 当前无候选人"
     return "\n".join(lines)
 
-def resolve_election(state: GameState) -> dict:
+@session_access.guarded(session_access.OP_MUTATE, command="resolve_election")
+def resolve_election(state: GameState, *,
+                     caller_context: Optional[session_access.HotseatContext] = None) -> dict:
     """
     统计投票结果，确定当选者，授予官职。
     根据人口阶段投票记录进行加权计票。
@@ -954,7 +979,7 @@ def resolve_election(state: GameState) -> dict:
 
     # 按公职分组投票
     votes_by_office = {}
-    cand_result = get_candidates(state)
+    cand_result = _get_candidates_impl(state)
     candidates_by_office = cand_result.get("data", {}) if cand_result.get("success") else {}
     candidate_ids_by_office = {
         office: {c["id"] for c in candidates} for office, candidates in candidates_by_office.items()
@@ -1061,6 +1086,7 @@ def resolve_election(state: GameState) -> dict:
     return api_response(True, message, data={"elected": [f.id for f in elected_figures], "election_results": election_results})
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="convert_battlefield_commanders")
 def convert_battlefield_commanders(state: GameState) -> dict:
     """
     Convert battlefield commanders (consul\u2192proconsul, praetor\u2192propraetor).
@@ -1144,6 +1170,7 @@ def convert_battlefield_commanders(state: GameState) -> dict:
     return result
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="archive_office_holders")
 def archive_office_holders(state: GameState) -> dict:
     """卸任所有现任官员（对齐 CLI _remove_office_holders 语义）。
 
@@ -1179,7 +1206,9 @@ def archive_office_holders(state: GameState) -> dict:
     return {"archived": archived, "total": len(archived)}
 
 
-def begin_population_phase(state: GameState) -> dict:
+@session_access.guarded(session_access.OP_MUTATE, command="begin_population_phase")
+def begin_population_phase(state: GameState, *,
+                           caller_context: Optional[session_access.HotseatContext] = None) -> dict:
     """人口阶段入口共享用例：curia 清理 + 现任归档 + 战场指挥官转换。
 
     幂等：以 phase-result marker "population_entry" 守卫（对齐
@@ -1203,10 +1232,10 @@ def begin_population_phase(state: GameState) -> dict:
         curia.clear()
 
     # 2) 归档在场现任官员（必须先于转换，P1-1b）
-    archive_result = archive_office_holders(state)
+    archive_result = archive_office_holders(state, caller_context=caller_context)
 
     # 3) 转换缺席战场指挥官（自带 "battlefield_commander_conversion" 幂等）
-    conversion_result = convert_battlefield_commanders(state)
+    conversion_result = convert_battlefield_commanders(state, caller_context=caller_context)
 
     result = {
         "archived": archive_result.get("archived", []),
@@ -1217,6 +1246,7 @@ def begin_population_phase(state: GameState) -> dict:
     return result
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="process_population_disbandments")
 def process_population_disbandments(state: GameState) -> dict:
     """人口阶段解散生命周期共享用例（§11.5 GUI/CLI 对等，WP-G G4-GD G2）。
 

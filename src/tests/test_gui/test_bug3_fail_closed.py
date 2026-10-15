@@ -97,7 +97,7 @@ class TestBug3FailClosed:
         self.complete_human_votes(state, viewer_id)
 
         # Inject vote failure at population_api boundary (TI-11 compliant)
-        def failing_vote(s, pid, office, fid, bypass_permission=False):
+        def failing_vote(s, pid, office, fid, bypass_permission=False, **kwargs):
             return {"success": False, "message": "T-B3-07a injected vote failure",
                     "data": {}, "errors": [{"code": "INJECTED_VOTE_FAILURE"}]}
 
@@ -131,7 +131,7 @@ class TestBug3FailClosed:
         state, viewer_id = self.setup_session()
         self.complete_human_votes(state, viewer_id)
 
-        def failing_campaign(s, pid, fid, amount, bypass_permission=False):
+        def failing_campaign(s, pid, fid, amount, bypass_permission=False, **kwargs):
             return {"success": False, "message": "T-B3-07b injected campaign failure",
                     "data": {}, "errors": [{"code": "INJECTED_CAMPAIGN_FAILURE"}]}
 
@@ -161,7 +161,7 @@ class TestBug3FailClosed:
         state, viewer_id = self.setup_session()
         self.complete_human_votes(state, viewer_id)
 
-        def failing_get_candidates(s):
+        def failing_get_candidates(s, **kwargs):
             return {"success": False, "message": "T-B3-07c-1 injected failure",
                     "data": {}, "errors": [{"code": "INJECTED_CANDIDATE_FAILURE"}]}
 
@@ -197,7 +197,7 @@ class TestBug3FailClosed:
         state, viewer_id = self.setup_session()
         self.complete_human_votes(state, viewer_id)
 
-        def raising_get_candidates(s):
+        def raising_get_candidates(s, **kwargs):
             raise RuntimeError("T-B3-07c-2 injected candidate retrieval exception")
 
         monkeypatch.setattr(population_api, "get_candidates", raising_get_candidates)
@@ -237,7 +237,7 @@ class TestBug3FailClosed:
         state, viewer_id = self.setup_session()
         self.complete_human_votes(state, viewer_id)
 
-        def empty_get_candidates(s):
+        def empty_get_candidates(s, **kwargs):
             return {"success": True, "message": "T-B3-07c-3 injected empty",
                     "data": {}}
 
@@ -271,7 +271,7 @@ class TestBug3FailClosed:
         state, viewer_id = self.setup_session()
         self.complete_human_votes(state, viewer_id)
 
-        def raising_vote(s, pid, office, fid, bypass_permission=False):
+        def raising_vote(s, pid, office, fid, bypass_permission=False, **kwargs):
             raise RuntimeError("T-B3-07d injected vote exception")
 
         monkeypatch.setattr(population_api, "vote", raising_vote)
@@ -306,13 +306,13 @@ class TestBug3FailClosed:
 
         call_counter = {"campaign": 0, "vote": 0}
 
-        def campaign_with_write(s, pid, fid, amount, bypass_permission=False):
+        def campaign_with_write(s, pid, fid, amount, bypass_permission=False, **kwargs):
             call_counter["campaign"] += 1
             # Write a campaign record to create partial state
             state.record_population_campaign(pid, -9999, 1)
             return {"success": True}
 
-        def failing_vote(s, pid, office, fid, bypass_permission=False):
+        def failing_vote(s, pid, office, fid, bypass_permission=False, **kwargs):
             call_counter["vote"] += 1
             raise RuntimeError("T-B3-07e injected vote failure")
 

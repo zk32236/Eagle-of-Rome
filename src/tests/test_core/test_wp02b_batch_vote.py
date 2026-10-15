@@ -1664,7 +1664,7 @@ def test_v3_submit_population_votes_partial_map_normalizes_fixed_five(vote_state
     state.get_member(3).add_office_history("quaestor", -4)
     captured = []
 
-    def capture_batch(_state, player_id, entries):
+    def capture_batch(_state, player_id, entries, **kwargs):
         captured.extend(entries)
         return {
             "success": True,
@@ -1829,7 +1829,7 @@ def test_v3_submit_population_votes_zero_candidate_office_forced_abstain(vote_st
 
     captured = []
 
-    def capture_batch(_state, player_id, entries):
+    def capture_batch(_state, player_id, entries, **kwargs):
         captured.extend(entries)
         return {
             "success": True,

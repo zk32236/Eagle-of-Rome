@@ -23,6 +23,7 @@ import unicodedata
 from typing import Any, Callable, Dict, List, Optional
 
 from src.api import api_response
+from src.api import session_access
 from src.core.game_state import GameState
 from src.core.entities.player import PlayerType
 
@@ -166,6 +167,8 @@ def get_global_query_result(
     query_id: str,
     filter_text: str = "",
     record_id: str = "",
+    *,
+    caller_context=None,
 ) -> dict:
     """Return one safe read-only typed DTO for the GUI global query bar.
 
@@ -177,6 +180,21 @@ def get_global_query_result(
         return api_response(
             False, _ERROR_MESSAGES_ZH[ERR_STATE_UNAVAILABLE],
             build_failure_dto("", "ERROR", ERR_STATE_UNAVAILABLE),
+        )
+
+    # -- 1b. active-seat access guard (S-B Group 1) -------------------------
+    # Registered Hot-seat session: a non-current / unauthorized viewer is denied
+    # BEFORE any query/existence lookup, with the CLOSED typed safe shell
+    # (result_state=DENIED, whitelisted viewer_unavailable) — no raw backend
+    # reason, no record-existence leak. Un-registered (CLI/historical) states are
+    # exempt and behave exactly as before. The CLOSED DTO redaction/receiver ack
+    # contract is unchanged.
+    if not session_access.present_decision(
+            state, session_access.OP_READ_QUERY, viewer=viewer_player_id,
+            caller_context=caller_context).allowed:
+        return api_response(
+            False, _ERROR_MESSAGES_ZH[ERR_VIEWER_UNAVAILABLE],
+            build_failure_dto(query_id, "DENIED", ERR_VIEWER_UNAVAILABLE),
         )
 
     # -- 2. viewer eligibility (A05-04) ------------------------------------
@@ -572,7 +590,8 @@ def _build_public_land(state: GameState, viewer, filter_text: str, record_id: st
     """
     from src.api import game_api
 
-    result = game_api.get_public_land_info(state)
+    result = game_api.get_public_land_info(
+        state, caller_context=session_access.current_caller_context(state))
     # N1 (defense hardening): a canonical producer result marked ``success=False``
     # must fail closed even if it still carries a well-formed ``data`` dict — a
     # failed producer is NEVER recast as success.
@@ -893,7 +912,8 @@ def _build_private_land(state: GameState, viewer, filter_text: str, record_id: s
     from src.api import figure_api
 
     viewer_faction_id = viewer.faction_id
-    land_result = figure_api.get_private_land_info(state)
+    land_result = figure_api.get_private_land_info(
+        state, caller_context=session_access.current_caller_context(state))
     land_data = land_result.get("data") if isinstance(land_result, dict) else None
     if not isinstance(land_data, dict):
         return build_failure_dto("private_land", "ERROR", ERR_SYSTEM_UNAVAILABLE)

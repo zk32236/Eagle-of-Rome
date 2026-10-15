@@ -14,7 +14,21 @@ from src.core.deciders.impl.auto_senate_vote_decider import AutoSenateVoteDecide
 from src.core.deciders.senate_vote_decider import SenateVoteDecider
 from src.core.entities.contract import ContractStatus, ContractType
 from src.core.entities.figure import Figure
+from src.core.entities.player import PlayerType
 from src.core.entities.war import WarStatus
+
+
+def _is_registered_hotseat(state) -> bool:
+    """S-C F5 / R-4: the REGISTERED Hot-seat record is the boundary — NOT book
+    presence. A registered-but-uncoordinated Hot-seat session must never have a
+    HUMAN's missing ballot synthesized; a never-registered CLI/legacy state keeps
+    the historical auto-backfill.
+    """
+    try:
+        from src.api import session_access
+        return session_access.is_hotseat_registered(state)
+    except Exception:  # pragma: no cover - defensive
+        return False
 
 
 def _tribune_absent_guard(figure) -> bool:
@@ -635,6 +649,15 @@ class PoliticalSystem:
                 vote_source = self.state.get_senate_vote_source(player_id, proposal_id) or "human"
                 decision_state = "reused"
             else:
+                # S-C (delta §1.2 / R1 §4.2): auto-backfill ONLY for an actual
+                # scheduled AI controller (``PlayerType.AI``). On a REGISTERED
+                # Hot-seat session a missing HUMAN ballot is NEVER synthesized —
+                # that HUMAN's obligation stays outstanding and the seat must vote
+                # for real (the registered record is the boundary, not book
+                # presence; un-coordinated registered states are protected too).
+                coordinated = _is_registered_hotseat(self.state)
+                if coordinated and getattr(player, "player_type", None) is not PlayerType.AI:
+                    continue
                 support = vote_decider.decide_vote(self.build_issue_from_proposal(proposal), faction, self.state)
                 # AU-R1-02a（C3 幂等契约，frozen）：AI 票首次决策即持久化（created once →
                 # persisted → Veto/resolve 复用同一存储）；record_senate_vote 重复返回 False

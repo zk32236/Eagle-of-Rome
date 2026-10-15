@@ -4,6 +4,8 @@ import random
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.api import api_response
+from src.api import session_access
+from src.api import session_turn_service as turn_service
 from src.core.game_state import GameState
 from src.core.i18n import i18n
 from src.core.entities.contract import Contract, ContractType, ContractStatus
@@ -16,8 +18,11 @@ from src.core.systems.figure_generation_system import generate_figures as system
 NEXT_PHASE_ID = "population"
 
 
+@session_access.guarded(session_access.OP_READ_PHASE_VIEW, viewer_param="viewer_player_id")
 def get_forum_view(state: GameState, viewer_player_id: str) -> dict:
     """Return the read-only GUI DTO for the forum stage."""
+    # S-B Group 1: active-seat read guard before any public/private DTO build.
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     try:
         viewer = state.get_player(viewer_player_id)
         if not viewer:
@@ -170,12 +175,16 @@ def _check_player_permission(state: GameState, player_id: str) -> Tuple[bool, di
     return True, api_response(True)
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="retire_figure",
+                        viewer_param="player_id")
 def retire_figure(state: GameState, player_id: str, figure_id: int) -> dict:
     """
     淘汰人物：从派系中移除，加入广场。
     权限：当前玩家，且人物属于该玩家派系。
     校验：人物不能是派系领袖、不能有活跃合同。
     """
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     ok, resp = _check_player_permission(state, player_id)
     if not ok:
         return resp
@@ -211,7 +220,9 @@ def retire_figure(state: GameState, player_id: str, figure_id: int) -> dict:
 
 
 
-def initialize_forum_turn(state: GameState) -> dict:
+@session_access.guarded(session_access.OP_MUTATE, command="initialize_forum_turn")
+def initialize_forum_turn(state: GameState, *, caller_context=None,
+                          ai_capability=None) -> dict:
     """Canonical forum turn initialization. Exactly-once per turn.
 
     Side effects: war trigger/escalate (015), fleet completion, figures(+hero, 009),
@@ -221,33 +232,76 @@ def initialize_forum_turn(state: GameState) -> dict:
     if pending.get("forum_initialized"):
         return api_response(True, "Forum already initialized", data={})   # exactly-once guard
 
-    # ODR-04 方案 B：入口校验 hero 标记回合归属（不匹配 → 丢弃，不消费）
-    if state.hero_spawned_this_turn or state.hero_to_spawn is not None:
-        _reconcile_stale_hero_markers(state)
+    # V12-F02: owner-step checkpoints live in Core's turn-local forum pending,
+    # not a Store flag. The existing pending save/load and year-clear lifecycle
+    # preserves/clears this list alongside the effects it witnesses. Checkpoint
+    # ONLY after an owner operation returns successfully; never roll back earlier
+    # commits or publish the terminal initialized marker after a later failure.
+    steps = state._forum_pending.setdefault("initialization_steps", [])
+    completed = {row["step"]: row["result"] for row in steps
+                 if row.get("turn") == state.turn.turn_number}
 
-    # ① war trigger + escalate（015）—— 尊重 enable_threats gate（war_system L736-737）
-    war_events: List[str] = []
+    def checkpoint(step, result):
+        state.add_forum_action("initialization_steps", {
+            "turn": state.turn.turn_number, "step": step, "result": result})
+        completed[step] = result
+        return result
+
+    if "hero_reconcile" not in completed:
+        if state.hero_spawned_this_turn or state.hero_to_spawn is not None:
+            _reconcile_stale_hero_markers(state)
+        checkpoint("hero_reconcile", None)
+
+    # Separate checkpoints at the actual trigger and escalation commit boundaries.
     ws = state.get_war_system()
-    if ws:
-        war_events = ws.check_triggers(state.turn.year, verbose=False) + ws.escalate_threats()
-
-    # WP-E F7（E-G7-14P/06P）：war_events 写入保留载体（open_market 丢弃问题收敛——
-    # 权威字符串直读，生命周期归 WP-G，零裁决零修改）
+    if "war_triggers" not in completed:
+        checkpoint("war_triggers", ws.check_triggers(state.turn.year, verbose=False) if ws else [])
+    if "war_escalation" not in completed:
+        checkpoint("war_escalation", ws.escalate_threats() if ws else [])
+    war_events = completed["war_triggers"] + completed["war_escalation"]
     state.set_forum_war_events(war_events)
 
-    # ④ fleet construction completion（副产物）
-    completed_fleets: List[int] = []
-    if state.naval_system:
-        completed_fleets = state.naval_system.process_fleet_construction(state.turn.turn_number)
+    if "fleet_completion" not in completed:
+        checkpoint("fleet_completion", state.naval_system.process_fleet_construction(
+            state.turn.turn_number) if state.naval_system else [])
+    completed_fleets = completed["fleet_completion"]
 
     # ③ figures（含 hero，009）—— 走 forum_api.generate_figures wrapper（含 is_hero 标记行）
-    figures_result = generate_figures(state)
+    # V11-F01: thread the presented owner authority into the nested guarded
+    # generation boundaries and CHECK each authoritative initialization result
+    # before the initialization is declared complete.  The presentation keyword is
+    # only attached when actually PRESENTED (an absent presentation keeps the exact
+    # historical ``f(state)`` call shape for the never-registered/CLI path).
+    _presented = {}
+    if caller_context is not None:
+        _presented["caller_context"] = caller_context
+    if ai_capability is not None:
+        _presented["ai_capability"] = ai_capability
+    if "figures" not in completed:
+        figures_result = generate_figures(state, **_presented)
+        if not (isinstance(figures_result, dict) and figures_result.get("success")):
+            return api_response(False, "Forum figure generation failed",
+                                errors=["FORUM_INIT_FIGURES_FAILED"])
+        checkpoint("figures", figures_result)
+    figures_result = completed["figures"]
 
     # ② contracts（014，含 fleet construction/replacement 合同）
-    contracts_result = generate_contracts(state)
+    if "contracts" not in completed:
+        contracts_result = generate_contracts(state, **_presented)
+        if not (isinstance(contracts_result, dict) and contracts_result.get("success")):
+            return api_response(False, "Forum contract generation failed",
+                                errors=["FORUM_INIT_CONTRACTS_FAILED"])
+        checkpoint("contracts", contracts_result)
+    contracts_result = completed["contracts"]
 
     # ⑤ 民变年度更新（副产物）
-    unrest_result = check_province_unrest(state)
+    if "unrest" not in completed:
+        unrest_result = check_province_unrest(state, **_presented)
+        if not (isinstance(unrest_result, dict) and unrest_result.get("success")):
+            return api_response(False, "Forum unrest check failed",
+                                errors=["FORUM_INIT_UNREST_FAILED"])
+        checkpoint("unrest", unrest_result)
+    unrest_result = completed["unrest"]
 
     # WP-J Group D（FC-D09）：在 check_province_unrest 之后【只读捕获】本回合权威起义事件
     # 为载体（镜像 _forum_war_events；不改起义创建/招募/民怨语义）
@@ -285,17 +339,50 @@ def _reconcile_stale_hero_markers(state: GameState) -> None:
     state.hero_spawned_this_turn = False
 
 
-def open_market(state: GameState, player_id: str) -> dict:
+@session_access.guarded(session_access.OP_MUTATE, command="open_market",
+                        viewer_param="player_id")
+def open_market(state: GameState, player_id: str, *, caller_context=None,
+                ai_capability=None) -> dict:
     """Open the forum market and generate the turn's new figures once."""
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     ok, resp = _check_player_permission(state, player_id)
     if not ok:
         return resp
+
+    # S-C (R1 §4.4 / Overlay §1.1): the relevant ledger barrier on a registered
+    # Hot-seat session -- every executable controller's forum RETIREMENT substep
+    # must be finished (explicit legal finish / structural inapplicability) BEFORE
+    # the market is opened once. No forced retirement duty; un-registered legacy
+    # states are exempt.
+    barrier = turn_service.owner_barrier(state, "forum", "retirement")
+    if barrier is not None:
+        return api_response(False, barrier["message"], errors=[barrier["code"]])
 
     pending = state.get_forum_pending()
     if pending.get("market_opened"):
         return api_response(True, "Forum market already open", data={"generated_figures": []})
 
-    init_result = initialize_forum_turn(state)                       # ← 切换 canonical init（AU-2，ODR-05）
+    # V11-F01 (S-C-A3-R12): thread the SAME controlled owner authority this
+    # boundary PRESENTED (no public auto-fill, no bypass flag, S-B unchanged) into
+    # the nested canonical initializer.  The presentation keyword is attached only
+    # when actually presented (the never-registered/CLI path keeps ``f(state)``).
+    _presented_kw = {}
+    if caller_context is not None:
+        _presented_kw["caller_context"] = caller_context
+    if ai_capability is not None:
+        _presented_kw["ai_capability"] = ai_capability
+    init_result = initialize_forum_turn(state, **_presented_kw)
+    # V11-F01 (S-C-A3-R12): the canonical initializer is a guarded owner boundary.
+    # Thread the SAME controlled owner authority the caller PRESENTED (no public
+    # auto-fill, no bypass flag, S-B unchanged) into the nested canonical
+    # initialization, and CHECK its authoritative result BEFORE publishing
+    # market-open / success (a refused initializer must NOT report a false
+    # success).  Un-registered CLI/legacy states stay exempt via the predicate.
+    if not (isinstance(init_result, dict) and init_result.get("success")):
+        message = (init_result.get("message")
+                   if isinstance(init_result, dict) else "") or "Forum initialization failed"
+        return api_response(False, message, errors=["FORUM_INIT_FAILED"])
     figure_ids = {fd["id"] for fd in init_result.get("data", {}).get("figures", [])}
     generated = [f for f in state.curia.get_all_available() if f.id in figure_ids]
     state.add_forum_action("market_opened", True)                    # L148 保留（market 步态标记）
@@ -322,11 +409,15 @@ def _generate_market_figures(state: GameState) -> List[Figure]:
     return generate_market_figures(state)
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="recruit_figure",
+                        viewer_param="player_id")
 def recruit_figure(state: GameState, player_id: str, figure_id: int, amount: int) -> dict:
     """
     招募出价：记录出价，等待公示结算。
     校验：金额>0，人物在广场中，派系有空位。
     """
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     ok, resp = _check_player_permission(state, player_id)
     if not ok:
         return resp
@@ -337,7 +428,6 @@ def recruit_figure(state: GameState, player_id: str, figure_id: int, amount: int
     figure = next((f for f in state.curia.get_all_available() if f.id == figure_id), None)
     if not figure:
         return api_response(False, i18n.get("error_figure_not_in_curia"))
-
     player = state.get_player(player_id)
     faction = state.get_faction(player.faction_id)
     if not faction:
@@ -357,6 +447,8 @@ def recruit_figure(state: GameState, player_id: str, figure_id: int, amount: int
     return api_response(True, message, data={"figure_id": figure_id, "amount": amount})
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="place_bid",
+                        viewer_param="player_id")
 def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int,
               amount: int, profit_rate: float = None, *,
               construction_cost: Optional[int] = None) -> dict:
@@ -372,8 +464,10 @@ def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int
     D≤C；显式 D 与显式 rate 冲突拒（int(C×(1-rate))≠D）；新请求 (contract_id, figure_id)
     防重。Legacy/AI explicit rate 路径（construction_cost=None）允许：两维为 C + 明确独立
     rate，只在入队时按 int(C×(1-rate)) 确定 D；一旦入队 D 即持久，award 不再算一遍。
-    非 Fleet（tax/普通工程）行为与 7 元组存储完全不变。
+    Non Fleet（tax/普通工程）行为与 7 元组存储完全不变。
     """
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     ok, resp = _check_player_permission(state, player_id)
     if not ok:
         return resp
@@ -508,7 +602,11 @@ def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int
     message = i18n.get("info_bid_recorded", contract_name=contract.name, amount=amount)
     return api_response(True, message, data={"contract_id": contract_id, "amount": amount, "profit_rate": profit_rate})
 
+@session_access.guarded(session_access.OP_MUTATE, command="buy_land",
+                        viewer_param="player_id")
 def buy_land(state: GameState, player_id: str, figure_id: int, amount: int) -> dict:
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     ok, resp = _check_player_permission(state, player_id)
     if not ok:
         return resp
@@ -549,7 +647,11 @@ def buy_land(state: GameState, player_id: str, figure_id: int, amount: int) -> d
     return api_response(True, message, data={"figure_id": figure_id, "amount": amount})
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="vote_triumph",
+                        viewer_param="player_id")
 def vote_triumph(state: GameState, player_id: str, war_id: str, vote: bool) -> dict:
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     ok, resp = _check_player_permission(state, player_id)
     if not ok:
         return resp
@@ -583,6 +685,8 @@ def vote_triumph(state: GameState, player_id: str, war_id: str, vote: bool) -> d
     return api_response(True, message, data={"vote": vote})
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="transact_land",
+                        viewer_param="player_id")
 def transact_land(state: GameState, player_id: str, seller_id: int, buyer_id: int,
                   land: int, price: int, bypass_permission: bool = False) -> dict:
     player = None
@@ -639,11 +743,21 @@ def _refund_veteran_pool_to_treasury(state: GameState, war) -> None:
     _settle_veteran_pool(state, war, war.soldier_share, reason="full_refund")
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="resolve_forum")
 def resolve_forum(state: GameState) -> dict:
     """
     公示结算：根据收集的操作执行实际游戏逻辑，返回汇总结果。
     此函数已在原有基础上添加统一返回格式。
     """
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
+    # S-C (R1 §4.4 / Overlay §1.1): the relevant ledger barrier on a registered
+    # Hot-seat session -- every executable controller's forum MARKET substep must
+    # be finished BEFORE the once-only settlement runs. Un-registered legacy states
+    # are exempt; settlement algorithms are unchanged.
+    barrier = turn_service.owner_barrier(state, "forum", "market")
+    if barrier is not None:
+        return api_response(False, barrier["message"], errors=[barrier["code"]])
     execute_land_acts(state)          # ← 新增：canonical land-acts hook（幂等，resolution-time）
     pending = state.get_forum_pending()
     results = []
@@ -1032,8 +1146,12 @@ def resolve_forum(state: GameState) -> dict:
     return api_response(True, message, data=data)
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="advance_forum_phase",
+                        viewer_param="viewer_player_id")
 def advance_forum_phase(state: GameState, viewer_player_id: str) -> dict:
     """Confirm forum resolution and advance to the population stage."""
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     viewer = state.get_player(viewer_player_id)
     if not viewer:
         return api_response(False, "Viewer player not found")
@@ -1052,6 +1170,13 @@ def advance_forum_phase(state: GameState, viewer_player_id: str) -> dict:
     if not result:
         return api_response(False, "Forum phase has not been resolved")
 
+    # S-C (R1 §4.4 / Overlay §1.1): advance checks the current phase scope plus the
+    # genuine existing result predicate on a registered Hot-seat session (the result
+    # predicate is already verified above; this pins the current scope).
+    barrier = turn_service.owner_barrier(state, "forum")
+    if barrier is not None:
+        return api_response(False, barrier["message"], errors=[barrier["code"]])
+
     state.mark_phase_executed("forum")
     return api_response(True, "Forum phase advanced", {
         "phase_executed": True,
@@ -1060,6 +1185,7 @@ def advance_forum_phase(state: GameState, viewer_player_id: str) -> dict:
     })
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="resolve_land_trades")
 def resolve_land_trades(state: GameState) -> dict:
     """
     结算土地交易（仅在交易市场环节调用），返回交易结果。
@@ -1351,6 +1477,7 @@ def _triumph_war_rows(state: GameState, viewer_player_id: str = "",
 # =====================================================================
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="generate_figures")
 def generate_figures(state: GameState) -> dict:
     """
     Public API: generate all new figures for the forum initialization phase.
@@ -1413,6 +1540,7 @@ def generate_figures(state: GameState) -> dict:
         return api_response(False, f"Figure generation failed: {e}")
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="generate_contracts")
 def generate_contracts(state: GameState) -> dict:
     """
     Public API: generate all new/renewal contracts for the forum initialization phase.
@@ -1676,6 +1804,7 @@ def generate_contracts(state: GameState) -> dict:
 # =====================================================================
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="check_province_unrest")
 def check_province_unrest(state: GameState) -> dict:
     """
     Public API: check all provinces for civil unrest and trigger rebellions.
@@ -1734,6 +1863,7 @@ def check_province_unrest(state: GameState) -> dict:
         return api_response(False, f"Unrest check failed: {e}")
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="execute_land_acts")
 def execute_land_acts(state: GameState) -> dict:
     """
     Public API: execute all pending land distribution acts.

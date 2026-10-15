@@ -3,10 +3,12 @@ from src.core.game_state import GameState
 from src.core.entities.contract import ContractStatus, ContractType
 from src.core.localization import TerminologyService
 from src.api import api_response
+from src.api import session_access
 from src.core.i18n import i18n
 from typing import List, Dict, Any
 
-def get_contracts_status(state: GameState) -> dict:
+@session_access.guarded(session_access.OP_READ_PHASE_VIEW)
+def get_contracts_status(state: GameState, *, caller_context=None) -> dict:
     """返回所有合同状态（分组）"""
     lines = [i18n.get("contracts_header")]
 

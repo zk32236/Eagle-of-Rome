@@ -35,6 +35,38 @@ Rectangle {
     function showHandoff(nextPlayerId) {
         handoffOverlay.show(nextPlayerId)
     }
+    // S-B masked handoff authority (R2): the Store drives these via the GuiApp
+    // barrier-witness provider. A single reused overlay; no second overlay.
+    function showHandoffBusy() {
+        handoffOverlay.showMaskedBusy()
+    }
+    function showHandoffPending(factionName) {
+        handoffOverlay.showMaskedPending(factionName)
+    }
+    // SD-R02 (§1.1.R): widen the copy wrapper by the safe, exclusive failure-
+    // origin token (route). Copy-only — this is never an authorization predicate
+    // and the frame gate (HandoffFrameBridge) is untouched.
+    function showHandoffFailure(kind, route) {
+        handoffOverlay.showMaskedFailure(kind, route)
+    }
+    function hideHandoff() {
+        handoffOverlay.hideOverlay()
+    }
+
+    readonly property bool handoffMasked: handoffOverlay.visible
+                                          && handoffOverlay.maskedMode
+
+    function a11yShellExcluded(objectName) {
+        var map = {
+            "topStatusBar": topBar,
+            "phaseRail": phaseRail,
+            "centerPanel": centerPanel,
+            "contextPanel": contextPanel,
+            "bottomQueryBar": bottomQueryBar
+        }
+        var item = map[objectName]
+        return item ? (item.Accessible.ignored === true) : null
+    }
 
     // EOR20261011-01 S1：query shell routing (v1.2 ④.1). Only routing opens the
     // overlay; queryResultChanged is a data notification, not an implicit open.
@@ -72,6 +104,9 @@ Rectangle {
     TopStatusBar {
         id: topBar
         objectName: "topStatusBar"
+        property bool a11yExcluded: root.handoffMasked
+        enabled: !a11yExcluded
+        Accessible.ignored: a11yExcluded
         anchors.top: parent.top
         anchors.topMargin: 14
         anchors.left: parent.left
@@ -94,6 +129,9 @@ Rectangle {
     PhaseRail {
         id: phaseRail
         objectName: "phaseRail"
+        property bool a11yExcluded: root.handoffMasked
+        enabled: !a11yExcluded
+        Accessible.ignored: a11yExcluded
         anchors.top: topBar.bottom
         anchors.topMargin: 14     // main-wrapper padding top
         anchors.left: parent.left
@@ -110,6 +148,9 @@ Rectangle {
     ContextPanel {
         id: contextPanel
         objectName: "contextPanel"
+        property bool a11yExcluded: root.handoffMasked
+        enabled: !a11yExcluded
+        Accessible.ignored: a11yExcluded
         anchors.top: topBar.bottom
         anchors.topMargin: 14
         anchors.right: parent.right
@@ -126,6 +167,9 @@ Rectangle {
     BottomQueryBar {
         id: bottomQueryBar
         objectName: "bottomQueryBar"
+        property bool a11yExcluded: root.handoffMasked
+        enabled: !a11yExcluded
+        Accessible.ignored: a11yExcluded
         anchors.left: parent.left
         anchors.leftMargin: 14
         anchors.right: parent.right
@@ -152,6 +196,9 @@ Rectangle {
     StageDesktop {
         id: centerPanel
         objectName: "centerPanel"
+        property bool a11yExcluded: root.handoffMasked
+        enabled: !a11yExcluded
+        Accessible.ignored: a11yExcluded
         anchors.top: topBar.bottom
         anchors.topMargin: 14
         anchors.left: phaseRail.right

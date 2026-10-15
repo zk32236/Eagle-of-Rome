@@ -248,6 +248,9 @@ Rectangle {
 
                     // Confirm button（常驻底部，整次 action 一个确认钮）
                     ActionButton {
+                        // S-D alias registry (G2-R5 §6): mandatory combat
+                        // result-confirm control (grCombatConfirmResult).
+                        objectName: "combatConfirmResultButton"
                         text: "✓ 确认战果"
                         Layout.alignment: Qt.AlignHCenter
                         Layout.preferredWidth: 180

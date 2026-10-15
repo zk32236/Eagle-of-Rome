@@ -388,7 +388,8 @@ class TestAutoPopulationApi:
             "p2",
             2,
             10,
-            bypass_permission=True
+            bypass_permission=True,
+            caller_context=None,
         )
 
     def test_vote_uses_api_with_explicit_bypass(self, state_normal_mode):
@@ -412,7 +413,8 @@ class TestAutoPopulationApi:
             "p2",
             "consul",
             2,
-            bypass_permission=True
+            bypass_permission=True,
+            caller_context=None,
         )
 
 

@@ -1865,6 +1865,9 @@ Rectangle {
                         }
                     }
                     Rectangle {
+                        // S-D alias registry (G2-R5 §6): mandatory senate
+                        // proposal-package submit control (grSenateSubmitProposals).
+                        objectName: "senateProposalSubmitButton"
                         Layout.fillWidth: true
                         Layout.preferredHeight: 34
                         radius: 4
@@ -1993,6 +1996,9 @@ Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 34
                         ActionButton {
+                            // S-D alias registry (G2-R5 §6): mandatory senate vote
+                            // submit control (grSenateSubmitVotes).
+                            objectName: "senateVoteSubmitButton"
                             anchors.fill: parent
                             text: root.senateVoteButtonText()
                             enabled: sessionStore.canSubmitSenateVote
@@ -2091,6 +2097,9 @@ Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 34
                         ActionButton {
+                            // S-D alias registry (G2-R5 §6): mandatory senate veto
+                            // submit control (grSenateSubmitVetoes).
+                            objectName: "senateVetoSubmitButton"
                             anchors.fill: parent
                             text: root.tribuneActionText()
                             enabled: sessionStore.canSubmitSenateVeto

@@ -1,0 +1,56 @@
+{
+    "scenario_name": "GUI Readiness 6H (6 HUMAN / 6 factions)",
+    "start_year": -282,
+    "initial_state": {
+        "treasury": 100,
+        "random_seed": 42,
+        "factions": [
+            {
+                "id": "optimates",
+                "name": "Optimates",
+                "is_player": true
+            },
+            {
+                "id": "populares",
+                "name": "Populares",
+                "is_player": true
+            },
+            {
+                "id": "equites",
+                "name": "Equites",
+                "is_player": true
+            },
+            {
+                "id": "f4",
+                "name": "第四派系",
+                "is_player": true
+            },
+            {
+                "id": "f5",
+                "name": "第五派系",
+                "is_player": true
+            },
+            {
+                "id": "f6",
+                "name": "第六派系",
+                "is_player": true
+            }
+        ],
+        "figure_generation": {
+            "per_faction": {
+                "nobile": {
+                    "count": 2,
+                    "age_range": [35, 50]
+                },
+                "eques": {
+                    "count": 1,
+                    "age_range": [25, 40]
+                },
+                "plebeian": {
+                    "count": 1,
+                    "age_range": [25, 35]
+                }
+            }
+        }
+    }
+}

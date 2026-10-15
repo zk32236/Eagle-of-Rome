@@ -25,6 +25,8 @@ R6-ODR-06）。唯一合法消费者 = 测试/fixture（`src/tests/**`）。
 import logging
 from typing import Any, Dict, List, Optional
 
+from src.api import session_access
+
 logger = logging.getLogger("EOR-API")
 
 # 两个独立字段（互不穿透）
@@ -65,6 +67,7 @@ def _err(code: str, message: str) -> Dict[str, Any]:
     return {"success": False, "message": message, "data": {}, "errors": [code]}
 
 
+@session_access.guarded(session_access.OP_READ_SNAPSHOT)
 def get_test_config(state, player_id: Optional[str] = None) -> Dict[str, Any]:
     """只读：两 force 键当前值 + 各自独立选项列表（QML 只消费，不推导）。"""
     return _ok({
@@ -87,6 +90,8 @@ def _normalize_token(value: str) -> Optional[str]:
     return None
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="set_test_config",
+                        viewer_param="player_id")
 def set_test_config(state, player_id: Optional[str], field: str, value: Any) -> Dict[str, Any]:
     """写入口（测试/配置面）：设置单个 force 键；空值 = 清除 override（正常结算）。
 

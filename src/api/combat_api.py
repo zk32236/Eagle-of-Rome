@@ -8,6 +8,8 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from src.api import api_response
+from src.api import session_access
+from src.api import session_turn_service as turn_service
 from src.core.game_state import GameState
 from src.core.entities.war import (
     War, WarStatus, validate_reward_receipt, is_persisted_receipt_shape,
@@ -891,10 +893,13 @@ def _normalize_stored_result(state: GameState, ws, result: Any) -> Any:
     return result
 
 
+@session_access.guarded(session_access.OP_READ_PHASE_VIEW, viewer_param="viewer_player_id")
 def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
     """Return read-only combat stage DTO."""
     if not state:
         return api_response(False, "Invalid game state")
+    # S-B Group 1: active-seat read guard before any public/private DTO build.
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     try:
         viewer = state.get_player(viewer_player_id)
         if not viewer:
@@ -1105,10 +1110,14 @@ def get_combat_view(state: GameState, viewer_player_id: str) -> dict:
         return api_response(False, f"获取战斗视图失败: {exc}", errors=[str(exc)])
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="select_war",
+                        viewer_param="viewer_player_id")
 def select_war(state: GameState, viewer_player_id: str, war_id: str) -> dict:
     """Mark a war as selected for combat action."""
     if not state:
         return api_response(False, "Invalid game state")
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     try:
         if not state.is_current_player(viewer_player_id):
             return api_response(False, "Current player mismatch")
@@ -1136,6 +1145,8 @@ def select_war(state: GameState, viewer_player_id: str, war_id: str) -> dict:
         return api_response(False, f"选择战争失败: {exc}", errors=[str(exc)])
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="do_combat_action",
+                        viewer_param="viewer_player_id")
 def do_combat_action(
     state: GameState,
     viewer_player_id: str,
@@ -1146,6 +1157,7 @@ def do_combat_action(
     """Execute a combat action on a war."""
     if not state:
         return api_response(False, "Invalid game state")
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     try:
         if not auto and not state.is_current_player(viewer_player_id):
             return api_response(False, "Current player mismatch")
@@ -1361,10 +1373,14 @@ def do_combat_action(
         return api_response(False, f"执行战斗操作失败: {exc}", errors=[str(exc)])
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="confirm_battle_result",
+                        viewer_param="viewer_player_id")
 def confirm_battle_result(state: GameState, viewer_player_id: str) -> dict:
     """Acknowledge the battle result and return to SELECT or ADVANCE."""
     if not state:
         return api_response(False, "Invalid game state")
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     try:
         if not state.is_current_player(viewer_player_id):
             return api_response(False, "Current player mismatch")
@@ -1400,13 +1416,25 @@ def confirm_battle_result(state: GameState, viewer_player_id: str) -> dict:
         return api_response(False, f"确认战果失败: {exc}", errors=[str(exc)])
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="advance_combat",
+                        viewer_param="viewer_player_id")
 def advance_combat(state: GameState, viewer_player_id: str) -> dict:
     """Confirm all combat is done, advance to Phase 7 (Resolution)."""
     if not state:
         return api_response(False, "Invalid game state")
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     try:
         if not state.is_current_player(viewer_player_id):
             return api_response(False, "Current player mismatch")
+
+        # S-C (R1 §3 / Overlay §1.1): the coordinator restricts combat scheduling to
+        # the phase-entry Core actor G; the barrier pins the current combat scope and
+        # adds NO commander-faction rule (the CLOSED actionable-wars predicate below
+        # remains the sole readiness gate).
+        barrier = turn_service.owner_barrier(state, "combat")
+        if barrier is not None:
+            return api_response(False, barrier["message"], errors=[barrier["code"]])
 
         # Check that all wars are resolved
         phase_data = state.get_phase_result("combat") or {}
@@ -1554,6 +1582,8 @@ def _skip_all_unassigned(state: GameState, wars: List) -> None:
     state.record_phase_result("combat", phase_data)
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="auto_resolve_combat",
+                        viewer_param="player_id")
 def auto_resolve_combat(state: GameState, player_id: str) -> dict:
     """
     阶段级公共用例：自动结算所有活跃战争。
@@ -1592,6 +1622,7 @@ def auto_resolve_combat(state: GameState, player_id: str) -> dict:
     }
     """
     try:
+        # S-B-R3a (DG-01): guard applied by the @guarded decorator.
         ws = _war_system(state)
         if not ws:
             return api_response(False, "War system not available")

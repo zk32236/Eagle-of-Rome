@@ -6,6 +6,8 @@ import logging
 from contextlib import redirect_stdout
 from src.core.game_state import GameState
 from src.api import api_response
+from src.api import session_access
+from src.api import session_turn_service as turn_service
 from src.core.i18n import i18n
 
 # 导入所有阶段命令类
@@ -28,9 +30,14 @@ PHASE_COMMAND_MAP = {
 }
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="execute_phase",
+                        viewer_param="player_id")
 def execute_phase(state: GameState, phase_name: str, player_id: str, args: list = None) -> dict:
 
     sys.stdout.flush()
+
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
 
     if not state.config.get("testing.bypass_player_check", False):
         if not state.is_current_player(player_id):
@@ -79,6 +86,8 @@ def execute_phase(state: GameState, phase_name: str, player_id: str, args: list 
     return api_response(success, output, data={"phase": phase_name})
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="execute_turn",
+                        viewer_param="player_id")
 def execute_turn(state: GameState, player_id: str) -> dict:
     """
     按顺序执行所有未执行阶段，需要玩家权限。
@@ -104,6 +113,8 @@ def execute_turn(state: GameState, player_id: str) -> dict:
     return api_response(all_success, message, data={"phases": results})
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="advance_year",
+                        viewer_param="player_id")
 def advance_year(state: GameState, player_id: str, force: bool = False) -> dict:
     """
     推进到下一年，需要玩家权限。
@@ -127,6 +138,7 @@ def advance_year(state: GameState, player_id: str, force: bool = False) -> dict:
     但不跳过权限检查、不跳过重入 guard、不跳过原子 commit；审计日志记录 force 使用。
     force 可连续推进多年，属调试语义，不构成产品幂等保证（产品 GUI 面不暴露 force）。
     """
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     # ① 权限检查（保留，force 不跳过）
     if not state.config.get("testing.bypass_player_check", False):
         if not state.is_current_player(player_id):
@@ -148,6 +160,15 @@ def advance_year(state: GameState, player_id: str, force: bool = False) -> dict:
 
     if force:
         state.log_event("advance_year force=True（调试逃生门，跳过 resolution 前置）", level=logging.DEBUG)
+
+    # S-C (R1 §4.5 / Overlay §1.1): on a registered Hot-seat session the year advance
+    # product path (force=False) checks the current scope + genuine resolution
+    # result/execution predicate before the once-only atomic commit. The debug force
+    # escape door is unchanged.
+    if not force:
+        barrier = turn_service.owner_barrier(state, "resolution")
+        if barrier is not None:
+            return api_response(False, barrier["message"], errors=[barrier["code"]])
 
     if not state.turn:
         return api_response(False, "游戏回合未初始化")
@@ -172,7 +193,8 @@ def advance_year(state: GameState, player_id: str, force: bool = False) -> dict:
 
 # ---------- 以下为阶段0已有的查询函数，无需权限检查，保持原样 ----------
 
-def get_status_summary(state: GameState) -> dict:
+@session_access.guarded(session_access.OP_READ_PHASE_VIEW)
+def get_status_summary(state: GameState, *, caller_context=None) -> dict:
     try:
         treasury = state.treasury
         living_count = len(state.get_living_members())
@@ -201,7 +223,8 @@ def get_status_summary(state: GameState) -> dict:
         return api_response(False, f"生成状态摘要时出错: {e}", errors=[str(e)])
 
 
-def get_public_land_info(state: GameState) -> dict:
+@session_access.guarded(session_access.OP_READ_PHASE_VIEW)
+def get_public_land_info(state: GameState, *, caller_context=None) -> dict:
     land_price = state.get_economic_rule("land_price_per_unit", 10)
     tax_rate = state.get_economic_rule("national_public_land_tax_rate", 0.02)
     national_land = state.get_national_public_land()

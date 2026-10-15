@@ -2,6 +2,7 @@
 from src.core.game_state import GameState
 from src.core.entities.contract import ContractType
 from src.api import api_response
+from src.api import session_access
 from src.core.i18n import i18n
 from typing import Optional, List, Dict, Any
 
@@ -41,7 +42,9 @@ def _get_governor_name(state: GameState, governor_id: Optional[int]) -> str:
     fig = state.get_member(governor_id)
     return fig.get_formal_name() if fig else i18n.get("province_governor_missing", default="缺失(数据异常)")
 
-def get_province_info(state: GameState, province_id: Optional[int] = None) -> dict:
+@session_access.guarded(session_access.OP_READ_PHASE_VIEW)
+def get_province_info(state: GameState, province_id: Optional[int] = None, *,
+                      caller_context=None) -> dict:
     """获取行省信息，无参数时返回所有已征服行省概要"""
     if province_id is None:
         provinces = [p for p in state.get_all_provinces() if p.conquered]

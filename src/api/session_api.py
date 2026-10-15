@@ -6,13 +6,19 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from src.api import api_response
+from src.api import session_access
 from src.api import population_api
 from src.api import player_api
 from src.api import faction_api
 from src.api import figure_api
+from src.api import session_turn_service as turn_service
 from src.core.game_state import GameState
+from src.core.i18n import i18n
 from src.core.scenario_loader import ScenarioLoader
+from src.core import scenario_validation
+from src.core.scenario_validation import ScenarioValidationError
 from src.core.entities.figure import _compute_influence
+from src.core.entities.player import PlayerType
 
 
 logger = logging.getLogger("EOR-GUI")
@@ -22,14 +28,49 @@ logger = logging.getLogger("EOR-GUI")
 # 1. 会话创建
 # ---------------------------------------------------------------------------
 
-def create_gui_prototype_session(config_path: Optional[str] = None, start_phase: str = "mortality") -> dict:
+def create_gui_prototype_session(
+    config_path: Optional[str] = None,
+    start_phase: str = "mortality",
+    scenario_file: str = scenario_validation.DEFAULT_SCENARIO_FILE,
+) -> dict:
     """
     创建 GUI 原型会话。
-    使用 gui_prototype.json 场景。默认从真实天命阶段开始；测试可显式指定 start_phase。
+
+    `scenario_file` 是启动/配置参数（S-A / GR-F10）：`data/scenarios` 下的裸场景文件名。
+    默认 `gui_prototype.json`，保留历史行为（1 HUMAN / 2 AI）。所选场景在任何
+    GameState/session 创建之前 fail-closed 校验（GR-F11）——非法选择绝不产生半开会话，
+    也绝不静默回退到默认场景。默认从真实天命阶段开始；测试可显式指定 start_phase。
     """
+    # ---- R02: 单次捕获不可变快照（分离式；尚未创建任何对外 session）----
+    # 快照在任何候选 GameState 创建之前准备好；失败 fail-closed，绝不替换默认场景。
+    try:
+        snapshot = scenario_validation.prepare_selected_scenario(
+            scenario_file, config_path=config_path)
+    except ScenarioValidationError as e:
+        logger.warning("Scenario selection rejected", extra={"scenario_file": scenario_file})
+        message = f"SCENARIO_INVALID: {e}"
+        return api_response(False, message, errors=[message])
+    except Exception as e:  # noqa: BLE001 - resolution/read/decode failure -> fail closed
+        message = ("SCENARIO_INVALID: scenario preparation failed for "
+                   f"{scenario_file}: {e}")
+        logger.error(message)
+        return api_response(False, message, errors=[message])
+
+    # canonical 选择 = 快照已解析的 canonical 裸名（非原始入参）；报告与配置同出一源。
+    canonical_scenario = snapshot.canonical_name
+    scenario_report = snapshot.report_copy()
+
     try:
         state = GameState(config_path)
-        ScenarioLoader.load_scenario(state, "gui_prototype.json")
+        # 已选择场景：仅经由有界新入口消费快照；应用失败必须 fail-closed
+        #（不得静默回退到内置默认，也绝不重试历史 filename loader）。
+        try:
+            ScenarioLoader.initialize_validated_scenario(state, snapshot)
+        except Exception as load_exc:  # noqa: BLE001 - convert any application failure to SCENARIO_INVALID
+            message = ("SCENARIO_INVALID: failed to apply selected scenario "
+                       f"{canonical_scenario}: {load_exc}")
+            logger.error(message)
+            return api_response(False, message, errors=[message])
 
         phase_order = _phase_order()
         if start_phase not in phase_order:
@@ -48,30 +89,180 @@ def create_gui_prototype_session(config_path: Optional[str] = None, start_phase:
             state.set_current_player(human_players[0])
             state.set_turn_order(human_players)
 
+        # ---- 创建后校验：玩家映射/基数须与预检一致（否则不发布半开会话）----
+        loaded_players = {p.player_id for p in state.get_all_players()}
+        if loaded_players != set(scenario_report["player_ids"]):
+            message = ("SCENARIO_INVALID: initialized player map does not match "
+                       f"validated preflight for {scenario_file}")
+            logger.error(message)
+            return api_response(False, message, errors=[message])
+        if len(loaded_players) != scenario_report["faction_count"]:
+            message = ("SCENARIO_INVALID: player/faction cardinality mismatch after "
+                       f"initialization for {scenario_file}")
+            logger.error(message)
+            return api_response(False, message, errors=[message])
+
+        # R02 (r2a/r2b): post-initialization CONSISTENCY checks — the ACTUAL
+        # player->faction ownership edges (exact edge + bijection), controller
+        # consistency and declared year/treasury equality. These are defence-in-depth
+        # mapping checks, NOT a provenance proof: provenance is structural (the GUI
+        # route only ever consumes the validated snapshot via the bounded new entry,
+        # with no call edge to the historical loader or its built-in whole-scenario
+        # default). Any mismatch still fails the caller closed.
+        ok, reason = _loaded_state_matches_selection(state, scenario_report)
+        if not ok:
+            message = ("SCENARIO_INVALID: loaded session does not match validated "
+                       f"selection {canonical_scenario} ({reason})")
+            logger.error(message)
+            return api_response(False, message, errors=[message])
+
         current_player = state.get_current_player()
         logger.info("GUI prototype session created", extra={
             "players": human_players,
             "current_player": current_player.player_id if current_player else None,
             "start_phase": start_phase,
+            "scenario_file": scenario_file,
         })
         return api_response(True, "GUI prototype session created", {
             "state": state,
             "human_players": human_players,
             "start_phase": start_phase,
+            "scenario": scenario_report,
         })
     except Exception as e:
         logger.exception("Session creation failed")
         return api_response(False, f"Session creation failed: {e}", errors=[str(e)])
 
 
+def create_gui_hotseat_session(
+    config_path: Optional[str] = None,
+    start_phase: str = "mortality",
+    scenario_file: str = scenario_validation.DEFAULT_SCENARIO_FILE,
+) -> dict:
+    """Create a GUI prototype session AND register it as a Hot-seat session (S-B).
+
+    Additive to :func:`create_gui_prototype_session` (which is unchanged and keeps
+    the historical CLI/1H2AI exemption): this entry binds the single access-policy
+    handle so the Active-seat read/write guard is enforced fail-closed. The
+    principal is the first HUMAN player (the first turn actor).
+
+    No scenario/loader logic is duplicated here; the validated S-A chain runs
+    verbatim inside the delegated call.
+    """
+    result = create_gui_prototype_session(
+        config_path=config_path, start_phase=start_phase, scenario_file=scenario_file)
+    if not result.get("success"):
+        return result
+    state = result["data"]["state"]
+    human_players = result["data"].get("human_players", [])
+    principal = human_players[0] if human_players else None
+    if principal is None:
+        current = state.get_current_player()
+        principal = current.player_id if current else None
+    if principal is None:
+        message = "SCENARIO_INVALID: no HUMAN principal for hot-seat session"
+        return api_response(False, message, errors=[message])
+    ctx = session_access.register_hotseat_session(state, principal, epoch=0)
+    result["data"]["hotseat_context"] = ctx
+    return result
+
+
+def _loaded_state_matches_selection(state: GameState, scenario_report: dict):
+    """Post-initialization consistency check (defence-in-depth, NOT provenance).
+
+    R02 r2a/r2b consistency guard (defence-in-depth; structural provenance is that
+    the GUI snapshot route has no fallback edge at all). ``ScenarioLoader.load_scenario``
+    historically swallows a file-read failure and substitutes its built-in default
+    config, which can share the selected file's faction ids / cardinality / controller
+    types (canonical ``gui_prototype.json`` vs the built-in default differ ONLY in
+    year/treasury); a controller/composition comparison alone cannot detect that.
+    This verifies, instead:
+
+      * exact faction-id set and player-id set (cardinality included);
+      * the ACTUAL player->faction ownership edge for every declared faction
+        (``player_<faction>.faction_id == <faction>``), not merely ``player_type``;
+      * ownership bijection: exactly one player per declared faction, no unowned
+        faction and no player owning an undeclared/multiple faction;
+      * controller consistency (``player_type`` AND ``faction.is_player``);
+      * declared ``start_year`` / national ``treasury`` equality (a consistency check
+        only — provenance is structural, not value-derived). Only enforced when the
+        selected scenario declares the value.
+
+    Returns ``(True, "")`` when the selection was honoured, else ``(False, reason)``.
+    """
+    expected_ids = {row["id"] for row in scenario_report["factions"]}
+    if set(state.factions.keys()) != expected_ids:
+        return False, "faction id set mismatch"
+
+    players = state.get_all_players()
+    if len(players) != scenario_report["faction_count"]:
+        return False, "player/faction cardinality mismatch"
+    if {p.player_id for p in players} != set(scenario_report["player_ids"]):
+        return False, "player id set mismatch"
+
+    # Ownership edges + bijection (the actual relationship, not player_type).
+    owned = {}
+    for row in scenario_report["factions"]:
+        fid = row["id"]
+        pid = row["player_id"]
+        player = state.get_player(pid)
+        if player is None:
+            return False, f"missing player {pid}"
+        if player.faction_id != fid:
+            return False, (f"ownership edge mismatch: {pid} owns "
+                           f"{player.faction_id!r}, expected {fid!r}")
+        if fid in owned:
+            return False, f"faction {fid!r} owned by more than one player"
+        owned[fid] = pid
+    if set(owned) != expected_ids:
+        return False, "ownership full-coverage failure (unowned faction)"
+    if len({p.faction_id for p in players}) != len(players):
+        return False, "duplicate faction ownership across players"
+
+    for row in scenario_report["factions"]:
+        fid = row["id"]
+        is_human = row["controller"] == scenario_validation.CONTROLLER_HUMAN
+        expected_type = "human" if is_human else "ai"
+        player = state.get_player(row["player_id"])
+        if player.player_type.value != expected_type:
+            return False, f"controller mismatch for {row['player_id']}"
+        faction = state.get_faction(fid)
+        if faction is None:
+            return False, f"faction {fid!r} missing after load"
+        if bool(getattr(faction, "is_player", None)) != is_human:
+            return False, f"faction controller flag mismatch for {fid!r}"
+
+    # Provenance: a silent built-in fallback publishes its own year/treasury.
+    expected_year = scenario_report.get("start_year")
+    if expected_year is not None:
+        actual_year = state.turn.year if state.turn else None
+        if actual_year != expected_year:
+            return False, f"start year mismatch: {actual_year!r} != {expected_year!r}"
+    expected_treasury = scenario_report.get("national_treasury")
+    if expected_treasury is not None and state.treasury != expected_treasury:
+        return False, (f"national treasury mismatch: {state.treasury!r} != "
+                       f"{expected_treasury!r}")
+
+    return True, ""
+
+
 # ---------------------------------------------------------------------------
 # 2. 按 viewer 过滤的快照
 # ---------------------------------------------------------------------------
 
-def get_session_snapshot(state: GameState, viewer_player_id: str) -> dict:
+def get_session_snapshot(state: GameState, viewer_player_id: str, *,
+                         caller_context: Optional[session_access.HotseatContext] = None) -> dict:
     """
     返回 GUI 需要的安全快照。只包含 viewer_player_id 有权查看的信息。
     """
+    # S-B Group 1: single active-seat read guard BEFORE building any private DTO.
+    # S-B-R3a (DG-01): the explicitly presented service handle is required; the
+    # boundary never fetches it off ``state`` (omission DENIES a registered seat).
+    denied = session_access.denied_or_none(
+        state, session_access.OP_READ_SNAPSHOT, viewer=viewer_player_id,
+        caller_context=caller_context)
+    if denied is not None:
+        return denied
     try:
         viewer = state.get_player(viewer_player_id)
         if not viewer:
@@ -254,10 +445,17 @@ def _project_population_outcome(state: GameState, result_data: dict) -> dict:
     }
 
 
-def get_population_view(state: GameState, viewer_player_id: str) -> dict:
+def get_population_view(state: GameState, viewer_player_id: str, *,
+                        caller_context: Optional[session_access.HotseatContext] = None) -> dict:
     """
     返回人口阶段的详细视图，包含候选人、已投票状态、可执行操作。
     """
+    # S-B Group 1: active-seat read guard before any public/private DTO build.
+    denied = session_access.denied_or_none(
+        state, session_access.OP_READ_PHASE_VIEW, viewer=viewer_player_id,
+        caller_context=caller_context)
+    if denied is not None:
+        return denied
     try:
         viewer = state.get_player(viewer_player_id)
         if not viewer:
@@ -272,8 +470,8 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
             # 使反馈在进入人口阶段的一瞬间即可见（FC-ESC-01）。canonical 幂等
             # （marker "population_disbandment"）⇒ 结算侧 resolve_population_slice 恒为
             # 幂等命中（安全网保留，FC-ESC-06）⇒ exactly-once、零二次 mutation。
-            population_api.process_population_disbandments(state)
-            population_api.begin_population_phase(state)
+            population_api.process_population_disbandments(state, caller_context=caller_context)
+            population_api.begin_population_phase(state, caller_context=caller_context)
 
         # 本派系可操作人物
         my_figures = []
@@ -294,7 +492,7 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
                 })
 
         # 候选人（所有人可见，但只含公开信息）
-        cand_result = population_api.get_candidates(state)
+        cand_result = population_api.get_candidates(state, caller_context=caller_context)
         candidates = cand_result.get("data", {}) if cand_result.get("success") else {}
         result = state.get_phase_result("population")
         result_data = result.get("data", {}) if isinstance(result, dict) else {}
@@ -421,13 +619,38 @@ def get_population_view(state: GameState, viewer_player_id: str) -> dict:
 # 4. 完成当前玩家操作
 # ---------------------------------------------------------------------------
 
-def complete_population_player(state: GameState, player_id: str) -> dict:
+def complete_population_player(state: GameState, player_id: str, *,
+                               caller_context: Optional[session_access.HotseatContext] = None) -> dict:
     """
     标记当前玩家完成人口阶段操作，切换到下一个玩家。
     """
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    decision = session_access.authorize_public(
+        state, session_access.OP_MUTATE, command="complete_population_player",
+        target_player_id=player_id, caller_context=caller_context)
+    if not decision.allowed:
+        return decision.denial()
     try:
-        result = player_api.next_player(state, player_id)
-        return result
+        # S-C (R1 §4.1 / delta §3.3#1): record the checked completion via the
+        # coordinator's ledger (owner-recorded explicit finish), then keep the
+        # historical cursor rotation for the non-coordinated pass.
+        scope = turn_service.mint_scope(state, "population")
+        substep = turn_service._population_substep(state)
+        # R11-F03: CHECK every completion result — a rejected/unrecorded owner
+        # completion must NOT proceed to the cursor rotation (never a false
+        # completion; the swallowed result is the defect being closed).
+        completion = turn_service.complete_actor(
+            state, None, scope.scope_id, "complete_population_player",
+            actor_player_id=player_id, phase="population", substep=substep,
+            satisfied_kind=turn_service.KIND_EXPLICIT_FINISH,
+            owner_declared=True)
+        if not completion.get("success"):
+            reason = completion.get("reason", "COMPLETION_REJECTED")
+            return api_response(False, "Player completion was not recorded", {
+                "reason": reason,
+            }, [{"code": reason,
+                "message": "the owner completion was not recorded"}])
+        return player_api.next_player(state, player_id, caller_context=caller_context)
     except Exception as e:
         logger.exception("Player completion failed")
         return api_response(False, f"Player completion failed: {e}", errors=[str(e)])
@@ -440,8 +663,16 @@ def submit_population_votes(
     state: GameState,
     player_id: str,
     selection_map: Dict[str, int],
+    *,
+    caller_context: Optional[session_access.HotseatContext] = None,
 ) -> dict:
     """Submit the WP-02b fixed-five selection map and orchestrate handoff/resolve."""
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    decision = session_access.authorize_public(
+        state, session_access.OP_MUTATE, command="submit_population_votes",
+        target_player_id=player_id, caller_context=caller_context)
+    if not decision.allowed:
+        return decision.denial()
     if not isinstance(selection_map, dict):
         return api_response(False, "Invalid population vote selection", {}, [{
             "code": "INVALID_SELECTION_MAP",
@@ -467,8 +698,8 @@ def submit_population_votes(
     # GUI 人口阶段投票入口：归档必须先于 get_candidates（设计 02 §2.2；G3 Q3）。
     # 阶段门：仅当当前阶段为 population 才执行（防 session_store 预刷新误触发，D-6）。
     if _infer_current_phase_id(state) == "population":
-        population_api.begin_population_phase(state)
-    cand_result = population_api.get_candidates(state)
+        population_api.begin_population_phase(state, caller_context=caller_context)
+    cand_result = population_api.get_candidates(state, caller_context=caller_context)
     if not cand_result.get("success"):
         return api_response(False, "Failed to load population candidates", {}, [{
             "code": "CANDIDATES_UNAVAILABLE",
@@ -480,37 +711,113 @@ def submit_population_votes(
          "figure_id": selection_map.get(office, 0) if cand_data.get(office) else 0}
         for office in _POPULATION_OFFICES
     ]
-    batch_result = population_api.batch_vote(state, player_id, entries)
+    batch_result = population_api.batch_vote(state, player_id, entries, caller_context=caller_context)
     if not batch_result.get("success"):
         return batch_result
 
-    completion = complete_population_player(state, player_id)
+    completion = complete_population_player(state, player_id, caller_context=caller_context)
     if not completion.get("success"):
         return completion
 
-    incomplete_humans = [
-        player.player_id
-        for player in state.get_all_players()
-        if player.player_type.value == "human"
-        and not state.get_vote_completed(player.player_id)
-    ]
-    if incomplete_humans:
-        awaiting = state.get_current_player()
-        return api_response(True, "Awaiting remaining players", {
-            "status": "awaiting_players",
-            "awaiting_player_id": awaiting.player_id if awaiting else incomplete_humans[0],
+    # S-C: the SOLE automatic continuation decides next actor / resolution. It is
+    # NOT a rotation on ``incomplete_humans == []`` (R1 §4.1 / delta §3.3#1).
+    cont = turn_service.continue_after_command(
+        state, ai_executor=_population_ai_executor)
+    if cont.masked_failure:
+        return api_response(False, "AI continuation failed", {
+            "status": "masked_failure",
             "resolved": False,
+            "retryable": True,
+            "reason": cont.reason,
             "election_results": [],
+        }, [{"code": "AI_DRAIN_MASKED_FAILURE", "message": cont.reason}])
+    if cont.status == turn_service.STATUS_RESOLVED:
+        resolved = resolve_population_slice(state, caller_context=caller_context)
+        if not resolved.get("success"):
+            return resolved
+        return api_response(True, "Population votes submitted and resolved", {
+            "status": "resolved",
+            "awaiting_player_id": None,
+            "resolved": True,
+            "election_results": resolved.get("data", {}).get("election_results", []),
         })
+    awaiting = state.get_current_player()
+    return api_response(True, "Awaiting remaining players", {
+        "status": "awaiting_players",
+        "awaiting_player_id": awaiting.player_id if awaiting else None,
+        "resolved": False,
+        "election_results": [],
+    })
 
-    resolved = resolve_population_slice(state)
-    if not resolved.get("success"):
-        return resolved
-    return api_response(True, "Population votes submitted and resolved", {
-        "status": "resolved",
-        "awaiting_player_id": None,
-        "resolved": True,
-        "election_results": resolved.get("data", {}).get("election_results", []),
+
+# ---------------------------------------------------------------------------
+# Recovery (R-02 / S-D-2 Disposition §2.3): the owner-layer continuation-recovery
+# entry. It supplies the SAME phase-specific AI executor the forward route uses
+# (``submit_population_votes`` L724 -> ``_population_ai_executor``; senate -> the
+# mirrored senate executor F1), so a real ``grContinuationRecover`` -> Store
+# ``doRecoverContinuation`` -> Adapter ``recover_continuation`` resumes ONLY the
+# outstanding scheduled-AI work instead of failing closed with ``NO_EXECUTOR``.
+# The committed HUMAN command is never resubmitted (same-revision ``DK`` replay
+# denied). No authorization is relaxed: the public mutation guard is the same one
+# the forward route presents.
+# ---------------------------------------------------------------------------
+def _phase_ai_executor(state: GameState):
+    """Select the phase-specific scheduled-AI drain for the CURRENT phase.
+
+    Mirrors the forward wiring (``submit_population_votes`` ->
+    ``_population_ai_executor``); senate uses the mirrored senate executor (F1).
+    An unknown phase fails closed (``None`` -> the coordinator's ``NO_EXECUTOR``
+    masked safe failure). The phase-specific knowledge stays in the phase owner;
+    the generic coordinator is never asked to carry it.
+    """
+    try:
+        phase = turn_service._current_phase(state)
+    except Exception:  # pragma: no cover - defensive
+        return None
+    if phase == "population":
+        return _population_ai_executor
+    if phase == "senate":
+        from src.api import senate_api
+        return senate_api._senate_ai_executor
+    return None
+
+
+def recover_continuation(
+    state: GameState,
+    lease: Any = None,
+    fresh_receipt: Any = None,
+    *,
+    caller_context: Optional[session_access.HotseatContext] = None,
+) -> dict:
+    """Owner-layer continuation-recovery entry (R-02 / disposition §2.3).
+
+    Adds the MISSING phase-AI-executor wiring to the recovery route (the forward
+    route already supplies it in ``submit_population_votes``). A real
+    ``grContinuationRecover`` -> Store ``doRecoverContinuation`` -> Adapter
+    ``recover_continuation`` therefore actually makes progress on outstanding AI
+    work (``continue_after_command(ai_executor=...)``) rather than returning a
+    dict that stays ``MASKED_FAILURE`` via ``NO_EXECUTOR``. The committed HUMAN
+    command is not resubmitted (same-revision ``DK`` replay denied).
+    """
+    # S-B Group 1: public mutation boundary guard (same policy as the forward route).
+    decision = session_access.authorize_public(
+        state, session_access.OP_MUTATE, command="recover_continuation",
+        target_player_id=None, caller_context=caller_context)
+    if not decision.allowed:
+        return decision.denial()
+    cont = turn_service.recover_continuation(
+        state, lease, fresh_receipt, ai_executor=_phase_ai_executor(state))
+    if cont.masked_failure:
+        return api_response(False, "AI continuation failed", {
+            "status": "masked_failure",
+            "resolved": False,
+            "retryable": True,
+            "reason": cont.reason,
+        }, [{"code": "AI_DRAIN_MASKED_FAILURE", "message": cont.reason}])
+    return api_response(True, "Continuation recovered", {
+        "status": cont.status,
+        "actor": cont.actor,
+        "resolved": cont.status == turn_service.STATUS_RESOLVED,
     })
 
 
@@ -520,7 +827,7 @@ def submit_population_votes(
 
 def _all_human_population_votes_complete(state: GameState) -> bool:
     """Return True when every human player has voted for all required offices."""
-    cand_result = population_api.get_candidates(state)
+    cand_result = population_api._get_candidates_impl(state)
     candidates = cand_result.get("data", {}) if cand_result.get("success") else {}
     required_offices = {office for office, rows in candidates.items() if rows}
     if not required_offices:
@@ -538,14 +845,17 @@ def _all_human_population_votes_complete(state: GameState) -> bool:
     )
 
 
-def _drain_ai_population_turns(state: GameState, auto) -> dict:
+def _drain_ai_population_turns(state: GameState, auto, *,
+                               caller_context: Optional[session_access.HotseatContext] = None) -> dict:
     """唯一 AI drain 实现。遍历所有非 human 玩家，执行 festival → vote →
     set_vote_completed。completed-AI skip + partial-state preflight fail-closed（FC10）。
     """
     processed = []
 
     for player in state.get_all_players():
-        if player.player_type.value == "human":
+        # S-C (delta §1.2): explicit AI-only filter. OBSERVER and other HUMAN seats
+        # are NEVER processed as AI (the old non-human filter admitted OBSERVER).
+        if player.player_type is not PlayerType.AI:
             continue
         if state.get_vote_completed(player.player_id):
             continue
@@ -574,7 +884,7 @@ def _drain_ai_population_turns(state: GameState, auto) -> dict:
 
         # === S1 GUARD: candidate retrieval（FIX-A + FIX-2）===
         try:
-            cand_result = population_api.get_candidates(state)
+            cand_result = population_api.get_candidates(state, caller_context=caller_context)
         except Exception as exc:
             return api_response(False, "AI drain: candidate retrieval error", {
                 "processed_players": processed,
@@ -609,8 +919,10 @@ def _drain_ai_population_turns(state: GameState, auto) -> dict:
         # === END S1 GUARD ===
 
         try:
-            auto.process_festival(player.player_id, faction, bypass_permission=True)
-            auto.process_vote(player.player_id, faction, bypass_permission=True)
+            auto.process_festival(player.player_id, faction, bypass_permission=True,
+                                  caller_context=caller_context)
+            auto.process_vote(player.player_id, faction, bypass_permission=True,
+                              caller_context=caller_context)
 
             # === POSTCONDITION VALIDATION (Option C) ===
             votes_after = {
@@ -643,22 +955,84 @@ def _drain_ai_population_turns(state: GameState, auto) -> dict:
     })
 
 
-def resolve_population_slice(state: GameState) -> dict:
+def _build_population_auto_processor(state: GameState) -> "AutoPlayerProcessor":
+    """Build the narrow scheduled-AI capability for the population drain."""
+    from src.ui.processors.auto_player_processor import AutoPlayerProcessor
+    from src.core.deciders.impl.auto_retirement_decider import AutoRetirementDecider
+    from src.core.deciders.impl.auto_recruitment_decider import AutoRecruitmentDecider
+    from src.core.deciders.impl.auto_bid_decider import AutoBidDecider
+    from src.core.deciders.impl.auto_triumph_decider import AutoTriumphDecider
+    from src.core.deciders.impl.auto_festival_decider import AutoFestivalDecider
+    from src.core.deciders.impl.auto_vote_decider import AutoVoteDecider
+    return AutoPlayerProcessor(
+        state,
+        retirement_decider=AutoRetirementDecider(state),
+        recruitment_decider=AutoRecruitmentDecider(),
+        bid_decider=AutoBidDecider(),
+        triumph_decider=AutoTriumphDecider(),
+        festival_decider=AutoFestivalDecider(),
+        vote_decider=AutoVoteDecider(),
+    )
+
+
+def _population_ai_executor(state: GameState, target) -> "turn_service.ExecutionOutcome":
+    """Bridge the population AI owner into the coordinator's narrow structured
+    outcome, mapping the drain's typed result codes truthfully (no swallowing)."""
+    try:
+        auto = _build_population_auto_processor(state)
+        res = _drain_ai_population_turns(state, auto)
+    except Exception as exc:  # decider-retrieval throw at the precommit seam
+        return turn_service.ExecutionOutcome(
+            turn_service.OUTCOME_FAILURE, detail=f"AI_DRAIN_EXCEPTION: {exc}")
+    if res.get("success"):
+        return turn_service.ExecutionOutcome(turn_service.OUTCOME_ACCEPTED,
+                                             command_id="ai-drain")
+    code = (res.get("data") or {}).get("reason_code", "")
+    if code == "AI_DRAIN_NO_CANDIDATES":
+        return turn_service.ExecutionOutcome(
+            turn_service.OUTCOME_STRUCTURAL_EMPTY, detail=code)
+    return turn_service.ExecutionOutcome(
+        turn_service.OUTCOME_FAILURE, detail=code or res.get("message", "AI_DRAIN_FAILED"))
+
+
+def resolve_population_slice(state: GameState, *,
+                             caller_context: Optional[session_access.HotseatContext] = None) -> dict:
     """
     结算人口阶段选举。所有玩家完成后调用。
     返回结构化选举结果，供 GUI 消费。
     """
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    decision = session_access.authorize_public(
+        state, session_access.OP_MUTATE, command="resolve_population_slice",
+        caller_context=caller_context)
+    if not decision.allowed:
+        return decision.denial()
+    # S-C (R1 §4.1 / delta §3.3#1): phase_ready is checked at the election-mutation
+    # boundary (after the AI drain and the human-completion guard below) — a public
+    # resolver denial MUST precede its business mutation.
     if state.get_phase_result("population") is not None:
         existing = state.get_phase_result("population")
         return api_response(True, "Population phase already resolved", {
             "phase_executed": state.is_phase_executed("population"),
             "election_results": existing.get("election_results", []) if existing else [],
         })
+    # S-C F5 / R-2 / R-4: the readiness gate MUST precede every denied operation's
+    # BUSINESS work. A REGISTERED Hot-seat session is checked BEFORE any
+    # begin_population_phase / AI drain / disbandment mutation, so a denied
+    # resolver commits nothing. Book presence alone is NOT the boundary — the
+    # registered Hot-seat record is. A never-registered CLI/legacy state keeps the
+    # historical FIX-C ordering + all-human guard below.
+    if session_access.is_hotseat_registered(state) \
+            and not turn_service.phase_ready(state, "population"):
+        return api_response(False, "Population phase not ready", {
+            "retryable": True,
+        }, [{"code": "PHASE_NOT_READY",
+            "message": "All required population ballots must be in before resolution"}])
     try:
         # GUI 人口阶段结算入口：归档必须先于 AI drain（其内部即 get_candidates）
         # （设计 02 §2.2；G3 Q3）。阶段门：仅当当前阶段为 population 才执行（D-6）。
         if _infer_current_phase_id(state) == "population":
-            population_api.begin_population_phase(state)
+            population_api.begin_population_phase(state, caller_context=caller_context)
         influence_before = _faction_influence_rows(state)
         # 先让 AI 自动完成（如果还有未完成的玩家）
         from src.ui.processors.auto_player_processor import AutoPlayerProcessor
@@ -677,7 +1051,7 @@ def resolve_population_slice(state: GameState) -> dict:
             festival_decider=AutoFestivalDecider(),
             vote_decider=AutoVoteDecider(),
         )
-        ai_drain_result = _drain_ai_population_turns(state, auto)
+        ai_drain_result = _drain_ai_population_turns(state, auto, caller_context=caller_context)
         if not ai_drain_result.get("success"):
             return ai_drain_result
 
@@ -688,7 +1062,7 @@ def resolve_population_slice(state: GameState) -> dict:
         if not _all_human_population_votes_complete(state):
             # Per-player 精确判定：用 per-player required.issubset，非全局 predicate
             from src.api.population_api import get_candidates as _get_candidates
-            cand_r = _get_candidates(state)
+            cand_r = _get_candidates(state, caller_context=caller_context)
             required = {
                 o for o, rows in (cand_r.get("data", {}) if cand_r.get("success") else {}).items() if rows
             }
@@ -708,7 +1082,7 @@ def resolve_population_slice(state: GameState) -> dict:
             ])
         # === END FIX-C ===
 
-        cand_result = population_api.get_candidates(state)
+        cand_result = population_api.get_candidates(state, caller_context=caller_context)
         candidates_before_resolve = cand_result.get("data", {}) if cand_result.get("success") else {}
 
         # R2-A-1（AU-R2-2a）：结算尾段以幂等 begin_population_phase 替代独立
@@ -716,7 +1090,7 @@ def resolve_population_slice(state: GameState) -> dict:
         # resolve_election，消除「resolve 前未清档」的间歇 stale office 窗口（R2-04 根因）。
         # 幂等：population_entry marker 守卫——已 archive（顶部 :523 门控已执行）→ 返回
         # cached no-op；未执行 → 此刻归档→转换全序。顶部阶段门控保留，二者互补无双重归档。
-        entry = population_api.begin_population_phase(state)
+        entry = population_api.begin_population_phase(state, caller_context=caller_context)
         conversion_result = {
             "converted": entry.get("converted", []),
             "total": len(entry.get("converted", [])),
@@ -726,10 +1100,12 @@ def resolve_population_slice(state: GameState) -> dict:
         # marker "population_disbandment"；CLI phase_population._handle_step_0 同一
         # canonical → GUI/CLI 同 mutation 集，S28/S29/S30）。业务事实供 DTO/证据，
         # 不做展示吸收（R-20）。
-        disbandment = population_api.process_population_disbandments(state)
+        disbandment = population_api.process_population_disbandments(state, caller_context=caller_context)
 
         # 结算选举（archive 已无条件先于 resolve）
-        resolve_result = population_api.resolve_election(state)
+        # S-C F5: the readiness gate already ran BEFORE all business work (top of the
+        # function); the election mutation is now reached directly.
+        resolve_result = population_api.resolve_election(state, caller_context=caller_context)
         if not resolve_result:
             return api_response(False, "Election resolve returned None")
 
@@ -763,7 +1139,8 @@ def resolve_population_slice(state: GameState) -> dict:
 # 6. 人口阶段推进
 # ---------------------------------------------------------------------------
 
-def advance_population_phase(state: GameState, viewer_player_id: str) -> dict:
+def advance_population_phase(state: GameState, viewer_player_id: str, *,
+                             caller_context: Optional[session_access.HotseatContext] = None) -> dict:
     """Confirm population result and advance to Senate phase.
 
     Failure semantics:
@@ -775,6 +1152,13 @@ def advance_population_phase(state: GameState, viewer_player_id: str) -> dict:
     viewer = state.get_player(viewer_player_id)
     if not viewer:
         return api_response(False, "Viewer player not found")
+
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    decision = session_access.authorize_public(
+        state, session_access.OP_MUTATE, command="advance_population_phase",
+        target_player_id=viewer_player_id, caller_context=caller_context)
+    if not decision.allowed:
+        return decision.denial()
 
     # Guard: phase not yet executed (prevents double-advance)
     if state.is_phase_executed("population"):
@@ -807,7 +1191,9 @@ def advance_population_phase(state: GameState, viewer_player_id: str) -> dict:
 # 7. 决算阶段视图
 # ---------------------------------------------------------------------------
 
-def get_resolution_view(state: GameState, viewer_player_id: str) -> dict:
+def get_resolution_view(state: GameState, viewer_player_id: str, *,
+                        caller_context: Optional[session_access.HotseatContext] = None) -> dict:
+    # S-B Group 1: active-seat read guard before any public/private DTO build.
     """
     返回决算阶段的只读视图 DTO。
 
@@ -820,6 +1206,12 @@ def get_resolution_view(state: GameState, viewer_player_id: str) -> dict:
     preview = _build_resolution_preview 只读投影（直连 _plan_*，R-23，零变异 EC-01），
     四信息类目（总督返回/合同到期/和约到期/派系聚合衰减），不再提供 step_statuses 顺序工作流。
     """
+    # S-B Group 1: active-seat read guard before any public/private DTO build.
+    denied = session_access.denied_or_none(
+        state, session_access.OP_READ_PHASE_VIEW, viewer=viewer_player_id,
+        caller_context=caller_context)
+    if denied is not None:
+        return denied
     try:
         viewer = state.get_player(viewer_player_id)
         if not viewer:

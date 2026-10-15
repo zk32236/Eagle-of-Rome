@@ -1,10 +1,12 @@
 # src/api/faction_api.py
 from src.core.game_state import GameState
 from src.api import api_response
+from src.api import session_access
 from src.core.i18n import i18n
 
 
-def get_faction_style_map(state: GameState) -> dict:
+@session_access.guarded(session_access.OP_READ_PHASE_VIEW)
+def get_faction_style_map(state: GameState, *, caller_context=None) -> dict:
     """
     返回全局派系样式映射。
     权威来源：state.config.get("faction_style_map", {})
@@ -56,7 +58,8 @@ def get_faction_style_map(state: GameState) -> dict:
         "default_unknown_color": "#3A3530",
     })
 
-def get_factions_status(state: GameState) -> dict:
+@session_access.guarded(session_access.OP_READ_PHASE_VIEW)
+def get_factions_status(state: GameState, *, caller_context=None) -> dict:
     """返回所有派系状态"""
     if not state.factions:
         return api_response(True, i18n.get("factions_no_factions"), data=[])

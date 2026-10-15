@@ -6,6 +6,8 @@ import logging
 from typing import Any, Dict
 
 from src.api import api_response
+from src.api import session_access
+from src.api import session_turn_service as turn_service
 from src.core.game_state import GameState
 from src.core.service.economic_service import EconomicService
 
@@ -14,8 +16,15 @@ logger = logging.getLogger("EOR-GUI")
 NEXT_PHASE_ID = "forum"
 
 
-def get_revenue_view(state: GameState, viewer_player_id: str) -> dict:
+def get_revenue_view(state: GameState, viewer_player_id: str, *,
+                     caller_context=None) -> dict:
     """返回收入阶段只读状态。"""
+    # S-B Group 1: active-seat read guard before any public/private DTO build.
+    denied = session_access.denied_or_none(
+        state, session_access.OP_READ_PHASE_VIEW, viewer=viewer_player_id,
+        caller_context=caller_context)
+    if denied is not None:
+        return denied
     viewer = state.get_player(viewer_player_id)
     if not viewer:
         return api_response(False, "Viewer player not found")
@@ -57,8 +66,15 @@ def get_revenue_view(state: GameState, viewer_player_id: str) -> dict:
     return api_response(True, "Revenue view", data)
 
 
-def execute_revenue_phase(state: GameState, viewer_player_id: str) -> dict:
+def execute_revenue_phase(state: GameState, viewer_player_id: str, *,
+                          caller_context=None) -> dict:
     """执行收入结算。"""
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    decision = session_access.authorize_public(
+        state, session_access.OP_MUTATE, command="execute_revenue_phase",
+        viewer=viewer_player_id, caller_context=caller_context)
+    if not decision.allowed:
+        return decision.denial()
     viewer = state.get_player(viewer_player_id)
     if not viewer:
         return api_response(False, "Viewer player not found")
@@ -90,8 +106,15 @@ def execute_revenue_phase(state: GameState, viewer_player_id: str) -> dict:
     return api_response(True, "Revenue phase settled", result)
 
 
-def advance_revenue_phase(state: GameState, viewer_player_id: str) -> dict:
+def advance_revenue_phase(state: GameState, viewer_player_id: str, *,
+                          caller_context=None) -> dict:
     """确认收入结算并推进到广场阶段。"""
+    # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
+    decision = session_access.authorize_public(
+        state, session_access.OP_MUTATE, command="advance_revenue_phase",
+        viewer=viewer_player_id, caller_context=caller_context)
+    if not decision.allowed:
+        return decision.denial()
     viewer = state.get_player(viewer_player_id)
     if not viewer:
         return api_response(False, "Viewer player not found")
@@ -109,6 +132,12 @@ def advance_revenue_phase(state: GameState, viewer_player_id: str) -> dict:
     result = state.get_phase_result("revenue")
     if not result:
         return api_response(False, "Revenue phase has not been resolved")
+
+    # S-C (R1 §4.5 / Overlay §1.1): advance checks the current scope + the genuine
+    # existing result/execution predicate on a registered Hot-seat session.
+    barrier = turn_service.owner_barrier(state, "revenue")
+    if barrier is not None:
+        return api_response(False, barrier["message"], errors=[barrier["code"]])
 
     state.mark_phase_executed("revenue")
     data = {

@@ -3,6 +3,7 @@ from src.core.game_state import GameState
 from src.core.entities.figure import ClassTier
 from src.core.localization import TerminologyService
 from src.api import api_response
+from src.api import session_access
 from src.core.i18n import i18n
 from typing import Optional, List, Dict, Any
 
@@ -51,7 +52,9 @@ def _extract_figure_data(fig) -> Dict[str, Any]:
         "contract_ids": fig.contract_ids,
     }
 
-def get_figure_info(state: GameState, figure_id: Optional[int] = None) -> dict:
+@session_access.guarded(session_access.OP_READ_PHASE_VIEW)
+def get_figure_info(state: GameState, figure_id: Optional[int] = None, *,
+                    caller_context=None) -> dict:
     """获取人物信息，若figure_id为None则返回所有存活人物列表"""
     if figure_id is not None:
         fig = state.get_member(figure_id)
@@ -137,7 +140,8 @@ def get_figure_info(state: GameState, figure_id: Optional[int] = None) -> dict:
         message = i18n.get("figure_list_header", rows="\n".join(rows))
         return api_response(True, message, data_list)
 
-def get_private_land_info(state: GameState) -> dict:
+@session_access.guarded(session_access.OP_READ_PHASE_VIEW)
+def get_private_land_info(state: GameState, *, caller_context=None) -> dict:
     """返回所有人物私地信息"""
     terms = TerminologyService.get()
     land_price = state.get_economic_rule("land_price_per_unit", 10)

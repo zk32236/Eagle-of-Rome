@@ -14,6 +14,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from src.api import api_response
+from src.api import session_access
 from src.core.deciders.impl.auto_budget_decider import AutoBudgetDecider
 from src.core.deciders.impl.auto_land_proposal_decider import AutoLandProposalDecider
 from src.core.deciders.land_proposal_decider import LandProposalDecider
@@ -628,6 +629,37 @@ def _build_vote_results_and_candidates(state: GameState) -> Dict[str, Any]:
     return _political_system(state).build_vote_results_and_candidates()
 
 
+def _record_veto_step_completion(state: GameState) -> None:
+    """S-C F1: record the senate veto-holder's LAWFUL decision (including an
+    explicit empty choice) into the ONE session ledger so the frozen veto
+    obligation is authoritatively satisfied — no cached DTO boolean. No-op on a
+    never-registered CLI/legacy state (which keeps the historical semantics).
+    """
+    from src.api import session_turn_service as _turn
+    if not session_access.is_hotseat_registered(state):
+        return
+    try:
+        scope = _turn.mint_scope(state, "senate")
+        book = _turn._book(state)
+        veto_oid = book.oid("senate", "veto", ("singleton", scope.scope_id),
+                            scope.scope_id)
+        # R10-1: the real owner veto command records a receipt-bound ACTION (bound
+        # to the veto OID + pre-command revision).
+        receipt = _turn.issue_owner_receipt(
+            state, "senate_veto_decision", scope_id=scope.scope_id,
+            obligation_id=veto_oid, fact_ref=f"senate-veto:{scope.scope_id}",
+            kind=_turn.KIND_ACTION)
+        _turn.complete_actor(
+            state, None, scope.scope_id, "senate_veto_decision",
+            phase="senate", substep="veto",
+            satisfied_kind=_turn.KIND_ACTION,
+            owner_receipt=receipt)
+    except Exception:  # pragma: no cover - defensive
+        logging.getLogger("EOR-GUI").exception(
+            "failed to record senate veto completion")
+
+
+@session_access.guarded(session_access.OP_MUTATE, command="apply_auto_tribune_vetoes")
 def apply_auto_tribune_vetoes(
     state: GameState,
     veto_decider: Optional[TribuneVetoDecider] = None,
@@ -681,16 +713,21 @@ def apply_auto_tribune_vetoes(
             "tribune_id": tribune.id,
             "tribune_faction_id": tribune.faction_id,
         })
+    # S-C F1: the AI tribune's lawful decision (including a deliberate no-veto) is
+    # recorded in the ledger so the frozen veto obligation is satisfied.
+    _record_veto_step_completion(state)
     return api_response(
         True,
         f"AI tribune veto decisions completed; vetoed {len(vetoed)} proposal(s)",
         data={"vetoed": vetoed, "decisions": decisions},
     )
 
+@session_access.guarded(session_access.OP_READ_PHASE_VIEW, viewer_param="viewer_player_id")
 def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
     """返回 GUI 元老院只读视图，不执行提案、投票或结算业务。"""
     if not state:
         return api_response(False, "无效的游戏状态")
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     try:
         viewer = state.get_player(viewer_player_id)
         if not viewer:
@@ -987,6 +1024,8 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
 
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="propose",
+                        viewer_param="player_id")
 def propose(state: GameState, player_id: str, proposal_type: str, bypass_turn_check: bool = False, **kwargs) -> dict:
     """R6（SA §A.4）：legacy 单提案入口退役——单项规范化为完整 package 后委托 propose_many。
 
@@ -1059,6 +1098,8 @@ def _single_proposal_request(state: GameState, player_id: str, proposal_type: st
 
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="propose_many",
+                        viewer_param="player_id")
 def propose_many(state: GameState, player_id: str, proposals: List[Dict[str, Any]]) -> dict:
     """R5（SA §3.1/§3.7，DA-2）：唯一整包提交门面（validate → stage → 原子发布）。
 
@@ -1071,6 +1112,7 @@ def propose_many(state: GameState, player_id: str, proposals: List[Dict[str, Any
     if not state:
         return api_response(False, "无效的游戏状态")
 
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     if isinstance(proposals, dict):
         request = dict(proposals)
     else:
@@ -1087,12 +1129,37 @@ def propose_many(state: GameState, player_id: str, proposals: List[Dict[str, Any
 
     result = _political_system(state).submit_proposal_package(
         player_id, request, _build_submit_context(state))
-    return api_response(
+    response = api_response(
         success=result.get("success", False),
         message=result.get("message", ""),
         data=result.get("data", {}),
         errors=result.get("errors", []),
     )
+    # F2 (S-D-2-R1 senate wiring / S-C Overlay §2.1.RR-03A N10-R "owner chain"):
+    # after a SUCCESSFUL package publication, route through the SOLE automatic
+    # continuation (``continue_after_command``) with the senate AI vote executor —
+    # mirroring ``session_api.submit_population_votes`` (L724). This is the
+    # production trigger the frozen N10-R chain requires
+    # (``submit_senate_proposals → propose_many → continue_after_command →
+    # senate AI vote decider``). The existing consumer (Store SD1-V01) already
+    # recognises the masked envelope below; the committed canonical ``created``
+    # (= PackageRecord.proposal_refs) is preserved verbatim on the success /
+    # awaiting branches so the Store's canonical existence predicate /
+    # ``_auto_finalize_after_submit`` semantics are NOT perturbed.
+    if response.get("success"):
+        from src.api import session_turn_service as _turn_service
+        cont = _turn_service.continue_after_command(
+            state, ai_executor=_senate_ai_executor)
+        if cont.masked_failure:
+            # Masked safe failure envelope — the EXACT shape the Store's
+            # ``_is_masked_continuation_failure`` requires (BOTH markers).
+            return api_response(False, "AI continuation failed", {
+                "status": "masked_failure",
+                "resolved": False,
+                "retryable": True,
+                "reason": cont.reason,
+            }, [{"code": "AI_DRAIN_MASKED_FAILURE", "message": cont.reason}])
+    return response
 
 
 def _package_request_from_specs(specs: List[Dict[str, Any]], state: Optional[GameState] = None,
@@ -1152,6 +1219,7 @@ def _build_submit_context(state: GameState) -> Dict[str, Any]:
     return ctx
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="auto_submit_proposals")
 def auto_submit_proposals(
     state: GameState,
     budget_decider: Optional[AutoBudgetDecider] = None,
@@ -1176,6 +1244,7 @@ def auto_submit_proposals(
     if not state:
         return api_response(False, "无效的游戏状态")
 
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     # 1. 查找主持人（WP-M D4.5：由 _find_any_eligible_consul 改为单一权威 GameState.get_presiding_officer）。
     host_figure = state.get_presiding_officer()
     if not host_figure:
@@ -1663,6 +1732,8 @@ def _execute_war_resolution_boundary(state: GameState, player_id: str) -> dict:
                      "next_phase_id": "combat", "effects": effects}}
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="advance_senate_phase",
+                        viewer_param="player_id")
 def advance_senate_phase(state: GameState, player_id: str) -> dict:
     """Mark senate complete and advance the GUI shell to combat.
 
@@ -1675,6 +1746,7 @@ def advance_senate_phase(state: GameState, player_id: str) -> dict:
     """
     if not state:
         return api_response(False, "Invalid game state")
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     if not state.is_current_player(player_id):
         return api_response(False, "Current player mismatch")
     # C-T01（SA §4.8）：同执行身份 receipt 重放优先于「Senate already executed」首次执行门。
@@ -1707,10 +1779,13 @@ def _infer_current_phase_id(state: GameState) -> str:
     return "resolution"
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="vote",
+                        viewer_param="player_id")
 def vote(state: GameState, player_id: str, proposal_ids: List[int], votes: List[bool]) -> dict:
     """记录玩家对多个提案的投票。"""
     if not state:
         return api_response(False, "无效的游戏状态")
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     result = _political_system(state).record_vote(player_id, proposal_ids, votes)
     return api_response(
         success=result.get("success", False),
@@ -1720,11 +1795,18 @@ def vote(state: GameState, player_id: str, proposal_ids: List[int], votes: List[
     )
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="veto",
+                        viewer_param="player_id")
 def veto(state: GameState, player_id: str, proposal_ids: List[int]) -> dict:
     """记录保民官对已通过提案的否决。"""
     if not state:
         return api_response(False, "无效的游戏状态")
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     result = _political_system(state).record_veto(player_id, proposal_ids)
+    if result.get("success"):
+        # S-C F1: record the human tribune's lawful veto decision (incl. explicit
+        # empty choice) into the ledger so the veto obligation is satisfied.
+        _record_veto_step_completion(state)
     return api_response(
         success=result.get("success", False),
         message=result.get("message", ""),
@@ -1840,8 +1922,10 @@ def _build_public_announcement(state: GameState, passed_snapshot: List[dict],
     }
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="finalize_senate_if_ready")
 def finalize_senate_if_ready(state: GameState,
-                             vote_decider: Optional[SenateVoteDecider] = None) -> dict:
+                             vote_decider: Optional[SenateVoteDecider] = None,
+                             *, caller_context=None) -> dict:
     """服务端命令流程调用的**唯一**政治 finalization 入口（API / CLI / GUI 三入口共用）。
 
     **不在 GET DTO 路径隐式写**：仅由 Submit 成功后的命令流程（零 Senate / vote 完成且零
@@ -1857,6 +1941,7 @@ def finalize_senate_if_ready(state: GameState,
     """
     if not state:
         return api_response(False, "无效的游戏状态")
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     finalization_id = senate_finalization_id(state)
     senate_session_id = finalization_id[1]
     existing_result = state.get_phase_result("senate")
@@ -1870,6 +1955,23 @@ def finalize_senate_if_ready(state: GameState,
         data["finalization_receipt"] = existing_receipt
         data["replayed"] = True
         return api_response(True, "元老院 finalization 已完成（幂等重放）", data=data)
+
+    # S-C F3 (Overlay §1.1 / R1 §4.2): on a REGISTERED Hot-seat session the frozen
+    # all-ballots ``phase_ready`` predicate gates BOTH the FIRST finalization AND
+    # partial recovery (``existing_result and not existing_receipt``) — an
+    # unresolved HUMAN/AI/veto obligation must not commit tally/finalization nor be
+    # recovered. The complete four-fact idempotent replay above is unaffected, and
+    # a never-registered CLI/legacy state keeps the historical behaviour.
+    if session_access.is_hotseat_registered(state):
+        from src.api import session_turn_service as _turn_service
+        if not _turn_service.phase_ready(state, "senate"):
+            return api_response(
+                False,
+                "元老院未就绪：仍有未决投票，禁止结算",
+                data={"retryable": True, "settlement_guard": "senate_not_ready"},
+                errors=[{"code": "PHASE_NOT_READY",
+                         "message": "All required senate ballots must be in before finalization"}],
+            )
 
     # 显式空选择守卫（仅对**首次** finalization 生效）——逐字保留 R4-09：零提案且未显式提交
     # 空批 → 拒绝，禁隐式 resolve。部分完成态（①已在、④缺）不适用本守卫（pending 已清）。
@@ -2007,9 +2109,11 @@ def finalize_senate_if_ready(state: GameState,
         )
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="resolve_senate")
 def resolve_senate(
     state: GameState,
     vote_decider: Optional[SenateVoteDecider] = None,
+    *, caller_context=None,
 ) -> dict:
     """执行元老院阶段最终结算。
 
@@ -2024,19 +2128,22 @@ def resolve_senate(
     """
     if not state:
         return api_response(False, "无效的游戏状态")
+    # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     # R6（SA §D.1.1，DA-4 B1）：本函数退役为 `finalize_senate_if_ready` 的兼容别名——三入口
     # （API / CLI / GUI）共用同一服务端完成协议（空选择守卫 / 幂等重放 / 受锁事务 /
     # 四完成事实同版）。旧前置幂等 no-op 与守卫整体迁入后者，此处零重复判定。
-    return finalize_senate_if_ready(state, vote_decider)
+    return finalize_senate_if_ready(state, vote_decider, caller_context=caller_context)
 
 
 # ==================== 兼容辅助函数 ====================
 
+@session_access.guarded(session_access.OP_MUTATE, command="execute_war_declaration")
 def execute_war_declaration(state: GameState, war, consul_id: int, legions: int):
     """执行宣战。保留旧公共函数名，内部委托 PoliticalSystem。"""
     return _political_system(state).execute_war_declaration(war, consul_id, legions)
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="execute_passed_peace_treaty")
 def execute_passed_peace_treaty(state: GameState, war):
     """执行通过的停战草案。保留旧公共函数名，内部委托 PoliticalSystem。"""
     return _political_system(state).execute_passed_peace_treaty(war)
@@ -2056,6 +2163,7 @@ def is_governor_position_occupied(state: GameState, figure_id: int) -> bool:
     return _political_system(state).is_governor_position_occupied(figure_id)
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="assign_fleets_to_active_wars")
 def assign_fleets_to_active_wars(state: GameState) -> dict:
     """
     为需要海战且尚无舰队的活跃战争指派可用舰队（补漏函数）。
@@ -2184,6 +2292,7 @@ def _frozen_commander_claim_ids(state: GameState) -> set:
     return excluded
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="assign_governors")
 def assign_governors(state: GameState, excluded_commander_ids=None) -> list[dict]:
     """总督候选人筛选与分配。
 
@@ -2305,6 +2414,8 @@ def assign_governors(state: GameState, excluded_commander_ids=None) -> list[dict
     return results
 
 
+@session_access.guarded(session_access.OP_MUTATE, command="auto_vote",
+                        viewer_param="player_id")
 def auto_vote(
     state: GameState,
     player_id: str,
@@ -2366,4 +2477,91 @@ def auto_vote(
         "skipped": skipped_count,
         "errors": errors,
     }
+
+
+# ---------------------------------------------------------------------------
+# F1 (S-D-2-R1 senate wiring): the senate phase-specific scheduled-AI executor.
+#
+# Mirrors ``session_api._population_ai_executor`` (the population drain): the
+# phase owner supplies a narrow structured ``ExecutionOutcome`` to the ONE
+# coordinator continuation (``session_turn_service.continue_after_command``),
+# which dispatches senate obligations via ``_senate_schedule`` /
+# ``_continue_scheduled_phase``. The executor is a PHASE-SPECIFIC drain and is
+# therefore owned here (never folded into the generic coordinator).
+# ---------------------------------------------------------------------------
+def _build_senate_vote_decider(state: GameState) -> SenateVoteDecider:
+    """The NAMED precommit senate vote decider seam (F1).
+
+    Mirrors ``session_api._build_population_auto_processor`` as the single,
+    monkeypatchable construction point for the scheduled senate AI's mandatory
+    ballot decision. The N10-R stimulus injects at THIS seam
+    (``MOCK_AUXILIARY``, BEFORE any owner commit), never inside the production
+    decision path itself.
+    """
+    from src.core.deciders.impl.auto_senate_vote_decider import AutoSenateVoteDecider
+    return AutoSenateVoteDecider()
+
+
+def _senate_ai_executor(state: GameState, target: Any) -> Any:
+    """Senate phase-specific scheduled-AI drain (F1) — mirrors
+    ``session_api._population_ai_executor``.
+
+    Executes the scheduled senate AI's mandatory action for ``target`` (an
+    ``Obligation``: ``substep == "vote:<proposal_id>"`` for a mandatory ballot;
+    ``actor_player_id`` = the scheduled senate AI). Mapping (no silent success):
+
+      * a real recorded ballot  -> ``OUTCOME_ACCEPTED(command_id=...)``;
+      * a deliberate decider no-choice (``None`` on a mandatory vote)
+        -> ``OUTCOME_NO_CHOICE`` (coordinator -> ``UNRESOLVED_MANDATORY_AI_VOTE``);
+      * an owner-validated structural absence (proposal gone)
+        -> ``OUTCOME_STRUCTURAL_EMPTY`` (removes only this obligation);
+      * a retrieval / decider / API error, OR an UNSUPPORTED substep
+        (``proposal`` / ``veto`` have no safe owner executor here)
+        -> ``OUTCOME_FAILURE`` (masked safe failure; NEVER a silent success).
+    """
+    from src.api import session_turn_service as turn_service
+    substep = getattr(target, "substep", "") or ""
+    actor = getattr(target, "actor_player_id", None)
+    try:
+        if not (isinstance(substep, str) and substep.startswith("vote:")):
+            # proposal / veto substeps: no safe owner executor here -> fail-closed.
+            return turn_service.ExecutionOutcome(
+                turn_service.OUTCOME_FAILURE,
+                detail=f"SENATE_UNSUPPORTED_SUBSTEP:{substep or 'unknown'}")
+        raw_pid = substep.split(":", 1)[1]
+        player = state.get_player(actor) if actor else None
+        if player is None:
+            return turn_service.ExecutionOutcome(
+                turn_service.OUTCOME_FAILURE, detail="SENATE_AI_ACTOR_MISSING")
+        faction = state.get_faction(player.faction_id)
+        if faction is None:
+            return turn_service.ExecutionOutcome(
+                turn_service.OUTCOME_FAILURE, detail="SENATE_AI_FACTION_MISSING")
+        proposal = next(
+            (p for p in state.get_senate_proposals()
+             if str(p.get("id")) == str(raw_pid)), None)
+        if proposal is None:
+            # the mandate vanished between derivation and execution: an
+            # owner-validated structural absence (removes only this obligation).
+            return turn_service.ExecutionOutcome(
+                turn_service.OUTCOME_STRUCTURAL_EMPTY, detail="SENATE_PROPOSAL_ABSENT")
+        pid = proposal.get("id")
+        if state.has_senate_vote(actor, pid):
+            return turn_service.ExecutionOutcome(
+                turn_service.OUTCOME_ACCEPTED,
+                command_id=f"senate-vote-{pid}", detail="ALREADY_RECORDED")
+        decider = _build_senate_vote_decider(state)
+        politics = _political_system(state)
+        issue = politics.build_issue_from_proposal(proposal)
+        support = decider.decide_vote(issue, faction, state)
+        if support is None:
+            # deliberate no-choice on a MANDATORY ballot (never a silent success).
+            return turn_service.ExecutionOutcome(
+                turn_service.OUTCOME_NO_CHOICE, detail="NO_DECISION")
+        state.record_senate_vote(actor, pid, bool(support))
+        return turn_service.ExecutionOutcome(
+            turn_service.OUTCOME_ACCEPTED, command_id=f"senate-vote-{pid}")
+    except Exception as exc:
+        return turn_service.ExecutionOutcome(
+            turn_service.OUTCOME_FAILURE, detail=f"SENATE_AI_EXECUTION_ERROR: {exc}")
 

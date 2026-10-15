@@ -7,6 +7,7 @@ import traceback
 from typing import Any, Callable, Dict, List, Optional
 
 from src.core.game_state import GameState
+from src.api import session_access
 
 logger = logging.getLogger("EOR-GUI")
 
@@ -62,7 +63,37 @@ class GuiApiAdapter:
         refresh_error: str = ""
         error_items: List[Dict[str, Any]] = []
         errors_by_scope: Dict[str, List[Dict[str, Any]]] = {}
+
+        # S-B-R3a (DG-01): the Adapter is the TRUSTED routing layer. It obtains the
+        # current service-issued handle from the session service and PRESENTS it
+        # explicitly to the boundary; the boundary never fetches it off ``state``.
+        caller_context = session_access.current_caller_context(self._state)
+
+        # S-B Group 1: state-mutating API boundary guard. Every mutating GUI call
+        # is routed through here; reads use the get_* methods directly. A
+        # registered Hot-seat session denies a mutation unless the authoritative
+        # current actor is the HUMAN principal (ACTIVE lifecycle), so a
+        # non-current/unauthorized command never reaches the API and the source
+        # state is NOT mutated. The structured refusal envelope is preserved (the
+        # caller keeps a typed failure rather than a successful empty result);
+        # un-registered CLI/historical states keep the historical behaviour.
+        denied = session_access.denied_or_none(
+            self._state, session_access.OP_MUTATE,
+            command=getattr(api_func, "__name__", None),
+            caller_context=caller_context)
+        if denied is not None:
+            normalized = self.normalize_error_feedback(
+                denied.get("errors", []), denied.get("message", ""))
+            return self._build_feedback(
+                False, denied.get("message", ""), denied.get("errors", []),
+                "error", feedback_message=normalized["feedback_message"],
+                error_items=normalized["error_items"],
+                errors_by_scope=normalized["errors_by_scope"])
+
         try:
+            # Present the handle to the boundary (only if it accepts one).
+            if caller_context is not None:
+                kwargs.setdefault("caller_context", caller_context)
             result = api_func(*args, **kwargs)
             if not isinstance(result, dict):
                 return self._build_feedback(
@@ -115,6 +146,24 @@ class GuiApiAdapter:
                 )
 
         return feedback
+
+    # -----------------------------------------------------------------------
+    # S-C grContinuationRecover — bounded continuation recovery (AI-drain only)
+    # -----------------------------------------------------------------------
+    def recover_continuation(self, viewer_id: str) -> Dict[str, Any]:
+        """Route ``grContinuationRecover`` → owner-layer recovery entry (R-02).
+
+        The route goes through ``self.call(...)`` so the Adapter's S-B guard /
+        authority path is preserved. The owner entry
+        (``session_api.recover_continuation``) supplies the phase-specific AI
+        executor, so the recovery ACTUALLY resumes only the outstanding
+        scheduled-AI work (mirroring the forward ``submit_population_votes``
+        wiring) instead of returning a dict that stays ``MASKED_FAILURE`` via
+        ``NO_EXECUTOR``. It never resubmits the committed HUMAN command
+        (same-revision ``DK`` replay denied). Distinct from activation retry
+        (S-B) and resolution-entry settlement retry (R4)."""
+        from src.api import session_api
+        return self.call(session_api.recover_continuation, self._state)
 
     # -----------------------------------------------------------------------
     # R6（SA §B.5，DA-2 B5）：**唯一** structured error formatter
@@ -220,6 +269,36 @@ class GuiApiAdapter:
         return out
 
     # -----------------------------------------------------------------------
+    # S-B Group 1/4 (SB-V07): envelope-preserving internal read path.
+    # The ordinary GUI getters above map a failure to a safe empty model for QML
+    # (safe empty/unavailable). The Store's authority-bearing activation path
+    # must instead observe the REAL envelope so a denied/empty read is never
+    # mistaken for a successful projection.
+    # -----------------------------------------------------------------------
+    def read_envelope(self, api_func, *args, **kwargs) -> Dict[str, Any]:
+        """Call a read API and return its RAW envelope (never collapsed to ``{}``).
+
+        Returns ``{success, message, data, errors}``; an exception is converted to
+        a typed failure envelope so the caller can fail closed. The trusted routing
+        layer presents the current service handle (DG-01); during masked staging the
+        internal neutral activation reservation authorizes the read for its reserved
+        target regardless of the presented (revoked) handle.
+        """
+        try:
+            caller_context = session_access.current_caller_context(self._state)
+            if caller_context is not None:
+                kwargs.setdefault("caller_context", caller_context)
+            result = api_func(*args, **kwargs)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.exception(f"API read exception: {getattr(api_func, '__name__', api_func)}")
+            return {"success": False, "message": f"API exception: {e}",
+                    "data": None, "errors": [str(e)]}
+        if not isinstance(result, dict):
+            return {"success": False, "message": f"API returned non-dict: {type(result)}",
+                    "data": None, "errors": []}
+        return result
+
+    # -----------------------------------------------------------------------
     # 人口阶段专用 API
     # -----------------------------------------------------------------------
     def campaign(self, player_id: str, figure_id: int, amount: int) -> Dict[str, Any]:
@@ -281,7 +360,9 @@ class GuiApiAdapter:
     # -----------------------------------------------------------------------
     def get_revenue_view(self, viewer_id: str) -> Dict[str, Any]:
         from src.api import revenue_api
-        result = revenue_api.get_revenue_view(self._state, viewer_id)
+        result = revenue_api.get_revenue_view(
+            self._state, viewer_id,
+            caller_context=session_access.current_caller_context(self._state))
         if result.get("success"):
             return result.get("data", {})
         logger.error(f"Revenue view failed: {result.get('message')}")
@@ -297,7 +378,9 @@ class GuiApiAdapter:
 
     def get_forum_view(self, viewer_id: str) -> Dict[str, Any]:
         from src.api import forum_api
-        result = forum_api.get_forum_view(self._state, viewer_id)
+        result = forum_api.get_forum_view(
+            self._state, viewer_id,
+            caller_context=session_access.current_caller_context(self._state))
         if result.get("success"):
             return result.get("data", {})
         logger.error(f"Forum view failed: {result.get('message')}")
@@ -362,7 +445,9 @@ class GuiApiAdapter:
     # -----------------------------------------------------------------------
     def get_snapshot(self, viewer_id: str) -> Dict[str, Any]:
         from src.api import session_api
-        result = session_api.get_session_snapshot(self._state, viewer_id)
+        result = session_api.get_session_snapshot(
+            self._state, viewer_id,
+            caller_context=session_access.current_caller_context(self._state))
         if result.get("success"):
             return result.get("data", {})
         logger.error(f"Snapshot failed: {result.get('message')}")
@@ -370,7 +455,9 @@ class GuiApiAdapter:
 
     def get_population_view(self, viewer_id: str) -> Dict[str, Any]:
         from src.api import session_api
-        result = session_api.get_population_view(self._state, viewer_id)
+        result = session_api.get_population_view(
+            self._state, viewer_id,
+            caller_context=session_access.current_caller_context(self._state))
         if result.get("success"):
             return result.get("data", {})
         logger.error(f"Population view failed: {result.get('message')}")
@@ -378,7 +465,9 @@ class GuiApiAdapter:
 
     def get_mortality_view(self, viewer_id: str) -> Dict[str, Any]:
         from src.api import mortality_api
-        result = mortality_api.get_mortality_view(self._state, viewer_id)
+        result = mortality_api.get_mortality_view(
+            self._state, viewer_id,
+            caller_context=session_access.current_caller_context(self._state))
         if result.get("success"):
             return result.get("data", {})
         logger.error(f"Mortality view failed: {result.get('message')}")
@@ -386,7 +475,9 @@ class GuiApiAdapter:
 
     def get_senate_view(self, viewer_id: str) -> Dict[str, Any]:
         from src.api import senate_api
-        result = senate_api.get_senate_view(self._state, viewer_id)
+        result = senate_api.get_senate_view(
+            self._state, viewer_id,
+            caller_context=session_access.current_caller_context(self._state))
         if result.get("success"):
             return result.get("data", {})
         logger.error(f"Senate view failed: {result.get('message')}")
@@ -426,7 +517,9 @@ class GuiApiAdapter:
     # -----------------------------------------------------------------------
     def get_combat_view(self, viewer_id: str) -> Dict[str, Any]:
         from src.api import combat_api
-        result = combat_api.get_combat_view(self._state, viewer_id)
+        result = combat_api.get_combat_view(
+            self._state, viewer_id,
+            caller_context=session_access.current_caller_context(self._state))
         if result.get("success"):
             return result.get("data", {})
         logger.error(f"Combat view failed: {result.get('message')}")
@@ -456,9 +549,11 @@ class GuiApiAdapter:
         codes / unsafe params) is **never** forwarded into the DTO (A05-02, F6).
         """
         from src.api import gui_query_api
+        caller_context = session_access.current_caller_context(self._state)
         try:
             result = gui_query_api.get_global_query_result(
-                self._state, viewer_id, query_id, filter_text, record_id
+                self._state, viewer_id, query_id, filter_text, record_id,
+                caller_context=caller_context,
             )
         except Exception:  # pragma: no cover - defensive fail-closed
             logger.exception("Global query exception: %s", query_id)
@@ -543,7 +638,9 @@ class GuiApiAdapter:
     # -----------------------------------------------------------------------
     def get_resolution_view(self, viewer_id: str) -> Dict[str, Any]:
         from src.api import session_api
-        result = session_api.get_resolution_view(self._state, viewer_id)
+        result = session_api.get_resolution_view(
+            self._state, viewer_id,
+            caller_context=session_access.current_caller_context(self._state))
         if result.get("success"):
             return result.get("data", {})
         logger.error(f"Resolution view failed: {result.get('message')}")

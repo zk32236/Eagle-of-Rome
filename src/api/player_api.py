@@ -1,10 +1,13 @@
 # src/api/player_api.py
 from src.core.game_state import GameState
 from src.api import api_response
+from src.api import session_access
+from src.api import session_turn_service as turn_service
 from src.core.i18n import i18n
 import logging
 
 
+@session_access.guarded(session_access.OP_READ_SNAPSHOT, viewer_param=None)
 def get_players(state: GameState) -> dict:
     """
     返回所有玩家信息，包括当前玩家标记。
@@ -30,6 +33,7 @@ def get_players(state: GameState) -> dict:
     return api_response(True, message, data)
 
 
+@session_access.guarded(session_access.OP_READ_SNAPSHOT, viewer_param=None)
 def get_current_player(state: GameState) -> dict:
     """
     返回当前玩家信息。
@@ -48,14 +52,46 @@ def get_current_player(state: GameState) -> dict:
     return api_response(True, message, data)
 
 
-def next_player(state: GameState, player_id: str) -> dict:
+@session_access.guarded(session_access.OP_MUTATE, command="next_player",
+                        viewer_param="player_id")
+def next_player(state: GameState, player_id: str, *, caller_context=None) -> dict:
     """
     结束当前玩家回合，切换到下一个玩家。
     需要检查 player_id 是否为当前玩家。
+
+    S-B Group 1 (SB-V01): this is a *public mutation boundary* reachable by a
+    direct call (not only through the Adapter). A registered Hot-seat state with a
+    revoked/masked authority (or a non-current caller) is refused BEFORE any
+    mutation; the exact prior-authorized one-use command lease still admits the one
+    sanctioned completion transition. Never-registered CLI states keep the
+    historical behaviour. The guard is applied by the ``@guarded`` decorator
+    (DG-01), which requires an explicitly presented service handle.
     """
     if not state.config.get("testing.bypass_player_check", False):
         if not state.is_current_player(player_id):
             return api_response(False, i18n.get("error_not_your_turn"))
+
+    # S-C (R1 §4.1 / R-3): on a COORDINATED Hot-seat session (registered by the S-B
+    # access service AND carrying the session/Core turn book) the single coordinator
+    # (``select_actor``) is the SOLE cursor writer — a public ``next_player``/``end_turn``
+    # MUST NOT bypass outstanding obligations. A legacy CLI / historical 1H2AI session
+    # (un-registered) and a registered-but-uncoordinated handoff transition keep the
+    # historical rotation unchanged (route by session mode; delta §6).
+    if session_access.is_hotseat_registered(state) and \
+            getattr(state, "_session_turn_book", None) is not None:
+        sel = turn_service.select_actor(state)
+        if not sel.get("success"):
+            return api_response(False, str(sel.get("reason", "not_ready")))
+        new_id = sel.get("actor")
+        if new_id is None:
+            # No outstanding required obligation -> phase ready; nothing to rotate.
+            return api_response(False, i18n.get("error_no_next_player"))
+        new_player = state.get_player(new_id)
+        faction_name = state.get_faction(new_player.faction_id).name if new_player.faction_id else "无派系"
+        message = i18n.get("info_player_switched", player_id=new_id, faction=faction_name)
+        state.log_event(f"玩家切换(协调器): {player_id} -> {new_id}", level=logging.INFO,
+                        extra={"from": player_id, "to": new_id})
+        return api_response(True, message, {"new_player_id": new_id})
 
     new_id = state.next_player()
     if new_id is None:
