@@ -11,7 +11,7 @@ import logging
 import math
 import random
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.api import api_response
 from src.api import session_access
@@ -629,34 +629,132 @@ def _build_vote_results_and_candidates(state: GameState) -> Dict[str, Any]:
     return _political_system(state).build_vote_results_and_candidates()
 
 
-def _record_veto_step_completion(state: GameState) -> None:
-    """S-C F1: record the senate veto-holder's LAWFUL decision (including an
-    explicit empty choice) into the ONE session ledger so the frozen veto
-    obligation is authoritatively satisfied — no cached DTO boolean. No-op on a
-    never-registered CLI/legacy state (which keeps the historical semantics).
+def _attach_senate_delivery(state: GameState, response: dict, player_id: str,
+                            *, receipt_ref: str = "", run: bool = True) -> dict:
+    """S1/FC-712-01..03: attach the ONE typed delivery envelope to a committed
+    senate owning command.
+
+    The owning API invokes the continuation EXACTLY ONCE after an accepted
+    completion; the envelope carries the semantic next obligation together with
+    its real receiver. On a never-registered CLI/legacy state the historical
+    response is returned byte-for-byte (no new keys).
+    """
+    if not isinstance(response, dict) or not response.get("success") or not run:
+        return response
+    if not session_access.is_hotseat_registered(state):
+        return response
+    from src.api import session_turn_service as _turn
+    cont = _turn.continue_after_command(state, ai_executor=_senate_ai_executor)
+    if cont.masked_failure:
+        return api_response(False, "AI continuation failed", {
+            "status": "masked_failure",
+            "resolved": False,
+            "retryable": True,
+            "reason": cont.reason,
+        }, [{"code": "AI_DRAIN_MASKED_FAILURE", "message": cont.reason}])
+    data = response.get("data")
+    if not isinstance(data, dict):
+        data = {}
+        response["data"] = data
+    delivery = _turn.delivery_from_continuation(
+        state, "senate", cont, viewer_id=player_id,
+        command_receipt_ref=_turn.delivery_command_ref(
+            state, "senate", receipt_ref or "senate-command",
+            actor=player_id))
+    data["delivery"] = delivery
+    if delivery.get("next"):
+        if delivery["next"].get("controller") == "HUMAN":
+            data["awaiting_player_id"] = delivery["next"]["actor_player_id"]
+        else:
+            data["awaiting_player_id"] = None
+        data["status"] = ("awaiting_players"
+                          if delivery.get("outcome") == "CONTINUE" else "resolved")
+    else:
+        data["awaiting_player_id"] = None
+    if cont.terminal is not None:
+        data.update(cont.terminal)
+    return response
+
+
+def _record_veto_step_completion(state: GameState) -> dict:
+    """S-C F1 · Rework-D3D6 D3 (FC-RW-05): the UNIQUE writer of the senate veto
+    singleton OID completion — records the veto-holder's LAWFUL decision
+    (including an explicit empty choice) into the ONE session ledger. Returns a
+    CHECKED result ``{success: bool, reason?: str}`` (the previous ``None`` return
+    swallowed a rejected/unrecorded completion — the defect being closed). No-op
+    on a never-registered CLI/legacy state (which keeps the historical semantics).
     """
     from src.api import session_turn_service as _turn
     if not session_access.is_hotseat_registered(state):
-        return
+        return {"success": True, "exempt": "cli"}
     try:
         scope = _turn.mint_scope(state, "senate")
         book = _turn._book(state)
         veto_oid = book.oid("senate", "veto", ("singleton", scope.scope_id),
                             scope.scope_id)
         # R10-1: the real owner veto command records a receipt-bound ACTION (bound
-        # to the veto OID + pre-command revision).
+        # to the veto OID + pre-command revision). The result is CHECKED and
+        # returned — a rejected receipt binding / complete_actor refusal must NOT
+        # be swallowed into a false success.
         receipt = _turn.issue_owner_receipt(
             state, "senate_veto_decision", scope_id=scope.scope_id,
             obligation_id=veto_oid, fact_ref=f"senate-veto:{scope.scope_id}",
             kind=_turn.KIND_ACTION)
-        _turn.complete_actor(
+        return _turn.complete_actor(
             state, None, scope.scope_id, "senate_veto_decision",
             phase="senate", substep="veto",
             satisfied_kind=_turn.KIND_ACTION,
             owner_receipt=receipt)
-    except Exception:  # pragma: no cover - defensive
+    except Exception as exc:  # pragma: no cover - defensive
         logging.getLogger("EOR-GUI").exception(
             "failed to record senate veto completion")
+        return {"success": False, "reason": "VETO_COMPLETION_EXCEPTION",
+                "message": str(exc)}
+
+
+def _validate_empty_veto_owner(state: GameState, player_id: str) -> tuple:
+    """Rework-D3D6 D3 (FC-RW-01/03/05): owner validation for a LAWFUL explicit
+    EMPTY veto decision. Returns ``(ok, code)`` — fail-closed on any missing
+    precondition. An empty set means "I veto no passed proposal this session",
+    NOT absence / structural NONE / a fake veto / a skipped duty.
+
+    Proves: the player is the Core current player; the player's faction holds the
+    eligible (HUMAN) tribune; the veto is a REQUIRED scheduled stop with a real
+    passed-only candidate set and every required ballot already in; and — on a
+    registered Hot-seat session — the derived schedule's veto obligation is the
+    ACTUAL HUMAN owner ``player_id`` (never a viewer-relative mode).
+    """
+    if not state or not player_id:
+        return False, "EMPTY_VETO_OWNER_INVALID"
+    if not state.is_current_player(player_id):
+        return False, "EMPTY_VETO_NOT_CURRENT"
+    player = state.get_player(player_id) if hasattr(state, "get_player") else None
+    if player is None:
+        return False, "EMPTY_VETO_OWNER_INVALID"
+    control = _political_system(state).resolve_veto_control(player_id)
+    if control.get("mode") != "HUMAN" or control.get("actor") is None:
+        return False, "EMPTY_VETO_NOT_OWNER"
+    try:
+        passed = _passed_proposals_for_veto(state)
+    except Exception:
+        return False, "EMPTY_VETO_CANDIDATE_DERIVATION_FAILED"
+    if not passed:
+        return False, "EMPTY_VETO_NO_PASSED_CANDIDATE"
+    from src.api import session_turn_service as _turn
+    try:
+        snap = _turn.obligations(state, "senate")
+    except Exception:
+        return False, "EMPTY_VETO_SCHEDULE_FAILED"
+    if getattr(snap, "errors", None):
+        return False, "EMPTY_VETO_SCHEDULE_FAILED"
+    veto_ob = next((o for o in snap.obligations if o.substep == "veto"), None)
+    if (veto_ob is None or veto_ob.required_operation != "veto"
+            or veto_ob.satisfied):
+        return False, "EMPTY_VETO_NOT_REQUIRED"
+    if (veto_ob.controller != _turn.CONTROLLER_HUMAN
+            or veto_ob.actor_player_id != player_id):
+        return False, "EMPTY_VETO_NOT_OWNER"
+    return True, ""
 
 
 @session_access.guarded(session_access.OP_MUTATE, command="apply_auto_tribune_vetoes")
@@ -721,6 +819,357 @@ def apply_auto_tribune_vetoes(
         f"AI tribune veto decisions completed; vetoed {len(vetoed)} proposal(s)",
         data={"vetoed": vetoed, "decisions": decisions},
     )
+
+
+def _registered_role_capabilities(state: GameState, viewer_player_id: str,
+                                  current_step: str) -> Dict[str, Any]:
+    """item5 (Disposition A, ``35be80c5…`` §3): the ADDITIVE registered-owner plane.
+
+    Authority = the coordinator's latched ACTUAL owner
+    (``session_turn_service.obligations(state, 'senate')`` derived from the
+    persisted ``role_selections``), NEVER the viewer-relative ``resolve_*``. The
+    read is STRICTLY side-effect free on GameState: the scope id is only read when
+    it already exists (NO ``mint_scope``); a schedule-derivation ERROR yields a
+    NEUTRAL block (``registered_schedule_valid=False``, controllers ``None`` —
+    error != NONE). A never-registered (CLI/legacy) seat is neutral with
+    ``registered_seat=False`` (legacy keys stay authoritative).
+    """
+    from src.api import session_turn_service as _turn
+    neutral: Dict[str, Any] = {
+        "registered_seat": False,
+        "registered_schedule_valid": False,
+        "registered_authority_source": "latched_schedule_role_selection",
+        "registered_proposal_owner_player_id": None,
+        "registered_proposal_officer_id": None,
+        "registered_proposal_controller": None,
+        "registered_proposal_authority_reason": "",
+        "registered_proposal_satisfied": False,
+        "registered_veto_required": False,
+        "registered_veto_owner_player_id": None,
+        "registered_veto_officer_id": None,
+        "registered_veto_controller": None,
+        "registered_veto_authority_reason": "",
+        "registered_veto_satisfied": False,
+        "registered_can_create_proposal": False,
+        "registered_can_select_proposal": False,
+        "registered_can_finish_empty": False,
+        "registered_can_veto": False,
+        "registered_can_trigger_ai_proposer": False,
+        "registered_can_auto_veto": False,
+    }
+    if not session_access.is_hotseat_registered(state):
+        return neutral
+    # Registered but no live senate scope -> neutral. STRICTLY read-only: the book
+    # attribute is probed DIRECTLY. (``session_turn_service.current_scope_id`` is
+    # NOT read-only — it calls ``_book(state)`` which ATTACHES the session turn
+    # book as a side effect; that would flip ``player_api.next_player`` from the
+    # legacy rotation onto the coordinator path, perturbing unrelated flows.)
+    # Do NOT mint a book and do NOT mint a scope.
+    book = getattr(state, "_session_turn_book", None)
+    scope = book.scopes.get("senate") if book is not None else None
+    if scope is None:
+        neutral["registered_seat"] = True
+        return neutral
+    scope_id = scope.scope_id
+    snap = _turn.obligations(state, "senate")
+    if snap.errors:
+        neutral["registered_seat"] = True
+        return neutral
+    prop = next((o for o in snap.obligations if o.substep == "proposal"), None)
+    veto = next((o for o in snap.obligations if o.substep == "veto"), None)
+    sel_p = book.role_selections.get((scope_id, "proposal"), {}) or {}
+    sel_v = book.role_selections.get((scope_id, "veto"), {}) or {}
+    p_ctrl = prop.controller if prop is not None else _turn.CONTROLLER_NONE
+    p_owner = prop.actor_player_id if prop is not None else None
+    v_ctrl = veto.controller if veto is not None else _turn.CONTROLLER_NONE
+    v_owner = veto.actor_player_id if veto is not None else None
+    # veto is REQUIRED iff the schedule derived the veto operation for a real
+    # passed candidate with an actual owner: the obligation's ``required_operation``
+    # is the veto step AND the schedule latched a real owner (``controller != NONE``;
+    # a structural absence yields controller ``NONE`` with ``satisfied``).
+    # I2-R3 observation ③: literal alignment with the item5 disposition
+    # (``required_operation == 'veto'`` + schedule ``veto_required`` semantics);
+    # the produced boolean is UNCHANGED (semantics preserved).
+    veto_required = bool(veto is not None
+                         and veto.required_operation == "veto"
+                         and v_ctrl != _turn.CONTROLLER_NONE)
+    try:
+        actionable_r = bool(state.is_current_player(viewer_player_id))
+    except Exception:  # pragma: no cover - defensive
+        actionable_r = False
+    human = _turn.CONTROLLER_HUMAN
+    prop_ok = bool(actionable_r and current_step == "proposal"
+                   and p_ctrl == human and p_owner == viewer_player_id)
+    veto_ok = bool(actionable_r and current_step == "tribune_veto"
+                   and v_ctrl == human and v_owner == viewer_player_id)
+    return {
+        "registered_seat": True,
+        "registered_schedule_valid": True,
+        "registered_authority_source": "latched_schedule_role_selection",
+        "registered_proposal_owner_player_id": p_owner,
+        "registered_proposal_officer_id": (prop.officer_id if prop is not None else None),
+        "registered_proposal_controller": p_ctrl,
+        "registered_proposal_authority_reason": sel_p.get("authority_reason", ""),
+        "registered_proposal_satisfied": (bool(prop.satisfied) if prop is not None else False),
+        "registered_veto_required": veto_required,
+        "registered_veto_owner_player_id": v_owner,
+        "registered_veto_officer_id": (veto.officer_id if veto is not None else None),
+        "registered_veto_controller": v_ctrl,
+        "registered_veto_authority_reason": sel_v.get("authority_reason", ""),
+        "registered_veto_satisfied": (bool(veto.satisfied) if veto is not None else False),
+        "registered_can_create_proposal": prop_ok,
+        "registered_can_select_proposal": prop_ok,
+        "registered_can_finish_empty": prop_ok,
+        "registered_can_veto": veto_ok,
+        # registered AI bits are ALWAYS False: the truth rides on
+        # registered_*_controller == 'AI' + the owner id, never a viewer button.
+        "registered_can_trigger_ai_proposer": False,
+        "registered_can_auto_veto": False,
+    }
+
+
+CANONICAL_VALID = "VALID"
+CANONICAL_ABSENT = "ABSENT"
+CANONICAL_WRONG = "WRONG"
+
+
+def _typed_finalization_tuple(value: Any) -> Optional[Tuple[str, str, int]]:
+    """B.4.1: positional ``(str, str, int)`` identity, never a coercion."""
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        return None
+    first, second, third = value
+    if type(first) is not str or type(second) is not str:
+        return None
+    if type(third) is not int or isinstance(third, bool):
+        return None
+    return (first, second, third)
+
+
+def _derived_commit_revision(book: Any, scope: Any) -> Optional[int]:
+    """B.1: the ORIGINAL commit revision derived from existing ledger data only.
+
+    ``SessionTurnBook.write`` is the ONLY monotonic increment point, so the last
+    committed owner write in the SAME senate scope generation IS the finalize
+    commit revision; with no such record the scope's entry revision is the
+    baseline (never a fabricated 0).
+    """
+    revisions = []
+    for record in getattr(book, "records", ()):
+        oid = getattr(record, "obligation_id", ()) or ()
+        if len(oid) > 3 and oid[2] == scope.scope_id and oid[3] == "senate":
+            revisions.append(record.satisfied_at_revision)
+    if revisions:
+        return max(revisions)
+    entry_revision = getattr(scope, "entry_revision", None)
+    if type(entry_revision) is not int:
+        return None
+    return entry_revision
+
+
+def _original_commit_denial(state: GameState, terminal: Dict[str, Any]
+                           ) -> Optional[Tuple[str, str]]:
+    """B.2/B.3: bind the claimed terminal to the ORIGINAL committed turn.
+
+    Pure read. Returns ``(stage, detail)`` for a canonical ``WRONG`` classification
+    or ``None`` when the terminal really is the result-owner obligation of the
+    live senate scope generation at the current ledger turn.
+    """
+    book = getattr(state, "_session_turn_book", None)
+    scope = book.scopes.get("senate") if book is not None else None
+    if scope is None:
+        return ("receipt_wrong", "no live senate scope binds this terminal")
+    oid = terminal.get("obligation_id")
+    if not isinstance(oid, (list, tuple)):
+        return ("obligation", "the terminal has no obligation identity")
+    if len(oid) != 6:
+        return ("obligation", "the terminal obligation identity is malformed")
+    if type(oid[1]) is not int or oid[1] != book.turn_number:
+        return ("obligation", "the terminal is bound to an earlier turn")
+    if oid[2] != scope.scope_id:
+        return ("scope", "the terminal is bound to an older scope generation")
+    if oid[3] != "senate":
+        return ("obligation", "the terminal names a foreign phase")
+    if oid[4] != "terminal":
+        return ("obligation", "the terminal names a non-terminal substep")
+    revision = _derived_commit_revision(book, scope)
+    if revision is None:
+        return ("receipt_wrong", "the original commit revision cannot be derived")
+    counter = getattr(book, "revision_counter", None)
+    if type(counter) is not int or revision > counter:
+        return ("receipt_wrong",
+                "the original commit revision is not a committed revision")
+    return None
+
+
+def _count_claim_denial(body: Dict[str, Any], data: Dict[str, Any]
+                        ) -> Optional[Tuple[str, str]]:
+    """B.4.5: counts are recomputed ``len()`` from the SAME frozen data.
+
+    A missing body key is NO count declaration (never defaulted to 0); a present
+    claim must be a typed int equal to the recomputed length of its source row.
+    """
+    sources = (("governor_assignment_count", "governor_assignments"),
+               ("retained_effect_intent_count", "retained_effect_intents"))
+    for body_key, data_key in sources:
+        if body_key not in body:
+            continue
+        declared = body.get(body_key)
+        if type(declared) is not int:
+            return ("counts", "the receipt count claim is not typed")
+        items = data.get(data_key)
+        if items is None:
+            actual = 0
+        elif isinstance(items, (list, tuple, dict)):
+            actual = len(items)
+        else:
+            return ("counts", "the committed count source is malformed")
+        if declared != actual:
+            return ("counts", "the receipt count claim is false")
+    return None
+
+
+def canonical_finalization(state: GameState, *, expected_scope: Optional[str] = None,
+                           expected_key: Optional[tuple] = None,
+                           claimed_terminal: Optional[Dict[str, Any]] = None
+                           ) -> Dict[str, Any]:
+    """§2 — the ONE canonical receipt predicate (pure; never mints or writes).
+
+    Joins the GENUINE receipt body (index → body → key) with the existing owner
+    binding and the SAME-version frozen result snapshot. Classification:
+
+    * ``ABSENT`` — no committed body and no claimed canonical link;
+    * ``WRONG``  — dangling index / foreign body/key/session/protocol/scope, a
+      missing required body field, a forged content hash or missing facts;
+    * ``VALID``  — all four facts + identity/content predicate true.
+
+    I1a §B: when ``claimed_terminal`` is supplied (the delivery's RESOLVED
+    terminal), the ORIGINAL COMMIT BINDING is verified from existing immutable
+    data only — turn / substep / scope generation / derived commit revision —
+    and the receipt's count claims are recomputed from the SAME frozen ``data``.
+    ``claimed_terminal=None`` keeps the projection/replay callers unchanged
+    (they bind through the stored body only).
+
+    It retrieves real data only: no ledger write, no AI backfill, no mint, no
+    finalization, no G selection. The ten logical fields share the existing
+    canonical key; no new storage column/UUID/protocol is introduced.
+    """
+    outcome: Dict[str, Any] = {
+        "status": CANONICAL_ABSENT, "stage": "", "detail": "",
+        "facts": {}, "key": None, "body": None, "fingerprint": "",
+    }
+
+    def wrong(stage: str, detail: str) -> Dict[str, Any]:
+        outcome.update(status=CANONICAL_WRONG, stage=stage, detail=detail)
+        return outcome
+
+    try:
+        key = (tuple(expected_key) if expected_key is not None
+               else senate_finalization_id(state))
+    except Exception:  # pragma: no cover - defensive
+        return wrong("receipt_wrong", "the finalization key cannot be derived")
+    if not isinstance(key, tuple) or len(key) != 3:
+        return wrong("finalization_id", "the finalization key is malformed")
+    outcome["key"] = key
+    session_id = str(key[1])
+
+    indexed = bool(state.has_senate_finalization_receipt(session_id))
+    body = state.get_senate_finalization_receipt(session_id)
+    if not indexed and body is None:
+        return outcome
+    if not isinstance(body, dict):
+        return wrong("receipt_wrong", "the receipt index is dangling")
+    for field in ("finalization_id", "session_id", "senate_session_id",
+                  "protocol_version", "phase_id", "phase_result_success",
+                  "content_fingerprint"):
+        if field not in body:
+            return wrong("receipt_wrong", f"the receipt body is missing {field}")
+
+    body_key = body.get("finalization_id")
+    typed_body_key = _typed_finalization_tuple(body_key)
+    typed_key = _typed_finalization_tuple(key)
+    if typed_body_key is None or typed_key is None:
+        return wrong("finalization_id", "the finalization id is malformed")
+    if typed_body_key != typed_key:
+        return wrong("finalization_id", "the receipt names a foreign finalization")
+    body_list = body.get("finalization_id_list")
+    if body_list is not None:
+        if not isinstance(body_list, (list, tuple)) or len(body_list) != 3:
+            return wrong("receipt_wrong",
+                         "the receipt finalization id list is malformed")
+        if list(body_list) != [str(part) for part in typed_key]:
+            return wrong("finalization_id",
+                         "the receipt finalization id list is foreign")
+    if str(body.get("session_id")) != str(key[0]) \
+            or str(body.get("senate_session_id")) != str(key[1]):
+        return wrong("receipt_wrong", "the receipt session binding is foreign")
+    protocol = body.get("protocol_version")
+    if type(protocol) is not int or protocol != key[2] \
+            or protocol != SENATE_FINALIZATION_PROTOCOL_VERSION:
+        return wrong("receipt_wrong", "the receipt protocol is foreign")
+    if body.get("phase_id") != "senate":
+        return wrong("receipt_wrong", "the receipt phase is not senate")
+    if body.get("phase_result_success") is not True:
+        return wrong("receipt_wrong", "the receipt does not record a success result")
+
+    if expected_scope:
+        book = getattr(state, "_session_turn_book", None)
+        scope = book.scopes.get("senate") if book is not None else None
+        if scope is not None and str(scope.scope_id) != str(expected_scope):
+            return wrong("receipt_wrong", "the receipt scope is foreign or stale")
+
+    if claimed_terminal is not None:
+        binding = _original_commit_denial(state, claimed_terminal)
+        if binding is not None:
+            return wrong(binding[0], binding[1])
+
+    phase_result = state.get_phase_result("senate")
+    if not (isinstance(phase_result, dict) and phase_result.get("success")):
+        return wrong("receipt_wrong", "no committed success result backs the receipt")
+    data = phase_result.get("data")
+    if not isinstance(data, dict):
+        return wrong("receipt_wrong", "the committed result has no data snapshot")
+    if "frozen_war_decisions" not in data:
+        return wrong("receipt_wrong", "the final outcome was never frozen")
+    if not _pending_cleared(state):
+        return wrong("receipt_wrong", "the pending set was not cleared")
+    counts = _count_claim_denial(body, data)
+    if counts is not None:
+        return wrong(counts[0], counts[1])
+    fingerprint = _finalization_fingerprint(dict(data))
+    if fingerprint != body.get("content_fingerprint"):
+        return wrong("content_fingerprint",
+                     "the stored content is not the committed content")
+    facts = completion_facts(state, session_id)
+    if not all(facts.values()):
+        return wrong("receipt_wrong", "the four completion facts are not committed")
+    outcome.update(status=CANONICAL_VALID, facts=facts, body=body,
+                   fingerprint=fingerprint)
+    return outcome
+
+
+def _canonical_finalization_committed(state: GameState) -> bool:
+    """S2/FC-712-10..13: the ONLY oracle for a terminal senate projection.
+
+    ``results`` requires the committed success phase_result AND all four
+    completion facts (frozen outcome / pending cleared / canonical receipt) at the
+    same version, proven through the GENUINE receipt body (§2). A bare
+    ``bool(result_data)`` is NOT a terminal result, and a dangling/foreign/forged
+    receipt is NOT treated as absence.
+    """
+    try:
+        return canonical_finalization(state)["status"] == CANONICAL_VALID
+    except Exception:  # pragma: no cover - defensive
+        return False
+
+
+def _canonical_finalization_status(state: GameState) -> Dict[str, Any]:
+    """Read-only classification used by the GET state machine (§2.3 WRONG)."""
+    try:
+        return canonical_finalization(state)
+    except Exception:  # pragma: no cover - defensive
+        return {"status": CANONICAL_WRONG, "stage": "receipt_wrong",
+                "detail": "the canonical predicate raised", "facts": {}}
+
 
 @session_access.guarded(session_access.OP_READ_PHASE_VIEW, viewer_param="viewer_player_id")
 def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
@@ -787,18 +1236,81 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         player_votes = state.get_senate_votes_copy().get(viewer_player_id, {})
         voted_all = bool(proposals) and all(proposal.get("id") in player_votes for proposal in proposals)
         decision_complete = state.senate_proposal_decision_complete
+        # S2/FC-712-10..12: the GLOBAL readiness facts are all-controller, never
+        # viewer-local. ``voted_all`` is a local progress value only.
+        from src.api import session_turn_service as _turn_service
+        _registered_seat = session_access.is_hotseat_registered(state)
+        readiness = (_turn_service.senate_readiness(state)
+                     if _registered_seat else None)
+        # S2/FC-712-13: ``results`` is derived from the canonical four-fact
+        # finalization ONLY (never from a non-empty ``result_data``). A WRONG
+        # receipt is an explicit readiness error, NEVER settlement_pending.
+        _canonical_state = (_canonical_finalization_status(state)
+                            if _registered_seat else None)
+        canonical_result = (bool(result_data) if not _registered_seat
+                            else bool(_canonical_state
+                                      and _canonical_state["status"] == CANONICAL_VALID))
+        readiness_errors = (list(readiness["errors"])
+                            if readiness is not None else [])
+        if _canonical_state is not None \
+                and _canonical_state["status"] == CANONICAL_WRONG:
+            readiness_errors.append(
+                "SENATE_FINALIZATION_RECEIPT_"
+                + str(_canonical_state.get("stage") or "wrong").upper())
+        if readiness is None:
+            all_ballots_ready = None
+            tally_final = bool(result_data)
+            tally_status = None
+            tally_covered = len(proposals) * len(state.get_all_players())
+            tally_required = tally_covered
+        else:
+            all_ballots_ready = bool(readiness["all_ballots_ready"])
+            tally_final = canonical_result
+            tally_status = ("COMPLETE" if (all_ballots_ready or canonical_result)
+                            else "PARTIAL")
+            tally_covered = int(readiness["covered"])
+            tally_required = int(readiness["required"])
         # WP-F R2-01（D-1 derive(A) 主案）：voted_all 后执行中间投影——复用 calculate_vote_result
         # （幂等 AI 回填：未投票派系首次决策即持久化，此后纯读零重掷），产出中间 vote_results
         # （Stage 2 支持率载体）+ veto_candidate_ids（权威 passed-only 候选集）。
-        if voted_all:
+        # S2: on a REGISTERED seat the aggregate preview is suppressed until ALL
+        # controller ballots are in — a partial tally is never a terminal result.
+        if _registered_seat:
+            if all_ballots_ready:
+                projection = _build_vote_results_and_candidates(state)
+                projected_vote_results = projection["vote_results"]
+                veto_candidate_ids = projection["veto_candidate_ids"]
+            else:
+                projected_vote_results = []
+                veto_candidate_ids = []
+        elif voted_all:
             projection = _build_vote_results_and_candidates(state)
             projected_vote_results = projection["vote_results"]
             veto_candidate_ids = projection["veto_candidate_ids"]
         else:
             projected_vote_results = []
             veto_candidate_ids = []
-        if result_data:
+        if canonical_result:
             current_step = "results"
+        elif _registered_seat:
+            # Global derivation: proposal -> ballots until ALL controllers ->
+            # veto only for a real candidate/actual holder -> settlement_pending
+            # (ready but not yet canonically finalized). A readiness ERROR is its
+            # own explicit state and is NEVER represented as settlement_pending.
+            if readiness_errors:
+                current_step = "readiness_error"
+            elif result_data:
+                # Partial finalization (result stored, canonical facts missing):
+                # a recovery state, never a terminal ``results`` projection.
+                current_step = "settlement_pending"
+            elif not readiness["proposal_ready"]:
+                current_step = "proposal"
+            elif readiness["required"] > 0 and not all_ballots_ready:
+                current_step = "senate_vote"
+            elif readiness["veto_required"] and not readiness["veto_satisfied"]:
+                current_step = "tribune_veto"
+            else:
+                current_step = "settlement_pending"
         elif not decision_complete:
             current_step = "proposal"
         elif not proposals:
@@ -820,7 +1332,7 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         )
         if current_step == "tribune_veto":
             _tribune_veto_state = "current"
-        elif current_step == "results":
+        elif current_step in ("results", "settlement_pending"):
             _tribune_veto_state = "complete" if _senate_veto_reached else "not_applicable"
         else:
             _tribune_veto_state = "todo"
@@ -829,13 +1341,15 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
                 "key": "proposal",
                 "label": "执政官提案",
                 "state": "current" if current_step == "proposal"
-                else ("complete" if current_step in {"senate_vote", "tribune_veto", "results"} else "todo"),
+                else ("complete" if current_step in {"senate_vote", "tribune_veto",
+                                                   "results", "settlement_pending"} else "todo"),
             },
             {
                 "key": "senate_vote",
                 "label": "元老表决",
                 "state": "current" if current_step == "senate_vote"
-                else ("complete" if current_step in {"tribune_veto", "results"} else "todo"),
+                else ("complete" if current_step in {"tribune_veto", "results",
+                                                   "settlement_pending"} else "todo"),
             },
             {
                 "key": "tribune_veto",
@@ -857,19 +1371,23 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         can_trigger_ai = actionable and current_step == "proposal" and proposal_control["mode"] == "AI"
         # R5（SA §5.1，DA-4）：旧 Takeover/Continue 读模型与 mandatory 门整体退役；
         # can_advance 以真实 phase_result 为权威（禁拿 current_step=="results" 冒充阶段完成）。
-        has_real_senate_result = bool(senate_result)
+        has_real_senate_result = canonical_result
         # R6（SA §D.1.1/D.1，DA-4 B1）：settlement 字段**正常态退役**——auto-finalization 已由
         # 服务端命令流程（`finalize_senate_if_ready`）完成，正常态不再产出「待结算」恢复动作位。
         # legacy 键保留（兼容读取器）但**恒 False 且不得驱动正常 UI**；真实异常恢复走
         # `finalization_error` 内部能力位（非正常态「完成结算」按钮）。
         senate_settlement_pending = False
-        # 异常恢复能力位：只有真实 finalization 失败（无成功 phase_result + 错误标记）才为 True
+        if _registered_seat and readiness is not None and not readiness_errors:
+            senate_settlement_pending = bool(
+                not canonical_result and (readiness["ready"] or bool(result_data)))
+        # 异常恢复能力位：只有真实 finalization 失败（无 canonical 结果 + 错误标记）才为 True
         _existing_senate_result = state.get_phase_result("senate")
         senate_finalization_error = bool(
             current_phase_id == "senate"
-            and not (isinstance(_existing_senate_result, dict)
-                     and _existing_senate_result.get("success"))
-            and bool(getattr(state, "_last_senate_finalization_error", None)))
+            and not canonical_result
+            and (bool(getattr(state, "_last_senate_finalization_error", None))
+                 or bool(result_data)
+                 or bool(readiness_errors)))
         # R5（SA §2.7 A-I14，DA-4）：显式空结束不再受 mandatory Takeover 门阻塞。
         can_finish_empty = (actionable and current_step == "proposal" and viewer_has_consul)
         proposal_selection_disabled_reason = ""
@@ -948,6 +1466,11 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             # R6（SA §D.1.1，DA-4 B1）：legacy 键保留但正常态恒 False（不得驱动 UI）
             "senate_settlement_pending": senate_settlement_pending,
             "can_resolve_settlement": senate_settlement_pending,
+            # S2/FC-712-13: an explicit readiness error surface (never laundered
+            # into settlement_pending) + the canonical-result predicate.
+            "readiness_ok": not readiness_errors,
+            "readiness_errors": list(readiness_errors),
+            "senate_result_canonical": bool(canonical_result),
             # R6（DA-4 B1）：异常恢复能力位（内部；非正常态动作位）
             "senate_finalization_error": senate_finalization_error,
             "can_retry_finalization": senate_finalization_error,
@@ -995,6 +1518,15 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             # Stage 2 即可读支持率）；非 voted_all / 结算后无 pending 提案时回退 phase_data
             # 落盘值（R1 既有 results 展示行为不变）。
             "vote_results": projected_vote_results if projected_vote_results else (result_data.get("vote_results", []) if isinstance(result_data, dict) else []),
+            # S2/FC-712-11: the aggregate tally is explicitly NON-TERMINAL until
+            # the canonical finalization. ``covered``/``required`` are the
+            # all-controller facts; a partial preview carries no winner row.
+            "vote_tally": {
+                "status": tally_status,
+                "is_final": bool(tally_final),
+                "covered": tally_covered,
+                "required": tally_required,
+            },
             # WP-F R2-01：权威 passed-only 否决候选 id 集（单一 producer，AI/Human/DTO/Store/QML 全消费者同源）
             "veto_candidate_ids": veto_candidate_ids,
             "seat_shares": _seat_share_rows(state),
@@ -1005,6 +1537,11 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
             }],
             "disabled_reason": "" if actionable else "当前不是元老院阶段或当前行动玩家，暂不可操作。",
         }
+        # item5 (Disposition A): ADDITIVE registered-owner plane — never replaces
+        # any legacy viewer-relative key; consumer switches read plane on
+        # registered_seat. STRICTLY read-only (no book/scope mint).
+        data.update(_registered_role_capabilities(state, viewer_player_id,
+                                                  current_step))
         return api_response(True, "Senate phase view refreshed", data)
     except Exception as exc:
         return api_response(False, f"获取元老院视图失败: {exc}", errors=[str(exc)])
@@ -1100,7 +1637,8 @@ def _single_proposal_request(state: GameState, player_id: str, proposal_type: st
 
 @session_access.guarded(session_access.OP_MUTATE, command="propose_many",
                         viewer_param="player_id")
-def propose_many(state: GameState, player_id: str, proposals: List[Dict[str, Any]]) -> dict:
+def propose_many(state: GameState, player_id: str, proposals: List[Dict[str, Any]],
+                 *, _run_continuation: bool = True) -> dict:
     """R5（SA §3.1/§3.7，DA-2）：唯一整包提交门面（validate → stage → 原子发布）。
 
     输入兼容两种形态：
@@ -1146,7 +1684,12 @@ def propose_many(state: GameState, player_id: str, proposals: List[Dict[str, Any
     # (= PackageRecord.proposal_refs) is preserved verbatim on the success /
     # awaiting branches so the Store's canonical existence predicate /
     # ``_auto_finalize_after_submit`` semantics are NOT perturbed.
-    if response.get("success"):
+    # D4/D6 I2-R1 item6 (FC-D46-08 §4.6.2): the NARROW AI-proposal executor exit
+    # passes ``_run_continuation=False`` so the owner publication does NOT re-enter
+    # the coordinator's ``continue_after_command`` (recursion-free single outer
+    # drive). The owning-root path keeps the built-in continuation as the ONE
+    # automatic drive (default True, byte-for-byte behaviour unchanged).
+    if response.get("success") and _run_continuation:
         from src.api import session_turn_service as _turn_service
         cont = _turn_service.continue_after_command(
             state, ai_executor=_senate_ai_executor)
@@ -1159,6 +1702,35 @@ def propose_many(state: GameState, player_id: str, proposals: List[Dict[str, Any
                 "retryable": True,
                 "reason": cont.reason,
             }, [{"code": "AI_DRAIN_MASKED_FAILURE", "message": cont.reason}])
+        # D4/D6 item3 (S7 / Errata E3): ADDITIVE terminal passthrough — the frozen
+        # senate terminal envelope rides on the success ``data`` (mirrors
+        # ``session_api.recover_continuation``); every existing success key is kept
+        # verbatim and only a non-None terminal is merged in.
+        if getattr(cont, "terminal", None) is not None:
+            _data = response.get("data")
+            if isinstance(_data, dict):
+                _data.update(cont.terminal)
+        # S1/FC-712-01..03: the ONE continuation result is serialized as the typed
+        # delivery envelope (additive; every pre-existing key is preserved).
+        _data = response.get("data")
+        if isinstance(_data, dict):
+            # A never-registered CLI/legacy state keeps its historical envelope
+            # byte-for-byte (reference literal untouched); a registered session
+            # carries the ENGINE-issued accepted-command reference (column Q).
+            receipt_ref = "propose_many"
+            if session_access.is_hotseat_registered(state):
+                receipt_ref = _turn_service.delivery_command_ref(
+                    state, "senate", "propose_many", actor=player_id)
+            delivery = _turn_service.delivery_from_continuation(
+                state, "senate", cont, viewer_id=player_id,
+                command_receipt_ref=receipt_ref)
+            _data["delivery"] = delivery
+            if delivery.get("next"):
+                if delivery["next"].get("controller") == "HUMAN":
+                    _data["awaiting_player_id"] = (
+                        delivery["next"]["actor_player_id"])
+                else:
+                    _data["awaiting_player_id"] = None
     return response
 
 
@@ -1224,6 +1796,8 @@ def auto_submit_proposals(
     state: GameState,
     budget_decider: Optional[AutoBudgetDecider] = None,
     land_proposal_deciders: Optional[List[LandProposalDecider]] = None,
+    *,
+    _run_continuation: bool = True,
 ) -> dict:
     """为 AI 执政官自动生成所有提案（无控制台输出）。
 
@@ -1545,7 +2119,8 @@ def auto_submit_proposals(
             filtered_drafts.append(draft)
         war_drafts = filtered_drafts
     submit = propose_many(state, consul_player_id, {
-        "war_drafts": war_drafts, "proposals": non_war_proposals})
+        "war_drafts": war_drafts, "proposals": non_war_proposals},
+        _run_continuation=_run_continuation)
     if not submit.get("success"):
         errors.extend([e.get("message", "") for e in (submit.get("errors") or [])])
     created = (submit.get("data") or {}).get("created", [])
@@ -1787,12 +2362,16 @@ def vote(state: GameState, player_id: str, proposal_ids: List[int], votes: List[
         return api_response(False, "无效的游戏状态")
     # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     result = _political_system(state).record_vote(player_id, proposal_ids, votes)
-    return api_response(
+    response = api_response(
         success=result.get("success", False),
         message=result.get("message", ""),
         data=result.get("data", {}),
         errors=result.get("errors", []),
     )
+    # S1/FC-712-03: the owning vote package is ONE completion boundary; the API
+    # invokes the continuation exactly once and returns the typed delivery.
+    return _attach_senate_delivery(state, response, player_id,
+                                   receipt_ref="senate_vote")
 
 
 @session_access.guarded(session_access.OP_MUTATE, command="veto",
@@ -1802,20 +2381,65 @@ def veto(state: GameState, player_id: str, proposal_ids: List[int]) -> dict:
     if not state:
         return api_response(False, "无效的游戏状态")
     # S-B-R3a (DG-01): guard applied by the @guarded decorator.
-    result = _political_system(state).record_veto(player_id, proposal_ids)
+    # Rework-D3D6 D3/D5 R1 (R01 · FC-RW-01/03): the OWNER boundary PRESERVES the
+    # difference between an EXPLICIT empty decision (``[]`` = "I veto no passed
+    # proposal now") and a MISSING / MALFORMED payload (None / bad shape). The
+    # previous ``list(proposal_ids or [])`` normalized None/False/0/""/{}/dict
+    # into a lawful "explicit no-veto" — an ABSENT decision masquerading as a
+    # deliberate one (frozen Overlay §3.1).
+    if proposal_ids is None or not isinstance(proposal_ids, (list, tuple)):
+        return api_response(False, "Invalid or missing veto decision payload", {
+            "vetoed": [], "rejected_ids": [],
+        }, [{"code": "VETO_PAYLOAD_INVALID",
+            "message": "veto decision payload must be an explicit list of ids"}])
+    ids = list(proposal_ids)
+    if not ids:
+        # Rework-D3D6 D3 (FC-RW-01/03/05): an EXPLICIT EMPTY veto is a LAWFUL owner
+        # decision — never routed through the always-failing ``record_veto([])``.
+        # Owner-validate, then satisfy the singleton veto OID through the ONE
+        # checked completion writer (a rejected/unrecorded completion is a real
+        # failure, not a swallowed success).
+        ok, code = _validate_empty_veto_owner(state, player_id)
+        if not ok:
+            return api_response(False, "Empty veto decision refused", {
+                "vetoed": [], "rejected_ids": [],
+            }, [{"code": code,
+                "message": "explicit empty veto owner validation failed"}])
+        completion = _record_veto_step_completion(state)
+        if not completion.get("success"):
+            reason = completion.get("reason", "VETO_COMPLETION_REJECTED")
+            return api_response(False, "Empty veto decision was not recorded", {
+                "vetoed": [], "rejected_ids": [],
+            }, [{"code": reason,
+                "message": "the owner completion was not recorded"}])
+        return _attach_senate_delivery(
+            state,
+            api_response(True, "本次不否决任何通过提案", {
+                "vetoed": [], "rejected_ids": [],
+            }),
+            player_id, receipt_ref="senate_veto_decision")
+    result = _political_system(state).record_veto(player_id, ids)
     if result.get("success"):
-        # S-C F1: record the human tribune's lawful veto decision (incl. explicit
-        # empty choice) into the ledger so the veto obligation is satisfied.
-        _record_veto_step_completion(state)
-    return api_response(
+        # S-C F1 · R10-1: record the human tribune's lawful veto decision into the
+        # ledger so the veto obligation is satisfied — WITH a CHECKED result.
+        completion = _record_veto_step_completion(state)
+        if not completion.get("success"):
+            reason = completion.get("reason", "VETO_COMPLETION_REJECTED")
+            data = result.get("data", {}) or {}
+            return api_response(False, "Veto decision was not recorded", {
+                "vetoed": data.get("vetoed", []),
+                "rejected_ids": data.get("rejected_ids", []),
+            }, [{"code": reason,
+                "message": "the owner completion was not recorded"}])
+    response = api_response(
         success=result.get("success", False),
         message=result.get("message", ""),
         data=result.get("data", {}),
         errors=result.get("errors", []),
     )
-
-
-# ==================== R6（SA §D.1.1，DA-4 B1）：政治 finalization 完成协议 ====================
+    # S1/FC-712-03: veto joins the SAME owning completion boundary/continuation.
+    return _attach_senate_delivery(state, response, player_id,
+                                   receipt_ref="senate_veto_decision")
 
 #: 完成协议版本（幂等键第三元；协议语义变更必须递增）。
 SENATE_FINALIZATION_PROTOCOL_VERSION = 2
@@ -1946,15 +2570,50 @@ def finalize_senate_if_ready(state: GameState,
     senate_session_id = finalization_id[1]
     existing_result = state.get_phase_result("senate")
     existing_receipt = state.get_senate_finalization_receipt(senate_session_id)
+    receipt_indexed = bool(state.has_senate_finalization_receipt(senate_session_id))
 
     # —— 幂等重放：四事实已同版 → 按 finalization_id 返回**原** phase_result/PA/direct 摘要，
     # 零再次执行非 War 效果、零重复 Governor、零重复征召。
+    # §2.3：重放必须经过同一 canonical 谓词（真 receipt body + 同版指纹 + 同 key），
+    # 不得只凭 ``existing_result and existing_receipt`` 真值。
     if existing_result and existing_receipt:
+        canonical = canonical_finalization(state, expected_key=finalization_id)
+        if canonical["status"] != CANONICAL_VALID:
+            return api_response(
+                False, "元老院 finalization 收据不一致：禁止重放",
+                data={
+                    "finalization_id": [str(part) for part in finalization_id],
+                    "receipt_mismatch": {
+                        "status": canonical["status"],
+                        "stage": canonical.get("stage", ""),
+                        "detail": canonical.get("detail", ""),
+                    },
+                    "can_advance": False,
+                },
+                errors=[{"code": "DELIVERY_MISMATCH",
+                         "stage": canonical.get("stage") or "receipt_wrong",
+                         "message": "the canonical receipt does not back this replay"}],
+            )
         data = dict(existing_result.get("data", {}) or {})
         data["finalization_id"] = [str(part) for part in finalization_id]
         data["finalization_receipt"] = existing_receipt
         data["replayed"] = True
         return api_response(True, "元老院 finalization 已完成（幂等重放）", data=data)
+
+    # §2.3：悬空索引（claim 存在、body 缺失/非映射）不得被当作 ABSENT 重跑效果。
+    if existing_result and receipt_indexed and existing_receipt is None:
+        return api_response(
+            False, "元老院 finalization 收据悬空：禁止重建",
+            data={
+                "finalization_id": [str(part) for part in finalization_id],
+                "receipt_mismatch": {"status": CANONICAL_WRONG,
+                                     "stage": "receipt_wrong",
+                                     "detail": "dangling receipt index"},
+                "can_advance": False,
+            },
+            errors=[{"code": "DELIVERY_MISMATCH", "stage": "receipt_wrong",
+                     "message": "the claimed receipt body is missing"}],
+        )
 
     # S-C F3 (Overlay §1.1 / R1 §4.2): on a REGISTERED Hot-seat session the frozen
     # all-ballots ``phase_ready`` predicate gates BOTH the FIRST finalization AND
@@ -2502,6 +3161,124 @@ def _build_senate_vote_decider(state: GameState) -> SenateVoteDecider:
     return AutoSenateVoteDecider()
 
 
+def _senate_ai_executor_proposal(state: GameState, target: Any) -> Any:
+    """item6/FC-D46-08 §4.6: the NARROW delegation of the senate ``proposal`` substep.
+
+    Delegates ONLY to the EXISTING AI-proposal algorithm
+    (``auto_submit_proposals`` -> the owner publication ``propose_many``) through
+    its NON-continuation owner exit, so the executor NEVER re-enters
+    ``continue_after_command`` (recursion-free single outer drive, §4.6.2). It runs
+    ONLY when every precondition holds EXACTLY: the proposal singleton is a real
+    outstanding scheduled-AI stop (actual ``PlayerType.AI`` latched proposal
+    owner), the latched proposal owner is EXACTLY the scheduled ``target`` actor. A
+    wrong-officer / non-AI / HUMAN case fails closed BEFORE the owner algorithm
+    runs (zero side effects) — never a HUMAN-proposer takeover, never a structural
+    NONE. The existing AI selection algorithm is reused verbatim (no new AI policy).
+    """
+    from src.api import session_turn_service as turn_service
+    actor = getattr(target, "actor_player_id", None)
+    if getattr(target, "required_operation", "") != "proposal" \
+            or getattr(target, "substep", "") != "proposal":
+        return turn_service.ExecutionOutcome(
+            turn_service.OUTCOME_FAILURE, detail="SENATE_UNSUPPORTED_SUBSTEP:proposal")
+    if (getattr(target, "controller", "") != turn_service.CONTROLLER_AI
+            or not getattr(target, "is_executable", False) or actor is None):
+        # never a HUMAN proposer takeover / structural NONE -> fail-closed.
+        return turn_service.ExecutionOutcome(
+            turn_service.OUTCOME_FAILURE, detail="SENATE_UNSUPPORTED_SUBSTEP:proposal")
+    scope = turn_service.mint_scope(state, "senate")
+    latched = turn_service._book(state).role_selections.get((scope.scope_id, "proposal"))
+    if (not isinstance(latched, dict)
+            or latched.get("actor_player_id") != actor
+            or latched.get("controller") != turn_service.CONTROLLER_AI):
+        return turn_service.ExecutionOutcome(
+            turn_service.OUTCOME_FAILURE, detail="SENATE_PROPOSAL_OWNER_MISMATCH")
+    # the EXISTING AI-proposal algorithm via its RECURSION-FREE owner exit
+    # (``_run_continuation=False``): the owner publication happens once and the
+    # outer continuation stays the single driver (no second coordinator start).
+    try:
+        res = auto_submit_proposals(state, _run_continuation=False)
+    except Exception as exc:
+        return turn_service.ExecutionOutcome(
+            turn_service.OUTCOME_FAILURE,
+            detail=f"SENATE_PROPOSAL_EXECUTION_ERROR: {exc}")
+    if not res.get("success"):
+        return turn_service.ExecutionOutcome(
+            turn_service.OUTCOME_FAILURE,
+            detail=f"SENATE_PROPOSAL_DELEGATION_FAILED:{res.get('message', '')}")
+    created = (res.get("data") or {}).get("created") or []
+    receipts = tuple(str((c or {}).get("proposal_id")) for c in created)
+    return turn_service.ExecutionOutcome(
+        turn_service.OUTCOME_ACCEPTED, command_id="auto_submit_proposals",
+        receipts=receipts)
+
+
+def _senate_ai_executor_veto(state: GameState, target: Any) -> Any:
+    """item6/FC-D46-08: the NARROW delegation of the senate ``veto`` substep.
+
+    Delegates ONLY to the EXISTING ``apply_auto_tribune_vetoes`` + its existing
+    decider, and ONLY when every precondition holds EXACTLY: the veto singleton is
+    a REAL outstanding AI stop (actual ``PlayerType.AI`` latched tribune), the
+    latched veto owner is EXACTLY the scheduled ``target`` actor, and a real
+    tribunal exists. It never takes over a HUMAN tribune / a structural NONE, never
+    re-enters ``continue_after_command`` (no recursion), and returns an
+    ``ExecutionOutcome`` carrying a read-only ``owner_completion`` marker (the
+    EXISTING owner write ``_record_veto_step_completion`` already recorded the
+    singleton OID). A wrong-officer / non-AI / no-safety-exit case fails closed
+    BEFORE the decider runs (zero side effects).
+    """
+    from src.api import session_turn_service as turn_service
+    actor = getattr(target, "actor_player_id", None)
+    if getattr(target, "required_operation", "") != "veto" \
+            or getattr(target, "substep", "") != "veto":
+        return turn_service.ExecutionOutcome(
+            turn_service.OUTCOME_FAILURE, detail="SENATE_UNSUPPORTED_SUBSTEP:veto")
+    if (getattr(target, "controller", "") != turn_service.CONTROLLER_AI
+            or not getattr(target, "is_executable", False) or actor is None):
+        # never a HUMAN tribune takeover / structural NONE -> fail-closed.
+        return turn_service.ExecutionOutcome(
+            turn_service.OUTCOME_FAILURE, detail="SENATE_UNSUPPORTED_SUBSTEP:veto")
+    scope = turn_service.mint_scope(state, "senate")
+    latched = turn_service._book(state).role_selections.get((scope.scope_id, "veto"))
+    if (not isinstance(latched, dict)
+            or latched.get("actor_player_id") != actor
+            or latched.get("controller") != turn_service.CONTROLLER_AI):
+        return turn_service.ExecutionOutcome(
+            turn_service.OUTCOME_FAILURE, detail="SENATE_VETO_OWNER_MISMATCH")
+    if _current_tribune(state) is None:
+        return turn_service.ExecutionOutcome(
+            turn_service.OUTCOME_FAILURE, detail="SENATE_VETO_NO_TRIBUNE")
+    # the EXISTING AI-tribune algorithm writes the singleton veto completion via
+    # ``_record_veto_step_completion`` (the ONE owner writer); no second drain.
+    res = apply_auto_tribune_vetoes(state)
+    if not res.get("success"):
+        return turn_service.ExecutionOutcome(
+            turn_service.OUTCOME_FAILURE,
+            detail=f"SENATE_VETO_DELEGATION_FAILED:{res.get('message', '')}")
+    book = turn_service._book(state)
+    veto_oid = book.oid("senate", "veto", ("singleton", scope.scope_id),
+                        scope.scope_id)
+    rec = None
+    for r in book.records:
+        if (r.obligation_id == veto_oid and r.command_id == "senate_veto_decision"
+                and r.satisfied_kind == turn_service.KIND_ACTION):
+            rec = r
+            break
+    oc = None
+    if rec is not None:
+        oc = turn_service.OwnerCompletion(
+            scope_id=scope.scope_id, obligation_id=veto_oid,
+            command_id="senate_veto_decision", actor_player_id=None,
+            kind=turn_service.KIND_ACTION,
+            receipt_id=rec.authoritative_fact_ref or "",
+            pre_revision=(rec.dispatch_key[-1] if rec.dispatch_key else 0),
+            satisfied_at_revision=rec.satisfied_at_revision,
+            fact_ref=rec.authoritative_fact_ref or "")
+    return turn_service.ExecutionOutcome(
+        turn_service.OUTCOME_ACCEPTED, command_id="senate_veto_decision",
+        owner_completion=oc)
+
+
 def _senate_ai_executor(state: GameState, target: Any) -> Any:
     """Senate phase-specific scheduled-AI drain (F1) — mirrors
     ``session_api._population_ai_executor``.
@@ -2523,8 +3300,15 @@ def _senate_ai_executor(state: GameState, target: Any) -> Any:
     substep = getattr(target, "substep", "") or ""
     actor = getattr(target, "actor_player_id", None)
     try:
+        if substep == "veto":
+            # item6: NARROW delegation to the EXISTING AI-tribune algorithm (gated).
+            return _senate_ai_executor_veto(state, target)
+        if substep == "proposal":
+            # item6: NARROW delegation to the EXISTING AI-proposal algorithm via
+            # its recursion-free owner exit (gated; never a HUMAN-proposer takeover).
+            return _senate_ai_executor_proposal(state, target)
         if not (isinstance(substep, str) and substep.startswith("vote:")):
-            # proposal / veto substeps: no safe owner executor here -> fail-closed.
+            # unknown substep: no safe owner executor here -> fail-closed.
             return turn_service.ExecutionOutcome(
                 turn_service.OUTCOME_FAILURE,
                 detail=f"SENATE_UNSUPPORTED_SUBSTEP:{substep or 'unknown'}")

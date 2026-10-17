@@ -166,6 +166,10 @@ class TestBug3FailClosed:
                     "data": {}, "errors": [{"code": "INJECTED_CANDIDATE_FAILURE"}]}
 
         monkeypatch.setattr(population_api, "get_candidates", failing_get_candidates)
+        # FC-D1-01 (Rework-D1D2): the AI drain reads candidates through the
+        # service-private validated-read boundary ``_get_candidates_impl`` (the
+        # frozen internal-continuation read); the fault seam moves with it.
+        monkeypatch.setattr(population_api, "_get_candidates_impl", failing_get_candidates)
 
         from src.api.session_api import _drain_ai_population_turns
         auto = self._make_auto_processor(state)
@@ -201,6 +205,8 @@ class TestBug3FailClosed:
             raise RuntimeError("T-B3-07c-2 injected candidate retrieval exception")
 
         monkeypatch.setattr(population_api, "get_candidates", raising_get_candidates)
+        # FC-D1-01 (Rework-D1D2): fault seam moved to the private boundary.
+        monkeypatch.setattr(population_api, "_get_candidates_impl", raising_get_candidates)
 
         from src.api.session_api import _drain_ai_population_turns
         auto = self._make_auto_processor(state)
@@ -242,6 +248,8 @@ class TestBug3FailClosed:
                     "data": {}}
 
         monkeypatch.setattr(population_api, "get_candidates", empty_get_candidates)
+        # FC-D1-01 (Rework-D1D2): fault seam moved to the private boundary.
+        monkeypatch.setattr(population_api, "_get_candidates_impl", empty_get_candidates)
 
         from src.api.session_api import _drain_ai_population_turns
         auto = self._make_auto_processor(state)

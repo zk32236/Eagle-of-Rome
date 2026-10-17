@@ -1236,6 +1236,14 @@ class GuiSessionStore(QObject):
         """确认人口阶段结果并切换到元老院阶段视图。"""
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
+        # item3 §2a S1: when a barrier provider is bound (production async host)
+        # the population->senate advance runs through the SAME masked owning-flow
+        # machine the senate commands use, so the owning dispatch (and thus the
+        # senate terminal gate) is available to the continuation. Legacy unchanged.
+        if self._barrier_provider is not None:
+            return self._masked_senate_owning_flow(
+                "advancePopulation", "advance_population_phase",
+                lambda: self._adapter.advance_population(self._viewer_id))
         if not self.canAdvancePopulation:
             feedback = self._feedback(False, "人口阶段尚未完成，无法推进", "error")
             self._raise_feedback(feedback)
@@ -1384,6 +1392,14 @@ class GuiSessionStore(QObject):
     def doCompleteForumStep(self) -> dict:
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
+        # D2 (FC-D2-03/04/05): under the bound production barrier provider the
+        # retirement substep finish runs through the SAME masked seat-handoff
+        # machine as the population path, so a cursor move to the next HUMAN is
+        # paired with the seat-authority handoff IN ONE TRANSACTION (no bare
+        # cursor move, no stale-viewer read). The legacy synchronous path (no
+        # provider) is byte-for-byte unchanged below.
+        if self._barrier_provider is not None and self.forumCurrentStep == "retirement":
+            return self._masked_forum_finish("doCompleteForumStep", "retirement")
         # R11-F03: the public finish must pass the ONE controlled seat authority
         # BEFORE any ledger/receipt mutation (an old/masked/non-current invocation
         # can no longer mutate completion truth first).
@@ -1444,11 +1460,14 @@ class GuiSessionStore(QObject):
             return None
         return decision.denial()
 
-    def _advance_forum_to_next_human(self, substep: str) -> bool:
-        """S-C F4: if a forum substep still has an outstanding HUMAN, make that
-        HUMAN the CURRENT actor via the coordinator's SOLE cursor writer
-        (``select_actor``) and report the hand-off (True) — never a false
-        completion; mask/access contract preserved."""
+    def _advance_forum_to_next_human(self, substep: str):
+        """S-C F4 / D2: if a forum substep still has an outstanding HUMAN, make
+        that HUMAN the CURRENT actor via the coordinator's SOLE cursor writer
+        (``select_actor``) and RETURN that actor id — never a false completion and
+        never a bare cursor move. The caller MUST pair the cursor move with the
+        seat-authority handoff in the SAME masked transaction (FC-D2-03); a bare
+        ``select_actor`` followed by a stale-viewer read IS the D2 defect. Returns
+        ``None`` when no HUMAN is outstanding for this substep (no cursor move)."""
         from src.api import session_turn_service as _turn
         scope = _turn.mint_scope(self._state, "forum")
         snapshot = _turn.obligations(self._state, "forum")
@@ -1456,9 +1475,10 @@ class GuiSessionStore(QObject):
                   if o.substep == substep
                   and o.controller == _turn.CONTROLLER_HUMAN]
         if humans:
-            _turn.select_actor(self._state, scope.scope_id)
-            return True
-        return False
+            sel = _turn.select_actor(self._state, scope.scope_id)
+            if sel.get("success") and sel.get("actor"):
+                return sel.get("actor")
+        return None
 
     def _record_forum_ledger_finish(self, player_id: str, substep: str,
                                     command: str) -> dict:
@@ -1537,6 +1557,11 @@ class GuiSessionStore(QObject):
     def doResolveForum(self) -> dict:
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
+        # D2 (FC-D2-03/04/05): the market substep finish runs through the SAME
+        # masked seat-handoff machine (the market settlement remains the recovered
+        # same seat's follow-up when there is no next HUMAN).
+        if self._barrier_provider is not None:
+            return self._masked_forum_finish("doResolveForum", "market")
         # R11-F03: the public finish must pass the ONE controlled seat authority
         # BEFORE any ledger/receipt mutation (an old/masked/non-current invocation
         # can no longer mutate completion truth first).
@@ -1994,6 +2019,27 @@ class GuiSessionStore(QObject):
             if isinstance(item, dict):
                 selected.append(item)
         if self._senate_view.get("viewer_has_consul", False):
+            if self._barrier_provider is not None:
+                # item3 §2a S2: the consul's proposal submission runs through the
+                # masked owning-flow machine, so the owning dispatch enables the
+                # senate terminal gate for the command's built-in continuation.
+                # G5 I2-R3 R1 (O-2): the legacy submit-time BOOKKEEPING (structured
+                # error surface + draft-cache reset on success) is re-applied inside
+                # the owning dispatch. It touches ONLY Store-local UI state (no
+                # guarded read), so it is scope-safe; the snapshot/view refresh is
+                # provided by the masked activation's staged re-read.
+                def _dispatch_proposals():
+                    submitted = self._adapter.submit_senate_proposals(
+                        self._viewer_id, selected)
+                    try:
+                        self._apply_senate_submit_feedback(submitted)
+                        if submitted.get("success"):
+                            self._senate_drafts = {}
+                    except Exception:  # pragma: no cover - defensive
+                        logger.exception("masked senate submit bookkeeping failed")
+                    return submitted
+                return self._masked_senate_owning_flow(
+                    "doSubmitSenateProposals", "propose_many", _dispatch_proposals)
             feedback = self._adapter.submit_senate_proposals(self._viewer_id, selected)
         else:
             # S-C F1/A3-02 (delta §3.3#3): the Store must NOT route EVERY non-consul
@@ -2113,6 +2159,17 @@ class GuiSessionStore(QObject):
             except (TypeError, ValueError):
                 continue
         votes = [pid in selectable for pid in proposal_ids]
+        if self._barrier_provider is not None:
+            # item3 §2a S3: the vote submission runs through the masked owning-flow
+            # machine (the owning dispatch enables the senate terminal gate).
+            # G5 I2-R3 REWORK (S3): the legacy settlement convergence (zero-passed /
+            # NONE-veto ``resolve_senate``) runs INSIDE the same owning transaction —
+            # the masked return must never skip it (production binds a provider).
+            return self._masked_senate_owning_flow(
+                "doSubmitSenateVotes", "vote",
+                lambda: self._adapter.submit_senate_votes(
+                    self._viewer_id, proposal_ids, votes),
+                converge=self._converge_senate_settlement)
         feedback = self._adapter.submit_senate_votes(self._viewer_id, proposal_ids, votes)
         self._raise_senate_feedback(feedback)
         if feedback.get("success"):
@@ -2123,7 +2180,7 @@ class GuiSessionStore(QObject):
             # 直接跳过进结算 + 本文件 doSubmitSenateVetoes 否决后无条件 resolve 先例）；resolve_senate
             # 幂等（落盘后 result_data 非空 → 条件不满足），passed>0 路径 step=tribune_veto 不触发。
             if (
-                self._senate_view.get("current_step") == "results"
+                self._senate_view.get("current_step") in ("results", "settlement_pending")
                 and not self._senate_view.get("senate_result")
             ):
                 resolve_feedback = self._adapter.resolve_senate()
@@ -2153,13 +2210,20 @@ class GuiSessionStore(QObject):
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
         payload = self._variant_to_python(proposal_ids)
-        veto_ids = []
-        for item in payload or []:
-            item = self._variant_to_python(item)
-            try:
-                veto_ids.append(int(item))
-            except (TypeError, ValueError):
-                continue
+        # Rework-D3D6 D3/D5 R1 (R01 · FC-RW-03): an EXPLICIT ``[]`` is a lawful
+        # no-veto decision; a MISSING / MALFORMED payload (None / bad shape /
+        # non-int rows) must NOT be silently filtered into a lawful ``[]``.
+        # ``veto_ids is None`` => malformed (never a lawful empty decision).
+        veto_ids = None
+        if isinstance(payload, (list, tuple)):
+            veto_ids = []
+            for item in payload:
+                item = self._variant_to_python(item)
+                try:
+                    veto_ids.append(int(item))
+                except (TypeError, ValueError):
+                    veto_ids = None
+                    break
         # AU-R2-3b（R2-B-2，C3）：路由改读 resolver-backed veto_control_mode——不再信任
         # cached can_auto_veto（stale 场景：cached True 但 mode=HUMAN → human 分支 + API
         # guard 双层兜底）。HUMAN→submit_senate_vetoes / AI→apply_auto（直传 viewer_id，
@@ -2181,7 +2245,30 @@ class GuiSessionStore(QObject):
                 self._refresh_senate_view()
                 self.senateViewChanged.emit()
                 return auto_feedback
-        elif veto_mode == "HUMAN" and veto_ids:
+        elif veto_mode == "HUMAN":
+            # Rework-D3D6 D3 (FC-RW-05): the HUMAN veto owner's decision — an
+            # EXPLICIT EMPTY set included — is routed through the owner API (the
+            # sole completion writer); the Store never fabricates completion and
+            # never infers the decision from the resolve outcome.
+            # Rework-D3D6 D3/D5 R1 (R01): a missing/malformed payload is a REAL
+            # failure — never silently degraded into a lawful no-veto decision.
+            if veto_ids is None:
+                rejected = self._feedback(False, "无效或缺失的否决决定", "error")
+                self._raise_senate_feedback(rejected)
+                self.senateViewChanged.emit()
+                return rejected
+            if self._barrier_provider is not None:
+                # item3 §2a S4: the HUMAN veto owner's decision runs through the
+                # masked owning-flow machine (the owning dispatch enables the
+                # senate terminal gate for the command's built-in continuation).
+                # G5 I2-R3 REWORK (S4): the legacy UNCONDITIONAL settlement
+                # convergence after a HUMAN veto runs INSIDE the same owning
+                # transaction — the masked return must never skip it.
+                return self._masked_senate_owning_flow(
+                    "doSubmitSenateVetoes", "veto",
+                    lambda: self._adapter.submit_senate_vetoes(
+                        self._viewer_id, veto_ids),
+                    converge=self._converge_senate_settlement)
             veto_feedback = self._adapter.submit_senate_vetoes(self._viewer_id, veto_ids)
             self._raise_senate_feedback(veto_feedback)
             if not veto_feedback.get("success"):
@@ -2859,12 +2946,84 @@ class GuiSessionStore(QObject):
     #: non-exported transaction-local continuation scope (DG-03 §3.4). The scope
     #: never widens into a reusable token and authorizes only these names for the
     #: one owning dispatch.
+    #:
+    #: FC-D1-02 (D1 rework): each masked owning command's helper set is EXACTLY the
+    #: internal guarded-boundary closure of that command (no fewer — a missing
+    #: label is a DENIED internal call; no more — an unreachable label is an
+    #: over-authorization surface). ``get_candidates`` is intentionally ABSENT:
+    #: every internal candidate read now uses the service-private
+    #: ``population_api._get_candidates_impl`` (FC-D1-01), so the PUBLIC guarded
+    #: read boundary is never reached inside the continuation scope. The AI-drain
+    #: sub-boundaries (``campaign`` / ``vote``) are reachable via the owning
+    #: command's automatic continuation (``continue_after_command`` /
+    #: ``resolve_population_slice``) and are therefore enumerated.
     _LEASE_HELPERS = {
         "submit_population_votes": frozenset({
-            "begin_population_phase", "get_candidates", "batch_vote",
-            "complete_population_player",
+            "begin_population_phase", "batch_vote", "complete_population_player",
+            "resolve_population_slice",
+            "process_population_disbandments", "resolve_election",
+            "campaign", "vote",
+        }),
+        "resolve_population_slice": frozenset({
+            "begin_population_phase", "process_population_disbandments",
+            "resolve_election", "campaign", "vote",
+        }),
+        # D2 — forum substep FINISH owning commands (FC-D2-03/05): the transaction
+        # records the seat's lawful finish, drives the scheduled-AI sub-boundaries
+        # and (via the coordinator) selects the next actor, all under ONE masked
+        # handoff transaction. ``open_market`` / ``resolve_forum`` are performed as
+        # the SAME seat's follow-up AFTER same-seat recovery (outside the
+        # continuation scope), so they are not helpers here.
+        "doCompleteForumStep": frozenset({
+            "retire_figure",
+        }),
+        "doResolveForum": frozenset({
+            "recruit_figure", "place_bid", "buy_land", "vote_triumph",
         }),
     }
+
+    #: D4/D6 I1 (FC-D46-01, PC-RA-05): the INDEPENDENT new-normal-root registry
+    #: (the five §1.1 owning commands). It is kept strictly SEPARATE from the
+    #: legacy ``_LEASE_HELPERS`` four-root map (byte-for-byte unchanged): the two
+    #: key sets MUST be disjoint, there is no default union / wildcard, and the
+    #: recovery root is in NEITHER normal registry. Each value is the root's
+    #: internal guarded-boundary closure E (design §4.1.2).
+    _PHASE_ROLE_LEASE_HELPERS = {
+        "advance_forum_phase": frozenset({
+            "begin_population_phase", "archive_office_holders",
+            "convert_battlefield_commanders", "process_population_disbandments",
+            "campaign", "vote", "resolve_election",
+        }),
+        "advance_population_phase": frozenset({
+            "auto_submit_proposals", "apply_auto_tribune_vetoes",
+            "finalize_senate_if_ready", "assign_governors",
+        }),
+        "propose_many": frozenset({
+            "auto_submit_proposals", "apply_auto_tribune_vetoes",
+            "finalize_senate_if_ready", "assign_governors",
+        }),
+        "vote": frozenset({
+            "auto_submit_proposals", "apply_auto_tribune_vetoes",
+            "finalize_senate_if_ready", "assign_governors",
+        }),
+        "veto": frozenset({
+            "auto_submit_proposals", "apply_auto_tribune_vetoes",
+            "finalize_senate_if_ready", "assign_governors",
+        }),
+    }
+
+    @classmethod
+    def _helpers_for_owning_command(cls, command: Optional[str]) -> frozenset:
+        """FC-D46-01: the ONLY owning-command helper lookup. Exact legacy map
+        first, then the independent new-normal-root registry; a root in NEITHER
+        resolves to the empty set (unknown -> refuse, never a default union /
+        wildcard). The legacy four roots keep their EXACT prior behaviour."""
+        if command is None:
+            return frozenset()
+        helpers = cls._LEASE_HELPERS.get(command)
+        if helpers is not None:
+            return helpers
+        return cls._PHASE_ROLE_LEASE_HELPERS.get(command, frozenset())
 
     def _begin_masked_seat_transition(self, command_id: str,
                                       lease_command: Optional[str] = None,
@@ -2967,7 +3126,7 @@ class GuiSessionStore(QObject):
         if lease_id:
             reason = session_access.consume_command_lease(
                 self._state, lease_id=lease_id,
-                helpers=self._LEASE_HELPERS.get(lease_command, frozenset()))
+                helpers=self._helpers_for_owning_command(lease_command))
             if reason is not None:
                 self._fail_masked(FAIL_BEFORE_COMMIT, txn_id)
                 return False
@@ -2981,7 +3140,7 @@ class GuiSessionStore(QObject):
         session_access.begin_dispatch_nesting(
             self._state, txn_id=txn["txn_id"], command=command,
             dispatch_epoch=txn["seat_epoch"],
-            helpers=self._LEASE_HELPERS.get(command, frozenset()))
+            helpers=self._helpers_for_owning_command(command))
         try:
             return fn(*args)
         finally:
@@ -3055,18 +3214,85 @@ class GuiSessionStore(QObject):
         self.phaseStepsChanged.emit()
         self.currentPlayerChanged.emit()
 
+    def _delivery_fail(self, txn_id: str, err: Dict[str, Any],
+                       done: Optional[Any] = None) -> Dict[str, Any]:
+        """S1/FC-712-02: a typed delivery failure — fail closed, remain masked,
+        retain the committed receipt. Never fall back to the same seat."""
+        self._fail_masked(FAIL_AFTER_COMMIT, txn_id)
+        result = self._feedback(False, "交付协议校验失败，本回合未切换", "error",
+                                data={"delivery_error": err or {}})
+        if done is not None:
+            done(result)
+        return result
+
+    def _receiver_delivery(self, phase: str, outcome: str = "CONTINUE",
+                           actor_id: Optional[str] = None) -> Dict[str, Any]:
+        """Build an EXPLICIT typed delivery for a genuinely committed transition
+        whose owner API returned no envelope (e.g. the resolved population slice).
+
+        The receiver is the REAL Core current player (or an explicit actor); it is
+        NOT a missing-receiver same-seat fallback and is validated downstream.
+        """
+        from src.api import session_turn_service
+        if not actor_id:
+            current = self._state.get_current_player()
+            actor_id = getattr(current, "player_id", None)
+        return session_turn_service.delivery_for_actor(
+            self._state, phase, actor_id, outcome=outcome,
+            viewer_id=self._viewer_id,
+            command_receipt_ref=session_turn_service.delivery_command_ref(
+                self._state, phase, "store_settle", actor=actor_id))
+
     def _settle_seat_after_success(self, txn_id: str,
                                    next_actor_id: Optional[str],
-                                   done: Optional[Any] = None) -> Dict[str, Any]:
+                                   done: Optional[Any] = None,
+                                   delivery: Optional[Dict[str, Any]] = None,
+                                   legacy: Optional[Dict[str, Any]] = None,
+                                   ) -> Dict[str, Any]:
         """R2 steps 5+: decide pending vs same-seat and stage privately (no
-        pre-confirm publication of the next seat)."""
+        pre-confirm publication of the next seat).
+
+        S1/FC-712-01/02: when a typed delivery is presented it is the ONLY
+        receiver truth — validated against the REAL Core current player / actual
+        ``PlayerType``. A missing receiver is a typed failure; there is NO
+        ``None -> same-seat`` fallback.
+        """
         # The dispatched command's success auto-refresh may have repopulated the
         # viewer (still A) projection; re-neutralize so no stale viewer residue is
         # visible while masked/pending.
         self._neutralize_public_projection()
-        # Same HUMAN (or no handoff): recover the same seat at a new epoch without
-        # an artificial 「接管」.
-        if not next_actor_id or next_actor_id == self._viewer_id:
+        if delivery is not None:
+            from src.api import session_turn_service
+            verdict = session_turn_service.validate_delivery_result(
+                self._state, delivery, viewer_id=self._viewer_id, legacy=legacy)
+            if not verdict.get("ok"):
+                return self._delivery_fail(
+                    txn_id, verdict.get("error") or {}, done)
+            outcome = delivery.get("outcome")
+            nxt = delivery.get("next") or {}
+            if outcome == session_turn_service.DELIVERY_OUTCOME_CONTINUE:
+                next_actor_id = nxt.get("actor_player_id")
+            elif outcome == session_turn_service.DELIVERY_OUTCOME_RESOLVED:
+                if nxt.get("controller") == session_turn_service.CONTROLLER_AI:
+                    return self._delivery_fail(
+                        txn_id,
+                        session_turn_service.delivery_error(
+                            "DELIVERY_INVALID", stage="terminal",
+                            detail="an AI owner is not an ACTIVE seat"),
+                        done)
+                next_actor_id = nxt.get("actor_player_id") or next_actor_id
+        if not next_actor_id:
+            from src.api import session_turn_service
+            return self._delivery_fail(
+                txn_id,
+                session_turn_service.delivery_error(
+                    session_turn_service.DELIVERY_MISSING_RECEIVER,
+                    stage="settle",
+                    detail="a successful command must deliver its receiver"),
+                done)
+        # Same HUMAN (explicitly delivered): recover the same seat at a new epoch
+        # without an artificial 「接管」.
+        if next_actor_id == self._viewer_id:
             return self._activate_seat(txn_id, self._viewer_id, same_seat=True,
                                        done=done)
         faction = self._safe_faction_name(next_actor_id)
@@ -3272,6 +3498,15 @@ class GuiSessionStore(QObject):
         # the one-use command lease is destroyed (no repeat-command capability).
         session_access.fail_hotseat_session(self._state)
         session_access.clear_command_lease(self._state)
+        # D4/D6 I2-R1 §2b (FC-D46-04/seal): a PROVEN POST-COMMIT failure is the ONLY
+        # point that seals the current ARMED recovery mandate FAILED_RECOVERABLE, so
+        # the public recovery chain (Store doRecoverContinuation -> Adapter -> public
+        # guard) can be driven in the I1/I2 semantics. The old lease/scope/handle are
+        # destroyed ABOVE (unchanged); the mandate is NOT a lease and survives the
+        # failure (PC-RA-02) — but only for a real post-commit failure. A pre-commit
+        # failure (no commit happened) seals NOTHING (no legitimate recovery source).
+        if kind == FAIL_AFTER_COMMIT:
+            session_access.seal_recovery_mandate_for_failure(self._state)
         # SB-V04.4 (D): a PRE-commit failure must ALSO neutralize every exposed
         # model (the old after_commit-only guard left the old A backing models
         # populated/accessible when arming failed). Never leave stale residue.
@@ -3293,6 +3528,186 @@ class GuiSessionStore(QObject):
                 done(feedback)
         self._activate_seat(txn_id, self._viewer_id, same_seat=True, done=_after)
         return feedback
+
+    def _senate_settlement_pending(self) -> bool:
+        """True iff the REAL all-ballots/ready predicate says the senate can be
+        finalised (the exact predicate the server-side finalization guard uses).
+
+        Read-only coordinator probe; it never writes the ledger/cursor and never
+        derives readiness from the Store's cached DTO.
+        """
+        try:
+            from src.api import session_turn_service
+            return bool(session_turn_service.phase_ready(self._state, "senate"))
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("senate readiness probe failed")
+            return False
+
+    def _converge_senate_settlement(self) -> bool:
+        """item3 §2a S3/S4 (G5 I2-R3 REWORK): restore the LEGACY settlement
+        convergence INSIDE the owning-dispatch scope.
+
+        The legacy synchronous branches call ``resolve_senate`` after a vote
+        (zero-passed / resolver-backed ``veto_control_mode == "NONE"``) and
+        unconditionally after a HUMAN veto. The masked branches used to RETURN
+        before those blocks, so with a barrier provider bound (the real GUI path,
+        ``app.py:286``) the senate was never finalised (deadlock).
+
+        ``senate_api.resolve_senate`` is the compatibility alias of the canonical
+        owner writer ``finalize_senate_if_ready``; the owning-scope helper
+        registry grants the CANONICAL label (not the retired alias label), so the
+        Store calls the SAME writer directly. It is self-gated by the server's
+        real readiness predicate and REFUSES otherwise, so no phase is ever
+        resolved early (legacy parity: resolve only after all ballots / the veto
+        decision).
+
+        Must be invoked from INSIDE ``_dispatch_owning`` (the continuation scope
+        only exists there); never from the seat-settle step.
+        """
+        if not self._senate_settlement_pending():
+            return False
+        from src.api import senate_api
+        feedback = self._adapter.call(senate_api.finalize_senate_if_ready, self._state)
+        if not feedback.get("success"):
+            # Legacy behaviour surfaces the refusal but keeps the committed
+            # command's result (never a second business decision).
+            logger.info("senate settlement convergence refused: %s",
+                        feedback.get("message", ""))
+            return False
+        return True
+
+    def _settle_after_senate_command(self, txn_id: str, feedback: Dict[str, Any],
+                                     done: Optional[Any] = None) -> Dict[str, Any]:
+        """item3 §2a S5 (Errata E1/E2, design §3.3): terminal-aware settlement for
+        a committed senate owning command.
+
+        The senate itself is settled INSIDE the same masked transaction, by the
+        in-scope convergence (``_converge_senate_settlement``, S3/S4) run by the
+        owning dispatch; this helper must never settle the seat alone. It then
+        consumes ONLY the frozen terminal envelope (the command's built-in
+        continuation output, passed through by ``senate_api``):
+
+        * ``status == 'resolved'`` + ``controller == 'HUMAN'`` -> settle to the
+          terminal G (``awaiting_player_id``/``actor``) — a different H hands off
+          (explicit takeover), the same H recovers at a new epoch (no artificial
+          takeover);
+        * ``status == 'resolved'`` + ``controller == 'AI'`` -> masked failure: the
+          frozen design §3.3-2 / §4.3.4 forbids the ``None -> same-seat`` fallback
+          for G=AI and there is no supported AI ACTIVE takeover yet (never a
+          forged H target / never an AI occupying the interactive seat);
+        * no terminal (legacy / awaiting business feedback) -> the ordinary
+          next-actor settle (``awaiting_player_id`` or the same-seat fallback),
+          identical to the population path.
+
+        It never recomputes G, never reads a DTO backwards, and never uses
+        ``cursor_restored`` as an activation credential.
+        """
+        data = feedback.get("data") if isinstance(feedback, dict) else None
+        if not isinstance(data, dict):
+            data = {}
+        delivery = data.get("delivery") if isinstance(data.get("delivery"), dict) \
+            else None
+        if data.get("status") == "resolved":
+            if data.get("controller") == "AI":
+                self._fail_masked(FAIL_AFTER_COMMIT, txn_id)
+                result = self._handoff_failure_feedback()
+                if done is not None:
+                    done(result)
+                return result
+            next_actor = (delivery or {}).get("next") or {}
+            next_actor = next_actor.get("actor_player_id") \
+                or data.get("awaiting_player_id") or data.get("actor")
+            return self._settle_seat_after_success(
+                txn_id, next_actor_id=next_actor, done=done, delivery=delivery,
+                legacy=data)
+        next_actor = data.get("awaiting_player_id")
+        if delivery is not None and delivery.get("outcome") == "CONTINUE":
+            next_actor = (delivery.get("next") or {}).get("actor_player_id")
+        return self._settle_seat_after_success(
+            txn_id, next_actor_id=next_actor, done=done, delivery=delivery,
+            legacy=data)
+
+    def _masked_senate_owning_flow(self, command_id: str, lease_command: str,
+                                   dispatch, converge=None) -> Dict[str, Any]:
+        """item3 §2a (S1–S4/S6): run a senate owning command through the SAME
+        masked seat-handoff machine the population/forum paths use (mirrors
+        ``_masked_forum_finish``).
+
+        Under ONE masked transaction the seat is suspended, the owning command is
+        dispatched inside the private owning-dispatch nesting (which is what makes
+        the item3 owning-possession gate TRUE, so the command's built-in
+        continuation can reach the UNIQUE senate terminal), and then settled via
+        :meth:`_settle_after_senate_command` (S5).
+
+        ``converge`` (S3/S4, optional) runs INSIDE the same owning-dispatch scope
+        after a successful command — it restores the legacy ``resolve_senate``
+        settlement convergence (zero-passed / NONE-veto / HUMAN veto) so the
+        senate is finalised in the SAME masked transaction, never only the seat.
+        It is invoked while the continuation scope is live because the canonical
+        owner writer is only authorized there.
+
+        * a post-commit AI-drain continuation MASKED_FAILURE -> ``_fail_masked``
+          with ``route=RECOVER_ROUTE_CONTINUATION`` (S6 — the bounded continuation
+          recovery, never an activation retry);
+        * an ordinary non-mutating business refusal -> same-seat recovery;
+        * an unexpected exception -> fail closed (after-commit mask).
+
+        Only entered when a barrier provider is bound (production async host); the
+        legacy synchronous path stays byte-for-byte unchanged for every other
+        caller.
+        """
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        if self._seat_lifecycle != SEAT_ACTIVE or self._handoff_busy:
+            return self._feedback(False, "当前无法执行本席操作", "error")
+        holder = {"r": None}
+
+        def done(result):
+            holder["r"] = result
+
+        def cont(txn, ok, fail_result):
+            txn_id = txn["txn_id"]
+            if not ok:
+                done(fail_result)
+                return
+            try:
+                # I1a: bind the TRUSTED senate phase entry BEFORE the owner
+                # command runs, so the continuation derives its scope/obligation
+                # identities from the same committed generation the delivery
+                # validator will accept (no-op once a route already exists).
+                from src.api import session_turn_service
+                session_turn_service.bind_phase_for_delivery(self._state, "senate")
+
+                def _owning_dispatch():
+                    dispatched = dispatch()
+                    if (converge is not None
+                            and isinstance(dispatched, dict)
+                            and dispatched.get("success")):
+                        converge()
+                    return dispatched
+                feedback = self._dispatch_owning(txn, lease_command, _owning_dispatch)
+                self._committed_receipt = feedback
+                if not feedback.get("success"):
+                    if self._is_masked_continuation_failure(feedback):
+                        self._fail_masked(FAIL_AFTER_COMMIT, txn_id,
+                                          route=RECOVER_ROUTE_CONTINUATION)
+                        done(self._handoff_failure_feedback())
+                        return
+                    self._masked_business_rejection(txn_id, feedback, done=done)
+                    return
+                self._settle_after_senate_command(txn_id, feedback, done=done)
+            except Exception:
+                logger.exception("masked senate owning flow failed")
+                self._fail_masked(FAIL_AFTER_COMMIT, txn_id)
+                done(self._handoff_failure_feedback())
+
+        txn = self._begin_masked_seat_transition(
+            command_id, lease_command=lease_command, payload={}, cont=cont)
+        if txn is None:
+            return self._handoff_failure_feedback()
+        if holder["r"] is not None:
+            return holder["r"]
+        return self._masked_pending_feedback(txn["txn_id"])
 
     def _handoff_failure_feedback(self) -> Dict[str, Any]:
         kind = self._handoff_failure_kind or FAIL_AFTER_COMMIT
@@ -3387,7 +3802,55 @@ class GuiSessionStore(QObject):
         """
         if self._seat_lifecycle != SEAT_MASKED_FAILURE:
             return self._feedback(False, "当前无待恢复的继续处理", "warning")
-        feedback = self._adapter.recover_continuation(self._viewer_id)
+        # D4/D6 I1 (PC-RA-01/05, §5): the Store sends a PRIVATE, no-argument
+        # intent. It supplies NO mandate id and NO viewer string, and it NEVER
+        # calls the coordinator directly: the intent still routes through the
+        # public Adapter -> public guard, and the service-private possession is
+        # presented by the trusted routing layer. A seat that holds a sealed
+        # recovery mandate takes the new authority path; every legacy
+        # (mandate-less) seat keeps the unchanged S-C continuation route
+        # (RA Delta §1.1 EXCLUDE).
+        if session_access.has_failed_recoverable_mandate(self._state):
+            return self._dispatch_recovery_authority_intent()
+        feedback = self._adapter.recover_continuation("")
+        self._raise_feedback(feedback)
+        return feedback
+
+    def _dispatch_recovery_authority_intent(self) -> dict:
+        """Broker the sealed-mandate recovery as a no-arg private intent.
+
+        The service mints the single-use attempt cap (only when the permitted
+        resume-kind is determinate; a multi-kind mandate needs the real owner
+        checkpoint, wired in I2) and the trusted routing layer arms the private
+        possession around the ONE dispatch; the public Adapter -> public guard
+        then adjudicates. The Store never mints/consumes a cap and never calls
+        the coordinator directly.
+        """
+        handle = session_access.current_recovery_invocation(self._state)
+        # D4/D6 I2-R3 item3 §5.2 (Errata E5): the resume-kind is resolved by the
+        # coordinator-owned owner checkpoint via the trusted Adapter (read-only),
+        # NOT by the I1 cardinality proxy (``determinate_recovery_resume_kind``
+        # is permanently None for every multi-kind admission row). The Store
+        # still sends a no-argument private intent and never picks a kind; the
+        # resolver membership-validates the derived kind against the mandate.
+        kind = self._adapter.recovery_resume_kind()
+        if handle is None or kind is None:
+            # Fail closed: no possession, or a resume-kind that requires the I2
+            # owner checkpoint -> no brokered recovery (never a direct call).
+            feedback = self._feedback(False, "当前无待恢复的继续处理", "warning")
+            self._raise_feedback(feedback)
+            return feedback
+        capability = session_access.issue_recovery_attempt(
+            self._state, resume_kind=kind)
+        if capability is None:
+            feedback = self._feedback(False, "当前无待恢复的继续处理", "warning")
+            self._raise_feedback(feedback)
+            return feedback
+        session_access.begin_recovery_nesting(self._state, capability)
+        try:
+            feedback = self._adapter.recover_continuation("")
+        finally:
+            session_access.end_recovery_nesting(self._state)
         self._raise_feedback(feedback)
         return feedback
 
@@ -3493,7 +3956,12 @@ class GuiSessionStore(QObject):
                             return
                         self._masked_business_rejection(txn_id, feedback, done=done)
                         return
-                    self._settle_seat_after_success(txn_id, next_actor_id=None, done=done)
+                    self._settle_seat_after_success(
+                        txn_id, next_actor_id=None, done=done,
+                        delivery=((feedback.get("data") or {}).get("delivery")
+                                  or self._receiver_delivery(
+                                      "population",
+                                      outcome="RESOLVED")))
                     return
                 feedback = self._dispatch_owning(
                     txn, lease_command, self._adapter.next_player, self._viewer_id)
@@ -3509,7 +3977,9 @@ class GuiSessionStore(QObject):
                     self._masked_business_rejection(txn_id, feedback, done=done)
                     return
                 new_id = (feedback.get("data") or {}).get("new_player_id")
-                self._settle_seat_after_success(txn_id, next_actor_id=new_id, done=done)
+                self._settle_seat_after_success(
+                    txn_id, next_actor_id=new_id, done=done,
+                    delivery=(feedback.get("data") or {}).get("delivery"))
             except Exception:
                 logger.exception("masked doCompletePlayer failed")
                 self._fail_masked(FAIL_AFTER_COMMIT, txn_id)
@@ -3568,7 +4038,9 @@ class GuiSessionStore(QObject):
                     return
                 data = feedback.get("data", {}) or {}
                 awaiting = data.get("awaiting_player_id")
-                self._settle_seat_after_success(txn_id, next_actor_id=awaiting, done=done)
+                self._settle_seat_after_success(
+                    txn_id, next_actor_id=awaiting, done=done,
+                    delivery=data.get("delivery"))
             except Exception:
                 logger.exception("masked submitPopulationVotes failed")
                 _clear_busy()
@@ -3584,6 +4056,104 @@ class GuiSessionStore(QObject):
         if holder["r"] is not None:
             return holder["r"]
         return self._masked_pending_feedback(txn["txn_id"])
+
+    def _masked_forum_finish(self, command_id: str, substep: str) -> dict:
+        """D2 (FC-D2-03/04/05): finish ONE forum substep through the SAME masked
+        seat-handoff machine the population path uses.
+
+        Under ONE masked transaction: suspend the seat (``_begin_masked_seat_transition``
+        -> ``suspend_hotseat_session``), dispatch the owning finish (record the
+        seat's lawful ledger finish + drive the scheduled-AI forum sub-boundaries +
+        ask the coordinator for the next actor), then settle:
+          * a next HUMAN B -> ``MASKED_PENDING_HANDOFF`` (explicit 「接管」 ->
+            ``commit_hotseat_principal(B)`` + fresh handle);
+          * no next HUMAN  -> same-seat recovery, then the recovered seat's own
+            follow-up (``open_market`` / ``resolve_forum``).
+        The cursor move and the seat-authority move are therefore ALWAYS paired —
+        there is NO observable window with cursor=B / principal=A, and NO stale
+        viewer read (the old ``_refresh_forum_view`` after a bare cursor move is
+        gone, FC-D2-04).
+        """
+        if not self._viewer_id:
+            return {"success": False, "message": "Not initialized"}
+        if self._seat_lifecycle != SEAT_ACTIVE or self._handoff_busy:
+            return self._feedback(False, "当前无法执行本席操作", "error")
+        holder = {"r": None}
+
+        def done(result):
+            holder["r"] = result
+
+        def _owner_finish(_command_id, _substep):
+            # The public finish must pass the ONE controlled seat authority BEFORE
+            # any ledger/receipt mutation (R11-F03); under the continuation scope
+            # this owning command label is the authorized dispatch.
+            denied = self._authorize_public_finish(_command_id)
+            if denied is not None:
+                return None, denied
+            _rec = self._record_forum_ledger_finish(
+                self._viewer_id, _substep, f"{_command_id}:{_substep}")
+            if not _rec.get("success"):
+                return None, self._feedback(False, "完成未记录（请重试）", "warning")
+            self._process_ai_factions_forum(_substep)
+            return self._advance_forum_to_next_human(_substep), None
+
+        def cont(txn, ok, fail_result):
+            txn_id = txn["txn_id"]
+            if not ok:
+                done(fail_result)
+                return
+            try:
+                next_actor, rejection = self._dispatch_owning(
+                    txn, command_id, _owner_finish, command_id, substep)
+                if rejection is not None:
+                    self._masked_business_rejection(txn_id, rejection, done=done)
+                    return
+                if next_actor and next_actor != self._viewer_id:
+                    self._settle_seat_after_success(
+                        txn_id, next_actor_id=next_actor, done=done)
+                    return
+
+                def _after_same_seat(result):
+                    if self._seat_lifecycle != SEAT_ACTIVE:
+                        done(result)
+                        return
+                    done(self._forum_substep_followup(substep))
+
+                self._settle_seat_after_success(
+                    txn_id, next_actor_id=self._viewer_id, done=_after_same_seat)
+            except Exception:
+                logger.exception("masked forum finish failed")
+                self._fail_masked(FAIL_AFTER_COMMIT, txn_id)
+                done(self._handoff_failure_feedback())
+
+        txn = self._begin_masked_seat_transition(
+            command_id, lease_command=command_id, payload={}, cont=cont)
+        if txn is None:
+            return self._handoff_failure_feedback()
+        if holder["r"] is not None:
+            return holder["r"]
+        return self._masked_pending_feedback(txn["txn_id"])
+
+    def _forum_substep_followup(self, substep: str) -> dict:
+        """The recovered SAME seat's follow-up after a forum substep finish with NO
+        next HUMAN (no cursor move): open the market once every retirement is
+        finished, or settle the market (``resolve_forum``). These run OUTSIDE the
+        masked continuation scope, as the (now authoritative) same seat."""
+        if substep == "retirement":
+            feedback = self._adapter.open_forum_market(self._viewer_id)
+            if feedback.get("success"):
+                self._forum_step_override = "market"
+            self._refresh_forum_view()
+            self._raise_feedback(feedback)
+            return feedback
+        feedback = self._adapter.resolve_forum()
+        if feedback.get("success"):
+            self._forum_result = feedback
+            self._forum_step_override = "resolution"
+        self._raise_feedback(feedback)
+        self._refresh_snapshot()
+        self._refresh_forum_view()
+        return feedback
 
     @Slot(str)
     def logUiEvent(self, message: str):

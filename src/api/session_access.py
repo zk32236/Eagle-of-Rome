@@ -304,6 +304,13 @@ class _SeatRecord:
     lifecycle_epoch: int = 0
     #: Current service-tracked core revision (re-checked at commit, DG-03 §3.3 #10).
     revision: int = 0
+    #: D4/D6 I1 recovery authority family (PC-RA-01..05). Independent of the
+    #: business ledger and of every other capability slot; registered ONLY on a
+    #: successful original ACTIVE exact authorization of a §1.1 admission row.
+    recovery_mandate: Optional[Dict[str, Any]] = None
+    recovery_invocation: Optional[Dict[str, Any]] = None
+    recovery_attempt: Optional[Dict[str, Any]] = None
+    recovery_scope: Optional[Dict[str, Any]] = None
 
 
 #: Per-state authoritative registration record. It lives on the state under a
@@ -418,6 +425,7 @@ def revoke_hotseat_session(state: Any) -> None:
     rec.reservation = None
     rec.ai_capability = None
     rec.masked_scope = None
+    _revoke_recovery_family(rec)
     _bind_handle(state, rec)
 
 
@@ -474,6 +482,7 @@ def advance_hotseat_principal(state: Any, principal_player_id: str,
     rec.reservation = None
     rec.ai_capability = None
     rec.masked_scope = None
+    _revoke_recovery_family(rec)
     return _bind_handle(state, rec)
 
 
@@ -502,6 +511,7 @@ def commit_hotseat_principal(state: Any, principal_player_id: str,
     rec.reservation = None
     rec.ai_capability = None
     rec.masked_scope = None
+    _revoke_recovery_family(rec)
     _bind_handle(state, rec)
     return rec
 
@@ -784,7 +794,17 @@ def authorize_and_lease(state: Any, *, command: str, actor: str,
         revision=int(auth_revision), scope=str(auth_scope),
         session_id=str(session_id), txn_id=str(txn_id),
         authorization_epoch=int(auth_epoch), dispatch_epoch=int(auth_epoch) + 1)
-    return issue_command_lease(state, lease)
+    issued = issue_command_lease(state, lease)
+    if issued is None:
+        return None
+    # D4/D6 I1: register the §1.1 narrow recovery mandate in the SAME serialized
+    # authorization boundary — ONLY for the five admission rows. Every other root
+    # (incl. the legacy S-C population roots) registers NOTHING (default deny).
+    _register_recovery_mandate_locked(
+        state, rec, lease_id=issued.lease_id, command=command, actor=actor,
+        payload_digest=payload_digest, auth_epoch=auth_epoch, txn_id=txn_id,
+        session_id=session_id)
+    return issued
 
 
 def current_lease_token(state: Any) -> Optional[LeaseToken]:
@@ -1123,6 +1143,450 @@ def _ai_capability_denied(rec: "_SeatRecord", state: Any, cap: AICapability,
 
 
 # ---------------------------------------------------------------------------
+# Recovery authority family (D4/D6 I1 — PC-RA-01/02/03/04/05, Owner-approved).
+#
+# Additive and service-private. A ``RecoveryMandate`` is registered ONLY on a
+# successful original ACTIVE exact authorization of one of the five RA Delta
+# §1.1 admission rows. It is NOT a receipt, NOT a business ledger and NOT
+# derivable from a failure / ``failureRoute`` / "the current actor is AI" fact.
+# After a PROVEN post-commit failure the mandate may be sealed
+# ``FAILED_RECOVERABLE``; a single-use ``RecoveryAttemptCapability`` then opens a
+# FRESH ``RecoveryDispatchScope`` (never the destroyed lease / continuation
+# scope). Every entry still passes the single public guard: the new recovery
+# branch is inert unless a service-private possession (an explicit cap or a live
+# fresh scope) is presented, and it is never derived from ``state``/DTO/viewer.
+# ---------------------------------------------------------------------------
+RECOVERY_ROOT = "recover_continuation"
+
+RESUME_ENTRY_PENDING = "ENTRY_PENDING"
+RESUME_CONTINUATION_PENDING = "CONTINUATION_PENDING"
+RESUME_TERMINAL_PENDING = "TERMINAL_PENDING"
+RESUME_DELIVERY_PENDING = "DELIVERY_PENDING"
+
+RECOVERY_RESUME_KINDS = frozenset({
+    RESUME_ENTRY_PENDING, RESUME_CONTINUATION_PENDING,
+    RESUME_TERMINAL_PENDING, RESUME_DELIVERY_PENDING,
+})
+
+MANDATE_ARMED = "ARMED"
+MANDATE_FAILED_RECOVERABLE = "FAILED_RECOVERABLE"
+MANDATE_CLOSED = "CLOSED"
+MANDATE_REVOKED = "REVOKED"
+
+RECOVERY_POLICY_VERSION = "RA-rev2"
+
+#: RA Delta §1.1 canonical finite opt-in admission (the ONLY original-auth roots
+#: that register a mandate). Value = (policy_id, permitted resume-kind closed set,
+#: permitted source->target phase transition). Every other root is EXCLUDE — the
+#: legacy S-C population roots and all ordinary commands register NOTHING.
+_RECOVERY_ADMISSION: Dict[str, Any] = {
+    "advance_forum_phase": (
+        "RA-A01",
+        frozenset({RESUME_ENTRY_PENDING, RESUME_CONTINUATION_PENDING,
+                   RESUME_DELIVERY_PENDING}),
+        "forum->population",
+    ),
+    "advance_population_phase": (
+        "RA-A02",
+        frozenset({RESUME_ENTRY_PENDING, RESUME_CONTINUATION_PENDING,
+                   RESUME_TERMINAL_PENDING, RESUME_DELIVERY_PENDING}),
+        "population->senate",
+    ),
+    "propose_many": (
+        "RA-A03",
+        frozenset({RESUME_CONTINUATION_PENDING, RESUME_TERMINAL_PENDING,
+                   RESUME_DELIVERY_PENDING}),
+        "senate-stop",
+    ),
+    "vote": (
+        "RA-A04",
+        frozenset({RESUME_CONTINUATION_PENDING, RESUME_TERMINAL_PENDING,
+                   RESUME_DELIVERY_PENDING}),
+        "senate-stop",
+    ),
+    "veto": (
+        "RA-A05",
+        frozenset({RESUME_TERMINAL_PENDING, RESUME_DELIVERY_PENDING}),
+        "senate-stop",
+    ),
+}
+
+#: recovery root x resume-kind -> the ONLY internal guarded edges reachable
+#: inside that recovery dispatch (design §4.1.3, expanded per resume-kind). The
+#: recovery root itself is always admissible and is NOT listed here; the five
+#: normal roots are NEVER in this registry (strict separation).
+_RECOVERY_EDGE_POLICIES: Dict[Any, frozenset] = {
+    (RECOVERY_ROOT, RESUME_ENTRY_PENDING): frozenset({
+        "begin_population_phase", "archive_office_holders",
+        "convert_battlefield_commanders", "process_population_disbandments",
+    }),
+    (RECOVERY_ROOT, RESUME_CONTINUATION_PENDING): frozenset({
+        "campaign", "vote", "resolve_election",
+        "auto_submit_proposals", "apply_auto_tribune_vetoes",
+    }),
+    (RECOVERY_ROOT, RESUME_TERMINAL_PENDING): frozenset({
+        "finalize_senate_if_ready", "assign_governors",
+    }),
+    (RECOVERY_ROOT, RESUME_DELIVERY_PENDING): frozenset(),
+}
+
+
+@dataclass(frozen=True)
+class RecoveryMandate:
+    """Service-private registration object (RA Delta §3.1); never exported."""
+
+    mandate_id: str
+    session_id: str
+    original_authorization_id: str
+    original_actor: str
+    original_command: str
+    original_payload_digest: str
+    original_auth_epoch: int
+    original_dispatch_txn: str
+    permitted_resume_kind: frozenset
+    permitted_phase_transition: str
+    policy_id: str = ""
+    policy_version: str = RECOVERY_POLICY_VERSION
+    status: str = MANDATE_ARMED
+
+
+@dataclass(frozen=True)
+class RecoveryInvocationHandle:
+    """Private possession (possession, not a public handle / not a live scope)."""
+
+    handle_id: str
+    mandate_id: str
+    session_id: str
+
+
+@dataclass(frozen=True)
+class RecoveryAttemptCapability:
+    """One-use opaque attempt capability (registry identity, not a dict)."""
+
+    attempt_id: str
+    mandate_id: str
+    session_id: str
+    resume_kind: str = ""
+    root: str = RECOVERY_ROOT
+    failure_generation: int = 0
+
+
+@dataclass(frozen=True)
+class RecoveryDispatchScope:
+    """The FRESH recovery dispatch scope (never the old lease/continuation)."""
+
+    fresh_scope_id: str
+    attempt_id: str
+    mandate_id: str
+    session_id: str
+    resume_kind: str
+    root: str = RECOVERY_ROOT
+    active: bool = True
+
+
+def recovery_admission_for(command: Optional[str]):
+    """The §1.1 admission row for ``command`` (or ``None``). Never derived from
+    a helper union / an OP label / a business success."""
+    if command is None:
+        return None
+    return _RECOVERY_ADMISSION.get(str(command))
+
+
+def recovery_edge_allowed(resume_kind: str, label: Optional[str]) -> bool:
+    """True iff ``label`` is an admissible internal edge for the recovery root
+    under ``resume_kind`` (the recovery root itself is always admissible)."""
+    if label is None:
+        return False
+    if label == RECOVERY_ROOT:
+        return True
+    return label in _RECOVERY_EDGE_POLICIES.get(
+        (RECOVERY_ROOT, resume_kind), frozenset())
+
+
+def _revoke_recovery_family(rec: "_SeatRecord") -> None:
+    """Tear down the whole recovery family (exit/revoke/unregister/principal
+    change). The old scope/attempt are permanently destroyed — never resurrected."""
+    rec.recovery_scope = None
+    rec.recovery_attempt = None
+    rec.recovery_invocation = None
+    rec.recovery_mandate = None
+
+
+def _register_recovery_mandate_locked(state: Any, rec: "_SeatRecord", *,
+                                      lease_id: str, command: str, actor: str,
+                                      payload_digest: str, auth_epoch: int,
+                                      txn_id: str, session_id: str
+                                      ) -> Optional[Dict[str, Any]]:
+    """Register the §1.1 narrow mandate inside the serialized authorization
+    boundary. Unknown / non-opt-in root -> NO mandate (default deny)."""
+    row = recovery_admission_for(command)
+    if row is None:
+        return None
+    policy_id, resume_kinds, transition = row
+    mandate_id = "rm-" + uuid.uuid4().hex
+    rec.recovery_mandate = {
+        "mandate_id": mandate_id,
+        "policy_id": policy_id,
+        "session_id": str(session_id),
+        "original_authorization_id": str(lease_id),
+        "original_actor": str(actor),
+        "original_command": str(command),
+        "original_payload_digest": str(payload_digest),
+        "original_auth_epoch": int(auth_epoch),
+        "original_dispatch_txn": str(txn_id),
+        "permitted_resume_kind": frozenset(resume_kinds),
+        "permitted_phase_transition": transition,
+        "policy_version": RECOVERY_POLICY_VERSION,
+        "status": MANDATE_ARMED,
+        "failure_generation": 0,
+    }
+    # THE private possession, placed at trusted binding time (never read off a DTO
+    # or a caller-supplied state argument).
+    rec.recovery_invocation = {
+        "handle_id": _new_handle_id().replace("ctx-", "rmi-"),
+        "mandate_id": mandate_id,
+        "session_id": str(session_id),
+    }
+    # a fresh authorization supersedes any prior attempt/scope (no resurrection)
+    rec.recovery_attempt = None
+    rec.recovery_scope = None
+    return dict(rec.recovery_mandate)
+
+
+def recovery_mandate(state: Any) -> Optional[RecoveryMandate]:
+    """Read-only audit view of the current mandate (never an authorization)."""
+    rec = _record(state)
+    if rec is None or not isinstance(rec.recovery_mandate, dict):
+        return None
+    m = rec.recovery_mandate
+    return RecoveryMandate(
+        mandate_id=m.get("mandate_id", ""),
+        session_id=m.get("session_id", ""),
+        original_authorization_id=m.get("original_authorization_id", ""),
+        original_actor=m.get("original_actor", ""),
+        original_command=m.get("original_command", ""),
+        original_payload_digest=m.get("original_payload_digest", ""),
+        original_auth_epoch=int(m.get("original_auth_epoch", -1)),
+        original_dispatch_txn=m.get("original_dispatch_txn", ""),
+        permitted_resume_kind=m.get("permitted_resume_kind") or frozenset(),
+        permitted_phase_transition=m.get("permitted_phase_transition", ""),
+        policy_id=m.get("policy_id", ""),
+        policy_version=m.get("policy_version", RECOVERY_POLICY_VERSION),
+        status=m.get("status", ""),
+    )
+
+
+def current_recovery_invocation(state: Any) -> Optional[RecoveryInvocationHandle]:
+    """Trusted service accessor: the private possession the trusted routing layer
+    may present. NEVER auto-fetched by a boundary and never read off a DTO."""
+    rec = _record(state)
+    if rec is None or not isinstance(rec.recovery_invocation, dict):
+        return None
+    inv = rec.recovery_invocation
+    return RecoveryInvocationHandle(
+        handle_id=inv.get("handle_id", ""),
+        mandate_id=inv.get("mandate_id", ""),
+        session_id=inv.get("session_id", ""))
+
+
+def has_failed_recoverable_mandate(state: Any) -> bool:
+    """True iff a mandate is sealed FAILED_RECOVERABLE (the only state from which
+    an attempt may be minted). A mandate-less (legacy) session is always False."""
+    rec = _record(state)
+    return bool(rec is not None and isinstance(rec.recovery_mandate, dict)
+                and rec.recovery_mandate.get("status") == MANDATE_FAILED_RECOVERABLE)
+
+
+def determinate_recovery_resume_kind(state: Any) -> Optional[str]:
+    """The resume-kind ONLY when the sealed mandate's permitted set is a
+    singleton. A multi-kind mandate requires the real owner checkpoint (I2) to
+    choose; in I1 the Store intent therefore fails closed (never a caller pick)."""
+    rec = _record(state)
+    if rec is None or not isinstance(rec.recovery_mandate, dict):
+        return None
+    if rec.recovery_mandate.get("status") != MANDATE_FAILED_RECOVERABLE:
+        return None
+    kinds = rec.recovery_mandate.get("permitted_resume_kind") or frozenset()
+    if len(kinds) == 1:
+        return next(iter(kinds))
+    return None
+
+
+def seal_recovery_mandate_for_failure(state: Any, *,
+                                      failure_generation: int = 1) -> bool:
+    """Owner-commit hook: mark the CURRENT armed mandate FAILED_RECOVERABLE.
+
+    Called ONLY by the real owner/coordinator commit path (wired in I2) after a
+    PROVEN, uncompleted post-commit failure. Without an armed mandate (a legacy
+    deployment-before session) nothing is sealed — the seat simply stays masked.
+    """
+    rec = _record(state)
+    if rec is None or not isinstance(rec.recovery_mandate, dict):
+        return False
+    if rec.recovery_mandate.get("status") != MANDATE_ARMED:
+        return False
+    rec.recovery_mandate["status"] = MANDATE_FAILED_RECOVERABLE
+    rec.recovery_mandate["failure_generation"] = int(failure_generation)
+    return True
+
+
+def issue_recovery_attempt(state: Any, *, resume_kind: str
+                           ) -> Optional[RecoveryAttemptCapability]:
+    """Mint the ONE single-use attempt cap. Requires a sealed FAILED_RECOVERABLE
+    mandate, no live attempt, and ``resume_kind`` inside the mandate's permitted
+    closed set (an illegal kind / phase chain is refused without side effects)."""
+    rec = _record(state)
+    if rec is None or not isinstance(rec.recovery_mandate, dict):
+        return None
+    m = rec.recovery_mandate
+    if m.get("status") != MANDATE_FAILED_RECOVERABLE:
+        return None
+    if resume_kind not in (m.get("permitted_resume_kind") or frozenset()):
+        return None
+    prior = rec.recovery_attempt
+    if isinstance(prior, dict) and not prior.get("consumed"):
+        return None  # one current attempt only
+    attempt_id = "ra-" + uuid.uuid4().hex
+    rec.recovery_attempt = {
+        "attempt_id": attempt_id,
+        "mandate_id": m.get("mandate_id"),
+        "session_id": rec.session_id,
+        "root": RECOVERY_ROOT,
+        "resume_kind": str(resume_kind),
+        "failure_generation": int(m.get("failure_generation", 0)),
+        "consumed": False,
+    }
+    return RecoveryAttemptCapability(
+        attempt_id=attempt_id, mandate_id=m.get("mandate_id", ""),
+        session_id=rec.session_id, resume_kind=str(resume_kind),
+        failure_generation=int(m.get("failure_generation", 0)))
+
+
+def claim_recovery_attempt(state: Any, capability: RecoveryAttemptCapability
+                          ) -> Optional[RecoveryDispatchScope]:
+    """Atomic claim/consume (the API guard's role, before any owner action):
+    validate the presented cap against the registry identity + mandate + session
+    + root, consume it EXACTLY once, and open a FRESH RecoveryDispatchScope.
+    A second claim, any mismatch, or a non-FAILED_RECOVERABLE mandate denies."""
+    rec = _record(state)
+    if rec is None or capability is None:
+        return None
+    attempt = rec.recovery_attempt
+    if not isinstance(attempt, dict) or attempt.get("consumed"):
+        return None
+    if capability.attempt_id != attempt.get("attempt_id"):
+        return None
+    if capability.mandate_id != attempt.get("mandate_id"):
+        return None
+    if capability.session_id != rec.session_id:
+        return None
+    if capability.root != RECOVERY_ROOT:
+        return None
+    m = rec.recovery_mandate
+    if not isinstance(m, dict) or m.get("status") != MANDATE_FAILED_RECOVERABLE:
+        return None
+    attempt["consumed"] = True
+    scope_id = "rsc-" + uuid.uuid4().hex
+    rec.recovery_scope = {
+        "fresh_scope_id": scope_id,
+        "attempt_id": attempt.get("attempt_id"),
+        "mandate_id": attempt.get("mandate_id"),
+        "session_id": rec.session_id,
+        "resume_kind": attempt.get("resume_kind"),
+        "root": RECOVERY_ROOT,
+        "active": True,
+    }
+    opened = RecoveryDispatchScope(
+        fresh_scope_id=scope_id, attempt_id=attempt.get("attempt_id", ""),
+        mandate_id=attempt.get("mandate_id", ""), session_id=rec.session_id,
+        resume_kind=attempt.get("resume_kind", ""))
+    return opened
+
+
+def close_recovery_scope(state: Any) -> None:
+    """Close the fresh dispatch scope (FINISH/finally). Never resurrected."""
+    rec = _record(state)
+    if rec is not None:
+        rec.recovery_scope = None
+
+
+# -- private recovery possession (thread-local, never derived from state) -----
+def begin_recovery_nesting(state: Any,
+                           capability: Optional[RecoveryAttemptCapability]) -> None:
+    """Arm the private recovery possession around the single intent dispatch.
+    Only the trusted routing layer calls this; a public call outside the window
+    possesses nothing and is adjudicated by the ordinary branches."""
+    if capability is not None:
+        _nesting_entry(state)["recovery_cap"] = capability
+
+
+def end_recovery_nesting(state: Any) -> None:
+    store = getattr(_NESTING_LOCAL, "by_state", None)
+    if store is not None and _key(state) in store:
+        store[_key(state)].pop("recovery_cap", None)
+        store[_key(state)].pop("recovery_scope", None)
+
+
+def _arm_recovery_scope_nesting(state: Any, scope: RecoveryDispatchScope) -> None:
+    _nesting_entry(state)["recovery_scope"] = scope
+
+
+def _nesting_recovery_capability(state: Any) -> Optional[RecoveryAttemptCapability]:
+    store = getattr(_NESTING_LOCAL, "by_state", None)
+    entry = store.get(_key(state)) if store else None
+    return entry.get("recovery_cap") if entry else None
+
+
+def _nesting_recovery_scope(state: Any) -> Optional[RecoveryDispatchScope]:
+    store = getattr(_NESTING_LOCAL, "by_state", None)
+    entry = store.get(_key(state)) if store else None
+    return entry.get("recovery_scope") if entry else None
+
+
+def _recovery_decision(state: Any, rec: "_SeatRecord", operation: str,
+                       command: Optional[str],
+                       capability: Optional[RecoveryAttemptCapability],
+                       scope: Optional[RecoveryDispatchScope],
+                       arm_scope: bool = False) -> "AccessDecision":
+    """The precise, additive recovery branch. Two shapes:
+
+    (a) a LIVE fresh scope possession authorizes the recovery root plus ONLY the
+        internal guarded edges allowed for that scope's resume-kind (a different
+        resume-kind's edge, an unrelated root, or a scope outside its txn is
+        DENIED);
+    (b) otherwise a presented (unconsumed) cap on the recovery root consumes and
+        opens the fresh scope (the owner-action consuming boundary), then allows.
+
+    No cap and no live scope -> DENY (never a None-viewer / route / current-AI /
+    failure default)."""
+    rs = rec.recovery_scope
+    if isinstance(rs, dict) and rs.get("active") and scope is not None \
+            and scope.fresh_scope_id == rs.get("fresh_scope_id") \
+            and scope.session_id == rec.session_id \
+            and scope.root == RECOVERY_ROOT:
+        if recovery_edge_allowed(rs.get("resume_kind"), command):
+            return _allow(operation, exempt="recovery",
+                          scope_id=rs.get("fresh_scope_id"),
+                          resume_kind=rs.get("resume_kind"))
+        return _deny(REASON_PHASE, operation)
+    if command != RECOVERY_ROOT or capability is None:
+        return _deny(REASON_PRINCIPAL, operation)
+    m = rec.recovery_mandate
+    if not isinstance(m, dict) or m.get("status") != MANDATE_FAILED_RECOVERABLE:
+        return _deny(REASON_LIFECYCLE, operation)
+    opened = claim_recovery_attempt(state, capability)
+    if opened is None:
+        return _deny(REASON_DUPLICATE, operation)
+    if arm_scope:
+        # Armed by the trusted routing layer's window: the fresh scope becomes the
+        # possession that authorizes the root + its allowed internal edges for the
+        # remainder of the ONE dispatch (cleared by end_recovery_nesting).
+        _arm_recovery_scope_nesting(state, opened)
+    return _allow(operation, exempt="recovery",
+                  scope_id=opened.fresh_scope_id, resume_kind=opened.resume_kind)
+
+
+# ---------------------------------------------------------------------------
 # Decision object.
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -1193,6 +1657,8 @@ def authorize_hotseat(
     lease_token: Optional[LeaseToken] = None,
     dispatch_capability: Optional[DispatchCapability] = None,
     staging_capability: Optional[StagingCapability] = None,
+    recovery_capability: Optional[RecoveryAttemptCapability] = None,
+    recovery_dispatch_scope: Optional[RecoveryDispatchScope] = None,
     requested_bypass: bool = False,
 ) -> AccessDecision:
     """Authorize one public API operation against a registered Hot-seat session.
@@ -1259,6 +1725,25 @@ def authorize_hotseat(
         if ai_reason is None:
             return _allow(operation, exempt="ai", principal=ai_capability.actor)
         return _deny(ai_reason, operation)
+
+    # -- 3.5 exact recovery authority branch (D4/D6 I1 — PC-RA-01/04/05) -------
+    # Additive. INERT unless a service-private possession is explicitly PRESENTED
+    # (an attempt cap or a live fresh recovery scope, possibly via the private
+    # thread-local possession the trusted routing layer armed). It is NEVER
+    # derived from the seat's failure state, a failureRoute string, a None
+    # viewer, or the fact that the current actor happens to be AI.
+    rec_cap = recovery_capability or _nesting_recovery_capability(state)
+    rec_scope = recovery_dispatch_scope or _nesting_recovery_scope(state)
+    if rec_cap is not None or rec_scope is not None:
+        # The fresh scope is armed into the private possession ONLY when the cap
+        # came from the trusted routing layer's window (never for a bare explicit
+        # cap presentation, so a second direct dispatch of the same cap still
+        # fails closed once the cap is consumed).
+        arm_scope = (recovery_capability is None
+                     and recovery_dispatch_scope is None
+                     and rec_cap is not None)
+        return _recovery_decision(state, rec, operation, command, rec_cap,
+                                  rec_scope, arm_scope=arm_scope)
 
     # -- 4. presented service-issued opaque context (mandatory) ---------------
     # F2: a public request must NEVER self-grant authority with a bypass flag or a
@@ -1352,6 +1837,7 @@ def authorize_ai(
 # ---------------------------------------------------------------------------
 def present_decision(state: Any, operation: str, *, caller_context=None,
                      ai_capability=None, lease_token=None, dispatch_capability=None,
+                     recovery_capability=None, recovery_dispatch_scope=None,
                      **kwargs: Any) -> AccessDecision:
     """Predicate form that passes through the EXPLICITLY presented capability.
 
@@ -1362,7 +1848,10 @@ def present_decision(state: Any, operation: str, *, caller_context=None,
     """
     return authorize_hotseat(state, operation, request_context=caller_context,
                              ai_capability=ai_capability, lease_token=lease_token,
-                             dispatch_capability=dispatch_capability, **kwargs)
+                             dispatch_capability=dispatch_capability,
+                             recovery_capability=recovery_capability,
+                             recovery_dispatch_scope=recovery_dispatch_scope,
+                             **kwargs)
 
 
 def denied_or_none(state: Any, operation: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -1396,6 +1885,8 @@ def authorize_public(state: Any, operation: str, *,
                      lease_token: Optional[LeaseToken] = None,
                      dispatch_capability: Optional[DispatchCapability] = None,
                      staging_capability: Optional[StagingCapability] = None,
+                     recovery_capability: Optional[RecoveryAttemptCapability] = None,
+                     recovery_dispatch_scope: Optional[RecoveryDispatchScope] = None,
                      requested_bypass: bool = False) -> AccessDecision:
     """Convenience predicate for a *direct* public mutation/helper endpoint.
 
@@ -1410,6 +1901,8 @@ def authorize_public(state: Any, operation: str, *,
         caller_context=caller_context, ai_capability=ai_capability,
         lease_token=lease_token, dispatch_capability=dispatch_capability,
         staging_capability=staging_capability,
+        recovery_capability=recovery_capability,
+        recovery_dispatch_scope=recovery_dispatch_scope,
         requested_bypass=requested_bypass)
 
 

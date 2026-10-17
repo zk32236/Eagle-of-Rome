@@ -57,6 +57,29 @@ OUTCOME_FAILURE = "FAILURE"                  # retrieval / decider / API error
 
 
 @dataclass(frozen=True)
+class OwnerCompletion:
+    """Private typed carrier (D4/D6 §4.4 FC-D46-06) proving a Senate OWNER already
+    wrote the completion for a singleton obligation (e.g. ``senate_veto_decision``).
+
+    It is a READ-ONLY oracle for the outer coordinator and authorises NOTHING: it
+    never replaces or duplicates the ONE ``SessionTurnBook`` record, and the outer
+    MUST re-verify it against the immutable book record before skipping the generic
+    completion path. Optional-value (``None``) is NOT optional-protocol — a
+    presented marker that does not match the real record is a masked failure.
+    """
+
+    scope_id: str
+    obligation_id: Tuple
+    command_id: str
+    actor_player_id: Optional[str]
+    kind: str
+    receipt_id: str = ""
+    pre_revision: int = 0
+    satisfied_at_revision: int = 0
+    fact_ref: str = ""
+
+
+@dataclass(frozen=True)
 class ExecutionOutcome:
     """Narrow structured result of a scheduled-AI execution step."""
 
@@ -64,6 +87,9 @@ class ExecutionOutcome:
     detail: str = ""
     command_id: str = ""
     receipts: Tuple[str, ...] = ()
+    #: D4/D6 §4.4: an optional owner-completion marker (only a real Senate owner
+    #: write ever sets it); default ``None`` keeps the ordinary ballot compatible.
+    owner_completion: Optional["OwnerCompletion"] = None
 
     @property
     def is_accepted(self) -> bool:
@@ -174,10 +200,995 @@ class ContinuationResult:
     reason: str = ""
     outstanding: Tuple[Obligation, ...] = ()
     processed: Tuple[str, ...] = ()
+    #: D4/D6 I2-R1 item3 (FC-D46-05 §4.3.4): the FROZEN senate terminal envelope
+    #: (only set on a real ``STATUS_RESOLVED`` senate terminal). ``None`` for every
+    #: other (legacy) result — the ordinary continuation stays byte-for-byte.
+    terminal: Optional[Dict[str, Any]] = None
 
     @property
     def ok(self) -> bool:
         return self.status != STATUS_FAILURE
+
+
+# ---------------------------------------------------------------------------
+# S1 — DeliveryResult v1 (D7–D12, FC-712-01..05)
+#
+# ONE typed internal/API data contract describing the semantic NEXT obligation.
+# It is a projection of the immutable scope + owner-backed completion records;
+# it grants NO authority and creates NO recovery capability. The invariant the
+# Store enforces before any activation is:
+#
+#   semantic next obligation.actor
+#       == DeliveryResult.next.actor_player_id
+#       == actual pending receiver
+#       == activation target
+#       == Core current player
+#
+# A missing / unknown / contradictory receiver is a TYPED failure and MUST NOT
+# be healed by the legacy ``None -> same-seat`` fallback.
+# ---------------------------------------------------------------------------
+DELIVERY_VERSION = 1
+
+DELIVERY_OUTCOME_CONTINUE = "CONTINUE"
+DELIVERY_OUTCOME_RESOLVED = "RESOLVED"
+DELIVERY_OUTCOME_FAILURE = "FAILURE"
+
+DELIVERY_DISPOSITION_SAME_HUMAN = "SAME_HUMAN"
+DELIVERY_DISPOSITION_NEXT_HUMAN = "NEXT_HUMAN"
+DELIVERY_DISPOSITION_AI_OWNER = "AI_OWNER"
+
+DELIVERY_MISSING_RECEIVER = "DELIVERY_MISSING_RECEIVER"
+DELIVERY_INVALID = "DELIVERY_INVALID"
+DELIVERY_MISMATCH = "DELIVERY_MISMATCH"
+
+DELIVERY_RETRY_ACTIVATION = "ACTIVATION_ONLY"
+DELIVERY_RETRY_NONE = "NONE"
+
+
+def delivery_error(code: str, stage: str = "", *,
+                   committed: bool = True,
+                   retry_class: str = DELIVERY_RETRY_ACTIVATION,
+                   detail: str = "") -> Dict[str, Any]:
+    """A typed, safe delivery error (no credential / guard reason)."""
+    return {
+        "code": code,
+        "stage": stage or "delivery",
+        "committed": bool(committed),
+        "retry_class": retry_class,
+        "detail": detail,
+    }
+
+
+def _delivery_disposition(actor: Optional[str], controller: str,
+                          viewer_id: Optional[str]) -> str:
+    if controller == CONTROLLER_AI:
+        return DELIVERY_DISPOSITION_AI_OWNER
+    if viewer_id and actor == viewer_id:
+        return DELIVERY_DISPOSITION_SAME_HUMAN
+    return DELIVERY_DISPOSITION_NEXT_HUMAN
+
+
+def _next_obligation_id(state: Any, phase: str,
+                        actor: Optional[str]) -> Optional[List[Any]]:
+    """The stable OID of ``actor``'s outstanding obligation (projection only)."""
+    if not actor:
+        return None
+    try:
+        snapshot = obligations(state, phase)
+    except Exception:  # pragma: no cover - defensive
+        return None
+    for obligation in snapshot.outstanding():
+        if obligation.actor_player_id == actor:
+            return list(obligation.obligation_id)
+    return None
+
+
+def delivery_for_actor(state: Any, phase: str, actor: Optional[str], *,
+                       outcome: str = DELIVERY_OUTCOME_CONTINUE,
+                       viewer_id: Optional[str] = None,
+                       terminal: Optional[Dict[str, Any]] = None,
+                       command_receipt_ref: str = "",
+                       substep: str = "") -> Dict[str, Any]:
+    """Build ``DeliveryResultV1`` for an explicitly resolved receiver.
+
+    Used where the owner has already committed the next/terminal obligation
+    (e.g. a resolved population slice). The actor is still validated later by
+    :func:`validate_delivery_result` against the REAL Core current player.
+    """
+    delivery: Dict[str, Any] = {
+        "version": DELIVERY_VERSION,
+        "session_ref": _session_ns(state),
+        "turn": _book(state).turn_number,
+        "scope_id": current_scope_id(state, phase) or "",
+        "core_revision": current_revision(state),
+        "command_receipt_ref": str(command_receipt_ref or ""),
+        "outcome": outcome,
+        "next": None,
+        "terminal": dict(terminal) if terminal else None,
+        "error": None,
+    }
+    if actor:
+        controller = controller_of(state, actor)
+        delivery["next"] = {
+            "obligation_id": None,
+            "phase": phase,
+            "substep": substep,
+            "actor_player_id": actor,
+            "controller": controller,
+            "disposition": _delivery_disposition(actor, controller, viewer_id),
+        }
+    if outcome == DELIVERY_OUTCOME_CONTINUE and not actor:
+        delivery["error"] = delivery_error(
+            DELIVERY_MISSING_RECEIVER, stage="continuation",
+            committed=True, retry_class=DELIVERY_RETRY_NONE,
+            detail="a non-terminal delivery requires a real receiver")
+    return delivery
+
+
+def delivery_from_continuation(
+        state: Any, phase: str, cont: ContinuationResult, *,
+        viewer_id: Optional[str] = None,
+        command_receipt_ref: str = "") -> Dict[str, Any]:
+    """Project ONE ``ContinuationResult`` into ``DeliveryResultV1``.
+
+    ``CONTINUE``/``RESOLVED`` require a real next actor; a successful delivery
+    without one is ``DELIVERY_MISSING_RECEIVER`` (never a silent same-seat).
+    """
+    scope_id = current_scope_id(state, phase) or ""
+    base: Dict[str, Any] = {
+        "version": DELIVERY_VERSION,
+        "session_ref": _session_ns(state),
+        "turn": _book(state).turn_number,
+        "scope_id": scope_id,
+        "core_revision": current_revision(state),
+        "command_receipt_ref": str(command_receipt_ref or ""),
+        "next": None,
+        "terminal": None,
+        "error": None,
+    }
+    if cont.status == STATUS_FAILURE or cont.masked_failure:
+        base["outcome"] = DELIVERY_OUTCOME_FAILURE
+        base["error"] = delivery_error(
+            DELIVERY_INVALID, stage="continuation", committed=True,
+            retry_class=DELIVERY_RETRY_NONE,
+            detail=str(cont.reason or "CONTINUATION_FAILED"))
+        return base
+    outcome = (DELIVERY_OUTCOME_RESOLVED
+               if cont.status in (STATUS_RESOLVED, STATUS_PHASE_READY)
+               else DELIVERY_OUTCOME_CONTINUE)
+    base["outcome"] = outcome
+    actor = cont.actor
+    if actor:
+        controller = controller_of(state, actor)
+        base["next"] = {
+            "obligation_id": (list(cont.outstanding[0].obligation_id)
+                              if cont.outstanding else None),
+            "phase": phase,
+            "substep": (cont.outstanding[0].substep if cont.outstanding else ""),
+            "actor_player_id": actor,
+            "controller": controller,
+            "disposition": _delivery_disposition(actor, controller, viewer_id),
+        }
+    if cont.terminal is not None:
+        base["terminal"] = dict(cont.terminal)
+        terminal_oid = base["terminal"].get("obligation_id")
+        if base.get("next") is not None and terminal_oid is not None \
+                and base["next"].get("obligation_id") is None:
+            # §1.2 O: a RESOLVED terminal carries the exact RESULT-OWNER
+            # obligation identity (never an outstanding voter).
+            base["next"]["obligation_id"] = list(terminal_oid)
+    if outcome == DELIVERY_OUTCOME_CONTINUE and not actor:
+        base["error"] = delivery_error(
+            DELIVERY_MISSING_RECEIVER, stage="continuation",
+            committed=True, retry_class=DELIVERY_RETRY_NONE,
+            detail="a non-terminal continuation requires a real receiver")
+    return base
+
+
+def _delivery_phase(delivery: Dict[str, Any]) -> str:
+    """The envelope's phase, read from the primary facts (never a bare default)."""
+    for key in ("next", "terminal"):
+        part = delivery.get(key)
+        if isinstance(part, dict) and part.get("phase"):
+            return str(part["phase"])
+    return str(delivery.get("phase") or "senate")
+
+
+def delivery_command_ref(state: Any, phase: str, command: str, *,
+                         actor: Optional[str] = None) -> str:
+    """Issue the ENGINE-owned accepted-command reference a delivery carries.
+
+    Uses the EXISTING owner-receipt facility (``book.receipts`` /
+    ``committed_facts``): no new ledger, schema, protocol version or authority.
+    Column Q resolves the returned fact reference back to this real command in
+    the SAME session / turn / scope (never an arbitrary string).
+
+    I1a: a delivery produced by the engine for a phase with NO committed phase
+    entry first binds the phase through the SAME service-issued committed entry
+    receipt used by ``enter_phase`` (never a payload/decorative claim). This is
+    the trusted route for a store-driven operation on a mid-phase state; if the
+    receipt cannot be consumed (source not committed / unknown phase) the state
+    stays unbound and the delivery validator fails closed.
+    """
+    scope = mint_scope(state, phase)
+    book = getattr(state, _BOOK_ATTR, None)
+    if book is not None:
+        # Reuse a GENUINE reference already issued by the owning command: no
+        # second receipt is minted for the same command/scope (one-time
+        # consumption accounting stays exact).
+        for ref, rec in book.committed_facts.items():
+            if rec.get("command") == command \
+                    and rec.get("scope_id") == scope.scope_id:
+                return ref
+        for receipt_id, rec in book.receipts.items():
+            if rec.get("command") == command \
+                    and rec.get("scope_id") == scope.scope_id:
+                return receipt_id
+    receipt = issue_owner_receipt(
+        state, command, actor_player_id=actor,
+        fact_ref=f"dispatch:{command}:{scope.scope_id}",
+        scope_id=scope.scope_id, kind=KIND_ACTION)
+    return receipt["fact_ref"]
+
+
+def bind_phase_for_delivery(state: Any, phase: str) -> None:
+    """Engine route declaration for a phase with no journal entry (I1a).
+
+    Issues the SAME service-private committed phase-entry receipt that a real
+    phase advance issues, then consumes it exactly once. Any failure leaves the
+    book unbound (the delivery validator then fails closed); it never forges an
+    entry, never weakens a registered session and never writes a payload field.
+    """
+    try:
+        book = getattr(state, _BOOK_ATTR, None)
+        if book is not None and book.entries:
+            return
+        receipt = issue_committed_phase_entry_receipt(
+            state, command_id=f"delivery:{phase}", phase=phase)
+    except Exception:  # pragma: no cover - defensive
+        return
+    try:
+        enter_phase(state, receipt)
+    except Exception:  # pragma: no cover - defensive
+        return
+
+
+def _norm_obligation_id(value: Any) -> Any:
+    if isinstance(value, (list, tuple)):
+        return tuple(_norm_obligation_id(item) for item in value)
+    return value
+
+
+def _typed_finalization_parts(value: Any) -> Optional[List[Any]]:
+    """B.4.1: (str, str, int) positional identity — never a coercion.
+
+    ``bool`` is an ``int`` subclass and a numeric string/float is not the
+    canonical protocol version: both are rejected instead of normalised.
+    """
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        return None
+    first, second, third = value
+    if type(first) is not str or type(second) is not str:
+        return None
+    if type(third) is not int or isinstance(third, bool):
+        return None
+    return [first, second, third]
+
+
+def _absent(value: Any) -> bool:
+    """Column helper: null/absent is 0 for every mandatory delivery field."""
+    return value is None or value == ""
+
+
+def _schema_denial(delivery: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Column H (§1.2): mapping / version=1 / known outcome / typed containers.
+
+    An ill-typed or unknown state is OUTSIDE the 16 normalised rows and is
+    ``DELIVERY_INVALID`` / ``schema`` (never a seventeenth enum).
+    """
+    version = delivery.get("version")
+    if isinstance(version, bool) or not isinstance(version, int) \
+            or version != DELIVERY_VERSION:
+        return delivery_error(DELIVERY_INVALID, stage="schema",
+                              detail="unsupported or untyped version")
+    outcome = delivery.get("outcome")
+    if not isinstance(outcome, str) or outcome not in (
+            DELIVERY_OUTCOME_CONTINUE, DELIVERY_OUTCOME_RESOLVED,
+            DELIVERY_OUTCOME_FAILURE):
+        return delivery_error(DELIVERY_INVALID, stage="schema",
+                              detail="unknown outcome")
+    for key in ("next", "terminal", "error"):
+        value = delivery.get(key)
+        if value is not None and not isinstance(value, dict):
+            return delivery_error(DELIVERY_INVALID, stage="schema",
+                                  detail=f"{key} must be a mapping or null")
+    if outcome != DELIVERY_OUTCOME_FAILURE and delivery.get("error") is not None:
+        return delivery_error(DELIVERY_INVALID, stage="schema",
+                              detail="a successful delivery must not carry an error")
+    return None
+
+
+def _shape_of(delivery: Dict[str, Any]) -> Tuple[str, int, int]:
+    """Normalise to (class, N, T) — C/S/R/F and typed next/terminal presence."""
+    outcome = delivery.get("outcome")
+    nxt = delivery.get("next") if isinstance(delivery.get("next"), dict) else None
+    terminal = (delivery.get("terminal")
+                if isinstance(delivery.get("terminal"), dict) else None)
+    if outcome == DELIVERY_OUTCOME_FAILURE:
+        cls = "F"
+    elif outcome == DELIVERY_OUTCOME_RESOLVED:
+        cls = "R"
+    else:
+        disposition = ((nxt or {}).get("disposition")
+                       or delivery.get("disposition"))
+        cls = "S" if disposition == DELIVERY_DISPOSITION_SAME_HUMAN else "C"
+    return cls, (1 if nxt is not None else 0), (1 if terminal is not None else 0)
+
+
+def _shape_denial(cls: str, n_present: int, t_present: int,
+                  phase: str = "senate") -> Optional[Dict[str, Any]]:
+    """The finite shape rows (§1.3) evaluated BEFORE the shared columns.
+
+    Rows 03/07/12/13 (the ACCEPT rows) return ``None`` and still require every
+    applicable column below. ``ALL`` is a conjunction, never an early success.
+    """
+    if cls in ("C", "S"):
+        if n_present == 0 and t_present == 0:
+            return delivery_error(DELIVERY_MISSING_RECEIVER, stage="receiver",
+                                  detail="a non-terminal delivery requires a real receiver")
+        if t_present == 1:
+            return delivery_error(DELIVERY_INVALID, stage="outcome_terminal",
+                                  detail="a non-terminal outcome cannot carry a terminal")
+    if cls == "R" and t_present == 0:
+        if phase != "senate":
+            # Out of the D7–D12 Senate protocol: a resolved non-Senate SLICE with a
+            # real next keeps its existing phase-boundary meaning (no terminal
+            # species is invented for it).
+            if n_present == 0:
+                return delivery_error(DELIVERY_MISSING_RECEIVER, stage="receiver",
+                                      detail="a resolved slice requires its next receiver")
+            return None
+        # Rows 09 and 11: RESOLVED requires the canonical terminal, even when a
+        # genuine next exists (a real next never substitutes for finalization).
+        return delivery_error(DELIVERY_INVALID, stage="terminal",
+                              detail="RESOLVED requires the canonical terminal")
+    if cls == "F" and (n_present == 1 or t_present == 1):
+        return delivery_error(DELIVERY_INVALID, stage="failure",
+                              detail="a failure cannot deliver a receiver or terminal")
+    return None
+
+
+def _claimed_phases(delivery: Dict[str, Any]) -> List[Tuple[str, Any]]:
+    """Every phase CLAIM the envelope makes (A.2) — never a source of authority."""
+    claims: List[Tuple[str, Any]] = []
+    for key in ("next", "terminal"):
+        part = delivery.get(key)
+        if isinstance(part, dict) and not _absent(part.get("phase")):
+            claims.append((key, part.get("phase")))
+    if not _absent(delivery.get("phase")):
+        claims.append(("phase", delivery.get("phase")))
+    return claims
+
+
+def _senate_semantics(delivery: Dict[str, Any]) -> bool:
+    """True when the envelope asserts ANY Senate protocol meaning (I1a)."""
+    for _key, value in _claimed_phases(delivery):
+        if value == "senate":
+            return True
+    terminal = delivery.get("terminal")
+    if isinstance(terminal, dict):
+        fid = terminal.get("finalization_id")
+        if fid not in (None, "", []):
+            return True
+        oid = terminal.get("obligation_id")
+        if isinstance(oid, (list, tuple)) and len(oid) > 3 and oid[3] == "senate":
+            return True
+    return False
+
+
+def _envelope_denial(state: Any, delivery: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Columns I / S / V / Q (§1.2): identity, scope, revision, command receipt.
+
+    A.1–A.4 (I1a): the trusted phase comes ONLY from ``trusted_phase`` (P1
+    ``SessionTurnBook.entries`` -> P2 live scope -> P3 committed receipt). The
+    envelope phase is a CLAIM used only for comparison; an unknown/forged claim
+    can never grant the non-Senate exemption (route, never payload).
+
+    A missing mandatory field is ``DELIVERY_INVALID``; a foreign/stale/unknown
+    value is ``DELIVERY_MISMATCH``. Read-only (the book is probed, never minted;
+    an unknown oracle fails closed).
+    """
+    book = getattr(state, _BOOK_ATTR, None)
+
+    # -- I: session_ref / turn must identify THIS session and CURRENT turn -----
+    session_ref = delivery.get("session_ref")
+    if _absent(session_ref):
+        return delivery_error(DELIVERY_INVALID, stage="identity",
+                              detail="session_ref is required")
+    if str(session_ref) != str(_session_ns(state)):
+        return delivery_error(DELIVERY_MISMATCH, stage="identity",
+                              detail="session_ref does not identify this session")
+
+    turn = delivery.get("turn")
+    if turn is None:
+        return delivery_error(DELIVERY_INVALID, stage="identity",
+                              detail="turn is required")
+    expected_turn = book.turn_number if book is not None else 1
+    try:
+        turn_ok = int(turn) == int(expected_turn)
+    except (TypeError, ValueError):
+        return delivery_error(DELIVERY_INVALID, stage="identity",
+                              detail="turn must be an integer")
+    if not turn_ok:
+        return delivery_error(DELIVERY_MISMATCH, stage="identity",
+                              detail="turn does not identify the current turn")
+
+    # -- A.1/A.2: trusted phase is the ONLY authority; claims only compare -------
+    trusted = trusted_phase(state)
+    phase = trusted.get("phase")
+    scope_id = delivery.get("scope_id")
+    if phase is None:
+        if _senate_semantics(delivery):
+            if _absent(scope_id):
+                return delivery_error(DELIVERY_INVALID, stage="scope",
+                                      detail="scope_id is required for the trusted scope")
+            if delivery.get("outcome") == DELIVERY_OUTCOME_RESOLVED:
+                return delivery_error(DELIVERY_MISMATCH, stage="receipt_wrong",
+                                      detail=trusted.get("detail")
+                                      or "the phase is not bound")
+            return delivery_error(trusted.get("code") or DELIVERY_INVALID,
+                                  stage=trusted.get("stage") or "phase",
+                                  detail=trusted.get("detail")
+                                  or "the phase is not bound")
+        # I1b (out of scope this round): a genuine NON-Senate slice on a state
+        # with no committed phase entry keeps its historical envelope semantics.
+        # It can never carry Senate semantics (checked above), so the Senate
+        # protocol is not weakened by this fallback.
+        phase = _delivery_phase(delivery)
+        current_scope = None
+        if book is not None:
+            scope = book.scopes.get(phase)
+            current_scope = scope.scope_id if scope is not None else None
+        if _absent(scope_id):
+            if current_scope:
+                return delivery_error(DELIVERY_INVALID, stage="scope",
+                                      detail="scope_id is required for a minted scope")
+        elif str(scope_id) != str(current_scope or ""):
+            return delivery_error(DELIVERY_MISMATCH, stage="scope",
+                                  detail="scope_id is foreign or stale")
+        terminal = delivery.get("terminal")
+        if isinstance(terminal, dict):
+            terminal_scope = terminal.get("scope_id")
+            if _absent(terminal_scope):
+                return delivery_error(DELIVERY_INVALID, stage="scope",
+                                      detail="terminal.scope_id is required")
+            if str(terminal_scope) != str(current_scope or ""):
+                return delivery_error(DELIVERY_MISMATCH, stage="scope",
+                                      detail="terminal scope is foreign or stale")
+        revision = delivery.get("core_revision")
+        if revision is None:
+            return delivery_error(DELIVERY_INVALID, stage="revision",
+                                  detail="core_revision is required")
+        try:
+            revision_ok = int(revision) == int(current_revision(state))
+        except (TypeError, ValueError):
+            return delivery_error(DELIVERY_INVALID, stage="revision",
+                                  detail="core_revision must be an integer")
+        if not revision_ok:
+            return delivery_error(DELIVERY_MISMATCH, stage="revision",
+                                  detail="core_revision is stale")
+        return _command_receipt_denial(state, book, delivery, scope_id)
+    current_scope = trusted["scope_id"]
+    claims = _claimed_phases(delivery)
+    declared: List[Any] = []
+    for _key, value in claims:
+        if value not in declared:
+            declared.append(value)
+    if len(declared) > 1:
+        return delivery_error(DELIVERY_MISMATCH, stage="phase",
+                              detail="the declared phases disagree")
+    for key, value in claims:
+        if value != phase:
+            return delivery_error(DELIVERY_MISMATCH, stage="phase",
+                                  detail=f"{key} phase disagrees with the trusted route")
+
+    # -- S: the envelope scope AND the terminal scope must be the TRUSTED scope --
+    if _absent(scope_id):
+        return delivery_error(DELIVERY_INVALID, stage="scope",
+                              detail="scope_id is required for the trusted scope")
+    if str(scope_id) != str(current_scope):
+        return delivery_error(DELIVERY_MISMATCH, stage="scope",
+                              detail="scope_id is foreign or stale")
+    terminal = delivery.get("terminal")
+    if isinstance(terminal, dict):
+        terminal_scope = terminal.get("scope_id")
+        if _absent(terminal_scope):
+            return delivery_error(DELIVERY_INVALID, stage="scope",
+                                  detail="terminal.scope_id is required")
+        if str(terminal_scope) != str(current_scope):
+            return delivery_error(DELIVERY_MISMATCH, stage="scope",
+                                  detail="terminal scope is foreign or stale")
+
+    # -- A.4.4: a non-Senate route cannot carry Senate-specific declarations ---
+    if phase != "senate":
+        senate_decl = False
+        if isinstance(terminal, dict):
+            fid = terminal.get("finalization_id")
+            if fid not in (None, "", []):
+                senate_decl = True
+            oid = terminal.get("obligation_id")
+            if isinstance(oid, (list, tuple)) and len(oid) > 3 \
+                    and oid[3] == "senate":
+                senate_decl = True
+        if senate_decl:
+            return delivery_error(
+                DELIVERY_MISMATCH, stage="phase",
+                detail="a Senate declaration cannot use a non-Senate route")
+
+    # -- V: a fresh (never the earlier commit) revision ------------------------
+    revision = delivery.get("core_revision")
+    if revision is None:
+        return delivery_error(DELIVERY_INVALID, stage="revision",
+                              detail="core_revision is required")
+    try:
+        revision_ok = int(revision) == int(current_revision(state))
+    except (TypeError, ValueError):
+        return delivery_error(DELIVERY_INVALID, stage="revision",
+                              detail="core_revision must be an integer")
+    if not revision_ok:
+        return delivery_error(DELIVERY_MISMATCH, stage="revision",
+                              detail="core_revision is stale")
+
+    # -- Q: the reference must resolve to a genuine accepted command -----------
+    return _command_receipt_denial(state, book, delivery, scope_id)
+
+
+def _command_receipt_denial(state: Any, book: Any,
+                            delivery: Dict[str, Any],
+                            scope_id: Any) -> Optional[Dict[str, Any]]:
+    ref = delivery.get("command_receipt_ref")
+    if not isinstance(ref, str) or not ref.strip():
+        return delivery_error(DELIVERY_INVALID, stage="command_receipt",
+                              detail="a committed command reference is required")
+    ref = ref.strip()
+    if book is None:
+        return delivery_error(DELIVERY_MISMATCH, stage="command_receipt",
+                              detail="the command reference cannot be verified")
+    if ref in book.receipts or ref in book.committed_facts:
+        return None
+    for rec in book.records:
+        oid = rec.obligation_id or ()
+        rec_scope = oid[2] if len(oid) > 2 else ""
+        rec_turn = oid[1] if len(oid) > 1 else None
+        if rec_scope == str(scope_id or "") and rec_turn == book.turn_number \
+                and (rec.command_id == ref or rec.authoritative_fact_ref == ref):
+            return None
+    return delivery_error(DELIVERY_MISMATCH, stage="command_receipt",
+                          detail="the reference is not an accepted command")
+
+
+def _obligation_denial(state: Any, phase: str,
+                       nxt: Dict[str, Any],
+                       terminal: Optional[Dict[str, Any]] = None,
+                       outcome: str = DELIVERY_OUTCOME_CONTINUE,
+                       scope_id: str = "") -> Optional[Dict[str, Any]]:
+    """Column O (§1.2): the exact authoritative immediate obligation identity.
+
+    A missing id is ``DELIVERY_INVALID/obligation``; a fake/stale/wrong-actor or
+    previous-generation id is ``DELIVERY_MISMATCH/obligation``. For a RESOLVED
+    terminal the identity is the RESULT-OWNER obligation (never an outstanding
+    voter), so no outstanding obligation is fabricated for a finalised scope.
+    """
+    presented = nxt.get("obligation_id")
+    if _absent(presented):
+        if phase != "senate":
+            return None
+        return delivery_error(DELIVERY_INVALID, stage="obligation",
+                              detail="the exact obligation identity is required")
+    actor = nxt.get("actor_player_id")
+    if _absent(actor):
+        # Column A owns the missing-receiver diagnostic; O never masks it as a
+        # fake obligation comparison against an empty actor.
+        return None
+    if terminal is not None and outcome == DELIVERY_OUTCOME_RESOLVED:
+        if not isinstance(presented, (list, tuple)) or len(presented) != 6:
+            return delivery_error(DELIVERY_MISMATCH, stage="obligation",
+                                  detail="the result-owner obligation is malformed")
+        book = getattr(state, _BOOK_ATTR, None)
+        turn = book.turn_number if book is not None else None
+        expected = (str(_session_ns(state)), turn, str(scope_id or ""), phase,
+                    "terminal", ("player", actor))
+        if _norm_obligation_id(presented) != _norm_obligation_id(expected):
+            return delivery_error(DELIVERY_MISMATCH, stage="obligation",
+                                  detail="not the exact result-owner obligation")
+        return None
+    try:
+        snapshot = obligations(state, phase)
+    except Exception:  # pragma: no cover - defensive
+        snapshot = None
+    if snapshot is None or snapshot.errors:
+        return delivery_error(DELIVERY_MISMATCH, stage="obligation",
+                              detail="the obligation cannot be verified")
+    expected = None
+    for obligation in snapshot.outstanding():
+        if obligation.actor_player_id == actor:
+            expected = obligation.obligation_id
+            break
+    if expected is None:
+        return delivery_error(DELIVERY_MISMATCH, stage="obligation",
+                              detail="no such outstanding obligation for the actor")
+    if _norm_obligation_id(presented) != _norm_obligation_id(expected):
+        return delivery_error(DELIVERY_MISMATCH, stage="obligation",
+                              detail="obligation id is foreign or stale")
+    return None
+
+
+def _legacy_denial(delivery: Dict[str, Any], legacy: Any,
+                   nxt: Optional[Dict[str, Any]],
+                   terminal: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Column L (§1.2): every PRESENT legacy sibling/embedded field must agree.
+
+    A NON-EMPTY legacy awaiting against an AI primary ALWAYS rejects — absent
+    optional fields never create a receiver, and a present field is never
+    skipped (the earlier AI-awaiting hole).
+    """
+    if nxt is not None:
+        primary_actor = nxt.get("actor_player_id")
+        primary_controller = nxt.get("controller")
+        primary_awaiting = (primary_actor
+                            if primary_controller == CONTROLLER_HUMAN else None)
+    elif isinstance(terminal, dict):
+        primary_actor = terminal.get("actor")
+        primary_controller = terminal.get("controller")
+        primary_awaiting = terminal.get("awaiting_player_id")
+    else:
+        return None
+    sources = [delivery]
+    if isinstance(legacy, dict):
+        sources.append(legacy)
+    for source in sources:
+        controller = source.get("controller")
+        if not _absent(controller) and primary_controller \
+                and controller != primary_controller:
+            return delivery_error(DELIVERY_MISMATCH, stage="legacy",
+                                  detail="legacy controller contradicts the delivery")
+        actor = source.get("actor")
+        if not _absent(actor) and primary_actor and actor != primary_actor:
+            return delivery_error(DELIVERY_MISMATCH, stage="legacy",
+                                  detail="legacy actor contradicts the delivery")
+        awaiting = source.get("awaiting_player_id")
+        if not _absent(awaiting):
+            if primary_awaiting is None or awaiting != primary_awaiting:
+                return delivery_error(
+                    DELIVERY_MISMATCH, stage="legacy",
+                    detail="legacy awaiting receiver contradicts the delivery")
+    return None
+
+
+def _terminal_denial(state: Any, phase: str,
+                     nxt: Optional[Dict[str, Any]],
+                     terminal: Any,
+                     scope_id: str = "") -> Optional[Dict[str, Any]]:
+    """Column T (§1.2) + §2 canonical terminal identity.
+
+    A RESOLVED Senate terminal must dereference the GENUINE receipt body and
+    satisfy the same-version canonical predicate (identity + content); four
+    booleans alone are insufficient. A non-Senate terminal uses its genuine
+    owner receipt.
+    """
+    if not isinstance(terminal, dict):
+        return delivery_error(DELIVERY_INVALID, stage="terminal",
+                              detail="terminal must be a mapping")
+    actor = terminal.get("actor")
+    if not actor:
+        return delivery_error(DELIVERY_INVALID, stage="terminal",
+                              detail="terminal requires the real result owner")
+    status = terminal.get("status")
+    if _absent(status):
+        return delivery_error(DELIVERY_INVALID, stage="terminal",
+                              detail="terminal requires a typed status")
+    if status != "resolved":
+        return delivery_error(DELIVERY_MISMATCH, stage="terminal",
+                              detail="terminal status is not resolved")
+    claimed_phase = terminal.get("phase")
+    if _absent(claimed_phase):
+        return delivery_error(DELIVERY_INVALID, stage="terminal",
+                              detail="terminal requires its phase identity")
+    if claimed_phase != phase:
+        return delivery_error(DELIVERY_MISMATCH, stage="terminal",
+                              detail="terminal phase disagrees with the delivery")
+    actual_controller = controller_of(state, actor)
+    if terminal.get("controller") != actual_controller:
+        return delivery_error(DELIVERY_MISMATCH, stage="terminal",
+                              detail="terminal controller disagrees with PlayerType")
+    if nxt is not None and nxt.get("actor_player_id") \
+            and nxt.get("actor_player_id") != actor:
+        return delivery_error(DELIVERY_MISMATCH, stage="terminal",
+                              detail="terminal owner differs from the delivered next")
+    awaiting = terminal.get("awaiting_player_id")
+    if actual_controller == CONTROLLER_HUMAN:
+        if awaiting != actor:
+            return delivery_error(DELIVERY_MISMATCH, stage="terminal",
+                                  detail="a HUMAN terminal must await its owner")
+    elif not _absent(awaiting):
+        return delivery_error(DELIVERY_MISMATCH, stage="terminal",
+                              detail="an AI owner is never an awaiting HUMAN seat")
+
+    if phase != "senate":
+        owner_receipt = terminal.get("owner_receipt")
+        receipt_id = (owner_receipt.get("receipt_id")
+                      if isinstance(owner_receipt, dict) else None)
+        book = getattr(state, _BOOK_ATTR, None)
+        if not receipt_id or book is None or receipt_id not in book.receipts:
+            return delivery_error(DELIVERY_MISMATCH, stage="terminal",
+                                  detail="a non-Senate terminal needs its owner receipt")
+        return None
+
+    from src.api import senate_api
+    try:
+        finalization_id = senate_api.senate_finalization_id(state)
+    except Exception:  # pragma: no cover - defensive
+        finalization_id = None
+    expected = _typed_finalization_parts(finalization_id)
+    if expected is None:
+        return delivery_error(DELIVERY_MISMATCH, stage="finalization_id",
+                              detail="the canonical finalization id is not typed")
+    claimed = terminal.get("finalization_id")
+    if _absent(claimed) or claimed == []:
+        return delivery_error(DELIVERY_INVALID, stage="terminal",
+                              detail="terminal requires the canonical finalization id")
+    if not isinstance(claimed, (list, tuple)) or len(claimed) != 3:
+        return delivery_error(DELIVERY_INVALID, stage="terminal",
+                              detail="the finalization id is malformed")
+    observed = _typed_finalization_parts(claimed)
+    if observed is None:
+        return delivery_error(DELIVERY_MISMATCH, stage="finalization_id",
+                              detail="the finalization id components are not typed")
+    if observed != expected:
+        return delivery_error(DELIVERY_MISMATCH, stage="finalization_id",
+                              detail="terminal names a foreign finalization")
+    claimed_list = terminal.get("finalization_id_list")
+    if claimed_list is not None:
+        if not isinstance(claimed_list, (list, tuple)) or len(claimed_list) != 3:
+            return delivery_error(DELIVERY_MISMATCH, stage="receipt_wrong",
+                                  detail="the finalization id list is malformed")
+        if list(claimed_list) != [str(part) for part in expected]:
+            return delivery_error(DELIVERY_MISMATCH, stage="finalization_id",
+                                  detail="the finalization id list is not positionally equal")
+
+    canonical = senate_api.canonical_finalization(
+        state, expected_scope=scope_id or None,
+        expected_key=tuple(finalization_id) if finalization_id else None,
+        claimed_terminal=terminal)
+    if canonical.get("status") == "ABSENT":
+        return delivery_error(DELIVERY_MISMATCH, stage="receipt_missing",
+                              detail="no canonical receipt backs this terminal")
+    if canonical.get("status") != "VALID":
+        stage = canonical.get("stage") or "receipt_wrong"
+        return delivery_error(DELIVERY_MISMATCH, stage=stage,
+                              detail="the canonical receipt is inconsistent")
+    facts_claim = terminal.get("completion_facts")
+    if facts_claim is not None:
+        verified = canonical.get("facts") or {}
+        if not isinstance(facts_claim, dict) or facts_claim != verified:
+            return delivery_error(DELIVERY_MISMATCH, stage="terminal",
+                                  detail="the claimed completion facts are false")
+    revision_claim = terminal.get("core_revision")
+    if revision_claim is not None:
+        try:
+            revision_ok = int(revision_claim) == int(current_revision(state))
+        except (TypeError, ValueError):
+            revision_ok = False
+        if not revision_ok:
+            return delivery_error(DELIVERY_MISMATCH, stage="terminal",
+                                  detail="the claimed terminal revision is stale")
+    return None
+
+
+def _receiver_denial(state: Any, nxt: Optional[Dict[str, Any]],
+                     terminal: Optional[Dict[str, Any]],
+                     viewer_id: Optional[str], phase: str = "") -> Optional[Dict[str, Any]]:
+    """Column A (§1.2): real actor, raw PlayerType, disposition/scheduling."""
+    part = nxt if nxt is not None else terminal
+    if not isinstance(part, dict):
+        return None
+    actor = (nxt.get("actor_player_id") if nxt is not None
+             else terminal.get("actor"))
+    if _absent(actor):
+        return delivery_error(DELIVERY_MISSING_RECEIVER, stage="receiver",
+                              detail="a real receiver is required")
+    if getattr(state, "get_player", lambda _x: None)(actor) is None:
+        return delivery_error(DELIVERY_INVALID, stage="receiver",
+                              detail="the receiver is not a real player")
+    controller = (nxt.get("controller") if nxt is not None
+                  else terminal.get("controller"))
+    if controller not in (CONTROLLER_HUMAN, CONTROLLER_AI):
+        return delivery_error(DELIVERY_INVALID, stage="receiver",
+                              detail="the controller enum is unknown")
+    actual = controller_of(state, actor)
+    if actual == CONTROLLER_NONE:
+        return delivery_error(DELIVERY_INVALID, stage="receiver",
+                              detail="the raw PlayerType is not executable")
+    if actual != controller:
+        return delivery_error(DELIVERY_MISMATCH, stage="receiver",
+                              detail="the controller contradicts the raw PlayerType")
+    if nxt is None:
+        return None
+    disposition = nxt.get("disposition")
+    if disposition not in (DELIVERY_DISPOSITION_SAME_HUMAN,
+                           DELIVERY_DISPOSITION_NEXT_HUMAN,
+                           DELIVERY_DISPOSITION_AI_OWNER):
+        return delivery_error(DELIVERY_INVALID, stage="receiver",
+                              detail="the disposition enum is unknown")
+    if actual == CONTROLLER_HUMAN \
+            and disposition == DELIVERY_DISPOSITION_AI_OWNER:
+        return delivery_error(DELIVERY_MISMATCH, stage="receiver",
+                              detail="a HUMAN receiver cannot carry AI_OWNER")
+    if actual == CONTROLLER_AI \
+            and disposition != DELIVERY_DISPOSITION_AI_OWNER:
+        return delivery_error(DELIVERY_MISMATCH, stage="receiver",
+                              detail="an AI receiver requires AI_OWNER")
+    if disposition == DELIVERY_DISPOSITION_SAME_HUMAN:
+        if viewer_id and actor != viewer_id:
+            return delivery_error(DELIVERY_MISMATCH, stage="receiver",
+                                  detail="SAME_HUMAN must target the current viewer")
+        if _earlier_obligation(state, phase, actor):
+            return delivery_error(DELIVERY_MISMATCH, stage="receiver",
+                                  detail="SAME_HUMAN cannot skip an earlier obligation")
+    return None
+
+
+def _earlier_obligation(state: Any, phase: str, actor: str) -> bool:
+    """True when another actor holds an EARLIER outstanding obligation."""
+    try:
+        snapshot = obligations(state, phase)
+    except Exception:  # pragma: no cover - defensive
+        return True
+    if snapshot.errors:
+        return True
+    outstanding = snapshot.outstanding()
+    for index, obligation in enumerate(outstanding):
+        if obligation.actor_player_id == actor:
+            return any(o.actor_player_id != actor for o in outstanding[:index])
+    return False
+
+
+def _core_denial(state: Any, phase: str, nxt: Optional[Dict[str, Any]],
+                 terminal: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Column K (§1.2): the ACTUAL Core current / result-owner G read-back.
+
+    Missing fields are never a wildcard; a terminal-only envelope is checked
+    against the real Core current player and the scope's true G.
+    """
+    current = _entry_actor(state)
+    if terminal is not None:
+        actor = terminal.get("actor")
+        if _absent(actor):
+            return delivery_error(DELIVERY_INVALID, stage="core",
+                                  detail="terminal actor is required")
+        current_player_id = terminal.get("current_player_id")
+        if _absent(current_player_id):
+            return delivery_error(DELIVERY_INVALID, stage="core",
+                                  detail="terminal.current_player_id is mandatory")
+        if str(current_player_id) != str(actor):
+            return delivery_error(DELIVERY_MISMATCH, stage="core",
+                                  detail="terminal current player is not the owner")
+        if str(current) != str(actor):
+            return delivery_error(DELIVERY_MISMATCH, stage="core",
+                                  detail="terminal owner is not the actual Core current")
+        cursor = terminal.get("cursor_restored")
+        if cursor is None:
+            return delivery_error(DELIVERY_INVALID, stage="core",
+                                  detail="cursor_restored is mandatory")
+        if cursor is not True:
+            return delivery_error(DELIVERY_MISMATCH, stage="core",
+                                  detail="the terminal must restore the real cursor")
+        book = getattr(state, _BOOK_ATTR, None)
+        scope = book.scopes.get(phase) if book is not None else None
+        if scope is not None and scope.actor \
+                and str(scope.actor) != str(actor):
+            return delivery_error(DELIVERY_MISMATCH, stage="core",
+                                  detail="the terminal owner is not the scope G")
+    if nxt is not None:
+        actor = nxt.get("actor_player_id")
+        if actor and str(current) != str(actor):
+            return delivery_error(DELIVERY_MISMATCH, stage="core",
+                                  detail="delivery actor is not the actual Core current")
+    return None
+
+
+def _failure_denial(delivery: Dict[str, Any],
+                    nxt: Optional[Dict[str, Any]],
+                    terminal: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Column E (§1.2): F requires a typed error and no activation/success."""
+    error = delivery.get("error")
+    if not isinstance(error, dict) or not isinstance(error.get("code"), str) \
+            or not error.get("code", "").strip():
+        return delivery_error(DELIVERY_INVALID, stage="failure",
+                              detail="a failure requires a typed error")
+    if nxt is not None or terminal is not None:
+        return delivery_error(DELIVERY_INVALID, stage="failure",
+                              detail="a failure cannot carry a receiver or terminal")
+    return None
+
+
+def validate_delivery_result(state: Any, delivery: Any, *,
+                             viewer_id: Optional[str] = None,
+                             legacy: Any = None) -> Dict[str, Any]:
+    """Validate ``DeliveryResultV1`` against the REAL Core/PlayerType facts.
+
+    Deterministic order (§1.2): H→I→S→V→Q→shape→O→A→K→T→L→E. Every applicable
+    column runs before ANY success return; a terminal-only envelope is NOT a
+    success shortcut (legacy / actual Core / G / canonical terminal still run).
+    It never mutates authority or the ledger.
+    """
+    if not isinstance(delivery, dict):
+        return {"ok": False, "error": delivery_error(
+            DELIVERY_INVALID, stage="schema", detail="delivery must be a mapping")}
+    denial = _schema_denial(delivery)
+    if denial is not None:
+        return {"ok": False, "error": denial}
+    outcome = delivery.get("outcome")
+    cls, n_present, t_present = _shape_of(delivery)
+    trusted = trusted_phase(state)
+    phase = trusted.get("phase") or _delivery_phase(delivery)
+
+    # I / S / V / Q (incl. A.1–A.4 trusted-phase resolution)
+    denial = _envelope_denial(state, delivery)
+    if denial is not None:
+        return {"ok": False, "error": denial}
+
+    # Shape rows (§1.3) — the phase is the TRUSTED phase, never the claim.
+    denial = _shape_denial(cls, n_present, t_present, phase)
+    if denial is not None:
+        return {"ok": False, "error": denial}
+
+    nxt = delivery.get("next") if isinstance(delivery.get("next"), dict) else None
+    terminal = (delivery.get("terminal")
+                if isinstance(delivery.get("terminal"), dict) else None)
+    scope_id = str(delivery.get("scope_id") or "")
+
+    # E — a typed failure is accepted as an error envelope only (row 13).
+    if cls == "F":
+        denial = _failure_denial(delivery, nxt, terminal)
+        if denial is not None:
+            return {"ok": False, "error": denial}
+        return {"ok": True, "error": None}
+
+    # O — exact immediate obligation / result-owner obligation.
+    if nxt is not None:
+        denial = _obligation_denial(state, phase, nxt, terminal, outcome, scope_id)
+        if denial is not None:
+            return {"ok": False, "error": denial}
+
+    # A — real actor / raw PlayerType / disposition.
+    denial = _receiver_denial(state, nxt, terminal, viewer_id, phase)
+    if denial is not None:
+        return {"ok": False, "error": denial}
+
+    # K — actual Core current + scope G read-back (terminal-only included).
+    denial = _core_denial(state, phase, nxt, terminal)
+    if denial is not None:
+        return {"ok": False, "error": denial}
+
+    # T — canonical terminal identity/content (§2).
+    if terminal is not None:
+        denial = _terminal_denial(state, phase, nxt, terminal, scope_id)
+        if denial is not None:
+            return {"ok": False, "error": denial}
+
+    # L — every PRESENT legacy sibling/embedded field.
+    denial = _legacy_denial(delivery, legacy, nxt, terminal)
+    if denial is not None:
+        return {"ok": False, "error": denial}
+
+    # Row 10 — a HUMAN interactive terminal-only delivery still needs a next.
+    if cls == "R" and nxt is None and terminal is not None \
+            and terminal.get("controller") != CONTROLLER_AI:
+        return {"ok": False, "error": delivery_error(
+            DELIVERY_MISSING_RECEIVER, stage="receiver",
+            detail="a HUMAN interactive result still requires its next receiver")}
+    return {"ok": True, "error": None}
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +1431,159 @@ def current_scope_id(state: Any, phase: str) -> Optional[str]:
     return scope.scope_id if scope else None
 
 
+def trusted_phase(state: Any) -> Dict[str, Any]:
+    """A.1/A.3 (I1a): the ONE authoritative phase binding.
+
+    * **P1** — ``SessionTurnBook.entries`` is append-only; the LAST entry is the
+      only authority for the current phase (and its scope generation). An empty
+      journal or an entry without a typed ``phase``/``scope_id`` is NOT inferred.
+    * **P2** — the phase must still be live: ``book.scopes[phase].scope_id`` must
+      equal the entry's scope (a cleaned/cross-turn scope is dead).
+    * **P3** — a service-issued committed entry receipt (``receipt_id``) must
+      still match this session/turn/phase and its source phase must be committed;
+      a legacy entry is only legitimate on a never-registered CLI/legacy state
+      (``TURN_BINDING_SCOPE_LIVE_ONLY`` diagnostic — no new field, no forgery).
+
+    Returns a plain mapping: ``phase``/``scope_id`` are ``None`` on any failure,
+    with ``code``/``stage``/``detail`` carrying the typed fail-closed denial.
+    Pure read: never mints, never writes, never defaults to ``"senate"``.
+    """
+    result: Dict[str, Any] = {
+        "phase": None, "scope_id": None, "receipt_id": None,
+        "diagnostic": "", "code": None, "stage": None, "detail": "",
+    }
+    book = getattr(state, _BOOK_ATTR, None)
+    if book is None or not book.entries:
+        result.update(code=DELIVERY_INVALID, stage="phase",
+                      detail="no committed phase entry binds this delivery")
+        return result
+    last = book.entries[-1]
+    phase = last.get("phase")
+    scope_id = last.get("scope_id")
+    if not isinstance(phase, str) or not phase \
+            or not isinstance(scope_id, str) or not scope_id:
+        result.update(code=DELIVERY_INVALID, stage="phase",
+                      detail="the last phase entry is not bound to a phase/scope")
+        return result
+    # Contradictory data: two entries pointing at ONE scope with a phase conflict.
+    for entry in book.entries:
+        if entry.get("scope_id") == scope_id and entry.get("phase") != phase:
+            result.update(code=DELIVERY_MISMATCH, stage="phase",
+                          detail="conflicting phase entries for one scope")
+            return result
+    scope = book.scopes.get(phase)
+    if scope is None or str(scope.scope_id) != scope_id:
+        result.update(code=DELIVERY_MISMATCH, stage="scope",
+                      detail="the trusted phase scope is no longer live")
+        return result
+    receipt_id = last.get("receipt_id")
+    if receipt_id:
+        snap = _phase_receipt_registry(book).get(receipt_id)
+        if snap is None:
+            result.update(code=DELIVERY_MISMATCH, stage="phase",
+                          detail="the phase entry receipt is not service-issued")
+            return result
+        if snap.get("session_id") != _session_ns(state) \
+                or snap.get("turn") != book.turn_number \
+                or snap.get("phase") != phase \
+                or snap.get("committed") is not True:
+            result.update(code=DELIVERY_MISMATCH, stage="phase",
+                          detail="the phase entry binding is forged")
+            return result
+        source = _PHASE_SOURCE.get(phase)
+        if source:
+            try:
+                src_executed = bool(state.is_phase_executed(source))
+            except Exception:  # pragma: no cover - defensive
+                src_executed = False
+            try:
+                src_result = state.get_phase_result(source) is not None
+            except Exception:  # pragma: no cover - defensive
+                src_result = False
+            if not (src_executed or src_result):
+                result.update(code=DELIVERY_MISMATCH, stage="phase",
+                              detail="the phase source is not committed")
+                return result
+        result.update(phase=phase, scope_id=scope_id, receipt_id=receipt_id,
+                      diagnostic="COMMITTED_ROUTE")
+        return result
+    from src.api import session_access
+    try:
+        registered = bool(session_access.is_hotseat_registered(state))
+    except Exception:  # pragma: no cover - defensive
+        registered = True  # fail closed
+    if registered:
+        result.update(code=DELIVERY_INVALID, stage="phase",
+                      detail="a registered session requires a committed phase entry")
+        return result
+    result.update(phase=phase, scope_id=scope_id,
+                  diagnostic="TURN_BINDING_SCOPE_LIVE_ONLY")
+    return result
+
+
+#: Service-private registry attr for COMMITTED phase-entry receipts (item2,
+#: FC-D46-04). Never a caller-held object; the receipt is a frozen snapshot so a
+#: GUI cannot forge ``committed=True``.
+_PHASE_RECEIPTS_ATTR = "_committed_phase_receipts"
+
+#: The committed advance source phase for each target phase (FC-D46-04 binding).
+_PHASE_SOURCE: Dict[str, str] = {
+    "population": "forum",
+    "senate": "population",
+}
+
+
+def _phase_receipt_registry(book: "SessionTurnBook") -> Dict[str, Any]:
+    reg = getattr(book, _PHASE_RECEIPTS_ATTR, None)
+    if reg is None:
+        reg = {}
+        try:
+            setattr(book, _PHASE_RECEIPTS_ATTR, reg)
+        except Exception:  # pragma: no cover - defensive
+            pass
+    return reg
+
+
+def issue_committed_phase_entry_receipt(
+        state: Any, *, command_id: str, phase: str, actor: Optional[str] = None,
+        txn_id: str = "", domain_scope_id: str = "", payload_digest: str = "",
+        core_revision_before: Optional[int] = None,
+        core_revision_after: Optional[int] = None) -> dict:
+    """item2/FC-D46-04 ISSUER: the phase-advance OWING command's commit hook.
+
+    Called by the advance API (``session_api.advance_population_phase`` /
+    ``forum_api.advance_forum_phase``) AFTER the real ``mark_phase_executed``
+    commit and BEFORE returning to the adapter. The receipt is a SERVICE-private
+    immutable snapshot (``committed=True`` set HERE, never by the caller) bound to
+    session/turn/source->target phase/actor/txn/revision/commit fact, and
+    registered in the book registry keyed by ``receipt_id``. ``enter_phase``
+    consumes it EXACTLY ONCE.
+    """
+    book = _book(state)
+    reg = _phase_receipt_registry(book)
+    rev = current_revision(state)
+    snap = types.MappingProxyType({
+        "receipt_id": uuid.uuid4().hex,
+        "issued_by": str(command_id),
+        "committed": True,
+        "command_id": str(command_id),
+        "phase": phase,
+        "source_phase": _PHASE_SOURCE.get(phase, ""),
+        "session_id": _session_ns(state),
+        "turn": book.turn_number,
+        "txn_id": str(txn_id),
+        "domain_scope_id": str(domain_scope_id),
+        "actor": actor if actor is not None else _entry_actor(state),
+        "core_revision_before": (int(core_revision_before)
+                                 if core_revision_before is not None else rev),
+        "core_revision_after": (int(core_revision_after)
+                                if core_revision_after is not None else rev),
+        "payload_digest": str(payload_digest),
+    })
+    reg[snap["receipt_id"]] = snap
+    return dict(snap)
+
+
 def enter_phase(state: Any, transition_receipt: Optional[dict]) -> dict:
     """Consume a successfully COMMITTED phase-advance receipt EXACTLY ONCE.
 
@@ -427,7 +1591,20 @@ def enter_phase(state: Any, transition_receipt: Optional[dict]) -> dict:
     phase (leaving the old phase invalidates old handles/commands, R1 §5). Visual
     navigation is NOT phase entry — only a committed advance receipt entry event
     reaches here.
+
+    D4/D6 item2 (FC-D46-04): on a REGISTERED Hot-seat session the receipt MUST be
+    a service-issued committed receipt (a GUI plain dict with ``committed=True``
+    is refused: ``NOT_COMMITTED``). A never-registered CLI/legacy state keeps the
+    historical low-level semantics (a direct primitive call with a committed dict).
     """
+    from src.api import session_access
+    if session_access.is_hotseat_registered(state):
+        return _enter_phase_from_committed_receipt(state, transition_receipt)
+    return _enter_phase_legacy(state, transition_receipt)
+
+
+def _enter_phase_legacy(state: Any, transition_receipt: Optional[dict]) -> dict:
+    """Never-registered CLI/legacy low-level semantics (historical, unchanged)."""
     if not isinstance(transition_receipt, dict) or not transition_receipt.get(
             "committed", False):
         return {"success": False, "reason": "NOT_COMMITTED",
@@ -441,7 +1618,6 @@ def enter_phase(state: Any, transition_receipt: Optional[dict]) -> dict:
     dedup = (book.turn_number, receipt_id, phase)
     if dedup in getattr(book, "entered_scope_ids", set()):
         return {"success": False, "reason": "DUPLICATE_RECEIPT"}
-    # Fresh scope minted at entry (new immutable identity).
     scope = _Scope(scope_id=uuid.uuid4().hex, phase=phase,
                    entry_revision=current_revision(state), actor=_entry_actor(state))
     book.scopes[phase] = scope
@@ -451,6 +1627,70 @@ def enter_phase(state: Any, transition_receipt: Optional[dict]) -> dict:
         "phase": phase,
         "core_revision": scope.entry_revision,
         "actor": scope.actor,
+    }
+    book.entries.append(event)
+    return {"success": True, "phase_entered": event}
+
+
+def _enter_phase_from_committed_receipt(state: Any,
+                                        transition_receipt: Optional[dict]) -> dict:
+    """REGISTERED Hot-seat item2 consumption (service-private receipt, once-only).
+
+    Failure enum (FC-D46-04): NOT_COMMITTED / MISSING_PHASE / DUPLICATE_RECEIPT /
+    BINDING_MISMATCH / SOURCE_NOT_COMMITTED. Never mints a scope on failure.
+    """
+    if not isinstance(transition_receipt, dict):
+        return {"success": False, "reason": "NOT_COMMITTED",
+                "message": "entry requires a service-issued committed receipt"}
+    book = _book(state)
+    reg = _phase_receipt_registry(book)
+    rid = transition_receipt.get("receipt_id")
+    snap = reg.get(rid) if rid else None
+    if snap is None:
+        return {"success": False, "reason": "NOT_COMMITTED",
+                "message": "receipt is not a service-issued committed receipt"}
+    if not snap.get("committed"):
+        return {"success": False, "reason": "NOT_COMMITTED"}
+    # The presented copy must MATCH the issued immutable snapshot field-for-field.
+    for field in ("committed", "command_id", "phase", "session_id", "turn",
+                  "txn_id", "domain_scope_id", "actor",
+                  "core_revision_before", "core_revision_after", "payload_digest"):
+        if transition_receipt.get(field) != snap.get(field):
+            return {"success": False, "reason": "BINDING_MISMATCH",
+                    "message": f"receipt field {field} does not match the issued receipt"}
+    phase = snap.get("phase")
+    if not phase:
+        return {"success": False, "reason": "MISSING_PHASE"}
+    if snap.get("session_id") != _session_ns(state) \
+            or snap.get("turn") != book.turn_number:
+        return {"success": False, "reason": "BINDING_MISMATCH",
+                "message": "receipt is bound to a different session/turn"}
+    source = snap.get("source_phase")
+    if source:
+        try:
+            src_executed = bool(state.is_phase_executed(source))
+        except Exception:  # pragma: no cover - defensive
+            src_executed = False
+        try:
+            src_result = state.get_phase_result(source) is not None
+        except Exception:  # pragma: no cover - defensive
+            src_result = False
+        if not (src_executed or src_result):
+            return {"success": False, "reason": "SOURCE_NOT_COMMITTED",
+                    "message": f"source phase {source} is not committed"}
+    dedup = (book.turn_number, snap.get("receipt_id"), phase)
+    if dedup in getattr(book, "entered_scope_ids", set()):
+        return {"success": False, "reason": "DUPLICATE_RECEIPT"}
+    scope = _Scope(scope_id=uuid.uuid4().hex, phase=phase,
+                   entry_revision=current_revision(state), actor=_entry_actor(state))
+    book.scopes[phase] = scope
+    book.entered_scope_ids.add(dedup)
+    event = {
+        "scope_id": scope.scope_id,
+        "phase": phase,
+        "core_revision": scope.entry_revision,
+        "actor": scope.actor,
+        "receipt_id": snap.get("receipt_id"),
     }
     book.entries.append(event)
     return {"success": True, "phase_entered": event}
@@ -781,6 +2021,97 @@ def phase_ready(state: Any, phase: Optional[str] = None,
     if scope_id is not None and scope_id != scope.scope_id:
         return False
     return obligations(state, phase).ready()
+
+
+def senate_readiness(state: Any) -> Dict[str, Any]:
+    """GET-PURE all-controller readiness for the senate phase (S2/FC-712-10..12).
+
+    Derived from the REAL ballots / proposal decision / actual office owner; it
+    never mints a scope, never backfills a ballot and never writes the ledger.
+    ``covered``/``required`` are the aggregate tally facts (partial vs complete),
+    NOT a terminal result: only the canonical finalizer writes results.
+    """
+    book = getattr(state, _BOOK_ATTR, None)
+    scope = book.scopes.get("senate") if book is not None else None
+    scope_id = scope.scope_id if scope else ""
+    rev = current_revision(state)
+    proposals = list(state.get_senate_proposals() or [])
+    votes = state.get_senate_votes_copy() or {}
+    players = [p.player_id for p in state.get_all_players()
+               if controller_of(state, p.player_id)
+               in (CONTROLLER_HUMAN, CONTROLLER_AI)]
+    required = len(proposals) * len(players)
+    covered = 0
+    for proposal in proposals:
+        pid_prop = proposal.get("id") if isinstance(proposal, dict) else None
+        if pid_prop is None:
+            continue
+        for player_id in players:
+            if pid_prop in votes.get(player_id, {}):
+                covered += 1
+    all_ballots = bool(proposals) and covered == required
+    try:
+        decision_complete = bool(state.senate_proposal_decision_complete)
+    except Exception:  # pragma: no cover - defensive
+        decision_complete = False
+    try:
+        no_host = state.get_presiding_officer() is None
+    except Exception:  # pragma: no cover - defensive
+        no_host = False
+    proposal_ready = bool(proposals) or decision_complete or no_host
+    errors: List[str] = []
+    veto_required = False
+    veto_satisfied = True
+    veto_actor = None
+    veto_officer = None
+    if all_ballots:
+        anchor = players[-1] if players else None
+        try:
+            control = _political_system(state).resolve_veto_control(anchor)
+        except Exception as exc:
+            errors.append("SENATE_VETO_RESOLVER_FAILED")
+            control = {}
+        veto_officer = (control or {}).get("actor")
+        if veto_officer is not None and not errors:
+            try:
+                candidates = _political_system(
+                    state).build_vote_results_and_candidates().get(
+                        "veto_candidate_ids") or []
+            except Exception:  # pragma: no cover - defensive
+                errors.append("SENATE_VETO_CANDIDATE_DERIVATION_FAILED")
+                candidates = []
+            veto_required = bool(candidates)
+            if veto_required:
+                owner = _office_owning_player(state, veto_officer)
+                if owner is None:
+                    errors.append("SENATE_VETO_CONTROLLER_MAPPING_INVALID")
+                    veto_satisfied = False
+                else:
+                    veto_actor = owner.player_id
+                    veto_oid = (book.oid("senate", "veto",
+                                         ("singleton", scope_id), scope_id)
+                                if book is not None and scope_id else None)
+                    veto_satisfied = bool(
+                        veto_oid is not None
+                        and book.satisfied(veto_oid, scope_id, rev))
+    ready = (not errors and proposal_ready
+             and (not proposals or all_ballots)
+             and (not veto_required or veto_satisfied))
+    return {
+        "scope_id": scope_id,
+        "covered": covered,
+        "required": required,
+        "all_ballots_ready": all_ballots,
+        "proposal_ready": proposal_ready,
+        "decision_complete": decision_complete,
+        "no_host": no_host,
+        "veto_required": veto_required,
+        "veto_satisfied": veto_satisfied,
+        "veto_actor": veto_actor,
+        "veto_officer_id": veto_officer,
+        "ready": ready,
+        "errors": tuple(errors),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1185,6 +2516,16 @@ def _continue_scheduled_phase(state: Any, phase: str, scope: _Scope, lease: Any,
         outstanding = list(snapshot.outstanding())
         if not outstanding:
             if snapshot.ready():
+                # item3 (S8 / Errata E1-E2): under a REAL owning possession the
+                # senate ready branch returns the UNIQUE terminal (finalize ->
+                # private G-only selection) instead of the legacy stop. The gate
+                # reads ONLY an already-tracked possession, so every
+                # unauthorized/no-possession context (unregistered CLI/legacy or a
+                # registered seat with no owning/recovery scope) keeps the frozen
+                # direct-API senate-ready contract byte-for-byte (no finalize
+                # side effect) — see ``has_owning_possession``.
+                if phase == "senate" and has_owning_possession(state):
+                    return _terminal_senate_phase(state, scope, lease)
                 return ContinuationResult(status=STATUS_PHASE_READY, actor=scope.actor,
                                           processed=tuple(processed))
             return ContinuationResult(status=STATUS_FAILURE, masked_failure=True,
@@ -1237,6 +2578,20 @@ def _continue_scheduled_phase(state: Any, phase: str, scope: _Scope, lease: Any,
         if outcome.kind == OUTCOME_NO_CHOICE:
             return ContinuationResult(status=STATUS_FAILURE, masked_failure=True,
                                       reason="UNRESOLVED_MANDATORY_AI_VOTE",
+                                      outstanding=tuple(outstanding),
+                                      processed=tuple(processed))
+        # item4/FC-D46-06: a Senate OWNER may have ALREADY written the completion
+        # (e.g. the veto singleton via ``_record_veto_step_completion``). The
+        # outcome then carries a read-only owner_completion marker: verify it
+        # against the immutable book record and SKIP the generic issue/complete
+        # (never call ``complete_actor`` — incl. its ALREADY_SATISFIED path).
+        if outcome.owner_completion is not None:
+            if _verify_owner_completion(state, phase, scope, target,
+                                        outcome.owner_completion):
+                processed.append(target.actor_player_id or "singleton")
+                continue
+            return ContinuationResult(status=STATUS_FAILURE, masked_failure=True,
+                                      reason="OWNER_COMPLETION_UNPROVEN",
                                       outstanding=tuple(outstanding),
                                       processed=tuple(processed))
         kind = (KIND_STRUCTURAL_NONE if outcome.kind == OUTCOME_STRUCTURAL_EMPTY
@@ -1463,6 +2818,42 @@ def _population_budget(state: Any, scope_id: str, max_iterations: Optional[int])
     return budget
 
 
+def _verify_owner_completion(state: Any, phase: str, scope: "_Scope",
+                             target: "Obligation",
+                             oc: Optional["OwnerCompletion"]) -> bool:
+    """item4/FC-D46-06: re-verify a presented owner-completion MARKER against the
+    IMMUTABLE book record (the ONE ledger). It authorises NOTHING; a mismatch is a
+    masked failure at the caller. Only the singleton ``senate_veto_decision``
+    ACTION record is accepted, with the exact scope/OID/actor/revision identity.
+    """
+    if oc is None or phase != "senate":
+        return False
+    book = _book(state)
+    if oc.scope_id != scope.scope_id:
+        return False
+    veto_oid = book.oid("senate", "veto", ("singleton", scope.scope_id),
+                        scope.scope_id)
+    if oc.obligation_id != veto_oid or oc.obligation_id != target.obligation_id:
+        return False
+    rec = None
+    for r in book.records:
+        if (r.obligation_id == veto_oid and r.command_id == "senate_veto_decision"
+                and r.satisfied_kind == KIND_ACTION):
+            rec = r
+            break
+    if rec is None:
+        return False
+    if oc.actor_player_id is not None:
+        return False
+    if oc.pre_revision != (rec.dispatch_key[-1] if rec.dispatch_key else -1):
+        return False
+    if oc.satisfied_at_revision != rec.satisfied_at_revision:
+        return False
+    if oc.fact_ref and oc.fact_ref != rec.authoritative_fact_ref:
+        return False
+    return book.satisfied(veto_oid, scope.scope_id, current_revision(state))
+
+
 def _run_ai_step(ai_executor: Optional[Callable[..., ExecutionOutcome]],
                  state: Any, target: Obligation) -> Optional[ExecutionOutcome]:
     """Invoke the narrow scheduled-AI capability through the phase owner.
@@ -1483,6 +2874,234 @@ def _run_ai_step(ai_executor: Optional[Callable[..., ExecutionOutcome]],
 
 
 # ---------------------------------------------------------------------------
+# Terminal / G — item3 / FC-D46-05 (§4.3)
+#
+# The senate phase's UNIQUE terminal: once this scope's all-required-ready and a
+# canonical finalization is committed, the result owner G is selected privately
+# (``scope.actor``) and made the real Core current player; only then is the
+# terminal envelope returned. This is NOT a generic coordinator duty — it is the
+# senate phase owner's terminal, invoked by the coordinator ONLY from the ready
+# branch (or the recovery ready branch). A never-authorized context (e.g. a direct
+# CLI/legacy call, or a registered seat with no owning dispatch/recovery scope)
+# falls back to the legacy ready stop, so no existing assertion changes.
+# ---------------------------------------------------------------------------
+def _is_registered(state: Any) -> bool:
+    """True iff ``state`` is a registered Hot-seat session. A never-registered
+    (CLI/legacy) state keeps the historical semantics."""
+    try:
+        from src.api import session_access as _access
+        return bool(_access.is_hotseat_registered(state))
+    except Exception:  # pragma: no cover - defensive
+        return False
+
+
+def has_owning_possession(state: Any) -> bool:
+    """item3 §3.4 / E1-E2: the FORWARD-continuation owning-possession gate.
+
+    ``True`` iff ``state`` is a registered Hot-seat session AND a live owning
+    continuation scope (``current_dispatch_capability``) OR a live recovery scope
+    is present. It ONLY re-reads authority facts the service ALREADY tracks — it
+    never widens a guard, never derives possession from a viewer / route /
+    default, and never mints a scope or a capability.
+    """
+    if not _is_registered(state):
+        return False
+    try:
+        from src.api import session_access as _access
+    except Exception:  # pragma: no cover - defensive
+        return False
+    try:
+        if _access.current_dispatch_capability(state) is not None:
+            return True
+        return _access._nesting_recovery_scope(state) is not None
+    except Exception:  # pragma: no cover - defensive
+        return False
+
+
+def _is_guard_denial(response: Any) -> bool:
+    """True iff ``response`` is the ordinary public-guard DENIED envelope (an
+    UNAUTHORIZED boundary call) rather than a business refusal. The guard denial
+    carries the single ``DENIED`` error code; it is NOT a terminal business
+    failure (so the terminal branch must NOT turn it into a masked failure)."""
+    if not isinstance(response, dict) or response.get("success") is not False:
+        return False
+    for err in (response.get("errors") or []):
+        if isinstance(err, dict) and err.get("code") == "DENIED":
+            return True
+    return False
+
+
+def _select_senate_result_owner(state: Any, scope: "_Scope") -> dict:
+    """item3/FC-D46-05 §4.3.2: the PRIVATE G-only result-owner selection.
+
+    Reads G from the existing ``scope.actor`` (the phase-entry Core current
+    executable actor); it does NOT accept a public actor parameter, does NOT write
+    the ledger, does NOT fabricate an outstanding obligation, and does NOT change
+    ``select_scheduled_actor``'s "only-outstanding" condition. It only makes G the
+    real Core current player (the SOLE controlled cursor write) and reads back.
+    """
+    if scope is None:
+        return {"success": False, "reason": "NO_SCOPE"}
+    if _book(state).scopes.get("senate") is not scope:
+        return {"success": False, "reason": "STALE_SCOPE"}
+    G = scope.actor
+    if not G:
+        return {"success": False, "reason": "NO_RESULT_OWNER"}
+    ctrl = controller_of(state, G)
+    if ctrl not in (CONTROLLER_HUMAN, CONTROLLER_AI):
+        return {"success": False, "reason": "RESULT_OWNER_NOT_EXECUTABLE"}
+    if not phase_ready(state, "senate", scope.scope_id):
+        # D4/D6 I2-R3 (item3 端到端可驱动): a REAL finalization that committed the
+        # senate phase result (four facts same version) authoritatively closes
+        # every required obligation. The finalize's ``clear_senate_pending`` then
+        # resets ``senate_proposal_decision_complete``, which can make the DERIVED
+        # ``phase_ready`` predicate read False AFTER the commit (the readiness that
+        # was true at the ready-branch entry is the same-version fact). The
+        # committed success phase_result is therefore the stronger same-version
+        # oracle; with NO committed result the historical guard is unchanged.
+        committed = state.get_phase_result("senate")
+        if not (isinstance(committed, dict) and committed.get("success")):
+            return {"success": False, "reason": "PHASE_NOT_READY"}
+    player = state.get_player(G) if hasattr(state, "get_player") else None
+    if player is None:
+        return {"success": False, "reason": "RESULT_OWNER_MISSING"}
+    if not state.set_current_player(G):
+        return {"success": False, "reason": "SET_CURRENT_FAILED"}
+    if _entry_actor(state) != G:
+        return {"success": False, "reason": "READBACK_MISMATCH"}
+    return {"success": True, "actor": G, "controller": ctrl}
+
+
+def _terminal_senate_phase(state: Any, scope: "_Scope",
+                           lease: Any = None, processed: Tuple[str, ...] = ()) -> "ContinuationResult":
+    """item3/FC-D46-05 §4.3.1 fixed order: (1) the UNIQUE internal finalize, then
+    (2) the private result-owner selection, then (3) the frozen terminal envelope.
+
+    An UNAUTHORIZED guard denial at the finalize boundary is NOT a terminal failure
+    — it means this context holds no owning dispatch/recovery scope, so the legacy
+    ready stop is returned. A real business/finalization failure IS a masked
+    terminal failure ``{status:'failure', masked_failure:true, reason:<stage>}``.
+    """
+    from src.api import senate_api
+    try:
+        fin = senate_api.finalize_senate_if_ready(state)
+    except Exception as exc:  # pragma: no cover - defensive
+        return ContinuationResult(
+            status=STATUS_FAILURE, masked_failure=True,
+            reason=f"TERMINAL_FINALIZE_EXCEPTION:{exc}")
+    if not fin.get("success"):
+        if _is_guard_denial(fin):
+            # no owning continuation/recovery authority in this context -> the
+            # historical ready stop (byte-for-byte) instead of a false terminal.
+            # I2-R3 observation ②: carry the (empty) ``processed`` tuple explicitly
+            # so the fallback envelope shape matches the ready branch verbatim.
+            return ContinuationResult(status=STATUS_PHASE_READY, actor=scope.actor,
+                                      processed=tuple(processed))
+        return ContinuationResult(status=STATUS_FAILURE, masked_failure=True,
+                                  reason="TERMINAL_FINALIZE_FAILED")
+    data = fin.get("data") or {}
+    facts = data.get("completion_facts")
+    if not (isinstance(facts, dict) and all(facts.values())):
+        return ContinuationResult(status=STATUS_FAILURE, masked_failure=True,
+                                  reason="TERMINAL_FACTS_INCOMPLETE")
+    sel = _select_senate_result_owner(state, scope)
+    if not sel.get("success"):
+        return ContinuationResult(
+            status=STATUS_FAILURE, masked_failure=True,
+            reason=sel.get("reason", "RESULT_OWNER_SELECTION_FAILED"))
+    G = sel["actor"]
+    ctrl = sel["controller"]
+    # §4.3.4: G=AI never enters the Store's ``None -> same-seat`` fallback — the
+    # envelope carries the real G + its controller (awaiting only for a HUMAN), and
+    # returns the ORIGINAL controlled phase owner without an AI takeover / ACTIVE AI.
+    awaiting = G if ctrl == CONTROLLER_HUMAN else None
+    # B.4.1: the terminal CLAIMS the typed positional identity. The owner's
+    # produced data may still carry the historical all-string form; in that case
+    # derive the typed identity from the SAME canonical key (never coerce it).
+    fid_claim = data.get("finalization_id")
+    typed_claim = (isinstance(fid_claim, (list, tuple)) and len(fid_claim) == 3
+                   and type(fid_claim[0]) is str and type(fid_claim[1]) is str
+                   and type(fid_claim[2]) is int
+                   and not isinstance(fid_claim[2], bool))
+    if not typed_claim:
+        fid_claim = list(senate_api.senate_finalization_id(state))
+    else:
+        fid_claim = list(fid_claim)
+    terminal = {
+        "status": "resolved",
+        "phase": "senate",
+        "scope_id": scope.scope_id,
+        "actor": G,
+        "controller": ctrl,
+        "current_player_id": G,
+        "finalization_id": fid_claim,
+        "cursor_restored": True,
+        "awaiting_player_id": awaiting,
+        # §1.2 O: the exact RESULT-OWNER obligation identity (an identity tuple
+        # only — no obligation is fabricated in the ledger for the finalised scope).
+        "obligation_id": list(_book(state).oid(
+            "senate", "terminal", ("player", G), scope.scope_id)),
+    }
+    return ContinuationResult(status=STATUS_RESOLVED, actor=G, terminal=terminal)
+
+
+# ---------------------------------------------------------------------------
+# owner checkpoint resume-kind resolver (item3 §5 / Errata E5)
+#
+# The Store's recovery intent must NOT pick a resume-kind itself and must NOT use
+# the I1 cardinality proxy (``determinate_recovery_resume_kind`` only returns a
+# value for a singleton permitted set — every admission row is multi-kind, so it
+# is permanently ``None``). The coordinator owns the REAL checkpoint: it chooses
+# the SINGLE kind from the Core facts + the ``SessionTurnBook``, then
+# MEMBERSHIP-validates it against the mandate's permitted closed set.
+# ---------------------------------------------------------------------------
+RESUME_ENTRY_PENDING = "ENTRY_PENDING"
+RESUME_CONTINUATION_PENDING = "CONTINUATION_PENDING"
+RESUME_TERMINAL_PENDING = "TERMINAL_PENDING"
+RESUME_DELIVERY_PENDING = "DELIVERY_PENDING"
+
+
+def _derive_recovery_resume_kind(state: Any) -> Optional[str]:
+    """The REAL owner checkpoint (read-only Core facts + the SessionTurnBook).
+
+    * senate phase already READY -> the terminal is the unfinished step
+      (``TERMINAL_PENDING``); otherwise outstanding work remains
+      (``CONTINUATION_PENDING``);
+    * any other phase already committed (ready) -> entry into the next phase is
+      the unfinished step (``ENTRY_PENDING``); otherwise ``CONTINUATION_PENDING``.
+    """
+    try:
+        phase = _current_phase(state)
+    except Exception:  # pragma: no cover - defensive
+        return None
+    try:
+        ready = bool(phase_ready(state, phase))
+    except Exception:  # pragma: no cover - defensive
+        ready = False
+    if phase == "senate":
+        return RESUME_TERMINAL_PENDING if ready else RESUME_CONTINUATION_PENDING
+    return RESUME_ENTRY_PENDING if ready else RESUME_CONTINUATION_PENDING
+
+
+def resolve_recovery_resume_kind(state: Any, mandate: Any) -> Optional[str]:
+    """item3 §5.2.1: coordinator-owned owner-checkpoint resolver.
+
+    Chooses the SINGLE resume-kind from the real checkpoint facts, then
+    MEMBERSHIP-validates it against ``mandate.permitted_resume_kind``. A derived
+    kind OUTSIDE the permitted closed set is REFUSED (``None``) with NO side
+    effects — never a caller pick, never a cardinality proxy, never a registry
+    expansion. Strictly read-only (it never writes a record / cursor / business).
+    """
+    if mandate is None:
+        return None
+    permitted = getattr(mandate, "permitted_resume_kind", None) or frozenset()
+    kind = _derive_recovery_resume_kind(state)
+    if kind is None or kind not in permitted:
+        return None
+    return kind
+
+
+# ---------------------------------------------------------------------------
 # continuance recovery (grContinuationRecover, Overlay §2.1.R)
 # ---------------------------------------------------------------------------
 def recover_continuation(state: Any, lease: Any = None,
@@ -1492,10 +3111,20 @@ def recover_continuation(state: Any, lease: Any = None,
     ``DK`` replays are denied => a committed HUMAN command is never resubmitted and
     no committed AI/global settlement is repeated. Mutually exclusive with
     activation retry (S-B) and resolution-entry settlement retry (R4).
+
+    D4/D6 I2-R1 item3 (FC-D46-05 §4.3.1): when the senate phase is READY (no
+    outstanding required obligation) the recovery MUST return the UNIQUE terminal
+    branch (finalize -> private G-only selection), NOT a bare ``STATUS_PHASE_READY``.
     """
-    if not phase_ready(state, _current_phase(state)):
+    phase = _current_phase(state)
+    if not phase_ready(state, phase):
         # Outstanding work remains -> resume the continuation.
         return continue_after_command(state, lease, fresh_receipt, **kwargs)
+    if phase == "senate" and _is_registered(state):
+        # D4/D6 I2-R1 item3 (FC-D46-05 §4.3.1): a REGISTERED senate-ready recovery
+        # returns the UNIQUE terminal branch, NOT a bare ``STATUS_PHASE_READY``.
+        scope = mint_scope(state, "senate")
+        return _terminal_senate_phase(state, scope, lease)
     return ContinuationResult(status=STATUS_PHASE_READY, actor=_entry_actor(state))
 
 

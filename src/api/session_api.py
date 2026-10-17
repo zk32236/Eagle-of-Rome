@@ -492,8 +492,39 @@ def get_population_view(state: GameState, viewer_player_id: str, *,
                 })
 
         # 候选人（所有人可见，但只含公开信息）
-        cand_result = population_api.get_candidates(state, caller_context=caller_context)
-        candidates = cand_result.get("data", {}) if cand_result.get("success") else {}
+        # D5 (Rework-D3D6 · FC-RW-01/02/12)：候选读 MUST 在**外层授权之后**组合
+        # 服务私有 validated read（``_get_candidates_impl``）——**不得**再调用无 viewer 的
+        # PUBLIC guarded ``get_candidates``（staging 时其 bound viewer=None 被 staging target
+        # predicate 拒绝 → 内部失败被静默降为 ``{}`` 成功 → 空候选被当作合法空缺发布）。
+        # 读失败 / 缺键 / 坏形状 = **显式失败**（稳定内部 code，绝不冒充合法空缺）；
+        # 合法「五职全空」mapping 仍是成功空缺。历史结果 fallback **不得**吞当前读失败。
+        try:
+            cand_result = population_api._get_candidates_impl(state)
+        except Exception:
+            # Rework-D3D6 D3/D5 R1 (R02 · FC-RW-02/12): a candidate RETRIEVAL
+            # EXCEPTION maps to the STABLE ``CANDIDATES_UNAVAILABLE`` code — never
+            # the outermost generic ``errors=[str(e)]`` (which did not carry the
+            # promised structured contract). Fail-closed and explicit.
+            logger.exception("Population candidate retrieval failed")
+            return api_response(False, "Failed to load population candidates", {}, [{
+                "code": "CANDIDATES_UNAVAILABLE",
+                "message": "Unable to load candidate list for the population view",
+            }])
+        if not isinstance(cand_result, dict) or not cand_result.get("success"):
+            return api_response(False, "Failed to load population candidates", {}, [{
+                "code": "CANDIDATES_UNAVAILABLE",
+                "message": "Unable to load candidate list for the population view",
+            }])
+        cand_data = cand_result.get("data")
+        if (not isinstance(cand_data, dict)
+                or set(cand_data) != set(_POPULATION_OFFICES)
+                or any(not isinstance(cand_data[o], list)
+                       for o in _POPULATION_OFFICES)):
+            return api_response(False, "Invalid population candidate payload", {}, [{
+                "code": "CANDIDATES_SHAPE_INVALID",
+                "message": "candidate payload must be the complete five-office map",
+            }])
+        candidates = cand_data
         result = state.get_phase_result("population")
         result_data = result.get("data", {}) if isinstance(result, dict) else {}
         resolved = bool(result) or state.is_phase_executed("population")
@@ -650,6 +681,23 @@ def complete_population_player(state: GameState, player_id: str, *,
                 "reason": reason,
             }, [{"code": reason,
                 "message": "the owner completion was not recorded"}])
+        # FC-D1-02 / RULE-SINGLE-APPLIER (W4): on a coordinated Hot-seat session the
+        # coordinator's SOLE automatic continuation
+        # (``session_turn_service.continue_after_command`` in
+        # ``submit_population_votes``) selects the next actor through
+        # ``turn_service.select_actor`` (the only cursor writer).
+        # ``complete_population_player`` MUST NOT pre-move the cursor: a bare
+        # pre-rotation left the Core cursor on the scheduler's next actor (e.g. the
+        # first outstanding AI) while the Store's seat authority / viewer stayed on
+        # the completing HUMAN — the exact "cursor moved without a paired seat
+        # handoff" desync the masked settle then rejects. The completion therefore
+        # records truth only; the sole automatic continuation performs the single
+        # cursor move. A never-registered CLI/legacy state keeps the historical
+        # public ``player_api.next_player`` rotation unchanged.
+        if session_access.is_hotseat_registered(state):
+            return api_response(True, "Player completion recorded", {
+                "new_player_id": None,
+            })
         return player_api.next_player(state, player_id, caller_context=caller_context)
     except Exception as e:
         logger.exception("Player completion failed")
@@ -699,7 +747,13 @@ def submit_population_votes(
     # 阶段门：仅当当前阶段为 population 才执行（防 session_store 预刷新误触发，D-6）。
     if _infer_current_phase_id(state) == "population":
         population_api.begin_population_phase(state, caller_context=caller_context)
-    cand_result = population_api.get_candidates(state, caller_context=caller_context)
+    # FC-D1-01: this read runs INSIDE the owning handoff transaction, so it must
+    # use the service-private validated-read boundary (the SAME internal read the
+    # coordinator / batch_vote already use) — never the PUBLIC guarded boundary
+    # (which has no continuation ``command`` label and is therefore denied under
+    # the transaction-local continuation scope). The public ``get_candidates``
+    # boundary is unchanged and stays fail-closed for ordinary public reads.
+    cand_result = population_api._get_candidates_impl(state)
     if not cand_result.get("success"):
         return api_response(False, "Failed to load population candidates", {}, [{
             "code": "CANDIDATES_UNAVAILABLE",
@@ -735,18 +789,43 @@ def submit_population_votes(
         resolved = resolve_population_slice(state, caller_context=caller_context)
         if not resolved.get("success"):
             return resolved
+        current = state.get_current_player()
+        receipt_ref = "submit_population_votes"
+        if session_access.is_hotseat_registered(state):
+            receipt_ref = turn_service.delivery_command_ref(
+                state, "population", "submit_population_votes",
+                actor=getattr(current, "player_id", None))
+        delivery = turn_service.delivery_for_actor(
+            state, "population",
+            getattr(current, "player_id", None),
+            outcome=turn_service.DELIVERY_OUTCOME_RESOLVED,
+            viewer_id=player_id,
+            command_receipt_ref=receipt_ref)
         return api_response(True, "Population votes submitted and resolved", {
             "status": "resolved",
             "awaiting_player_id": None,
             "resolved": True,
             "election_results": resolved.get("data", {}).get("election_results", []),
+            "delivery": delivery,
         })
     awaiting = state.get_current_player()
+    receipt_ref = "submit_population_votes"
+    if session_access.is_hotseat_registered(state):
+        receipt_ref = turn_service.delivery_command_ref(
+            state, "population", "submit_population_votes",
+            actor=getattr(awaiting, "player_id", None))
+    delivery = turn_service.delivery_for_actor(
+        state, "population",
+        getattr(awaiting, "player_id", None),
+        viewer_id=player_id,
+        command_receipt_ref=receipt_ref,
+        substep=turn_service._population_substep(state))
     return api_response(True, "Awaiting remaining players", {
         "status": "awaiting_players",
         "awaiting_player_id": awaiting.player_id if awaiting else None,
         "resolved": False,
         "election_results": [],
+        "delivery": delivery,
     })
 
 
@@ -814,11 +893,18 @@ def recover_continuation(
             "retryable": True,
             "reason": cont.reason,
         }, [{"code": "AI_DRAIN_MASKED_FAILURE", "message": cont.reason}])
-    return api_response(True, "Continuation recovered", {
+    data = {
         "status": cont.status,
         "actor": cont.actor,
         "resolved": cont.status == turn_service.STATUS_RESOLVED,
-    })
+    }
+    # D4/D6 I2-R1 item3 (FC-D46-05 §4.3.4): a real senate terminal carries the
+    # frozen envelope (actor/controller/current_player_id/finalization_id/
+    # cursor_restored/awaiting_player_id) so the Store can drive the SAME masked
+    # activation; the ordinary (non-terminal) recovery data stays unchanged.
+    if getattr(cont, "terminal", None) is not None:
+        data.update(cont.terminal)
+    return api_response(True, "Continuation recovered", data)
 
 
 # ---------------------------------------------------------------------------
@@ -883,8 +969,11 @@ def _drain_ai_population_turns(state: GameState, auto, *,
             })
 
         # === S1 GUARD: candidate retrieval（FIX-A + FIX-2）===
+        # FC-D1-01: the AI drain is an internal continuation of the owning masked
+        # transaction -> the service-private validated-read boundary (never the
+        # public guarded read boundary).
         try:
-            cand_result = population_api.get_candidates(state, caller_context=caller_context)
+            cand_result = population_api._get_candidates_impl(state)
         except Exception as exc:
             return api_response(False, "AI drain: candidate retrieval error", {
                 "processed_players": processed,
@@ -1061,8 +1150,9 @@ def resolve_population_slice(state: GameState, *,
         # 非 AI drain completion marker（stale）。
         if not _all_human_population_votes_complete(state):
             # Per-player 精确判定：用 per-player required.issubset，非全局 predicate
-            from src.api.population_api import get_candidates as _get_candidates
-            cand_r = _get_candidates(state, caller_context=caller_context)
+            # FC-D1-01: internal read under the owning masked transaction -> the
+            # service-private validated-read boundary (never the public boundary).
+            cand_r = population_api._get_candidates_impl(state)
             required = {
                 o for o, rows in (cand_r.get("data", {}) if cand_r.get("success") else {}).items() if rows
             }
@@ -1082,7 +1172,8 @@ def resolve_population_slice(state: GameState, *,
             ])
         # === END FIX-C ===
 
-        cand_result = population_api.get_candidates(state, caller_context=caller_context)
+        # FC-D1-01: internal read under the owning masked transaction -> private impl.
+        cand_result = population_api._get_candidates_impl(state)
         candidates_before_resolve = cand_result.get("data", {}) if cand_result.get("success") else {}
 
         # R2-A-1（AU-R2-2a）：结算尾段以幂等 begin_population_phase 替代独立
@@ -1180,10 +1271,17 @@ def advance_population_phase(state: GameState, viewer_player_id: str, *,
 
     # Perform the advance (single state mutation point)
     state.mark_phase_executed("population")
+    # D4/D6 I2 item2 (FC-D46-04): the phase-advance OWING command's commit hook
+    # ISSUES the committed entry receipt AFTER the real mark and BEFORE returning
+    # to the adapter (the ONLY issuer of a service-private committed receipt).
+    entry_receipt = turn_service.issue_committed_phase_entry_receipt(
+        state, command_id="advance_population_phase", phase="senate",
+        payload_digest=str(viewer_player_id))
     return api_response(True, "Population phase advanced", {
         "phase_executed": True,
         "next_phase_id": "senate",
         "result": result,
+        "entry_receipt": entry_receipt,
     })
 
 

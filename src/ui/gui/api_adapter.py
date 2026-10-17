@@ -122,6 +122,12 @@ class GuiApiAdapter:
                 success, message, errors, feedback_type, feedback_message, data,
                 error_items=error_items, errors_by_scope=errors_by_scope,
             )
+            # S1/FC-712-01: the typed delivery envelope is preserved verbatim (no
+            # flattening / no guessed receiver). Consumers validate it against the
+            # REAL coordinator/Core facts; the Adapter adds no authority.
+            if success and isinstance(data, dict) \
+                    and isinstance(data.get("delivery"), dict):
+                feedback["delivery"] = data["delivery"]
 
         except Exception as e:
             logger.exception(f"API call exception: {api_func.__name__}")
@@ -164,6 +170,35 @@ class GuiApiAdapter:
         (S-B) and resolution-entry settlement retry (R4)."""
         from src.api import session_api
         return self.call(session_api.recover_continuation, self._state)
+
+    # -----------------------------------------------------------------------
+    # D4/D6 item3 §5.2 (Errata E5) — read-only owner-checkpoint resume-kind
+    # adapter. Added under the PM write-face Amendment (api_adapter.py narrow
+    # extension): a NEW read-only method only. It changes NO existing adapter
+    # method / route / semantics.
+    # -----------------------------------------------------------------------
+    def recovery_resume_kind(self) -> Optional[str]:
+        """Return the coordinator-owned owner-checkpoint resume-kind (or None).
+
+        The Store's no-argument recovery intent must NOT pick a resume-kind
+        itself and must NOT use the I1 cardinality proxy
+        (``determinate_recovery_resume_kind`` returns a value only for a
+        singleton permitted set — every admission row is multi-kind). This
+        trusted routing-layer adapter routes the intent to the coordinator's
+        ``session_turn_service.resolve_recovery_resume_kind`` against the
+        CURRENT sealed mandate; the resolver chooses the SINGLE kind from the
+        REAL checkpoint facts and membership-validates it against the mandate's
+        permitted closed set.
+
+        Strictly READ-ONLY: it never mints/comsumes a capability, never opens a
+        scope, never writes the ledger/cursor, and takes NO caller-supplied kind.
+        """
+        from src.api import session_access, session_turn_service
+        mandate = session_access.recovery_mandate(self._state)
+        if mandate is None:
+            return None
+        return session_turn_service.resolve_recovery_resume_kind(
+            self._state, mandate)
 
     # -----------------------------------------------------------------------
     # R6（SA §B.5，DA-2 B5）：**唯一** structured error formatter

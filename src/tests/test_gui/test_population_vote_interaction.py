@@ -111,8 +111,25 @@ def _build_runtime(*, campaign_done, one_human_with_ai=False,
     assert result["success"] is True, result
     state = result["data"]["state"]
     human_ids = list(result["data"]["human_players"])
-    assert len(human_ids) == 1
-    viewer_id = human_ids[0]
+    # W-T3 (Rework-D1D2): the test must NOT depend on the scenario file's
+    # ``is_player`` flags (the Owner's local worktree edit must not be a test
+    # baseline). Construct the default 1H/2AI composition IN-TEST: force the
+    # non-primary controllers to AI (the hotseat_compat / one_human_with_ai
+    # fixtures below reconstruct the other shapes explicitly).
+    all_player_ids = [p.player_id for p in state.get_all_players()]
+    assert len(all_player_ids) == 3
+    viewer_id = all_player_ids[0]
+    for player_id in all_player_ids[1:]:
+        original = state.get_player(player_id)
+        assert original is not None
+        if original.player_type is not PlayerType.AI:
+            assert state.remove_player(player_id) is True
+            state.add_player(Player(
+                player_id=player_id,
+                faction_id=original.faction_id,
+                player_type=PlayerType.AI,
+            ))
+    human_ids = [viewer_id]
     viewer = state.get_player(viewer_id)
     assert viewer is not None
     assert viewer.player_type == PlayerType.HUMAN

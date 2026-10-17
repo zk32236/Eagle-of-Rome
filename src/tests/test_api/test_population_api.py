@@ -379,6 +379,15 @@ class TestAutoPopulationApi:
                 "success": True,
                 "data": {"consul": [{"id": 2}]},
             }
+        ), patch(
+            # FC-D1-01 (Rework-D1D2/W5): the AI processor now reads candidates
+            # through the service-private validated-read boundary; keep the
+            # deterministic candidate seam aligned with the production read.
+            "src.api.population_api._get_candidates_impl",
+            return_value={
+                "success": True,
+                "data": {"consul": [{"id": 2}]},
+            }
         ), patch("src.api.population_api.campaign") as campaign_mock:
             campaign_mock.return_value = {"success": True, "message": "ok"}
             processor.process_festival("p2", faction, bypass_permission=True)
@@ -400,6 +409,15 @@ class TestAutoPopulationApi:
 
         with patch(
             "src.api.population_api.get_candidates",
+            return_value={
+                "success": True,
+                "data": {"consul": [{"id": 2}]},
+            }
+        ), patch(
+            # FC-D1-01 (Rework-D1D2/W5): the AI processor now reads candidates
+            # through the service-private validated-read boundary; keep the
+            # deterministic candidate seam aligned with the production read.
+            "src.api.population_api._get_candidates_impl",
             return_value={
                 "success": True,
                 "data": {"consul": [{"id": 2}]},

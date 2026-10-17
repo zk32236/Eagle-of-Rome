@@ -51,8 +51,10 @@ class AutoPlayerProcessor:
 
         try:
             from src.api import population_api
-            from src.api.population_api import get_candidates
-            cand_result = get_candidates(self.state, caller_context=caller_context)
+            from src.api.population_api import _get_candidates_impl
+            # FC-D1-01: internal read inside the owning masked transaction -> the
+            # service-private validated-read boundary (never the public boundary).
+            cand_result = _get_candidates_impl(self.state)
             if not cand_result["success"]:
                 return Outcome(turn_service.OUTCOME_FAILURE,
                                detail="FESTIVAL_CANDIDATES_UNAVAILABLE")
@@ -107,8 +109,10 @@ class AutoPlayerProcessor:
             return Outcome(turn_service.OUTCOME_FAILURE, detail="VOTE_DECIDER_MISSING")
 
         try:
-            from src.api.population_api import get_candidates, vote
-            cand_result = get_candidates(self.state, caller_context=caller_context)
+            from src.api.population_api import _get_candidates_impl, vote
+            # FC-D1-01: internal read inside the owning masked transaction -> the
+            # service-private validated-read boundary (never the public boundary).
+            cand_result = _get_candidates_impl(self.state)
             if not cand_result["success"]:
                 return Outcome(turn_service.OUTCOME_FAILURE,
                                detail="VOTE_CANDIDATES_UNAVAILABLE")

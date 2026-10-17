@@ -1914,6 +1914,8 @@ def test_v3_submit_population_votes_get_candidates_failure_blocked(vote_state):
         "errors": [{"code": "CANDIDATES_UNAVAILABLE", "message": "boom"}],
     }
     with patch.object(session_api.population_api, "get_candidates", return_value=failure), \
+            patch.object(session_api.population_api, "_get_candidates_impl",
+                         return_value=failure), \
             patch.object(session_api.population_api, "batch_vote") as batch_spy, \
             patch.object(session_api, "complete_population_player") as complete_spy:
         result = session_api.submit_population_votes(state, "p1", {"consul": 1})

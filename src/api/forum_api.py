@@ -1178,10 +1178,17 @@ def advance_forum_phase(state: GameState, viewer_player_id: str) -> dict:
         return api_response(False, barrier["message"], errors=[barrier["code"]])
 
     state.mark_phase_executed("forum")
+    # D4/D6 I2 item2 (FC-D46-04): the phase-advance OWING command's commit hook
+    # ISSUES the committed entry receipt AFTER the real mark and BEFORE returning
+    # to the adapter (the ONLY issuer of a service-private committed receipt).
+    entry_receipt = turn_service.issue_committed_phase_entry_receipt(
+        state, command_id="advance_forum_phase", phase="population",
+        payload_digest=str(viewer_player_id))
     return api_response(True, "Forum phase advanced", {
         "phase_executed": True,
         "next_phase_id": NEXT_PHASE_ID,
         "result": result,
+        "entry_receipt": entry_receipt,
     })
 
 
