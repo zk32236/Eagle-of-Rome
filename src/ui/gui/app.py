@@ -434,11 +434,18 @@ class GuiApp(QObject):
     def request_unmask(self, txn_id: str) -> bool:
         return False
 
-    @Slot(str, str, result=bool)
-    def show_pending(self, txn_id: str, faction_name: str) -> bool:
+    @Slot(str, str, str, result=bool)
+    def show_pending(self, txn_id: str, faction_name: str,
+                     mode: str = "") -> bool:
+        """Copy-only provider: the optional startup ``mode`` widens the existing
+        pending call. The frame gate / authority path is untouched."""
         if self._root is None:
             return False
         try:
+            if mode:
+                # One-shot property: the historical 1-argument QML provider
+                # signature stays valid for every 3H / legacy call.
+                self._root.setProperty("pendingStartupMode", mode)
             self._root.showHandoffPending(faction_name)
             return True
         except Exception as e:  # pragma: no cover - defensive

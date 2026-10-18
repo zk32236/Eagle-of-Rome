@@ -539,5 +539,19 @@
     "query.fleet.status.on_mission": "执行任务中",
     "query.fleet.status.in_combat": "战斗中",
     "query.fleet.status.destroyed": "已摧毁",
-    "query.fleet.status.disbanded": "已退役"
+    "query.fleet.status.disbanded": "已退役",
+    "startup.start_game": "开始游戏",
+    "startup.exit": "退出",
+    "startup.intro.title": "【游戏介绍】",
+    "startup.intro.description": "基于罗马共和国历史背景的政治策略游戏",
+    "startup.intro.start_year": "开始年份：{year}",
+    "startup.intro.treasury": "国库资金：{amount} {unit}",
+    "startup.intro.territory": "罗马领土：{name}{suffix}",
+    "startup.year.bc": "公元前 {year} 年",
+    "startup.year.ad": "公元 {year} 年",
+    "startup.unit.talents": "塔兰特",
+    "startup.territory.homeland_suffix": "(本土)",
+    "startup.territory.suffix": "(本土)",
+    "startup.province.0.name": "意大利",
+    "startup.dialog.a11y": "游戏介绍"
 }

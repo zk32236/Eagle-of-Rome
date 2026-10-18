@@ -437,5 +437,19 @@
     "query.fleet.status.on_mission": "On Mission",
     "query.fleet.status.in_combat": "In Combat",
     "query.fleet.status.destroyed": "Destroyed",
-    "query.fleet.status.disbanded": "Disbanded"
+    "query.fleet.status.disbanded": "Disbanded",
+    "startup.start_game": "Start Game",
+    "startup.exit": "Exit",
+    "startup.intro.title": "[Game Overview]",
+    "startup.intro.description": "A political strategy game set in the Roman Republic",
+    "startup.intro.start_year": "Start year: {year}",
+    "startup.intro.treasury": "Treasury: {amount} {unit}",
+    "startup.intro.territory": "Roman territory: {name} {suffix}",
+    "startup.year.bc": "{year} BC",
+    "startup.year.ad": "{year} AD",
+    "startup.unit.talents": "Talents",
+    "startup.territory.homeland_suffix": "(homeland)",
+    "startup.territory.suffix": "(homeland)",
+    "startup.province.0.name": "Italy",
+    "startup.dialog.a11y": "Game Overview"
 }

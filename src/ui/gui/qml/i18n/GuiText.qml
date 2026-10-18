@@ -128,8 +128,36 @@ QtObject {
     // (never a raw backend message; F6/F7).
     readonly property string queryErrorFallback: I18n.L10n.t("feedback.query.failed")
 
+    // -- W2a neutral startup page (1H+AI) ------------------------------------
+    readonly property string startupStartGame: I18n.L10n.t("startup.start_game")
+    readonly property string startupIntroTitle: I18n.L10n.t("startup.intro.title")
+    readonly property string startupIntroDescription: I18n.L10n.t("startup.intro.description")
+    readonly property string startupExit: I18n.L10n.t("startup.exit")
+    readonly property string startupDialogA11y: I18n.L10n.t("startup.dialog.a11y")
+
     function turnText(turnNumber) {
         return I18n.L10n.t("topStatusBar.turn", { turn: turnNumber || 1 })
+    }
+
+    function startupYearLine(yearText) {
+        if (!yearText || yearText === "—") return "—"
+        return I18n.L10n.t("startup.intro.start_year", { year: yearText })
+    }
+
+    function startupTreasuryLine(amountText) {
+        if (!amountText || amountText === "—") return "—"
+        return I18n.L10n.t("startup.intro.treasury", {
+            amount: amountText,
+            unit: I18n.L10n.t("startup.unit.talents")
+        })
+    }
+
+    function startupTerritoryLine(nameText, suffixText) {
+        if (!nameText || nameText === "—") return "—"
+        return I18n.L10n.t("startup.intro.territory", {
+            name: nameText,
+            suffix: suffixText || ""
+        })
     }
 
     function currentPlayerText(playerId, factionName, factionId) {

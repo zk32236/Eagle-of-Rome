@@ -3,6 +3,7 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
 import "../components"
+import "../i18n"
 
 /*!
  * PlayerHandoffOverlay — REUSED (Owner S-2 / R5 §5). One overlay only; no second
@@ -40,6 +41,13 @@ Rectangle {
     property string failureKind: ""
     property bool canRetry: false
     property bool canExit: false
+    // W2a: set only by the neutral startup provider ("single_human"). Empty
+    // for every 3H / legacy path, which is byte-semantics unchanged.
+    property string startupMode: ""
+    // One-shot carrier used by showMaskedStartup() so the historical
+    // showMaskedPending(faction) meta signature stays 1-argument compatible.
+    property string pendingStartupMode: ""
+    readonly property bool startupIntro: maskedMode && startupMode === "single_human"
     // SD-R02 (§1.1.R): the ONE safe, exclusive failure-origin routing token
     // ("activation" | "continuation") carried by the barrier-witness provider copy
     // call. It is a routing enum only — never player/domain data, never copy.
@@ -55,10 +63,16 @@ Rectangle {
     // Accessible description for the masked modal (safe copy only; never a
     // player name / handle / raw player_* id / epoch / token).
     Accessible.role: Accessible.Dialog
-    Accessible.name: maskedMode ? "玩家交接" : "玩家交接"
+    Accessible.name: root.dialogAccessibleName
+    // Readable a11y projection (the attached property itself is not a normal
+    // QML property). 1H startup copy is faction-free and locale-bound.
+    readonly property string dialogAccessibleName: startupIntro
+        ? GuiText.startupDialogA11y
+        : "玩家交接"
 
     function show(playerId) {
         maskedMode = false
+        startupMode = ""
         nextPlayerId = playerId
         failureVisible = false
         failureRoute = ""
@@ -69,6 +83,7 @@ Rectangle {
     }
     function showMaskedBusy() {
         maskedMode = true
+        startupMode = ""
         pendingFactionName = ""
         failureVisible = false
         failureRoute = ""
@@ -79,6 +94,8 @@ Rectangle {
     }
     function showMaskedPending(factionName) {
         maskedMode = true
+        startupMode = pendingStartupMode || ""
+        pendingStartupMode = ""
         pendingFactionName = factionName || ""
         failureVisible = false
         failureRoute = ""
@@ -87,11 +104,18 @@ Rectangle {
         visible = true
         forceActiveFocus()
     }
+    // W2a entry used ONLY by the neutral startup provider. Kept separate so
+    // every existing 1-argument showMaskedPending(faction) call still binds.
+    function showMaskedStartup(factionName, mode) {
+        pendingStartupMode = mode || ""
+        showMaskedPending(factionName)
+    }
     // SD-R02 §1.1.R: the failure surface now receives the safe, exclusive
     // failure-origin token (route) from the widened copy path
     // (GuiApp.show_failure -> GameShell.showHandoffFailure). Copy-only.
     function showMaskedFailure(kind, route) {
         maskedMode = true
+        startupMode = ""
         // SB-V06: a stale pending target label must NOT survive the failure surface.
         pendingFactionName = ""
         failureVisible = true
@@ -195,7 +219,9 @@ Rectangle {
             spacing: 24
 
             Text {
+                objectName: "handoffDialogTitle"
                 Layout.alignment: Qt.AlignHCenter
+                visible: !root.startupIntro
                 text: "🔒 玩家交接"
                 color: theme.textPrimary
                 font.pixelSize: 24
@@ -217,11 +243,87 @@ Rectangle {
                 border.width: 1
             }
 
+            // ---- W2a: neutral 1H+AI startup intro -----------------------------
+            // Owner copy (2026-10-18 21:54): title + description + three real
+            // state-backed lines. Every string resolves through the GUI catalog.
+            ColumnLayout {
+                objectName: "startupIntroBlock"
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: 400
+                spacing: 8
+                visible: root.startupIntro && !root.busy && !root.failureVisible
+
+                Text {
+                    objectName: "startupIntroTitle"
+                    Layout.alignment: Qt.AlignHCenter
+                    text: GuiText.startupIntroTitle
+                    color: theme.textPrimary
+                    font.pixelSize: 20
+                    font.family: theme.fontTitle
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    Accessible.name: text
+                }
+
+                Text {
+                    objectName: "startupIntroDescription"
+                    Layout.fillWidth: true
+                    text: GuiText.startupIntroDescription
+                    color: theme.textSecondary
+                    font.pixelSize: 14
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                    Accessible.name: text
+                }
+
+                Text {
+                    objectName: "startupIntroYear"
+                    Layout.fillWidth: true
+                    text: sessionStore
+                          ? GuiText.startupYearLine(sessionStore.startupYearText)
+                          : "—"
+                    color: theme.textSecondary
+                    font.pixelSize: 14
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                    Accessible.name: text
+                }
+
+                Text {
+                    objectName: "startupIntroTreasury"
+                    Layout.fillWidth: true
+                    text: sessionStore
+                          ? GuiText.startupTreasuryLine(sessionStore.startupTreasuryText)
+                          : "—"
+                    color: theme.textSecondary
+                    font.pixelSize: 14
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                    Accessible.name: text
+                }
+
+                Text {
+                    objectName: "startupIntroTerritory"
+                    Layout.fillWidth: true
+                    text: sessionStore
+                          ? GuiText.startupTerritoryLine(
+                                sessionStore.startupTerritoryText,
+                                sessionStore.startupTerritorySuffix)
+                          : "—"
+                    color: theme.textSecondary
+                    font.pixelSize: 14
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                    Accessible.name: text
+                }
+            }
+
             // ---- masked pending: safe FACTION NAME ONLY -----------------------
             Text {
                 objectName: "handoffPendingLabel"
                 Layout.alignment: Qt.AlignHCenter
-                visible: root.maskedMode && !root.busy && !root.failureVisible
+                visible: root.maskedMode && !root.startupIntro
+                    && !root.busy && !root.failureVisible
                 text: "下一位：" + root.pendingFactionName
                 color: theme.textPrimary
                 font.pixelSize: 16
@@ -233,7 +335,8 @@ Rectangle {
             Text {
                 objectName: "handoffPendingInstruction"
                 Layout.alignment: Qt.AlignHCenter
-                visible: root.maskedMode && !root.busy && !root.failureVisible
+                visible: root.maskedMode && !root.startupIntro
+                    && !root.busy && !root.failureVisible
                 text: "请该派系玩家点击“接管”。"
                 color: theme.textSecondary
                 font.pixelSize: 14
@@ -287,7 +390,9 @@ Rectangle {
                 objectName: "grHandoffStart"
                 Layout.alignment: Qt.AlignHCenter
                 Layout.preferredWidth: 200
-                text: root.maskedMode ? "接管" : "确认交接"
+                text: root.maskedMode
+                      ? (root.startupIntro ? GuiText.startupStartGame : "接管")
+                      : "确认交接"
                 enabled: !root.busy && !root.failureVisible
                 visible: !root.failureVisible
                 onClicked: {
@@ -361,7 +466,7 @@ Rectangle {
                 objectName: "grHandoffExit"
                 Layout.alignment: Qt.AlignHCenter
                 Layout.preferredWidth: 200
-                text: "退出"
+                text: root.startupIntro ? GuiText.startupExit : "退出"
                 visible: root.maskedMode && root.canExit
                 onClicked: root.requestExit()
             }

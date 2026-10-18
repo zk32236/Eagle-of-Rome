@@ -14,7 +14,7 @@ from src.core.game_state import GameState
 from src.core.entities.player import PlayerType
 from src.api import session_access
 from src.ui.gui.api_adapter import GuiApiAdapter
-from src.ui.gui.localization import gui_text
+from src.ui.gui.localization import gui_localization, gui_text
 from src.ui.processors.auto_player_processor import AutoPlayerProcessor
 from src.core.deciders.impl.auto_retirement_decider import AutoRetirementDecider
 from src.core.deciders.impl.auto_recruitment_decider import AutoRecruitmentDecider
@@ -88,6 +88,10 @@ class GuiSessionStore(QObject):
     phaseStepsChanged = Signal()  # WP-J J-AC-10：选中相位的权威步骤读模型 notify
     feedbackRaised = Signal(str, str)  # type, message
     handoffRequired = Signal(str)  # next_player_id (LEGACY informational handoff)
+    # W2a: startup-page value/mode notification. Emitted when the neutral
+    # startup state is established and when the GUI locale changes (the
+    # year/territory display strings are locale-dependent).
+    startupChanged = Signal()
     # S-B Group 2/3: masked handoff authority machine signals.
     # ``handoffMaskPending`` carries ONLY the safe faction display name; the raw
     # next player id / token / epoch stay private routing metadata (never copy).
@@ -204,6 +208,9 @@ class GuiSessionStore(QObject):
         self._reveal_pending: bool = False
         self._handoff_busy: bool = False
         self._handoff_feedback: Dict[str, Any] = {}
+        # W2a: neutral startup presentation mode ("single_human"/"multi_human").
+        # Empty until a neutral startup actually begins.
+        self._startup_mode: str = ""
         # F4 (R2 §1/§4): the resumable frame-gate continuation. When the bound
         # provider exposes the real-frame async gate methods, the masked handoff
         # transaction SUSPENDS on a gate (arm / publication-under-mask / final
@@ -211,6 +218,7 @@ class GuiSessionStore(QObject):
         # therefore return ``pending`` and complete later via ``handoffFinished``.
         self._async_gate: Optional[Dict[str, Any]] = None
         self._activation_result: Optional[Dict[str, Any]] = None
+        gui_localization.localeChanged.connect(self._on_gui_locale_changed)
 
     # -----------------------------------------------------------------------
     # 初始化
@@ -3017,6 +3025,76 @@ class GuiSessionStore(QObject):
         """Safe faction display name ONLY (never a player name / raw player_* id)."""
         return self._pending_faction_name
 
+    # -- W2a startup page (neutral 1H+AI) -----------------------------------
+    # These read the LIVE Core state (never ``_snapshot``, which is emptied by
+    # ``_neutralize_public_projection`` before the startup page is shown).
+    @Property(str, notify=startupChanged)
+    def startupMode(self) -> str:
+        """``single_human`` when EXACTLY one actual HUMAN player exists."""
+        return self._startup_mode
+
+    @Property(str, notify=startupChanged)
+    def startupYearText(self) -> str:
+        turn = getattr(self._state, "turn", None)
+        year = getattr(turn, "year", None) if turn is not None else None
+        if year is None:
+            return "—"
+        try:
+            value = int(year)
+        except (TypeError, ValueError):
+            return "—"
+        if value < 0:
+            return gui_text("startup.year.bc", year=abs(value))
+        return gui_text("startup.year.ad", year=value)
+
+    @Property(str, notify=startupChanged)
+    def startupTreasuryText(self) -> str:
+        value = getattr(self._state, "treasury", None)
+        if value is None:
+            return "—"
+        try:
+            return str(int(value))
+        except (TypeError, ValueError):
+            return "—"
+
+    @Property(str, notify=startupChanged)
+    def startupTerritoryText(self) -> str:
+        try:
+            province = self._state.get_province(0)
+        except Exception:
+            return "—"
+        if province is None:
+            return "—"
+        name = getattr(province, "name", None)
+        if not isinstance(name, str) or not name.strip():
+            return "—"
+        raw_name = name.strip()
+        # Only canonical, registered names are translated. Every other legal
+        # non-empty real name is shown verbatim (F1: never suppress real data).
+        key = {
+            "意大利": "startup.province.0.name",
+            "Italy": "startup.province.0.name",
+        }.get(raw_name)
+        if key is None:
+            return raw_name
+        localized = gui_text(key)
+        return localized if localized and localized != key else raw_name
+
+    @Property(str, notify=startupChanged)
+    def startupTerritorySuffix(self) -> str:
+        """Localized homeland suffix, ONLY for the capital/home province (id 0)."""
+        try:
+            province = self._state.get_province(0)
+        except Exception:
+            return ""
+        if province is None or getattr(province, "province_id", None) != 0:
+            return ""
+        return gui_text("startup.territory.suffix")
+
+    def _on_gui_locale_changed(self) -> None:
+        """Re-emit startup values so QML re-reads locale-formatted text."""
+        self.startupChanged.emit()
+
     @Property(bool, notify=seatLifecycleChanged)
     def handoffCanRetry(self) -> bool:
         return self._seat_lifecycle == SEAT_MASKED_FAILURE
@@ -4087,7 +4165,15 @@ class GuiSessionStore(QObject):
             "armed": True,
             "cleared": True,
         }
-        faction = self._safe_faction_name(first_human_id)
+        human_count = sum(
+            1 for p in self._state.get_all_players()
+            if getattr(p, "player_type", None) == PlayerType.HUMAN
+        )
+        self._startup_mode = "single_human" if human_count == 1 else "multi_human"
+        # PC712-03 / W2a: a single-HUMAN startup page carries NO faction
+        # identity. 3H keeps the existing safe faction name byte-for-byte.
+        faction = ("" if self._startup_mode == "single_human"
+                   else self._safe_faction_name(first_human_id))
         self._pending_player_id = first_human_id
         self._pending_faction_name = faction
         self._pending_token = uuid.uuid4().hex
@@ -4100,8 +4186,14 @@ class GuiSessionStore(QObject):
         session_access.suspend_hotseat_session(
             self._state, lifecycle_epoch=self._seat_epoch + 1)
         self._neutralize_public_projection()
-        self._provider_call("show_pending", txn_id, faction)
+        if self._startup_mode == "single_human":
+            self._provider_call("show_pending", txn_id, faction,
+                                self._startup_mode)
+        else:
+            # 3H: keep the historical two-argument provider call.
+            self._provider_call("show_pending", txn_id, faction)
         self._emit_seat()
+        self.startupChanged.emit()
         self.handoffMaskPending.emit(faction)
         self.handoffPendingFactionChanged.emit()
 

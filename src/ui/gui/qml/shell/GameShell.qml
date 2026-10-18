@@ -40,8 +40,16 @@ Rectangle {
     function showHandoffBusy() {
         handoffOverlay.showMaskedBusy()
     }
+    // W2a: the optional startup mode travels via a one-shot property so the
+    // historical 1-argument provider call remains valid (3H unchanged).
+    property string pendingStartupMode: ""
     function showHandoffPending(factionName) {
-        handoffOverlay.showMaskedPending(factionName)
+        if (pendingStartupMode) {
+            handoffOverlay.showMaskedStartup(factionName, pendingStartupMode)
+            pendingStartupMode = ""
+        } else {
+            handoffOverlay.showMaskedPending(factionName)
+        }
     }
     // SD-R02 (§1.1.R): widen the copy wrapper by the safe, exclusive failure-
     // origin token (route). Copy-only — this is never an authorization predicate
