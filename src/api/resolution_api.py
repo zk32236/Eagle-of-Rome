@@ -23,6 +23,8 @@ logger = logging.getLogger("EOR-RESOLUTION")
 def execute_resolution(
     state: GameState,
     player_id: Optional[str] = None,
+    *,
+    caller_context=None,
 ) -> Dict[str, Any]:
     """
     决算阶段共享用例。
@@ -38,6 +40,9 @@ def execute_resolution(
     参数:
         state: 游戏状态
         player_id: 可选的玩家 ID（跳过检查时可为 None）
+        caller_context: 调用方显式出示的不透明授权上下文（keyword-only）。
+            声明后 ``@guarded`` 的 ``forward_cc`` 生效；缺省 ``None`` 仍 DENY，
+            安全语义不变。禁止在本函数体内自取上下文。
 
     返回:
         api_response 格式的 dict:

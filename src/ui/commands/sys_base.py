@@ -56,6 +56,22 @@ class Command(ABC):
         """
         pass
 
+    def execute_with_context(self, args: List[str], *, caller_context=None):
+        """执行命令并携带调用方显式传入的授权上下文。
+
+        D12 / W1（S3）：GUI 路由层把 service-issued handle 显式传到命令链；
+        默认实现保持既有 ``execute(args)`` 语义，因此其余命令子类零改动。
+        需要向内转发上下文的命令（如决议阶段）覆写本方法并返回结构化结果。
+
+        Args:
+            args: 命令参数字符串列表（已去除命令名本身）
+            caller_context: 调用方显式出示的不透明授权上下文（keyword-only）
+
+        Returns:
+            默认实现返回 ``execute(args)`` 的 bool 结果。
+        """
+        return self.execute(args)
+
     # ==================== 新增：多玩家信息隔离相关方法 ====================
 
     def _is_auto_mode(self) -> bool:

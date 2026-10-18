@@ -4246,6 +4246,19 @@ class GuiSessionStore(QObject):
             logger.warning("Cannot execute resolution: no viewer_id")
             return
 
+        # D12 / W1（A5）：仅在座位 ACTIVE 且 handle 未 revoked 时自动结算。
+        # masked-refresh 瞬间 handle 已被 suspend（revoked=True）；此时**不调用**
+        # API，保持现状等待下一次 ACTIVE refresh（不改 masked / staging / reveal）。
+        if self._seat_lifecycle != SEAT_ACTIVE:
+            logger.info("Resolution deferred: seat lifecycle=%s",
+                        self._seat_lifecycle)
+            return
+        if session_access.is_hotseat_registered(self._state):
+            ctx = session_access.current_caller_context(self._state)
+            if ctx is None or ctx.revoked:
+                logger.info("Resolution deferred: seat handle not active")
+                return
+
         self._resolution_resolving = True
         self.resolutionViewChanged.emit()
         self.phaseChanged.emit()  # 同步通知 advance 按钮绑定

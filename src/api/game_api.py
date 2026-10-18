@@ -11,6 +11,7 @@ from src.api import session_turn_service as turn_service
 from src.core.i18n import i18n
 
 # 导入所有阶段命令类
+from src.ui.commands.sys_base import Command
 from src.ui.commands.phase_mortality import MortalityCommand
 from src.ui.commands.phase_revenue import RevenueCommand
 from src.ui.commands.phase_forum import ForumCommand
@@ -32,7 +33,8 @@ PHASE_COMMAND_MAP = {
 
 @session_access.guarded(session_access.OP_MUTATE, command="execute_phase",
                         viewer_param="player_id")
-def execute_phase(state: GameState, phase_name: str, player_id: str, args: list = None) -> dict:
+def execute_phase(state: GameState, phase_name: str, player_id: str, args: list = None,
+                  *, caller_context=None) -> dict:
 
     sys.stdout.flush()
 
@@ -70,27 +72,53 @@ def execute_phase(state: GameState, phase_name: str, player_id: str, args: list 
     tee = TeeStdout()
     sys.stdout = tee
 
+    structured_message = None
+    errors: list = []
     try:
-        success = cmd.execute(args or [])
+        # D12 / W1（S3）：把调用方显式出示的 caller_context 沿命令链转发到底。
+        # caller_context is None → 走历史 ``execute`` 旧路径（CLI 字节等价）；
+        # 否则走结构化 ``execute_with_context``。
+        # R2b（B-01）：命令返回值既可能是 dict（结构化实现），也可能是 bool
+        # （Command 默认契约，如 MortalityCommand）；禁止对 bool 调 ``.get()``。
+        if caller_context is None:
+            result = cmd.execute(args or [])
+        else:
+            result = cmd.execute_with_context(args or [],
+                                              caller_context=caller_context)
+
+        if isinstance(result, dict):
+            success = bool(result.get("success"))
+            errors = list(result.get("errors") or [])
+            structured_message = result.get("message")
+        else:
+            success = bool(result)
+            errors = []
     except Exception as e:
         sys.stdout = original_stdout
 
         traceback.print_exc(file=sys.stdout)
         sys.stdout.flush()
-        return api_response(False, f"阶段执行异常: {e}", errors=[str(e)])
+        return api_response(False, f"阶段执行异常: {e}",
+                            errors=[{"code": "EXECUTION_ERROR", "message": str(e)}])
 
     sys.stdout = original_stdout
     output = f.getvalue().strip()
+    if not output and structured_message:
+        # 失败文案由结构化结果提供（不得由 stdout 文本重建 errors）
+        output = str(structured_message)
 
     sys.stdout.flush()
-    return api_response(success, output, data={"phase": phase_name})
+    return api_response(success, output, data={"phase": phase_name}, errors=errors)
 
 
 @session_access.guarded(session_access.OP_MUTATE, command="execute_turn",
                         viewer_param="player_id")
-def execute_turn(state: GameState, player_id: str) -> dict:
+def execute_turn(state: GameState, player_id: str, *, caller_context=None) -> dict:
     """
     按顺序执行所有未执行阶段，需要玩家权限。
+
+    R2b（B-04）：keyword-only ``caller_context`` 沿 ``execute_phase`` 转发到
+    resolution 内层 guarded 边界；缺省 None 时保持既有 CLI/测试行为。
     """
     if not state.config.get("testing.bypass_player_check", False):
         if not state.is_current_player(player_id):
@@ -103,7 +131,8 @@ def execute_turn(state: GameState, player_id: str) -> dict:
     for phase in phase_order:
         if state.is_phase_executed(phase):
             continue
-        result = execute_phase(state, phase, player_id)
+        result = execute_phase(state, phase, player_id,
+                               caller_context=caller_context)
         results.append(result)
         outputs.append(result["message"])
         if not result["success"]:
