@@ -134,6 +134,12 @@ def test_open_market_generated_figures_dto_compat():
     for row in rows:
         for key in DTO_ROW_KEYS:
             assert key in row, f"missing DTO key {key} in {row}"
+        member = state.get_member(row["id"])
+        assert member is not None, f"generated figure {row['id']} missing from state"
+        assert row["intellect"] == member.intelligence, (
+            f"intellect value mismatch for {row['id']}: "
+            f"{row['intellect']} != {member.intelligence}"
+        )
 
     f2 = adapter.open_forum_market(viewer)
     assert f2["success"]

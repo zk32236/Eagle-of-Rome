@@ -176,6 +176,32 @@ class TestForumView:
         assert "can_advance" in data
 
 
+class TestForumIntellectDTO:
+    """AC-MI-01 / AC-MI-03：available / my 两面 intellect 逐行动态值 == 实体 intelligence。"""
+
+    def test_available_figures_intellect_matches_entity(self, test_state):
+        rows = forum_api.get_forum_view(test_state, "p1")["data"]["available_figures"]
+        assert rows, "available_figures must not be empty"
+        for row in rows:
+            member = test_state.get_member(row["id"])
+            assert member is not None, f"available figure {row['id']} missing from state"
+            assert row["intellect"] == member.intelligence, (
+                f"intellect mismatch for available figure {row['id']}: "
+                f"{row['intellect']} != {member.intelligence}"
+            )
+
+    def test_my_figures_intellect_matches_entity(self, test_state):
+        rows = forum_api.get_forum_view(test_state, "p1")["data"]["my_figures"]
+        assert rows, "my_figures must not be empty"
+        for row in rows:
+            member = test_state.get_member(row["id"])
+            assert member is not None, f"my figure {row['id']} missing from state"
+            assert row["intellect"] == member.intelligence, (
+                f"intellect mismatch for my figure {row['id']}: "
+                f"{row['intellect']} != {member.intelligence}"
+            )
+
+
 class TestRetireFigure:
     """测试 retire_figure API"""
 
