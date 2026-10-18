@@ -2121,17 +2121,27 @@ def auto_submit_proposals(
     submit = propose_many(state, consul_player_id, {
         "war_drafts": war_drafts, "proposals": non_war_proposals},
         _run_continuation=_run_continuation)
-    if not submit.get("success"):
-        errors.extend([e.get("message", "") for e in (submit.get("errors") or [])])
-    created = (submit.get("data") or {}).get("created", [])
+
+    # D13（Option 1）：完整复制内层 `propose_many` 的 data envelope（delivery /
+    # status / controller / awaiting_player_id / reason / retryable 等原有事实），
+    # 再补既有展示键。不重算 / 不挑删字段（兼容与完整性，非选择性重算）。
+    submit_data = submit.get("data")
+    if not isinstance(submit_data, dict):
+        submit_data = {}
+    created = submit_data.get("created", [])
+    # 失败文案必须保留原拒绝（含 typed code），不得伪装成成功。
+    message = (f"已自动提交 {len(created)} 项提案"
+               if submit.get("success") else submit.get("message"))
+    data = dict(submit_data)
+    data["proposals"] = created_proposals      # UI 展示草稿（原有键）
+    data["created"] = created                  # canonical PackageRecord refs（原有键）
 
     # ========== 返回结果 ==========
-    message = f"已自动提交 {len(created)} 项提案"
     return api_response(
         success=submit.get("success", False),
         message=message,
-        data={"proposals": created_proposals, "created": created},
-        errors=errors,
+        data=data,
+        errors=(submit.get("errors") if not submit.get("success") else errors),
     )
 
 

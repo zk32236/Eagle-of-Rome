@@ -166,6 +166,12 @@ class GuiSessionStore(QObject):
         self._senate_draft_session_id: str = ""
         # R6（SA §D.1，DA-4 B2）：自动 finalization 失败 warning 文本（Submit 回包携带）
         self._senate_finalization_warning: str = ""
+        # D13（Option 4）：AI 执政官提案发布失败的 UI-local 阻止态。仅 typed seat
+        # `DENIED` 建立；reason 由同席恢复后的既有反馈通道实际消费（不是闲置
+        # QML 属性）；key = 调用前捕获的 (session, step, viewer)，不含 epoch。
+        self._senate_ai_proposer_blocked: bool = False
+        self._senate_ai_proposer_blocked_reason: str = ""
+        self._senate_ai_proposer_block_key: Optional[Any] = None
 
         # EOR20261011-01 S1（v1.2 §2.1 step 3，A3/F2）：**真实** receiver 完成见证。
         # 真实 QML receiver（Overlay.resetForInvalidation）在**完成本地/绑定模型清空
@@ -582,6 +588,14 @@ class GuiSessionStore(QObject):
     def senateCanFinishEmpty(self) -> bool:
         """R5/R6：显式空结束能力（零提案关闭选择需先提交 []）。"""
         return self._senate_view.get("can_finish_proposal_selection", False)
+
+    @Property(bool, notify=senateViewChanged)
+    def senateAiProposerBlocked(self) -> bool:
+        """D13（Option 4）：AI 执政官提案因授权失败被本地阻止（按钮 disabled）。
+
+        唯一的公开面就是这个 bool；reason/key 均为私有，reason 只经既有反馈
+        通道消费（不新增 DTO 字段 / 不新增 QML 属性）。"""
+        return self._senate_ai_proposer_blocked
 
     @Property(bool, notify=senateViewChanged)
     def senateFinalizationError(self) -> bool:
@@ -2002,6 +2016,109 @@ class GuiSessionStore(QObject):
         self._senate_submit_errors_by_war = by_war
         self.senateSubmitErrorsChanged.emit()
 
+    # ------------------------------------------------------------------
+    # D13（Option 4）— AI proposer UI-local guard
+    # ------------------------------------------------------------------
+    #: 元老院已知合法 step（身份同步只接受这些值；未知/空字段不构成「离开 proposal」）。
+    _SENATE_STEPS = ("proposal", "senate_vote", "tribune_veto", "results",
+                     "settlement_pending")
+    #: AI 提案授权失败的可读说明（由既有反馈通道消费，不是 QML 属性）。
+    AI_PROPOSER_BLOCK_REASON = "AI 执政官提案未能发布（授权失败），请报告缺陷。"
+
+    def _senate_ai_proposer_origin(self) -> Optional[Any]:
+        """调用前捕获的 origin 三元 `(session, step, viewer)`。
+
+        只在 ACTIVE、proposal step、session/viewer 非空时返回；否则 None（不得
+        制造空 key 锁）。不可在 cont / 拒绝处理重新读取 `_senate_view`——begin /
+        dispatch 都会 neutralize。
+        """
+        if self._seat_lifecycle != SEAT_ACTIVE:
+            return None
+        viewer = self._viewer_id
+        view = self._senate_view
+        if (not viewer or not self._is_valid_senate_projection(view, viewer)
+                or view.get("current_step") != "proposal"):
+            return None
+        session = self._senate_session_identity()
+        if session is None:
+            return None
+        return (session, "proposal", viewer)
+
+    def _senate_session_identity(self) -> Optional[str]:
+        """Core-owned identity, exactly as propose_many names the GUI session.
+
+        The read DTO deliberately has no session id. Never substitute a viewer,
+        draft, previous package, or guard key for an unavailable Core turn.
+        """
+        turn = getattr(self._state, "turn", None)
+        number = getattr(turn, "turn_number", None)
+        if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
+            return None
+        return f"turn-{number}"
+
+    def _is_valid_senate_projection(self, view: Any, viewer: str) -> bool:
+        """Only a successful, viewer-bound Senate projection can release a lock."""
+        if not isinstance(view, dict) or not view or not viewer:
+            return False
+        if view.get("success") is False:
+            return False
+        if view.get("denied") or view.get("masked") or view.get("placeholder"):
+            return False
+        if view.get("status") in ("denied", "masked", "masked_failure"):
+            return False
+        return (view.get("phase_id") == "senate"
+                and view.get("viewer_player_id") == viewer
+                and view.get("current_step") in self._SENATE_STEPS)
+
+    def _clear_ai_proposer_guard(self, *, notify: bool = True) -> None:
+        """唯一重置入口：同时归零 bool/reason/key，变更完成后才 emit（幂等）。"""
+        changed = (self._senate_ai_proposer_blocked
+                   or bool(self._senate_ai_proposer_blocked_reason)
+                   or self._senate_ai_proposer_block_key is not None)
+        self._senate_ai_proposer_blocked = False
+        self._senate_ai_proposer_blocked_reason = ""
+        self._senate_ai_proposer_block_key = None
+        if changed and notify:
+            self.senateViewChanged.emit()
+
+    def _sync_ai_proposer_guard(self, view: Any, *,
+                                target_id: Optional[str] = None) -> None:
+        """用**有效发布/有效 ACTIVE 投影**同步锁：只在真实身份变化时统一清除。
+
+        1. 真换 viewer：只有成功的显式 target 才是可信事实（staged final reveal）。
+        2. 同 viewer：必须是有效 senate DTO（含已知合法 step）；真实会期改变或真正
+           离开 proposal 才清除。
+        空 / denied / masked / 未知字段一律保锁（不推断换会期/离开 proposal）。
+        """
+        if not self._senate_ai_proposer_blocked:
+            return
+        key = self._senate_ai_proposer_block_key
+        if key is None:
+            self._clear_ai_proposer_guard(notify=False)
+            return
+        if target_id and target_id != key[2]:
+            self._clear_ai_proposer_guard(notify=False)
+            return
+        session = self._senate_session_identity()
+        if session is None or not self._is_valid_senate_projection(view, key[2]):
+            return
+        if session != key[0] or view.get("current_step") != key[1]:
+            self._clear_ai_proposer_guard(notify=False)
+
+    @staticmethod
+    def _is_ai_proposer_seat_denied(feedback: Any) -> bool:
+        """仅真实 typed seat `DENIED`（success 显式 False）→ 可选 Option 4 锁。
+
+        不匹配 message；普通校验 / PACKAGE_ALREADY_SUBMITTED / continuation 均 False。
+        """
+        if not isinstance(feedback, dict) or feedback.get("success") is not False:
+            return False
+        errors = feedback.get("errors")
+        if not isinstance(errors, (list, tuple)):
+            return False
+        return any(isinstance(err, dict) and err.get("code") == "DENIED"
+                   for err in errors)
+
     @Slot("QVariant", result=dict)
     def doSubmitSenateProposals(self, proposals) -> dict:
         """WP-D AU-1/AU-3：提案提交路由（执政官 → propose_many 0…N；非执政官 → AI proposer 0…N）。
@@ -2072,6 +2189,29 @@ class GuiSessionStore(QObject):
             elif prop_ctrl == _turn.CONTROLLER_AI:
                 # actual AI controller -> AI proposer is the decision maker
                 from src.api import senate_api
+                if self._barrier_provider is not None:
+                    # D13（Option 1）：AI proposer 也必须走同一 masked owning flow
+                    # ——否则 AI-child `propose_many`（viewer = AI consul）在注册
+                    # 热座下无 owning possession → DENIED（发布死锁）。origin 必须
+                    # 在 begin/neutralize **之前**捕获（cont 不再回读公共投影）。
+                    _ai_origin = self._senate_ai_proposer_origin()
+
+                    def _dispatch_ai_proposals():
+                        submitted = self._adapter.call(
+                            senate_api.auto_submit_proposals, self._state)
+                        try:
+                            self._apply_senate_submit_feedback(submitted)
+                            if submitted.get("success"):
+                                self._senate_drafts = {}
+                        except Exception:  # pragma: no cover - defensive
+                            logger.exception(
+                                "masked AI senate submit bookkeeping failed")
+                        return submitted
+                    return self._masked_senate_owning_flow(
+                        "doSubmitSenateProposals", "propose_many",
+                        _dispatch_ai_proposals,
+                        ai_proposer_origin=_ai_origin)
+                # 无 provider：保留原语句与公共尾部（legacy CLI/历史路径不变）。
                 feedback = self._adapter.call(senate_api.auto_submit_proposals, self._state)
             elif prop_ctrl == _turn.CONTROLLER_NONE and not _sa.is_hotseat_registered(self._state):
                 # NEVER-REGISTERED compatibility path ONLY (legacy / non-PlayerType
@@ -3188,8 +3328,14 @@ class GuiSessionStore(QObject):
             if registered:
                 session_access.end_activation_reservation(self._state)
 
-    def _apply_staged(self, staged: Dict[str, Any]) -> None:
-        """Atomically publish the staged (private) bundle to the public models."""
+    def _apply_staged(self, staged: Dict[str, Any], *,
+                      target_id: Optional[str] = None) -> None:
+        """Atomically publish the staged (private) bundle to the public models.
+
+        D13：`target_id`（可选，默认 None 保持旧调用语义）是本次成功 final-reveal
+        的显式新 publication viewer——`_viewer_id = target_id` 发生在本方法之后，
+        因此换席判定不得依赖仍是旧值的 `_viewer_id`。
+        """
         self._snapshot = staged.get("snapshot", {})
         self._population_view = staged.get("population", {})
         self._mortality_view = staged.get("mortality", {})
@@ -3198,6 +3344,9 @@ class GuiSessionStore(QObject):
         self._forum_view = staged.get("forum", {})
         self._combat_view = staged.get("combat", {})
         self._resolution_view = staged.get("resolution", {})
+        # D13：在 senateViewChanged 发出前完成同步（先改状态，后通知）。
+        self._sync_ai_proposer_guard(self._senate_view,
+                                     target_id=target_id or self._viewer_id)
         new_current = self._snapshot.get("current_phase_id") or "mortality"
         self._selected_phase_id = new_current
         self._selected_phase_summary = self._summary_from_phase(
@@ -3375,7 +3524,7 @@ class GuiSessionStore(QObject):
                 _fail_activation(FAIL_AFTER_COMMIT)
                 return
             # ---- visibility commit (only after the final-reveal real frame) ---
-            self._apply_staged(staged)
+            self._apply_staged(staged, target_id=target_id)
             self._viewer_id = target_id
             self._reveal_pending = False
             session_access.issue_fresh_handle(self._state)
@@ -3628,7 +3777,9 @@ class GuiSessionStore(QObject):
             legacy=data)
 
     def _masked_senate_owning_flow(self, command_id: str, lease_command: str,
-                                   dispatch, converge=None) -> Dict[str, Any]:
+                                   dispatch, converge=None, *,
+                                   ai_proposer_origin: Optional[Any] = None
+                                   ) -> Dict[str, Any]:
         """item3 §2a (S1–S4/S6): run a senate owning command through the SAME
         masked seat-handoff machine the population/forum paths use (mirrors
         ``_masked_forum_finish``).
@@ -3693,8 +3844,43 @@ class GuiSessionStore(QObject):
                                           route=RECOVER_ROUTE_CONTINUATION)
                         done(self._handoff_failure_feedback())
                         return
-                    self._masked_business_rejection(txn_id, feedback, done=done)
+                    # D13（Option 4）：只有真实 typed seat `DENIED` + 有效 AI origin
+                    # 才立 UI-local 锁；普通校验/已提交 → 可重试，不锁、不贴授权失败。
+                    blocked = (ai_proposer_origin is not None
+                               and self._is_ai_proposer_seat_denied(feedback))
+                    if blocked:
+                        self._senate_ai_proposer_blocked = True
+                        self._senate_ai_proposer_blocked_reason = (
+                            self.AI_PROPOSER_BLOCK_REASON)
+                        self._senate_ai_proposer_block_key = ai_proposer_origin
+                        self.senateViewChanged.emit()
+
+                    def _after_rejection(_result):
+                        # 只在本事务的真实同席激活 **成功** 后重发原结构化错误并
+                        # 消费 reason（原 message/data/errors 不改写）。
+                        if (blocked
+                                and self._seat_lifecycle == SEAT_ACTIVE
+                                and isinstance(self._activation_result, dict)
+                                and self._activation_result.get("success")
+                                and self._senate_ai_proposer_block_key == ai_proposer_origin
+                                and self._senate_ai_proposer_origin() == ai_proposer_origin):
+                            self._apply_senate_submit_feedback(feedback)
+                            self._raise_feedback(self._feedback(
+                                False, self._senate_ai_proposer_blocked_reason, "error"))
+                            self.senateViewChanged.emit()
+                        if done is not None:
+                            done(feedback)
+
+                    self._masked_business_rejection(txn_id, feedback,
+                                                    done=_after_rejection)
                     return
+                # E-D13-4.2：成功清锁必须**归属于该锁的同一 owner**（origin 三元
+                # = session/step/viewer）。同 owner → 清；不同 owner 或无法证明
+                # （origin 为 None）→ 保锁（fail-closed）。禁止「任意成功即清」。
+                if (ai_proposer_origin is not None
+                        and self._senate_ai_proposer_block_key is not None
+                        and ai_proposer_origin == self._senate_ai_proposer_block_key):
+                    self._clear_ai_proposer_guard()
                 self._settle_after_senate_command(txn_id, feedback, done=done)
             except Exception:
                 logger.exception("masked senate owning flow failed")
@@ -4212,7 +4398,12 @@ class GuiSessionStore(QObject):
         self.phaseStepsChanged.emit()
 
     def _refresh_senate_view(self):
-        self._senate_view = self._adapter.get_senate_view(self._viewer_id)
+        view = self._adapter.get_senate_view(self._viewer_id)
+        self._senate_view = view
+        # D13：仅 ACTIVE 且新 DTO 有效时同步（masked/denied/空 refresh 保锁）；
+        # 先改状态，后通知。成功 masked API 自动刷新返回空 DTO 不得清锁。
+        if self._seat_lifecycle == SEAT_ACTIVE:
+            self._sync_ai_proposer_guard(view)
         self.senateViewChanged.emit()
         self.phaseStepsChanged.emit()
 

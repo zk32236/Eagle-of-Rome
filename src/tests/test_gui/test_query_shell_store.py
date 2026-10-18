@@ -26,7 +26,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QCoreApplication, Qt
 
 from src.api import session_api
 from src.core.entities.player import Player, PlayerType
@@ -211,6 +211,14 @@ def test_queued_receiver_does_not_satisfy_completion_witness():
 
     assert store.viewerPlayerId == player_ids[0]
     assert store.globalQueryResult == {}
+
+    # Drain the deliberately-queued (never-acked) delivery NOW, while this Store
+    # is alive; otherwise it fires in the next module's first event pump and
+    # dereferences this finished test's Store -> native SIGSEGV (D13 R2b).
+    _app = QCoreApplication.instance()
+    if _app is not None:
+        _app.processEvents()
+    store.queryInvalidated.disconnect(shim._on_invalidated)
 
 
 # ===========================================================================

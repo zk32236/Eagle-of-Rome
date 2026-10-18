@@ -1873,13 +1873,13 @@ Rectangle {
                         radius: 4
                         // WP-D AU-3/AU-1：移除 selectedProposalKeys.length>0（空批合法）；
                         // AI 分支（canTriggerAIProposer）按钮同样可点（frozen §11 Scenario B，见偏离 D-7）
-                        enabled: (sessionStore.canCreateSenateProposal || sessionStore.canTriggerAIProposer) && !root.hasZeroValueLandSelection()
+                        enabled: (sessionStore.canCreateSenateProposal || sessionStore.canTriggerAIProposer) && !root.hasZeroValueLandSelection() && !sessionStore.senateAiProposerBlocked
                         opacity: enabled ? 1.0 : 0.45
                         gradient: Gradient { GradientStop { position: 0.0; color: "#D9AA52" } GradientStop { position: 1.0; color: "#BC7B28" } }
                         Text {
                             anchors.centerIn: parent
                             text: root.proposalStepDone ? "\u2190 \u6cd5\u6848\u5df2\u63d0\u4ea4"
-                                : (sessionStore.canTriggerAIProposer ? "AI \u6267\u653f\u5b98\u81ea\u52a8\u63d0\u6848 \u2192"
+                                : (sessionStore.canTriggerAIProposer ? (sessionStore.senateAiProposerBlocked ? "AI \u63d0\u6848\u672a\u80fd\u53d1\u5e03\uff08\u6388\u6743\u5931\u8d25\uff09" : "AI \u6267\u653f\u5b98\u81ea\u52a8\u63d0\u6848 \u2192")
                                    : (root.selectedProposalKeys.length === 0 ? "\u672c\u4f1a\u671f\u4e0d\u63d0\u4ea4\u6cd5\u6848 \u2192 \u7ed3\u675f\u63d0\u6848" : "\u63d0\u4ea4\u9009\u4e2d\u6cd5\u6848 \u2192 \u79fb\u4ea4\u8868\u51b3"))
                             color: "#2C1E12"; font.pixelSize: 12; font.bold: true
                         }
