@@ -104,6 +104,11 @@ class _SyncWitness:
     def __init__(self):
         self.calls = []
         self.pendings = []
+        self.query_clears = []
+
+    def on_query_invalidated(self, keep_open):
+        """FC-712-20 witness: a REAL Query clear still happens while masked."""
+        self.query_clears.append(bool(keep_open))
 
     def arm_barrier(self, txn):
         self.calls.append(("arm", txn)); return True
@@ -249,12 +254,22 @@ def test_mask_1h_pop_03_chain_probe_no_internal_deny(monkeypatch):
     while the seat is masked) from an owning INTERNAL BUSINESS read/call. It then
     asserts, per internal read site, that NO ``DENIED`` is returned, and that
     INSIDE the owning dispatch window EVERY internal call (READ *and* MUTATE) is
-    authorised — while the external projection refusals are still observed (so the
-    pass is not produced by excluding all READ denials)."""
+    authorised. FC-712-20 forbids ANY masked public refresh, so the anti-cheat
+    intent is carried by positive controls instead of by observing a (now
+    impossible) masked projection refusal: a real denied READ proves the probe is
+    not blind, and the entered-but-deferred refresh must show ZERO guarded reads."""
     state, pids = _prepared("population", ai_tail=2)
     store, witness = _masked_store(state, pids[0])
     probe = ClosureProbe()
     probe.install(monkeypatch)
+    # FC-712-20: the masked transaction must still issue a REAL Query clear.
+    store.queryInvalidated.connect(witness.on_query_invalidated)
+    # TEST-ONLY SEAM: the Adapter captures ``store._on_refresh`` as a bound method
+    # at CONSTRUCTION time, so a later class-level monkeypatch of ``_on_refresh``
+    # would never reach the refresh actually invoked by ``adapter.call``. Re-bind
+    # the same logical callback so the probe's wrapper (H6) observes the real
+    # masked refresh entry. No product change; the original body still runs.
+    store._adapter._refresh_callback = store._on_refresh
 
     # observe every INTERNAL business read (the service-private validated-read
     # boundary the owning continuation must use) and its real envelope.
@@ -267,6 +282,7 @@ def test_mask_1h_pop_03_chain_probe_no_internal_deny(monkeypatch):
         return r
     monkeypatch.setattr(population_api, "_get_candidates_impl", impl_spy)
 
+    clears_before = len(witness.query_clears)
     fb = _submit_1h(store, state)
     assert fb["success"] is True, fb
 
@@ -291,16 +307,35 @@ def test_mask_1h_pop_03_chain_probe_no_internal_deny(monkeypatch):
     assert {c["command"] for c in biz} >= {"submit_population_votes", "batch_vote"}
     assert None not in {c["command"] for c in biz}
 
-    # (C) the legitimate MASKED EXTERNAL PROJECTION refusals ARE observed and
-    #     classified as such — we did NOT exclude all READ denials to claim
-    #     "no DENIED". These are the Store's masked projection refresh reads.
+    # (C) FC-712-20 SUPERSEDES the old "observed masked projection refusal"
+    #     witness: a masked owning dispatch must run NO public projection
+    #     refresh at all (it is deferred to the full private activation), so
+    #     there is no in-window projection READ left to refuse. The R-02
+    #     anti-cheat intent (no "no DENIED" verdict produced by filtering READ
+    #     denials) is kept by positive controls:
+    #       C1 the probe is NOT blind to denials — a real denied public READ is
+    #          recorded right here;
+    #       C2 a Store projection refresh WAS entered inside the masked window
+    #          and made ZERO guarded reads (an un-deferred refresh performs
+    #          >= 8), so "no projection read" is causal, not vacuous;
+    #       C3 the masked transaction still issued a REAL Query clear
+    #          (keep_open=False); its ack is a precondition of dispatch, so
+    #          `fb["success"]` above already proves the ack happened.
     proj = probe.projection_calls()
-    assert proj, "expected masked external projection reads inside the window"
-    proj_denied = [c for c in proj if not c["allowed"]]
-    assert proj_denied, "the masked projection refresh must be refused"
-    assert all(c["reason"] for c in proj_denied)
-    # and the two classes are disjoint: no projection read was counted as business.
-    assert all(c not in biz for c in proj)
+    assert proj == [], f"FC-712-20: masked public refresh ran: {proj}"
+    entries = [e for e in probe.projection_entries if e["in_window"]]
+    assert entries, "expected the masked window to enter a deferred refresh"
+    assert all(e["guard_calls"] == 0 for e in entries), entries
+    new_clears = witness.query_clears[clears_before:]
+    assert new_clears and False in new_clears, (
+        f"the masked transaction must issue a real Query clear: {new_clears}")
+    forged = session_access.HotseatContext(session_id="session-forged",
+                                           principal_player_id=pids[0])
+    blind = session_api.get_population_view(state, pids[0],
+                                            caller_context=forged)
+    assert blind.get("success") is False, blind
+    assert any(c["allowed"] is False for c in probe.calls), (
+        "the guard probe must record refusals, not filter them")
 
 
 # ===========================================================================
@@ -448,6 +483,7 @@ class ClosureProbe:
         self.calls = []            # one record per guard decision
         self.dispatched = []       # the ACTUAL owning labels, in dispatch order
         self._projection_depth = 0
+        self.projection_entries = []   # FC-712-20: entered refresh + guard reads
 
     def install(self, monkeypatch):
         orig_auth = session_access.authorize_hotseat
@@ -485,11 +521,19 @@ class ClosureProbe:
     def _projection_wrap(self, orig):
         @functools.wraps(orig)
         def wrapper(store, *a, **k):
+            in_window = session_access._nesting_dispatch_capability(
+                store._state) is not None
+            before = len(self.calls)
             self._projection_depth += 1
             try:
                 return orig(store, *a, **k)
             finally:
                 self._projection_depth -= 1
+                self.projection_entries.append({
+                    "name": orig.__name__,
+                    "in_window": in_window,
+                    "guard_calls": len(self.calls) - before,
+                })
         return wrapper
 
     # -- derived views -------------------------------------------------------

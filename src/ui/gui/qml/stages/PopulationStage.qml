@@ -15,6 +15,10 @@ Rectangle {
     property var selectedVotes: ({})
     // EOR-DEFECT-20260817-01 Fix A (P0): 年度切换哨兵 —— 上次快照所见年度（turnNumber）
     property int _lastSeenTurn: 0
+    // W2b（FC-712-17 local selection）：席位哨兵 —— 上次所见 viewer。
+    // 换席 / neutralize（viewer 变空）时清空本地选票，避免 A 席未提交的选择
+    // 出现在 B 席页面上。
+    property string _lastSeenViewerId: ""
     property color actionButtonTop: "#FFF9EC"
     property color actionButtonBottom: "#E8D5B8"
     property color actionButtonHover: "#F4DFB8"
@@ -32,11 +36,28 @@ Rectangle {
                 root._lastSeenTurn = sessionStore.turnNumber
                 root.selectedVotes = ({})
             }
+            root._syncSeatSelection()
+        }
+        function onSeatLifecycleChanged() {
+            root._syncSeatSelection()
         }
     }
 
     // 组件创建时同步当前年度，避免把「创建后首个快照」误判为年度切换。
-    Component.onCompleted: root._lastSeenTurn = sessionStore.turnNumber
+    Component.onCompleted: {
+        root._lastSeenTurn = sessionStore.turnNumber
+        root._lastSeenViewerId = sessionStore.viewerPlayerId || ""
+    }
+
+    // W2b：仅清理本地选票状态（不碰渲染 / 布局 / 文案）。neutralize 后 viewer
+    // 为空同样视为换席，因此遮罩期间的残留选择不会带到下一次激活。
+    function _syncSeatSelection() {
+        var viewer = sessionStore ? (sessionStore.viewerPlayerId || "") : ""
+        if (viewer !== root._lastSeenViewerId) {
+            root._lastSeenViewerId = viewer
+            root.selectedVotes = ({})
+        }
+    }
 
     function officeName(office) {
         var names = {

@@ -334,6 +334,64 @@ class GuiApiAdapter:
         return result
 
     # -----------------------------------------------------------------------
+    # W2b (FC-712-19) — envelope-preserving public view reads.
+    #
+    # The legacy ``get_*_view`` wrappers above keep their historical QML-facing
+    # contract (a failure is mapped to a safe empty model). The Store however
+    # must distinguish:
+    #
+    #   * DENIED / malformed  -> ``success`` is not the boolean True, or ``data``
+    #     is ``None`` / not a mapping  -> NEVER a legal projection;
+    #   * legal EMPTY         -> ``success is True`` and ``data == {}`` -> a
+    #     successful empty projection.
+    #
+    # Collapsing both to ``{}`` (the old behaviour) is exactly the FC-712-19
+    # violation. These twins preserve the envelope for the Store's private
+    # projection; they never invent a value and never mutate source state.
+    # -----------------------------------------------------------------------
+    def _view_envelope(self, api_func, viewer_id: str) -> Dict[str, Any]:
+        return self.read_envelope(api_func, self._state, viewer_id)
+
+    def get_snapshot_envelope(self, viewer_id: str) -> Dict[str, Any]:
+        from src.api import session_api
+        return self._view_envelope(session_api.get_session_snapshot, viewer_id)
+
+    def get_population_view_envelope(self, viewer_id: str) -> Dict[str, Any]:
+        from src.api import session_api
+        return self._view_envelope(session_api.get_population_view, viewer_id)
+
+    def get_resolution_view_envelope(self, viewer_id: str) -> Dict[str, Any]:
+        from src.api import session_api
+        return self._view_envelope(session_api.get_resolution_view, viewer_id)
+
+    def get_mortality_view_envelope(self, viewer_id: str) -> Dict[str, Any]:
+        from src.api import mortality_api
+        return self._view_envelope(mortality_api.get_mortality_view, viewer_id)
+
+    def get_senate_view_envelope(self, viewer_id: str) -> Dict[str, Any]:
+        from src.api import senate_api
+        return self._view_envelope(senate_api.get_senate_view, viewer_id)
+
+    def get_revenue_view_envelope(self, viewer_id: str) -> Dict[str, Any]:
+        from src.api import revenue_api
+        return self._view_envelope(revenue_api.get_revenue_view, viewer_id)
+
+    def get_forum_view_envelope(self, viewer_id: str) -> Dict[str, Any]:
+        from src.api import forum_api
+        return self._view_envelope(forum_api.get_forum_view, viewer_id)
+
+    def get_combat_view_envelope(self, viewer_id: str) -> Dict[str, Any]:
+        from src.api import combat_api
+        return self._view_envelope(combat_api.get_combat_view, viewer_id)
+
+    def get_faction_style_map_envelope(self, viewer_id: str) -> Dict[str, Any]:
+        """FC-712-20: target-aware style read, envelope preserved."""
+        from src.api import faction_api
+        return self.read_envelope(
+            faction_api.get_faction_style_map, self._state,
+            viewer_player_id=viewer_id)
+
+    # -----------------------------------------------------------------------
     # 人口阶段专用 API
     # -----------------------------------------------------------------------
     def campaign(self, player_id: str, figure_id: int, amount: int) -> Dict[str, Any]:
@@ -509,6 +567,15 @@ class GuiApiAdapter:
         return {}
 
     def get_senate_view(self, viewer_id: str) -> Dict[str, Any]:
+        """Legacy (bare) senate projection — the D13 OBSERVATION SEAM.
+
+        Its historical QML-facing contract (a failure maps to a safe empty model)
+        is kept byte-for-byte for its external callers and for D13, which installs
+        its controlled projection on exactly this attribute. The W2b Store does
+        NOT use this contract for its own projection: it reads the ENVELOPE
+        (``get_senate_view_envelope``) unless this seam is explicitly overridden,
+        so a DENIED read can never collapse into an authoritative empty.
+        """
         from src.api import senate_api
         result = senate_api.get_senate_view(
             self._state, viewer_id,

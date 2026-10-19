@@ -4,6 +4,7 @@ GuiSessionStore — 唯一 GUI 会话存储。
 QML 只能访问只读属性、列表模型和 Slot。
 每次 API 操作后从 session_api 重新刷新。
 """
+import importlib
 import logging
 import uuid
 from typing import Any, Dict, List, Optional
@@ -62,11 +63,163 @@ MASKED_CONTINUATION_STATUS = "masked_failure"
 MASKED_CONTINUATION_ERROR_CODE = "AI_DRAIN_MASKED_FAILURE"
 
 
+# ---------------------------------------------------------------------------
+# W2b (FC-712-17..20) — declarative private staged inventory.
+#
+# The activation bundle is a DECLARED inventory (one entry per resource), not an
+# ad-hoc tuple. Each entry carries the frozen fields:
+#
+#   resource_id / scope / source / required / neutral_value / validator /
+#   notify / tags
+#
+# ``scope`` is the publication scope of the resource:
+#   * SCOPE_SEAT            — seat-facing DTO of the target seat;
+#   * SCOPE_SESSION_DISPLAY — session display data (faction style) that is
+#                             REQUIRED but is NOT a public/global surface;
+#   * SCOPE_TRANSIENT       — reserved for transient derivations (none yet).
+#
+# ``tags`` names the bundle tags every resource is bound to; they are recorded
+# on the bundle and re-validated at publish time so an old/foreign bundle can
+# never publish into a newer epoch.
+# ---------------------------------------------------------------------------
+SCOPE_SEAT = "SEAT"
+SCOPE_SESSION_DISPLAY = "SESSION_DISPLAY"
+SCOPE_TRANSIENT = "TRANSIENT"
+
+#: The tag names every staged resource is bound to (FC-712-17).
+STAGED_TAG_NAMES = (
+    "session",
+    "scope",
+    "target",
+    "seat_epoch",
+    "core_revision",
+    "publication_revision",
+)
+
+
+def _is_mapping(value: Any) -> bool:
+    """Base DTO validator: every staged DTO is a mapping."""
+    return isinstance(value, dict)
+
+
+def _is_style_map_dto(value: Any) -> bool:
+    """FC-712-20 schema check for ``factionStyleMap``.
+
+    A style map that is not the declared shape (``map`` mapping + ``fallback``
+    mapping + ``default_unknown_color`` string) is malformed, never an empty
+    legal value.
+    """
+    if not isinstance(value, dict):
+        return False
+    if not isinstance(value.get("map"), dict):
+        return False
+    if not isinstance(value.get("fallback"), dict):
+        return False
+    if not isinstance(value.get("default_unknown_color"), str):
+        return False
+    return True
+
+
 class GuiSessionStore(QObject):
     """
     GUI 会话存储。
     内部持有 GameState 引用，对 QML 暴露只读属性和信号。
     """
+
+    #: FC-712-17 — the DECLARATIVE activation inventory. The order is the
+    #: staging read order; publication order is fixed by ``_apply_staged``.
+    #: Every entry is REQUIRED today (the eight DTOs already failed closed as a
+    #: package; ``factionStyleMap`` joins them as the ninth REQUIRED resource).
+    #: R03 (FC-712-17): each entry ALSO declares where the value is published
+    #: (``attr`` = the private backing attribute), the ORDER the public
+    #: notification runs in (``publish_order``), and the value that
+    #: ``_neutralize_public_projection`` restores (``neutral_value``). Apply /
+    #: notify / neutralize are ALL derived from this single declaration, so a new
+    #: resource can never be staged and then silently dropped on publication.
+    _ACTIVATION_INVENTORY = (
+        {
+            "resource_id": "snapshot", "scope": SCOPE_SEAT,
+            "source": "session_api.get_session_snapshot", "required": True,
+            "neutral_value": {}, "validator": _is_mapping,
+            "notify": "snapshotChanged", "tags": STAGED_TAG_NAMES,
+            "attr": "_snapshot", "publish_order": 1,
+        },
+        {
+            "resource_id": "population", "scope": SCOPE_SEAT,
+            "source": "session_api.get_population_view", "required": True,
+            "neutral_value": {}, "validator": _is_mapping,
+            "notify": "populationViewChanged", "tags": STAGED_TAG_NAMES,
+            "attr": "_population_view", "publish_order": 2,
+        },
+        {
+            "resource_id": "resolution", "scope": SCOPE_SEAT,
+            "source": "session_api.get_resolution_view", "required": True,
+            "neutral_value": {}, "validator": _is_mapping,
+            "notify": "resolutionViewChanged", "tags": STAGED_TAG_NAMES,
+            "attr": "_resolution_view", "publish_order": 8,
+        },
+        {
+            "resource_id": "mortality", "scope": SCOPE_SEAT,
+            "source": "mortality_api.get_mortality_view", "required": True,
+            "neutral_value": {}, "validator": _is_mapping,
+            "notify": "mortalityViewChanged", "tags": STAGED_TAG_NAMES,
+            "attr": "_mortality_view", "publish_order": 3,
+        },
+        {
+            "resource_id": "senate", "scope": SCOPE_SEAT,
+            "source": "senate_api.get_senate_view", "required": True,
+            "neutral_value": {}, "validator": _is_mapping,
+            "notify": "senateViewChanged", "tags": STAGED_TAG_NAMES,
+            "attr": "_senate_view", "publish_order": 4,
+        },
+        {
+            "resource_id": "revenue", "scope": SCOPE_SEAT,
+            "source": "revenue_api.get_revenue_view", "required": True,
+            "neutral_value": {}, "validator": _is_mapping,
+            "notify": "revenueViewChanged", "tags": STAGED_TAG_NAMES,
+            "attr": "_revenue_view", "publish_order": 5,
+        },
+        {
+            "resource_id": "forum", "scope": SCOPE_SEAT,
+            "source": "forum_api.get_forum_view", "required": True,
+            "neutral_value": {}, "validator": _is_mapping,
+            "notify": "forumViewChanged", "tags": STAGED_TAG_NAMES,
+            "attr": "_forum_view", "publish_order": 6,
+        },
+        {
+            "resource_id": "combat", "scope": SCOPE_SEAT,
+            "source": "combat_api.get_combat_view", "required": True,
+            "neutral_value": {}, "validator": _is_mapping,
+            "notify": "combatViewChanged", "tags": STAGED_TAG_NAMES,
+            "attr": "_combat_view", "publish_order": 7,
+        },
+        {
+            # FC-712-17/20: the colour/name card is a SESSION DISPLAY resource,
+            # never "public because it looks static". It is REQUIRED in every
+            # activation bundle and read target-aware.
+            "resource_id": "factionStyleMap", "scope": SCOPE_SESSION_DISPLAY,
+            "source": "faction_api.get_faction_style_map", "required": True,
+            "neutral_value": {}, "validator": _is_style_map_dto,
+            "notify": "snapshotChanged", "tags": STAGED_TAG_NAMES,
+            "attr": "_faction_style_map", "publish_order": 0,
+        },
+    )
+
+    @classmethod
+    def activation_inventory(cls) -> tuple:
+        """The declared activation inventory (read-only copy per call)."""
+        return tuple(dict(entry) for entry in cls._ACTIVATION_INVENTORY)
+
+    @classmethod
+    def _required_resource_ids(cls) -> tuple:
+        """R05: the resources whose freshness a WRITE depends on.
+
+        Derived from the SAME declaration as staging (``required=True``), never
+        from a hand-maintained list, so adding a REQUIRED resource automatically
+        adds its freshness dependency to ``freshnessWritesBlocked``.
+        """
+        return tuple(entry["resource_id"] for entry in cls._ACTIVATION_INVENTORY
+                     if entry.get("required"))
 
     # 信号
     snapshotChanged = Signal()
@@ -157,6 +310,16 @@ class GuiSessionStore(QObject):
         self._forum_ai_processed = False
         self._last_reset_turn: int = 0
         self._faction_style_map: Dict[str, Any] = {}
+        # W2b (FC-712-18): PRIVATE last-good projection cache + freshness state.
+        # ``_last_good_views[resource_id] = {"viewer": <player_id>, "data": {...}}``
+        # — a cached value is only ever reused for the SAME viewer, so a stale A
+        # value can never be rendered for B.
+        self._last_good_views: Dict[str, Dict[str, Any]] = {}
+        self._stale_resources: Dict[str, bool] = {}
+        # FC-712-20: a public refresh requested while the seat is masked is
+        # deferred (never applied) and satisfied by the complete private
+        # activation bundle.
+        self._deferred_public_refresh: bool = False
         # R6（SA §B.5，DA-2 B5）：Submit 结构化错误 + 草稿保留
         # - _senate_submit_errors：规范排序的 error_items（Adapter formatter 输出）
         # - _senate_submit_errors_by_war：war_id → items（卡级 cardErrors 定位）
@@ -1048,19 +1211,109 @@ class GuiSessionStore(QObject):
 
     @Property(dict, notify=snapshotChanged)
     def factionStyleMap(self) -> Dict[str, Any]:
-        """全局派系样式映射，从 faction_api.get_faction_style_map() 加载。"""
+        """FC-712-17/20 — SESSION_DISPLAY faction style map for the CURRENT seat.
+
+        The public value is always the projection of the CURRENT viewer: it is
+        emptied on neutralize (masked/pending/failure) and replaced by the
+        target's own staged bundle on activation.
+        """
         return self._faction_style_map
 
-    def _refresh_faction_style_map(self):
-        """从 faction_api 加载派系样式映射。"""
-        from src.api import faction_api
-        result = faction_api.get_faction_style_map(
-            self._state,
-            caller_context=session_access.current_caller_context(self._state))
-        if result.get("success"):
-            self._faction_style_map = result.get("data", {})
+    @Property(bool, notify=snapshotChanged)
+    def factionStyleMapStale(self) -> bool:
+        """True when the style map is the private last_good, not fresh data."""
+        return bool(self._stale_resources.get("factionStyleMap"))
+
+    @Property(bool, notify=snapshotChanged)
+    def projectionStale(self) -> bool:
+        """True when ANY projected resource is served from last_good."""
+        return any(bool(flag) for flag in self._stale_resources.values())
+
+    @Property(list, notify=snapshotChanged)
+    def staleResourceIds(self) -> List[str]:
+        """Resource ids currently served from the private last_good cache."""
+        return sorted(rid for rid, flag in self._stale_resources.items() if flag)
+
+    def _stale_write_dependencies(self) -> List[str]:
+        """R05 — the REQUIRED resources that are currently served from last_good.
+
+        Dependency-driven: ONLY resources declared ``required`` in the activation
+        inventory can gate a write (a purely transient/optional projection never
+        does), and EVERY such resource can — not just the style map.
+        """
+        return sorted(rid for rid in self._required_resource_ids()
+                      if self._stale_resources.get(rid))
+
+    @Property(bool, notify=snapshotChanged)
+    def freshnessWritesBlocked(self) -> bool:
+        """FC-712-18 / R05 — freshness-dependent writes are disabled while stale.
+
+        The predicate is DEPENDENCY-RELATED (per REQUIRED resource), not a style
+        proxy: an ACTIVE seat served from ANY stale REQUIRED projection (style,
+        population, senate, ...) may not start a NEW command. The gate is applied
+        BEFORE any side effect (``_begin_masked_seat_transition``), so a refused
+        write never reaches Core (no lease, no receipt, no RNG draw); the only
+        bounded action left is a fresh refresh / activation.
+        """
+        return bool(self._stale_write_dependencies())
+
+    @staticmethod
+    def _read_outcome(envelope: Any) -> tuple:
+        """FC-712-19 — classify one raw read envelope.
+
+        Returns ``(ok, data)``. ``ok`` is True ONLY for a real success whose
+        payload is a mapping. A DENIED (``success`` False), a malformed envelope
+        (non-dict / non-boolean success), and ``data is None`` / non-mapping are
+        all failures; ``success is True`` with ``data == {}`` is a LEGAL EMPTY.
+        """
+        if not isinstance(envelope, dict):
+            return False, {}
+        if envelope.get("success") is not True:
+            return False, {}
+        data = envelope.get("data")
+        if not isinstance(data, dict):
+            return False, {}
+        return True, data
+
+    def _publish_private_read(self, resource_id: str, envelope: Any) -> Dict[str, Any]:
+        """Consume one envelope for the CURRENT viewer.
+
+        On success the fresh value is published and remembered as last_good.
+        On failure the private last_good is retained (same viewer only) and the
+        resource is marked stale; a foreign/no cache yields a neutral value.
+        """
+        ok, data = self._read_outcome(envelope)
+        if ok:
+            self._last_good_views[resource_id] = {"viewer": self._viewer_id,
+                                                  "data": data}
+            self._stale_resources.pop(resource_id, None)
+            return data
+        cached = self._last_good_views.get(resource_id) or {}
+        self._stale_resources[resource_id] = True
+        if cached.get("viewer") == self._viewer_id \
+                and isinstance(cached.get("data"), dict):
+            return cached["data"]
+        return {}
+
+    def _refresh_faction_style_map(self, viewer_id: Optional[str] = None):
+        """FC-712-20 — target-aware guarded style read with private last_good."""
+        vid = self._viewer_id if viewer_id is None else viewer_id
+        envelope = self._adapter.get_faction_style_map_envelope(vid)
+        ok, data = self._read_outcome(envelope)
+        if ok and not _is_style_map_dto(data):
+            ok = False
+        if ok:
+            self._faction_style_map = data
+            self._last_good_views["factionStyleMap"] = {"viewer": vid,
+                                                       "data": data}
+            self._stale_resources.pop("factionStyleMap", None)
+            return
+        cached = self._last_good_views.get("factionStyleMap") or {}
+        if cached.get("viewer") == vid and _is_style_map_dto(cached.get("data")):
+            self._faction_style_map = cached["data"]
         else:
             self._faction_style_map = {}
+        self._stale_resources["factionStyleMap"] = True
 
     @Property(bool, notify=resolutionAdvancingChanged)
     def isResolutionAdvancing(self) -> bool:
@@ -3129,19 +3382,26 @@ class GuiSessionStore(QObject):
 
     def _neutralize_public_projection(self) -> None:
         """Clear every public/private projected model so no stale viewer residue
-        is visible or accessible while masked (no source-state mutation)."""
-        self._snapshot = {}
-        self._population_view = {}
+        is visible or accessible while masked (no source-state mutation).
+
+        W2b (FC-712-17/20) — additive only: the SESSION_DISPLAY faction style
+        map is part of the projection and is cleared here too (it used to
+        survive every neutralization as an accidental global surface).
+
+        R03 — the per-resource clear set is now driven by the SAME activation
+        inventory as staging/apply (``attr`` + ``neutral_value``), so every
+        declared resource is neutralized by construction. The non-resource
+        transient fields below are not staged projections and stay explicit.
+        """
+        for resource in self._ACTIVATION_INVENTORY:
+            setattr(self, resource["attr"],
+                    dict(resource["neutral_value"])
+                    if isinstance(resource["neutral_value"], dict)
+                    else resource["neutral_value"])
         self._population_vote_submitting = False
-        self._mortality_view = {}
-        self._senate_view = {}
-        self._revenue_view = {}
-        self._forum_view = {}
         self._forum_result = {}
         self._forum_step_override = ""
-        self._combat_view = {}
         self._combat_result = {}
-        self._resolution_view = {}
         self._revenue_result = {}
         self._mortality_result = {}
         self._selected_phase_summary = {}
@@ -3150,15 +3410,30 @@ class GuiSessionStore(QObject):
         self._senate_submit_errors_by_scope = {}
         self._senate_drafts = {}
         self._senate_finalization_warning = ""
-        self.snapshotChanged.emit()
-        self.populationViewChanged.emit()
-        self.mortalityViewChanged.emit()
-        self.senateViewChanged.emit()
-        self.revenueViewChanged.emit()
-        self.forumViewChanged.emit()
-        self.combatViewChanged.emit()
-        self.resolutionViewChanged.emit()
+        self._emit_inventory_notifications()
         self.phaseChanged.emit()
+
+    @classmethod
+    def _inventory_by_publish_order(cls) -> tuple:
+        """The inventory in PUBLIC notification order (declared, not implied)."""
+        return tuple(sorted(cls._ACTIVATION_INVENTORY,
+                            key=lambda entry: int(entry.get("publish_order", 99))))
+
+    def _emit_inventory_notifications(self) -> None:
+        """R03 — emit every declared ``notify`` signal exactly once, in order.
+
+        The notification set/order comes from the inventory declaration; two
+        resources sharing a signal (``factionStyleMap`` -> ``snapshotChanged``)
+        emit it once. Subscribers can therefore never observe a half-assigned
+        frame, and a new resource cannot be published silently.
+        """
+        emitted = set()
+        for resource in self._inventory_by_publish_order():
+            name = resource["notify"]
+            if name in emitted:
+                continue
+            emitted.add(name)
+            getattr(self, name).emit()
 
     #: Internal helper commands each top-level GUI command may invoke under the
     #: non-exported transaction-local continuation scope (DG-03 §3.4). The scope
@@ -3257,6 +3532,16 @@ class GuiSessionStore(QObject):
         MASKED_FAILURE (fail-closed). The exact authorized command is dispatched by
         the caller only after this returns non-None."""
         txn_id = uuid.uuid4().hex
+        # R05 (FC-712-18): a freshness-dependent WRITE is refused BEFORE any side
+        # effect — no lease is issued, no barrier is armed, no Core command runs,
+        # no receipt/RNG is produced. The predicate is dependency-related: ANY
+        # REQUIRED resource served from last_good blocks (never just the style
+        # map). The bounded recovery is a fresh refresh / activation.
+        stale = self._stale_write_dependencies()
+        if stale:
+            logger.warning("write refused: stale projection (%s)", stale)
+            self._fail_masked(FAIL_BEFORE_COMMIT, txn_id)
+            return None
         seat_epoch = self._seat_epoch + 1
         self._seat_txn = {
             "txn_id": txn_id,
@@ -3365,12 +3650,23 @@ class GuiSessionStore(QObject):
             session_access.end_dispatch_nesting(self._state)
 
     def _stage_activation(self, target_id: str, epoch: int) -> Optional[Dict[str, Any]]:
-        """R2 step 7: build the target's DTOs through the internal neutral
-        activation reservation into a PRIVATE staging bundle (never the public
-        getters). Every read must return a successful envelope, else ``None``
-        (fail closed) — an empty/denied read is never a successful projection."""
-        from src.api import (session_api, mortality_api, senate_api,
-                             revenue_api, forum_api, combat_api)
+        """R2 step 7 — build the DECLARED inventory (FC-712-17) into a PRIVATE
+        staged bundle through the internal neutral activation reservation.
+
+        For every declared resource:
+
+          * the read is the real API boundary, with the target presented as the
+            viewer (target-aware);
+          * ``success is not True``, a malformed payload, or a schema violation
+            is a FAILURE (never a legal empty);
+          * ``success is True`` + ``{}`` IS a legal empty projection;
+          * a failed REQUIRED resource refuses the WHOLE bundle (``None``), so
+            no partial first frame can ever be published.
+
+        The bundle is tagged (session / scope / target / seat_epoch /
+        core_revision / publication_revision) after the reads, and those tags are
+        re-validated at publish time.
+        """
         registered = session_access.is_hotseat_registered(self._state)
         capability = None
         if registered:
@@ -3383,45 +3679,184 @@ class GuiSessionStore(QObject):
             # the reservation can no longer be borrowed by naming the target.
             session_access.begin_staging_nesting(self._state, capability)
         try:
-            reads = (
-                ("snapshot", session_api.get_session_snapshot),
-                ("population", session_api.get_population_view),
-                ("resolution", session_api.get_resolution_view),
-                ("mortality", mortality_api.get_mortality_view),
-                ("senate", senate_api.get_senate_view),
-                ("revenue", revenue_api.get_revenue_view),
-                ("forum", forum_api.get_forum_view),
-                ("combat", combat_api.get_combat_view),
-            )
-            staged: Dict[str, Any] = {}
-            for key, fn in reads:
-                envelope = self._adapter.read_envelope(fn, self._state, target_id)
-                if not isinstance(envelope, dict) or not envelope.get("success"):
-                    return None
-                data = envelope.get("data")
-                staged[key] = data if isinstance(data, dict) else {}
+            staged: Dict[str, Any] = {
+                "target_id": target_id,
+                "seat_epoch": int(epoch),
+                "txn_id": (self._seat_txn or {}).get("txn_id", ""),
+                "resources": {},
+            }
+            for resource in self.activation_inventory():
+                rid = resource["resource_id"]
+                source = self._resolve_source(resource["source"])
+                if rid == "factionStyleMap":
+                    # FC-712-20: target-aware guarded read.
+                    envelope = self._adapter.read_envelope(
+                        source, self._state, viewer_player_id=target_id)
+                else:
+                    envelope = self._adapter.read_envelope(
+                        source, self._state, target_id)
+                ok, data = self._read_outcome(envelope)
+                if ok and not resource["validator"](data):
+                    ok = False
+                if not ok:
+                    if resource["required"]:
+                        logger.warning(
+                            "activation staging refused: resource=%s required=%s",
+                            rid, True)
+                        return None
+                    staged["resources"][rid] = resource["neutral_value"]
+                    continue
+                staged["resources"][rid] = data
+            # Tags are bound AFTER the reads (a staging read may legitimately
+            # advance a phase marker); they describe the bundle this transaction
+            # is allowed to publish.
+            staged["tags"] = self._activation_tags(target_id, epoch)
             return staged
         finally:
             session_access.end_staging_nesting(self._state)
             if registered:
                 session_access.end_activation_reservation(self._state)
 
+    @staticmethod
+    def _resolve_source(source: str):
+        """Resolve ``"<module>.<attr>"`` to the LIVE API attribute (so a
+        boundary-level fault injection or a real code change is always honoured;
+        never a captured reference)."""
+        module_name, _, attr = str(source).partition(".")
+        module = importlib.import_module("src.api." + module_name)
+        return getattr(module, attr)
+
+    def _activation_tags(self, target_id: str, epoch: int) -> Dict[str, Any]:
+        """The six tags every staged resource is bound to (FC-712-17)."""
+        try:
+            revision = int(session_access.core_business_revision(self._state))
+        except Exception:  # pragma: no cover - defensive
+            revision = -1
+        try:
+            session_id = session_access._state_identity(self._state)
+        except Exception:  # pragma: no cover - defensive
+            session_id = ""
+        return {
+            "session": session_id,
+            "scope": "activation",
+            "target": target_id,
+            "seat_epoch": int(epoch),
+            "core_revision": revision,
+            "publication_revision": int(epoch),
+        }
+
+    def _tags_current(self, bundle: Dict[str, Any],
+                      target_id: Optional[str]) -> bool:
+        """True iff ``bundle`` is publishable into the CURRENT epoch.
+
+        A bundle staged for another target, another seat epoch, another
+        publication revision, another session, or another transaction is
+        refused — a late/foreign callback can never overwrite a newer epoch.
+
+        R02: ALL SIX declared tags are validated. ``scope`` must be the one
+        activation scope and ``core_revision`` must equal the CURRENT Core
+        business revision (both were written by ``_activation_tags`` but never
+        read before R2, so a bundle staged before a business revision advance
+        could still publish). Missing/wrong values fail closed.
+        """
+        tags = bundle.get("tags")
+        if not isinstance(tags, dict):
+            return False
+        if tags.get("scope") != "activation":
+            return False
+        try:
+            if int(tags.get("core_revision", -1)) != int(
+                    session_access.core_business_revision(self._state)):
+                return False
+        except (TypeError, ValueError):
+            return False
+        except Exception:  # pragma: no cover - defensive
+            return False
+        expected_target = target_id or tags.get("target", "")
+        if tags.get("target") != expected_target:
+            return False
+        try:
+            if int(tags.get("seat_epoch", -1)) != int(bundle.get("seat_epoch", -2)):
+                return False
+            if int(tags.get("seat_epoch", -1)) != int(self._seat_epoch):
+                return False
+            if int(tags.get("publication_revision", -1)) != int(self._seat_epoch):
+                return False
+        except (TypeError, ValueError):
+            return False
+        try:
+            if tags.get("session") != session_access._state_identity(self._state):
+                return False
+        except Exception:  # pragma: no cover - defensive
+            return False
+        live_txn = (self._seat_txn or {}).get("txn_id", "")
+        if live_txn and bundle.get("txn_id") != live_txn:
+            return False
+        return True
+
+    def _bundle_publishable(self, bundle: Dict[str, Any],
+                            target_id: Optional[str]) -> bool:
+        """Whole-package validation before ANY public assignment."""
+        resources = bundle.get("resources")
+        if not isinstance(resources, dict):
+            return False
+        for resource in self.activation_inventory():
+            rid = resource["resource_id"]
+            if rid not in resources:
+                if resource["required"]:
+                    return False
+                continue
+            if not resource["validator"](resources[rid]):
+                return False
+        return self._tags_current(bundle, target_id)
+
     def _apply_staged(self, staged: Dict[str, Any], *,
-                      target_id: Optional[str] = None) -> None:
+                      target_id: Optional[str] = None) -> bool:
         """Atomically publish the staged (private) bundle to the public models.
 
         D13：`target_id`（可选，默认 None 保持旧调用语义）是本次成功 final-reveal
         的显式新 publication viewer——`_viewer_id = target_id` 发生在本方法之后，
         因此换席判定不得依赖仍是旧值的 `_viewer_id`。
+
+        W2b (FC-712-17): the WHOLE package is validated first (every REQUIRED
+        resource present + schema-valid + tags current). Only then are the
+        assignments made, ``_viewer_id`` is moved to the new publication viewer,
+        and every notification is emitted — so no subscriber can observe a
+        half-assigned frame. Returns ``False`` (and publishes nothing) when the
+        bundle is not publishable.
+
+        R03: assignments, the last_good snapshot and the notification order are
+        ALL derived from the activation inventory (``attr`` / ``publish_order``).
+        The legacy FLAT bundle branch is CLOSED: a flat mapping carries no
+        tags/REQUIRED proof, so it can never bypass the whole-package gate.
         """
-        self._snapshot = staged.get("snapshot", {})
-        self._population_view = staged.get("population", {})
-        self._mortality_view = staged.get("mortality", {})
-        self._senate_view = staged.get("senate", {})
-        self._revenue_view = staged.get("revenue", {})
-        self._forum_view = staged.get("forum", {})
-        self._combat_view = staged.get("combat", {})
-        self._resolution_view = staged.get("resolution", {})
+        bundle = staged if isinstance(staged, dict) else {}
+        if not self._bundle_publishable(bundle, target_id):
+            logger.warning("staged bundle refused at publish time")
+            return False
+        resources = bundle.get("resources") or {}
+        inventory = self.activation_inventory()
+        for resource in inventory:
+            setattr(self, resource["attr"],
+                    resources.get(resource["resource_id"],
+                                  resource["neutral_value"]))
+        # FC-712-20: the successful publication viewer is assigned BEFORE any
+        # notification, so no subscriber sees "new data + old viewer".
+        if target_id:
+            self._viewer_id = target_id
+        # A complete fresh bundle satisfies every freshness obligation.
+        # The bundle IS the private last_good for this viewer, so a later
+        # same-seat DENIED refresh can be served from it (never from
+        # another seat's cache: the viewer is part of the entry).
+        for resource in inventory:
+            value = getattr(self, resource["attr"])
+            if isinstance(value, dict):
+                self._last_good_views[resource["resource_id"]] = {
+                    "viewer": self._viewer_id,
+                    "data": value,
+                }
+        self._stale_resources.clear()
+        self._deferred_public_refresh = False
         # D13：在 senateViewChanged 发出前完成同步（先改状态，后通知）。
         self._sync_ai_proposer_guard(self._senate_view,
                                      target_id=target_id or self._viewer_id)
@@ -3429,17 +3864,11 @@ class GuiSessionStore(QObject):
         self._selected_phase_id = new_current
         self._selected_phase_summary = self._summary_from_phase(
             self._phase_by_id(new_current))
-        self.snapshotChanged.emit()
-        self.populationViewChanged.emit()
-        self.mortalityViewChanged.emit()
-        self.senateViewChanged.emit()
-        self.revenueViewChanged.emit()
-        self.forumViewChanged.emit()
-        self.combatViewChanged.emit()
-        self.resolutionViewChanged.emit()
+        self._emit_inventory_notifications()
         self.phaseChanged.emit()
         self.phaseStepsChanged.emit()
         self.currentPlayerChanged.emit()
+        return True
 
     def _delivery_fail(self, txn_id: str, err: Dict[str, Any],
                        done: Optional[Any] = None) -> Dict[str, Any]:
@@ -3488,6 +3917,20 @@ class GuiSessionStore(QObject):
         # viewer (still A) projection; re-neutralize so no stale viewer residue is
         # visible while masked/pending.
         self._neutralize_public_projection()
+        # FC-712-18 (W2b): a REQUIRED display resource served from last_good is
+        # not fresh. Publishing a NEW seat / recovering the SAME seat from a
+        # stale projection is a freshness-dependent write and is therefore
+        # disabled: the transaction fails closed into MASKED_FAILURE, whose only
+        # bounded action is a fresh activation (which re-stages the whole
+        # inventory and clears the stale state).
+        if self.freshnessWritesBlocked:
+            logger.warning("seat settle refused: projection stale (%s)",
+                           self.staleResourceIds)
+            self._fail_masked(FAIL_AFTER_COMMIT, txn_id)
+            result = self._feedback(False, "界面数据未能刷新，请重试进入回合。", "error")
+            if done is not None:
+                done(result)
+            return result
         if delivery is not None:
             from src.api import session_turn_service
             verdict = session_turn_service.validate_delivery_result(
@@ -3602,7 +4045,13 @@ class GuiSessionStore(QObject):
                 _fail_activation(FAIL_AFTER_COMMIT)
                 return
             # ---- visibility commit (only after the final-reveal real frame) ---
-            self._apply_staged(staged, target_id=target_id)
+            # W2b (FC-712-17): whole-package validation + atomic publication. A
+            # bundle that is not publishable (missing REQUIRED / schema / stale
+            # tag / foreign txn) publishes NOTHING and keeps the seat masked.
+            if not self._apply_staged(staged, target_id=target_id):
+                self._reveal_pending = False
+                _fail_activation(FAIL_AFTER_COMMIT)
+                return
             self._viewer_id = target_id
             self._reveal_pending = False
             session_access.issue_fresh_handle(self._state)
@@ -4442,7 +4891,20 @@ class GuiSessionStore(QObject):
     # 内部刷新
     # -----------------------------------------------------------------------
     def _on_refresh(self):
-        """API 操作成功后自动刷新。"""
+        """API 操作成功后自动刷新。
+
+        FC-712-20 (W2b): while the seat is NOT ACTIVE (busy / masked / pending /
+        failure) NO public refresh runs. A masked owning command must not
+        republish the old viewer's models (or reload a style map) under the
+        cover; the request is deferred and satisfied by the complete private
+        activation bundle, which is the only publication point of the target's
+        first frame.
+        """
+        if self._seat_lifecycle != SEAT_ACTIVE:
+            self._deferred_public_refresh = True
+            logger.info("public refresh deferred: seat lifecycle=%s",
+                        self._seat_lifecycle)
+            return
         self._guard_enter()
         try:
             self._invalidate_global_query("refresh", keep_open=False)
@@ -4466,7 +4928,8 @@ class GuiSessionStore(QObject):
             self._executeResolution()
 
     def _refresh_snapshot(self):
-        self._snapshot = self._adapter.get_snapshot(self._viewer_id)
+        self._snapshot = self._publish_private_read(
+            "snapshot", self._adapter.get_snapshot_envelope(self._viewer_id))
         self._refresh_faction_style_map()
         new_current = self._snapshot.get("current_phase_id", "mortality")
         if not self._selected_phase_id or self._selected_phase_id != new_current:
@@ -4480,17 +4943,28 @@ class GuiSessionStore(QObject):
         self.phaseStepsChanged.emit()
 
     def _refresh_population_view(self):
-        self._population_view = self._adapter.get_population_view(self._viewer_id)
+        self._population_view = self._publish_private_read(
+            "population", self._adapter.get_population_view_envelope(self._viewer_id))
         self.populationViewChanged.emit()
         self.phaseStepsChanged.emit()
 
     def _refresh_mortality_view(self):
-        self._mortality_view = self._adapter.get_mortality_view(self._viewer_id)
+        self._mortality_view = self._publish_private_read(
+            "mortality", self._adapter.get_mortality_view_envelope(self._viewer_id))
         self.mortalityViewChanged.emit()
         self.phaseStepsChanged.emit()
 
     def _refresh_senate_view(self):
-        view = self._adapter.get_senate_view(self._viewer_id)
+        # R01 (W2b): the senate projection is consumed through the SAME private
+        # last_good/stale pipeline as every other REQUIRED resource. The D13
+        # observation seam is PRESERVED (``adapter.get_senate_view``); the
+        # production adapter now returns the RAW envelope there, so a DENIED /
+        # malformed read is never mistaken for an authoritative EMPTY. A bare
+        # projection installed on that seam (D13 witness style) is still honoured
+        # as a successful read.
+        raw = self._senate_read()
+        view = self._publish_private_read(
+            "senate", self._normalise_read_seam(raw))
         self._senate_view = view
         # D13：仅 ACTIVE 且新 DTO 有效时同步（masked/denied/空 refresh 保锁）；
         # 先改状态，后通知。成功 masked API 自动刷新返回空 DTO 不得清锁。
@@ -4499,25 +4973,58 @@ class GuiSessionStore(QObject):
         self.senateViewChanged.emit()
         self.phaseStepsChanged.emit()
 
+    def _senate_read(self) -> Any:
+        """R01 — read the senate projection with the envelope preserved.
+
+        The production path uses ``get_senate_view_envelope`` (DENIED/malformed
+        never collapse to ``{}``). The D13 OBSERVATION SEAM is preserved: when a
+        caller installs its own ``adapter.get_senate_view`` (an instance-level
+        override, exactly how the frozen D13 witnesses inject a controlled
+        projection), that bare projection is authoritative-by-contract and is
+        normalised to a success envelope here.
+        """
+        if "get_senate_view" in vars(self._adapter):
+            return self._normalise_read_seam(
+                self._adapter.get_senate_view(self._viewer_id))
+        return self._adapter.get_senate_view_envelope(self._viewer_id)
+
+    @staticmethod
+    def _normalise_read_seam(raw: Any) -> Dict[str, Any]:
+        """R01 — normalise one value coming from a legacy read seam.
+
+        A mapping WITHOUT a ``success`` key is a bare projection (the historical
+        ``get_*_view``/D13 seam contract) and is authoritative by contract; every
+        other value is handed to ``_read_outcome`` unchanged, so a DENIED, a
+        malformed envelope or a legal ``success/{}`` keep their exact meaning.
+        """
+        if isinstance(raw, dict) and "success" not in raw:
+            return {"success": True, "message": "bare projection",
+                    "data": raw, "errors": []}
+        return raw
+
     def _refresh_revenue_view(self):
-        self._revenue_view = self._adapter.get_revenue_view(self._viewer_id)
+        self._revenue_view = self._publish_private_read(
+            "revenue", self._adapter.get_revenue_view_envelope(self._viewer_id))
         self.revenueViewChanged.emit()
         self.phaseStepsChanged.emit()
 
     def _refresh_forum_view(self):
-        self._forum_view = self._adapter.get_forum_view(self._viewer_id)
+        self._forum_view = self._publish_private_read(
+            "forum", self._adapter.get_forum_view_envelope(self._viewer_id))
         if self._forum_step_override and self._forum_view.get("resolved"):
             self._forum_step_override = "resolution"
         self.forumViewChanged.emit()
         self.phaseStepsChanged.emit()
 
     def _refresh_combat_view(self):
-        self._combat_view = self._adapter.get_combat_view(self._viewer_id)
+        self._combat_view = self._publish_private_read(
+            "combat", self._adapter.get_combat_view_envelope(self._viewer_id))
         self.combatViewChanged.emit()
         self.phaseStepsChanged.emit()
 
     def _refresh_resolution_view(self):
-        self._resolution_view = self._adapter.get_resolution_view(self._viewer_id)
+        self._resolution_view = self._publish_private_read(
+            "resolution", self._adapter.get_resolution_view_envelope(self._viewer_id))
         self.resolutionViewChanged.emit()
 
     def _executeResolution(self):

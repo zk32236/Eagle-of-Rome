@@ -432,11 +432,16 @@ def _jr1_new_session(store, state, viewer_id, n_props):
         for i in range(n_props)
     ]
     store.doSubmitSenateProposals(plans)
+    submitted = store.senateSubmittedProposals
+    assert submitted, "本会期须有已提交法案（前置）"
     for p in state.get_all_players():
         if p.player_id != viewer_id:
             for prop in state.get_senate_proposals():
                 state.record_senate_vote(p.player_id, prop["id"], True)
-    store.doSubmitSenateVotes()
+    # WJR1-AC-03 只验证「三会期否决链」；投票分支不是被测语义，
+    # 因此显式对本会期全部法案投赞成，使「进入 tribune_veto」成为确定前提。
+    feedback = store.doSubmitSenateVotes([int(p["id"]) for p in submitted])
+    assert feedback.get("success"), feedback
     return list(store.senateVetoCandidateIds)
 
 
@@ -455,6 +460,10 @@ def test_jr1_data_three_session_chain_no_deadlock():
     **不得**直置 `selectedVetoProposalIds` / 不得绕过 `record_veto`：本测试经真 QML
     `setVetoSelected()`（= ③ 勾选框 `onToggled` 写回路径）与真 Store 命令链达成；`resolve_senate`
     仅以 `_count_resolve` **同缝观测**（仍执行原实现，不旁路业务）。
+
+    WJR1-AC-03 前置：本用例显式对全部法案投赞成；「无参 = 全反对」（FC-C42）
+    由 test_jr1_data_empty_veto_submit_resolves_and_advances / R7 delta 用例单独覆盖，
+    本用例不重复验证该默认值。
     """
     from src.api import game_api
 
@@ -529,6 +538,7 @@ def test_jr1_data_three_session_chain_no_deadlock():
         vf.member_ids.append(tribune.id)
     tribune.faction_id = viewer.faction_id
     s3_cands = _jr1_new_session(store, state, viewer_id, 2)
+    assert store.senateSubmittedProposals, "turn3 前置：须存在已提交法案"
     assert store.senateCurrentStep == "tribune_veto", store.senateCurrentStep
     assert store.senateVetoControlMode == "HUMAN", store.senateVetoControlMode
     key3 = stage_root.property("_vetoSelectionKey")

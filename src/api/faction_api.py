@@ -1,15 +1,34 @@
 # src/api/faction_api.py
+from typing import Any, Dict, Optional
+
 from src.core.game_state import GameState
 from src.api import api_response
 from src.api import session_access
 from src.core.i18n import i18n
 
 
-@session_access.guarded(session_access.OP_READ_PHASE_VIEW)
-def get_faction_style_map(state: GameState, *, caller_context=None) -> dict:
+@session_access.guarded(session_access.OP_READ_PHASE_VIEW,
+                        viewer_param="viewer_player_id")
+def get_faction_style_map(state: GameState, *,
+                          viewer_player_id: Optional[str] = None,
+                          caller_context=None) -> dict:
     """
     返回全局派系样式映射。
     权威来源：state.config.get("faction_style_map", {})
+
+    FC-712-20 (W2b) — TARGET-AWARE GUARDED READ. The guard is now bound to the
+    ``viewer_player_id`` keyword (``viewer_param``), so this read is adjudicated
+    for the SAME seat that will consume it:
+
+      * during the private activation staging the internal neutral reservation
+        presents its staging capability and ``viewer_player_id`` must equal the
+        reserved target; naming any other player DENIES;
+      * on an ACTIVE refresh ``viewer_player_id`` must equal the registered
+        principal; an omitted value keeps the historical un-scoped CLI/historical
+        behaviour (additive keyword-only parameter — no caller breaks).
+
+    The payload stays display-only config; the *scope* is the session display
+    scope, never a cross-seat public surface.
     返回值格式：
     {
         "map": {
@@ -37,7 +56,7 @@ def get_faction_style_map(state: GameState, *, caller_context=None) -> dict:
         "id_display": "?",
     }
 
-    result_map = {}
+    result_map: Dict[str, Any] = {}
     for faction_id, faction in state.factions.items():
         style = style_map.get(faction_id, {})
         result_map[faction_id] = {

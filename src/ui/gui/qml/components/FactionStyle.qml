@@ -16,6 +16,20 @@ QtObject {
     id: factionStyle
 
     /*!
+     * FC-712-20 (W2b) — the style map is a viewer/session-scoped projection.
+     * ``stale`` means the Store is serving its PRIVATE last_good because the
+     * last guarded read was DENIED/malformed; ``availability`` is the safe
+     * failure class consumers may render ("FRESH" | "STALE" | "UNAVAILABLE").
+     * This object NEVER guesses an identity from a raw id or a name fragment.
+     */
+    readonly property bool stale: sessionStore ? !!sessionStore.factionStyleMapStale : false
+    readonly property string availability: {
+        if (!sessionStore) return "UNAVAILABLE"
+        if (sessionStore.factionStyleMapStale) return "STALE"
+        return _hasEntries() ? "FRESH" : "UNAVAILABLE"
+    }
+
+    /*!
      * Returns the hex color for a faction_id, or fallback color if unknown.
      * Accepts either faction_id ("optimates") or faction name ("Optimates").
      */
@@ -38,6 +52,9 @@ QtObject {
         if (!factionIdOrName) return _fallbackName()
 
         var map = _styleMap()
+        // Safe failure category: with no style map at all we never echo back a
+        // raw id / unvalidated name as if it were a display name.
+        if (_isEmpty(map)) return _fallbackName()
         var key = _resolveKey(factionIdOrName, map)
         if (key && map[key] && map[key].name) {
             return map[key].name
@@ -68,6 +85,18 @@ QtObject {
         var data = sessionStore ? sessionStore.factionStyleMap : null
         if (!data || !data.map) return {}
         return data.map
+    }
+
+    function _isEmpty(map) {
+        if (!map) return true
+        for (var key in map) {
+            if (map.hasOwnProperty(key)) return false
+        }
+        return true
+    }
+
+    function _hasEntries() {
+        return !_isEmpty(_styleMap())
     }
 
     function _fallbackColor() {
