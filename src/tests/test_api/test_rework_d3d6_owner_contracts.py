@@ -137,6 +137,12 @@ def test_d3_02_registered_empty_veto_satisfies_singleton_obligation():
 
     res = senate_api.veto(state, "player2", [], caller_context=ctx)
     assert res.get("success") is True, res
+    # W-12 (TA-06): the owning entry binds the phase and therefore starts a NEW
+    # scope generation — the handle minted by a pre-command READ is superseded by
+    # design (enter_phase always mints a fresh scope). Re-derive before asserting;
+    # the invariant under test (the singleton veto OID is satisfied in the CURRENT
+    # generation) is unchanged.
+    oid, scope_id = _veto_oid(state)
     assert book.satisfied(oid, scope_id, turn_service.current_revision(state)) is True
     # the ALL-ballots readiness predicate is now satisfied (finalization is not an
     # obligation) — the empty decision closed the frozen veto obligation.
@@ -268,6 +274,8 @@ def test_r03_d3_store_explicit_empty_veto_full_chain_ready_result():
     assert fb.get("success") is True, fb
     # real owner completion satisfied the singleton veto OID; the REAL result
     # landed (no veto recorded) and the real advance capability is available.
+    # TA-06: re-derive the CURRENT generation (W-12 binds the owning entry first).
+    oid, scope_id = _veto_oid(state)
     assert book.satisfied(oid, scope_id,
                           turn_service.current_revision(state)) is True
     assert state.get_senate_vetoes_copy() == set()

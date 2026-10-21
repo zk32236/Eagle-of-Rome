@@ -51,7 +51,7 @@ from src.core.game_state import GameState
 from src.core.systems.military_system import MilitarySystem
 from src.core.systems.naval_system import NavalSystem
 from src.core.systems.war_system import WarSystem
-from src.ui.gui.session_store import GuiSessionStore, SEAT_ACTIVE
+from src.ui.gui.session_store import GuiSessionStore, SEAT_ACTIVE, SEAT_MASKED_FAILURE
 
 
 def _senate_state(*, passed=0, current="player1", tribune_ai=True,
@@ -127,6 +127,17 @@ class _SyncWitness:
         self.calls.append(("failure", txn, kind, route)); return True
 
 
+# TA-04 (B1 strict gate): a REGISTERED consul submit is released only by a
+# VALID viewer-bound projection carrying the DTO capability key.
+_VALID_SENATE_VIEW = {
+    "phase_id": "senate",
+    "viewer_player_id": "player1",
+    "current_step": "proposal",
+    "viewer_has_consul": True,
+    "can_create_proposal": True,
+}
+
+
 def _active_store(state, viewer, senate_view):
     """A store with a bound barrier provider and an ACTIVE seat (the masked
     machine's precondition), WITHOUT the full ``initialize`` DTO load (the
@@ -147,7 +158,7 @@ def _active_store(state, viewer, senate_view):
 def test_i2r3_e2e_masked_senate_proposal_reaches_terminal():
     state = _senate_state(passed=0, current="player1", decision_complete=False)
     session_access.register_hotseat_session(state, "player1", epoch=0)
-    store, witness = _active_store(state, "player1", {"viewer_has_consul": True})
+    store, witness = _active_store(state, "player1", _VALID_SENATE_VIEW)
 
     fb = store.doSubmitSenateProposals([])
 
@@ -170,7 +181,7 @@ def test_i2r3_e2e_masked_senate_proposal_reaches_terminal():
 def test_i2r3_e2e_masked_transaction_was_opened_with_owning_lease():
     state = _senate_state(passed=0, current="player1", decision_complete=False)
     session_access.register_hotseat_session(state, "player1", epoch=0)
-    store, witness = _active_store(state, "player1", {"viewer_has_consul": True})
+    store, witness = _active_store(state, "player1", _VALID_SENATE_VIEW)
 
     store.doSubmitSenateProposals([])
     # the masked machine really armed the barrier (the owning transaction ran)
@@ -200,14 +211,25 @@ def test_i2r3_s5_human_terminal_settles_to_g():
     session_access.register_hotseat_session(state, "player1", epoch=0)
     store, witness = _active_store(state, "player1", {"viewer_has_consul": True})
 
-    # a DIFFERENT human G -> handoff pending (explicit takeover for the other H)
+    # W3 / W-05 / L3+L6 (SUPERSEDED assertion, TA-01): a "resolved" success
+    # WITHOUT the typed envelope is a committed-but-unaddressed command ->
+    # typed DELIVERY_MISSING_RECEIVER/settle. The legacy
+    # awaiting_player_id/actor/status/controller fallback is RETIRED.
+    # Positive terminal settle coverage lives in AC-W3-01 and in
+    # test_d7d12_s1_same_human_delivery_requires_real_activation.
     state.set_current_player("player2")
     result = store._settle_after_senate_command(
         "txn-s5b", {"success": True, "data": {
             "status": "resolved", "phase": "senate", "actor": "player2",
             "controller": "HUMAN", "current_player_id": "player2",
             "awaiting_player_id": "player2"}})
-    assert store._pending_player_id == "player2", (result, store._pending_player_id)
+    assert result.get("success") is False, result
+    err = (result.get("data") or {}).get("delivery_error") or {}
+    assert err.get("code") == "DELIVERY_MISSING_RECEIVER", result
+    assert err.get("stage") == "settle", result
+    assert err.get("committed") is True, result
+    assert store.seatLifecycle == SEAT_MASKED_FAILURE, store.seatLifecycle
+    assert store._pending_player_id in (None, ""), store._pending_player_id
 
 
 # ===========================================================================
@@ -219,7 +241,7 @@ def test_i2r3_neg_no_provider_keeps_legacy_path(monkeypatch):
     store = GuiSessionStore(state)
     store._viewer_id = "player1"
     store._seat_lifecycle = SEAT_ACTIVE
-    store._senate_view = {"viewer_has_consul": True}
+    store._senate_view = dict(_VALID_SENATE_VIEW)
     # no barrier provider -> the masked flow must NOT be entered
     called = {"masked": 0}
     orig = store._masked_senate_owning_flow

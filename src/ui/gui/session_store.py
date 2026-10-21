@@ -367,6 +367,15 @@ class GuiSessionStore(QObject):
         self._handoff_failure_kind: str = ""
         self._handoff_failure_route: str = RECOVER_ROUTE_ACTIVATION
         self._committed_receipt: Optional[Dict[str, Any]] = None
+        #: W3 / A-W3-03: the EXACT envelope this transaction settled from. A
+        #: failure retry re-validates THIS record only; the Core cursor is never a
+        #: target source (D-W3-D08). Cleared by a successful activation.
+        self._last_delivery: Optional[Dict[str, Any]] = None
+        #: W3 / W-04: the in-scope owning command whose settlement REQUIRES a
+        #: recorded delivery envelope. Set by the masked senate owning flow; empty
+        #: for startup / population / forum legacy transactions (whose retry keeps
+        #: its recorded transaction target, never the Core cursor).
+        self._delivery_required_command: str = ""
         self._staged_viewer_id: str = ""
         self._reveal_pending: bool = False
         self._handoff_busy: bool = False
@@ -381,6 +390,12 @@ class GuiSessionStore(QObject):
         # therefore return ``pending`` and complete later via ``handoffFinished``.
         self._async_gate: Optional[Dict[str, Any]] = None
         self._activation_result: Optional[Dict[str, Any]] = None
+        # W3-C1 (F01) / AC-W3-19 §9.1 / G43 W13: the PRIVATE carrier of the
+        # recovery diagnostic produced when a same-seat recovery of a legitimate
+        # (non-mutating) business refusal fails. It is written ONLY from the
+        # authorized recovery callback and is NEVER copied into the rejected
+        # command's public ``success/message/data/errors`` envelope.
+        self._w3_recovery_diagnostic: Optional[Dict[str, Any]] = None
         gui_localization.localeChanged.connect(self._on_gui_locale_changed)
 
     # -----------------------------------------------------------------------
@@ -2390,6 +2405,13 @@ class GuiSessionStore(QObject):
         if not self._viewer_id:
             return {"success": False, "message": "Not initialized"}
         self._senate_finalization_warning = ""
+        # W-09 / U5 (PL-02): a REGISTERED Hot-seat HUMAN submit is released ONLY
+        # by the trusted viewer-bound DTO capability (``can_create_proposal``) on a
+        # valid projection. A false/MISSING capability is refused (B1 / AC-W3-18);
+        # it is NEVER re-derived locally from the obligation schedule (A-W3-04).
+        # The never-registered CLI/legacy route below is byte-for-byte unchanged.
+        from src.api import session_access as _sa_capability
+        registered_capability = bool(_sa_capability.is_hotseat_registered(self._state))
         payload = self._variant_to_python(proposals)
         selected = []
         for item in payload or []:
@@ -2397,6 +2419,14 @@ class GuiSessionStore(QObject):
             if isinstance(item, dict):
                 selected.append(item)
         if self._senate_view.get("viewer_has_consul", False):
+            if registered_capability and not (
+                    self._is_valid_senate_projection(self._senate_view, self._viewer_id)
+                    and self.canCreateSenateProposal):
+                feedback = self._feedback(
+                    False, "当前提案权不属于本玩家，不能代替其他玩家/无主持人提案", "warning")
+                self._raise_senate_feedback(feedback)
+                self.senateViewChanged.emit()
+                return feedback
             if self._barrier_provider is not None:
                 # item3 §2a S2: the consul's proposal submission runs through the
                 # masked owning-flow machine, so the owning dispatch enables the
@@ -3532,6 +3562,15 @@ class GuiSessionStore(QObject):
         MASKED_FAILURE (fail-closed). The exact authorized command is dispatched by
         the caller only after this returns non-None."""
         txn_id = uuid.uuid4().hex
+        # W3 / W-04: only the in-scope owning commands require a recorded
+        # delivery envelope for their bounded retry.
+        self._delivery_required_command = (
+            str(command_id) if command_id in (
+                "advancePopulation", "doSubmitSenateProposals",
+                "doSubmitSenateVotes", "doSubmitSenateVetoes",
+                "submitPopulationVotes",
+                "advance_population_phase", "propose_many", "vote", "veto",
+            ) else "")
         # R05 (FC-712-18): a freshness-dependent WRITE is refused BEFORE any side
         # effect — no lease is issued, no barrier is armed, no Core command runs,
         # no receipt/RNG is produced. The predicate is dependency-related: ANY
@@ -3627,9 +3666,15 @@ class GuiSessionStore(QObject):
         self._seat_txn["cleared"] = True
         self._neutralize_public_projection()
         if lease_id:
+            helpers = self._helpers_for_owning_command(lease_command)
+            if lease_command == "advance_population_phase":
+                # W-01/W-07 / A-W3-08: the entry continuation's AI proposal
+                # executor delegates to the propose_many OWNER publication, which
+                # must be reachable inside the SAME owning dispatch (exactly once).
+                # The frozen helper registry above stays byte-identical.
+                helpers = frozenset(set(helpers) | {"propose_many"})
             reason = session_access.consume_command_lease(
-                self._state, lease_id=lease_id,
-                helpers=self._helpers_for_owning_command(lease_command))
+                self._state, lease_id=lease_id, helpers=helpers)
             if reason is not None:
                 self._fail_masked(FAIL_BEFORE_COMMIT, txn_id)
                 return False
@@ -3870,6 +3915,27 @@ class GuiSessionStore(QObject):
         self.currentPlayerChanged.emit()
         return True
 
+    @staticmethod
+    def _typed_delivery_error(code: str, stage: str,
+                              committed: Optional[bool] = True
+                              ) -> Dict[str, Any]:
+        """W-11 / §9.2 + AC-W3-19: a typed diagnostic; ``committed`` is the
+        PROVEN state.
+
+        The commit state is TRI-STATE (G3-delta §7.1/§9.1): ``True`` = a proven
+        commit, ``False`` = a proven non-commit, and ``None`` = UNPROVEN — the
+        ``committed`` key is then OMITTED so an unknown commit can be neither
+        swallowed by the ``True`` default nor fabricated as ``False``.
+        """
+        from src.api import session_turn_service
+        record = session_turn_service.delivery_error(
+            code, stage=stage,
+            committed=(True if committed is None else bool(committed)),
+            retry_class=session_turn_service.DELIVERY_RETRY_NONE)
+        if committed is None:
+            record.pop("committed", None)
+        return record
+
     def _delivery_fail(self, txn_id: str, err: Dict[str, Any],
                        done: Optional[Any] = None) -> Dict[str, Any]:
         """S1/FC-712-02: a typed delivery failure — fail closed, remain masked,
@@ -3881,24 +3947,6 @@ class GuiSessionStore(QObject):
             done(result)
         return result
 
-    def _receiver_delivery(self, phase: str, outcome: str = "CONTINUE",
-                           actor_id: Optional[str] = None) -> Dict[str, Any]:
-        """Build an EXPLICIT typed delivery for a genuinely committed transition
-        whose owner API returned no envelope (e.g. the resolved population slice).
-
-        The receiver is the REAL Core current player (or an explicit actor); it is
-        NOT a missing-receiver same-seat fallback and is validated downstream.
-        """
-        from src.api import session_turn_service
-        if not actor_id:
-            current = self._state.get_current_player()
-            actor_id = getattr(current, "player_id", None)
-        return session_turn_service.delivery_for_actor(
-            self._state, phase, actor_id, outcome=outcome,
-            viewer_id=self._viewer_id,
-            command_receipt_ref=session_turn_service.delivery_command_ref(
-                self._state, phase, "store_settle", actor=actor_id))
-
     def _settle_seat_after_success(self, txn_id: str,
                                    next_actor_id: Optional[str],
                                    done: Optional[Any] = None,
@@ -3908,29 +3956,20 @@ class GuiSessionStore(QObject):
         """R2 steps 5+: decide pending vs same-seat and stage privately (no
         pre-confirm publication of the next seat).
 
-        S1/FC-712-01/02: when a typed delivery is presented it is the ONLY
-        receiver truth — validated against the REAL Core current player / actual
-        ``PlayerType``. A missing receiver is a typed failure; there is NO
+        W3 / §3: when a typed delivery is presented it is the ONLY receiver truth —
+        validated against the REAL Core current player / actual ``PlayerType``. The
+        legacy mapping is passed ONLY to the validator for cross-checking; it never
+        selects a receiver. A missing receiver is a typed failure; there is NO
         ``None -> same-seat`` fallback.
+
+        Out-of-scope legacy flows (population ``next_player`` / forum substeps) do
+        not yet emit an envelope and keep their already-derived actor: this branch
+        is explicitly NOT a senate/population phase-entry receiver source.
         """
         # The dispatched command's success auto-refresh may have repopulated the
         # viewer (still A) projection; re-neutralize so no stale viewer residue is
         # visible while masked/pending.
         self._neutralize_public_projection()
-        # FC-712-18 (W2b): a REQUIRED display resource served from last_good is
-        # not fresh. Publishing a NEW seat / recovering the SAME seat from a
-        # stale projection is a freshness-dependent write and is therefore
-        # disabled: the transaction fails closed into MASKED_FAILURE, whose only
-        # bounded action is a fresh activation (which re-stages the whole
-        # inventory and clears the stale state).
-        if self.freshnessWritesBlocked:
-            logger.warning("seat settle refused: projection stale (%s)",
-                           self.staleResourceIds)
-            self._fail_masked(FAIL_AFTER_COMMIT, txn_id)
-            result = self._feedback(False, "界面数据未能刷新，请重试进入回合。", "error")
-            if done is not None:
-                done(result)
-            return result
         if delivery is not None:
             from src.api import session_turn_service
             verdict = session_turn_service.validate_delivery_result(
@@ -3938,19 +3977,26 @@ class GuiSessionStore(QObject):
             if not verdict.get("ok"):
                 return self._delivery_fail(
                     txn_id, verdict.get("error") or {}, done)
+            # Only a VALIDATED envelope is recorded for a later bounded retry.
+            self._last_delivery = {
+                "delivery": delivery,
+                "txn_id": txn_id,
+                "scope_id": str(delivery.get("scope_id") or ""),
+                "viewer": self._viewer_id,
+            }
             outcome = delivery.get("outcome")
             nxt = delivery.get("next") or {}
-            if outcome == session_turn_service.DELIVERY_OUTCOME_CONTINUE:
-                next_actor_id = nxt.get("actor_player_id")
-            elif outcome == session_turn_service.DELIVERY_OUTCOME_RESOLVED:
-                if nxt.get("controller") == session_turn_service.CONTROLLER_AI:
-                    return self._delivery_fail(
-                        txn_id,
-                        session_turn_service.delivery_error(
-                            "DELIVERY_INVALID", stage="terminal",
-                            detail="an AI owner is not an ACTIVE seat"),
-                        done)
-                next_actor_id = nxt.get("actor_player_id") or next_actor_id
+            if outcome == session_turn_service.DELIVERY_OUTCOME_RESOLVED \
+                    and nxt.get("controller") == session_turn_service.CONTROLLER_AI:
+                return self._delivery_fail(
+                    txn_id,
+                    session_turn_service.delivery_error(
+                        "DELIVERY_INVALID", stage="terminal",
+                        detail="an AI owner is not an ACTIVE seat"),
+                    done)
+            next_actor_id = nxt.get("actor_player_id")
+        else:
+            self._last_delivery = None
         if not next_actor_id:
             from src.api import session_turn_service
             return self._delivery_fail(
@@ -3969,7 +4015,12 @@ class GuiSessionStore(QObject):
         if not faction:
             # Invalid/stale/missing target -> fail closed (never guess a receiver).
             self._fail_masked(FAIL_AFTER_COMMIT, txn_id)
-            result = self._handoff_failure_feedback()
+            from src.api import session_turn_service
+            result = self._handoff_failure_feedback(
+                delivery_error=session_turn_service.delivery_error(
+                    session_turn_service.DELIVERY_MISMATCH,
+                    stage="target_faction", committed=True,
+                    detail="the delivered target has no real faction"))
             if done is not None:
                 done(result)
             return result
@@ -3978,6 +4029,9 @@ class GuiSessionStore(QObject):
         self._pending_token = uuid.uuid4().hex
         self._seat_lifecycle = SEAT_MASKED_PENDING
         self._handoff_busy = False
+        if self._seat_txn is not None:
+            # The transaction's OWN recorded target (bounded retry checkpoint).
+            self._seat_txn["target_id"] = next_actor_id
         if not self._provider_call("show_pending", txn_id, faction):
             # Missing pending witness -> fail closed (SB-V05).
             self._fail_masked(FAIL_AFTER_COMMIT, txn_id)
@@ -3997,7 +4051,8 @@ class GuiSessionStore(QObject):
 
     def _activate_seat(self, txn_id: str, target_id: str,
                        same_seat: bool = False,
-                       done: Optional[Any] = None) -> Dict[str, Any]:
+                       done: Optional[Any] = None,
+                       commit_proven: Optional[bool] = True) -> Dict[str, Any]:
         """R2 steps 6-8 (F4 async): stage the target's DTOs privately, await the
         PUBLICATION-UNDER-MASK real frame, commit the authority, await the
         FINAL-REVEAL real frame, and ONLY THEN run the visibility commit (publish
@@ -4009,40 +4064,78 @@ class GuiSessionStore(QObject):
         miss fails closed (no fresh handle) (SB-V04).
         """
         self._activation_result = None
-        if self._seat_txn is None:
-            result = self._feedback(False, "无可激活的交接事务", "error")
+
+        def _fail_activation(stage: str = "settlement_exception",
+                             code: str = "SEAT_PUBLICATION_FAILED"
+                             ) -> Dict[str, Any]:
+            """ONE joint classifier shared by EVERY exit of this activation.
+
+            A-W3-13 / AC-W3-19 (§9.1) / W3-C1-B: the commit context is the
+            TRI-STATE ``commit_proven``, evaluated IDENTICALLY at the early exits
+            (``activation_txn`` / ``core`` / ``staging`` / ``freshness``) and at
+            the late ones (``publish_frame`` / ``unmask_frame`` / ``apply`` /
+            ``settlement_exception``). A PROVEN non-commit -- and equally an
+            UNPROVEN dispatch -- is NEVER reported as ``after_commit`` and never
+            seals a recovery mandate; ``commit_proven is None`` keeps the
+            ``committed`` key OMITTED (never a fabricated boolean, and never the
+            ``committed=True`` default leaking into a pre-commit refusal).
+            """
+            kind = (FAIL_BEFORE_COMMIT
+                    if commit_proven is None or not commit_proven
+                    else FAIL_AFTER_COMMIT)
+            self._fail_masked(kind, txn_id)
+            result = self._handoff_failure_feedback(
+                delivery_error=self._typed_delivery_error(
+                    code, stage, committed=commit_proven))
             self._finish_activation(done, result)
             return result
+
+        if self._seat_txn is None:
+            # The transaction record is GONE, so this activation can never prove a
+            # commit: the guard carries the CALLER's exact context and fails
+            # closed (it must never fall back to the ``committed=True`` default).
+            return _fail_activation("activation_txn")
         self._seat_lifecycle = SEAT_ACTIVATE
         self._handoff_busy = True
+        if self._seat_txn is not None:
+            # The transaction's OWN recorded target (a bounded retry re-validates
+            # this, never the Core cursor).
+            self._seat_txn["target_id"] = target_id
         self._emit_seat()
         # Recheck the Core target before the stage commit (R3b F5: the SAME-seat
-        # recovery path also validates the current target).
+        # recovery path also validates the current target). This is a NEGATIVE
+        # read-back of the delivered target, never a new target source (§9 core).
         current = self._state.get_current_player()
         current_id = getattr(current, "player_id", None)
         if current_id != target_id:
-            self._fail_masked(FAIL_AFTER_COMMIT, txn_id)
-            result = self._handoff_failure_feedback()
-            self._finish_activation(done, result)
-            return result
+            return _fail_activation("core", code="DELIVERY_MISMATCH")
         new_epoch = self._seat_epoch + 1
         # 1. PRIVATE staging under the internal neutral activation capability; no
         #    public getter is exposed and a denied/empty read fails closed.
         staged = self._stage_activation(target_id, new_epoch)
         if staged is None:
-            self._fail_masked(FAIL_AFTER_COMMIT, txn_id)
-            result = self._handoff_failure_feedback()
-            self._finish_activation(done, result)
-            return result
-
-        def _fail_activation(kind: str = FAIL_AFTER_COMMIT) -> None:
-            self._fail_masked(kind, txn_id)
-            self._finish_activation(done, self._handoff_failure_feedback())
+            return _fail_activation("staging")
+        # F4 / D-W3-D07 / A-W3-05: the ONE full private rebuild above is the only
+        # path that can clear a stale REQUIRED projection. Freshness is now
+        # evaluated AFTER the rebuild and ONLY for this activation/publication
+        # (a cross-seat MASKED_PENDING publishes nothing and is never blocked).
+        for rid in self._required_resource_ids():
+            if rid in (staged.get("resources") or {}):
+                self._stale_resources.pop(rid, None)
+        still_stale = self._stale_write_dependencies()
+        if still_stale:
+            # W3-C1-B: the staleness DECISION above is untouched (AC11 owns that
+            # surface); only the FAILURE CLASSIFICATION is routed through the
+            # joint classifier, so a FALSE recovery branch is never
+            # ``after_commit`` and seals nothing.
+            logger.warning("activation refused: projection still stale (%s)",
+                           still_stale)
+            return _fail_activation("freshness", code="STALE_REQUIRED_RESOURCE")
 
         def after_unmask(ok):
             if not ok:
                 self._reveal_pending = False
-                _fail_activation(FAIL_AFTER_COMMIT)
+                _fail_activation("unmask_frame")
                 return
             # ---- visibility commit (only after the final-reveal real frame) ---
             # W2b (FC-712-17): whole-package validation + atomic publication. A
@@ -4050,7 +4143,7 @@ class GuiSessionStore(QObject):
             # tag / foreign txn) publishes NOTHING and keeps the seat masked.
             if not self._apply_staged(staged, target_id=target_id):
                 self._reveal_pending = False
-                _fail_activation(FAIL_AFTER_COMMIT)
+                _fail_activation("apply")
                 return
             self._viewer_id = target_id
             self._reveal_pending = False
@@ -4063,6 +4156,8 @@ class GuiSessionStore(QObject):
             self._pending_faction_name = ""
             self._pending_token = ""
             self._seat_txn = None
+            self._last_delivery = None
+            self._delivery_required_command = ""
             session_access.clear_command_lease(self._state)
             self._emit_seat()
             self.handoffFinished.emit(txn_id, True)
@@ -4074,7 +4169,7 @@ class GuiSessionStore(QObject):
 
         def after_publish(ok):
             if not ok:
-                _fail_activation(FAIL_AFTER_COMMIT)
+                _fail_activation("publish_frame")
                 return
             # AUTHORITY COMMIT strictly AFTER the under-mask publication frame and
             # strictly BEFORE any public pixel/handle: record ACTIVE(B) WITHOUT a
@@ -4088,7 +4183,7 @@ class GuiSessionStore(QObject):
                 return                  # suspended: awaits the final real frame
             if not self._provider_call("request_unmask", txn_id):
                 self._reveal_pending = False
-                _fail_activation(FAIL_AFTER_COMMIT)
+                _fail_activation("unmask_frame")
                 return
             after_unmask(True)
 
@@ -4197,12 +4292,54 @@ class GuiSessionStore(QObject):
         through the SAME fresh-EPOCH activation protocol (DG-03 §3.3A / D) — never
         a re-stage at the old epoch. Rebuild the private bundle, commit the same
         principal at a NEW epoch, publish under the mask, request the unmask
-        witness, then issue the fresh handle. A failed unmask stays fail-closed."""
+        witness, then issue the fresh handle. A failed unmask stays fail-closed
+        and is a PRE-COMMIT failure (never ``after_commit``).
+
+        AC-W3-19 (§9.1) / W3-C1-C: when that recovery fails, the caller gets the
+        ORIGINAL refusal with its FOUR public fields byte-faithful (``success`` /
+        ``message`` / ``errors`` / ``data`` — value, key presence and type) and the
+        typed ``{code, stage, committed:false}`` record on the PRIVATE carrier
+        (``_w3_recovery_diagnostic`` / the private ``_activation_result``), never
+        injected into the rejected object.
+        """
         def _after(_activation_result):
+            if isinstance(_activation_result, dict) \
+                    and _activation_result.get("success"):
+                self._w3_recovery_diagnostic = None
+                self._raise_feedback(feedback)
+                if done is not None:
+                    done(feedback)
+                return
+            # The refusal did not commit (commit_proven=False); its same-seat
+            # recovery did not complete either.
+            # W3-C1-C (AC-W3-19 §9.1): the ORIGINAL refusal is returned with its
+            # FOUR public fields byte-faithful (``success`` / ``message`` /
+            # ``errors`` / ``data`` — value, key presence AND type). The recovery
+            # diagnostic is NEVER written into the rejected object: no
+            # ``data["delivery_error"]`` injection, no ``None -> {}`` rewrite and no
+            # overwrite of a producer's own record. It lives ONLY on the private
+            # carrier below (and on the existing private ``_activation_result``).
+            typed = None
+            if isinstance(_activation_result, dict):
+                activation_data = _activation_result.get("data")
+                if isinstance(activation_data, dict):
+                    typed = activation_data.get("delivery_error")
+            if not isinstance(typed, dict):
+                typed = self._typed_delivery_error(
+                    "SEAT_PUBLICATION_FAILED", "business_rejection",
+                    committed=False)
+            self._w3_recovery_diagnostic = {
+                "code": str(typed.get("code") or ""),
+                "stage": str(typed.get("stage") or ""),
+                "committed": typed.get("committed"),
+                "txn_id": txn_id,
+                "delivery_error": dict(typed),
+            }
             self._raise_feedback(feedback)
             if done is not None:
                 done(feedback)
-        self._activate_seat(txn_id, self._viewer_id, same_seat=True, done=_after)
+        self._activate_seat(txn_id, self._viewer_id, same_seat=True, done=_after,
+                            commit_proven=False)
         return feedback
 
     def _senate_settlement_pending(self) -> bool:
@@ -4259,21 +4396,15 @@ class GuiSessionStore(QObject):
 
         The senate itself is settled INSIDE the same masked transaction, by the
         in-scope convergence (``_converge_senate_settlement``, S3/S4) run by the
-        owning dispatch; this helper must never settle the seat alone. It then
-        consumes ONLY the frozen terminal envelope (the command's built-in
-        continuation output, passed through by ``senate_api``):
+        owning dispatch; this helper must never settle the seat alone. It consumes
+        ONLY the typed ``delivery`` envelope the owning command returned (the
+        command's built-in continuation output, passed through by ``senate_api``):
 
-        * ``status == 'resolved'`` + ``controller == 'HUMAN'`` -> settle to the
-          terminal G (``awaiting_player_id``/``actor``) — a different H hands off
-          (explicit takeover), the same H recovers at a new epoch (no artificial
-          takeover);
-        * ``status == 'resolved'`` + ``controller == 'AI'`` -> masked failure: the
-          frozen design §3.3-2 / §4.3.4 forbids the ``None -> same-seat`` fallback
-          for G=AI and there is no supported AI ACTIVE takeover yet (never a
-          forged H target / never an AI occupying the interactive seat);
-        * no terminal (legacy / awaiting business feedback) -> the ordinary
-          next-actor settle (``awaiting_player_id`` or the same-seat fallback),
-          identical to the population path.
+        * no envelope -> typed ``DELIVERY_MISSING_RECEIVER / settle / true``;
+        * otherwise the envelope's own ``next``/``terminal`` decides the seat (the
+          validator rejects a forged/stale/AI-seat terminal). The legacy
+          ``awaiting_player_id`` / ``actor`` / ``status`` / ``controller`` fields
+          are NEVER a receiver source (L3/L6 retired).
 
         It never recomputes G, never reads a DTO backwards, and never uses
         ``cursor_restored`` as an activation credential.
@@ -4283,24 +4414,21 @@ class GuiSessionStore(QObject):
             data = {}
         delivery = data.get("delivery") if isinstance(data.get("delivery"), dict) \
             else None
-        if data.get("status") == "resolved":
-            if data.get("controller") == "AI":
-                self._fail_masked(FAIL_AFTER_COMMIT, txn_id)
-                result = self._handoff_failure_feedback()
-                if done is not None:
-                    done(result)
-                return result
-            next_actor = (delivery or {}).get("next") or {}
-            next_actor = next_actor.get("actor_player_id") \
-                or data.get("awaiting_player_id") or data.get("actor")
-            return self._settle_seat_after_success(
-                txn_id, next_actor_id=next_actor, done=done, delivery=delivery,
-                legacy=data)
-        next_actor = data.get("awaiting_player_id")
-        if delivery is not None and delivery.get("outcome") == "CONTINUE":
-            next_actor = (delivery.get("next") or {}).get("actor_player_id")
+        if delivery is None:
+            # W-05 / L3+L6: the legacy ``awaiting_player_id`` / ``actor`` /
+            # ``status`` / ``controller`` fallbacks are GONE. A committed owning
+            # command without its envelope is a typed missing-receiver failure
+            # (AC-W3-10), never a same-seat guess.
+            from src.api import session_turn_service
+            return self._delivery_fail(
+                txn_id,
+                session_turn_service.delivery_error(
+                    session_turn_service.DELIVERY_MISSING_RECEIVER,
+                    stage="settle", committed=True,
+                    detail="a successful senate command must deliver its receiver"),
+                done)
         return self._settle_seat_after_success(
-            txn_id, next_actor_id=next_actor, done=done, delivery=delivery,
+            txn_id, next_actor_id=None, done=done, delivery=delivery,
             legacy=data)
 
     def _masked_senate_owning_flow(self, command_id: str, lease_command: str,
@@ -4349,13 +4477,6 @@ class GuiSessionStore(QObject):
                 done(fail_result)
                 return
             try:
-                # I1a: bind the TRUSTED senate phase entry BEFORE the owner
-                # command runs, so the continuation derives its scope/obligation
-                # identities from the same committed generation the delivery
-                # validator will accept (no-op once a route already exists).
-                from src.api import session_turn_service
-                session_turn_service.bind_phase_for_delivery(self._state, "senate")
-
                 def _owning_dispatch():
                     dispatched = dispatch()
                     if (converge is not None
@@ -4396,7 +4517,10 @@ class GuiSessionStore(QObject):
                                 False, self._senate_ai_proposer_blocked_reason, "error"))
                             self.senateViewChanged.emit()
                         if done is not None:
-                            done(feedback)
+                            # AC-W3-19 (§9.1): on a FAILED same-seat recovery the
+                            # result is the original refusal + the typed record;
+                            # never re-send only the bare refusal.
+                            done(_result if isinstance(_result, dict) else feedback)
 
                     self._masked_business_rejection(txn_id, feedback,
                                                     done=_after_rejection)
@@ -4411,8 +4535,16 @@ class GuiSessionStore(QObject):
                 self._settle_after_senate_command(txn_id, feedback, done=done)
             except Exception:
                 logger.exception("masked senate owning flow failed")
-                self._fail_masked(FAIL_AFTER_COMMIT, txn_id)
-                done(self._handoff_failure_feedback())
+                # AC-W3-19 / G3-delta §9.1: an unexpected DISPATCH exception cannot
+                # prove whether the command committed. The commit state is
+                # UNPROVEN: keep the neutral mask on the GENERIC (never
+                # after_commit) route — no recovery mandate is sealed, nothing is
+                # replayed — and carry the typed diagnostic with the ``committed``
+                # key OMITTED (never a fabricated true/false).
+                self._fail_masked(FAIL_BEFORE_COMMIT, txn_id)
+                done(self._handoff_failure_feedback(
+                    delivery_error=self._typed_delivery_error(
+                        "COMMIT_STATUS_UNPROVEN", "dispatch", committed=None)))
 
         txn = self._begin_masked_seat_transition(
             command_id, lease_command=lease_command, payload={}, cont=cont)
@@ -4422,13 +4554,20 @@ class GuiSessionStore(QObject):
             return holder["r"]
         return self._masked_pending_feedback(txn["txn_id"])
 
-    def _handoff_failure_feedback(self) -> Dict[str, Any]:
+    def _handoff_failure_feedback(self,
+                                  delivery_error: Optional[Dict[str, Any]] = None
+                                  ) -> Dict[str, Any]:
         kind = self._handoff_failure_kind or FAIL_AFTER_COMMIT
         if kind == FAIL_AFTER_COMMIT:
             msg = "操作已记录，界面尚未准备好。请重试进入回合。"
         else:
             msg = "暂未进入回合，请重试。"
-        return self._feedback(False, msg, "error")
+        feedback = self._feedback(False, msg, "error")
+        if delivery_error:
+            # W-11 / §9.2: an ADDITIVE typed diagnostic on the Store-private
+            # feedback (the original message/errors/failureKind stay byte-equal).
+            feedback["data"] = {"delivery_error": delivery_error}
+        return feedback
 
     @Slot(str, result=dict)
     def confirmHandoffAsync(self, pending_token: str) -> dict:
@@ -4455,13 +4594,52 @@ class GuiSessionStore(QObject):
 
     @Slot(result=dict)
     def retryHandoff(self) -> dict:
-        """Bounded recovery from MASKED_FAILURE: recompute the ACTUAL Core target
-        and re-arm with a fresh R2 reservation/token. Never replays A's action or
-        the already-consumed AI turns."""
+        """Bounded recovery from MASKED_FAILURE: re-validate the EXACT envelope
+        this transaction recorded and re-arm with a fresh R2 reservation/token.
+        Never reads the Core cursor as a target, never replays A's action or the
+        already-consumed AI turns (W-04 / A-W3-03 / D-W3-D08)."""
         if self._seat_lifecycle != SEAT_MASKED_FAILURE:
             return {"accepted": False, "txn_id": "", "reason": "not_failed"}
-        current = self._state.get_current_player()
-        target = getattr(current, "player_id", None)
+        from src.api import session_turn_service
+        recorded = self._last_delivery if isinstance(self._last_delivery, dict) else None
+        if not recorded and not self._delivery_required_command:
+            # Out-of-scope legacy transaction (startup / population / forum): its
+            # own recorded target is the bounded retry checkpoint (never Core).
+            recorded_target = str((self._seat_txn or {}).get("target_id") or "")
+            if not recorded_target:
+                return {
+                    "accepted": False, "txn_id": "", "reason": "no_delivery",
+                    "delivery_error": session_turn_service.delivery_error(
+                        session_turn_service.DELIVERY_MISSING_RECEIVER,
+                        stage="retry", committed=True,
+                        detail="no recorded envelope or transaction target"),
+                }
+            recorded = {"delivery": {"next": {"actor_player_id": recorded_target}}}
+        if not recorded:
+            # AC-W3-08: no recorded envelope -> typed STOP, zero activation.
+            return {
+                "accepted": False, "txn_id": "", "reason": "no_delivery",
+                "delivery_error": session_turn_service.delivery_error(
+                    session_turn_service.DELIVERY_MISSING_RECEIVER,
+                    stage="retry", committed=True,
+                    detail="no recorded delivery envelope to re-validate"),
+            }
+        delivery = recorded.get("delivery") or {}
+        if self._delivery_required_command:
+            verdict = session_turn_service.validate_delivery_result(
+                self._state, delivery, viewer_id=self._viewer_id, legacy=None)
+            if not verdict.get("ok"):
+                return {"accepted": False, "txn_id": "", "reason": "delivery_invalid",
+                        "delivery_error": verdict.get("error") or {}}
+        target = (delivery.get("next") or {}).get("actor_player_id")
+        if not target:
+            return {
+                "accepted": False, "txn_id": "", "reason": "no_receiver",
+                "delivery_error": session_turn_service.delivery_error(
+                    session_turn_service.DELIVERY_MISSING_RECEIVER,
+                    stage="retry", committed=True,
+                    detail="the recorded envelope has no receiver"),
+            }
         holder = {"r": None}
 
         def cont(txn, ok, fail_result):
@@ -4685,10 +4863,7 @@ class GuiSessionStore(QObject):
                         return
                     self._settle_seat_after_success(
                         txn_id, next_actor_id=None, done=done,
-                        delivery=((feedback.get("data") or {}).get("delivery")
-                                  or self._receiver_delivery(
-                                      "population",
-                                      outcome="RESOLVED")))
+                        delivery=(feedback.get("data") or {}).get("delivery"))
                     return
                 feedback = self._dispatch_owning(
                     txn, lease_command, self._adapter.next_player, self._viewer_id)

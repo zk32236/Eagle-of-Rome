@@ -809,14 +809,31 @@ def _obligation_denial(state: Any, phase: str,
     if snapshot is None or snapshot.errors:
         return delivery_error(DELIVERY_MISMATCH, stage="obligation",
                               detail="the obligation cannot be verified")
-    expected = None
-    for obligation in snapshot.outstanding():
-        if obligation.actor_player_id == actor:
-            expected = obligation.obligation_id
-            break
-    if expected is None:
-        return delivery_error(DELIVERY_MISMATCH, stage="obligation",
-                              detail="no such outstanding obligation for the actor")
+    outstanding = snapshot.outstanding()
+    if outcome == DELIVERY_OUTCOME_CONTINUE:
+        # A-W3-11 / F-01: a CONTINUE delivery MUST name the GLOBAL queue-head
+        # obligation. Accepting "any unsatisfied obligation of this actor" would
+        # let a delivery skip an earlier faction (the D9 "never got a turn"
+        # defect). RESOLVED / non-CONTINUE keeps its exact result-owner meaning.
+        if not outstanding:
+            return delivery_error(DELIVERY_MISMATCH, stage="obligation",
+                                  detail="a CONTINUE delivery requires an "
+                                         "outstanding obligation")
+        head = outstanding[0]
+        if head.actor_player_id != actor:
+            return delivery_error(DELIVERY_MISMATCH, stage="obligation",
+                                  detail="the receiver is not the queue-head "
+                                         "obligation")
+        expected = head.obligation_id
+    else:
+        expected = None
+        for obligation in outstanding:
+            if obligation.actor_player_id == actor:
+                expected = obligation.obligation_id
+                break
+        if expected is None:
+            return delivery_error(DELIVERY_MISMATCH, stage="obligation",
+                                  detail="no such outstanding obligation for the actor")
     if _norm_obligation_id(presented) != _norm_obligation_id(expected):
         return delivery_error(DELIVERY_MISMATCH, stage="obligation",
                               detail="obligation id is foreign or stale")

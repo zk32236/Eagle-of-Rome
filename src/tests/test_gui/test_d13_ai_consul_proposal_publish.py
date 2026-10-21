@@ -1000,7 +1000,8 @@ def test_d13_t12b_real_validation_rejection_then_real_publish():
         state, viewer="player1",
         senate_view={"phase_id": "senate", "current_phase_id": "senate",
                      "viewer_player_id": "player1", "current_step": "proposal",
-                     "viewer_has_consul": True, "is_current_player": True})
+                     "viewer_has_consul": True, "is_current_player": True,
+                     "can_create_proposal": True})
     from src.core.systems.political_system import PoliticalSystem
     assert PoliticalSystem(state).resolve_proposal_control("player1")["mode"] == "HUMAN"
 

@@ -24,6 +24,29 @@ from src.core.entities.player import PlayerType
 logger = logging.getLogger("EOR-GUI")
 
 
+#: W3 / PL-03: typed registration read failure. The hot-seat registration fact is
+#: the EXISTING independent record (``session_access._record``); an exception or a
+#: non-boolean answer is UNKNOWN -> fail closed with this code, never a silent CLI
+#: downgrade and never a fabricated ``True``.
+REGISTRATION_UNAVAILABLE = "REGISTRATION_UNAVAILABLE"
+
+
+def _registration_state(state: GameState) -> Optional[bool]:
+    """Read the existing registration fact as ``True``/``False``; ``None`` = UNKNOWN."""
+    try:
+        registered = session_access.is_hotseat_registered(state)
+    except Exception:  # pragma: no cover - defensive
+        return None
+    return registered if isinstance(registered, bool) else None
+
+
+def _registration_unavailable_response() -> dict:
+    return api_response(False, "Hot-seat registration state unavailable", {
+        "retryable": True,
+    }, [{"code": REGISTRATION_UNAVAILABLE, "stage": "registration",
+        "message": "the hot-seat registration fact could not be read"}])
+
+
 # ---------------------------------------------------------------------------
 # 1. 会话创建
 # ---------------------------------------------------------------------------
@@ -1096,15 +1119,45 @@ def resolve_population_slice(state: GameState, *,
         caller_context=caller_context)
     if not decision.allowed:
         return decision.denial()
+    # W3 / PL-03: registration fact resolved before any business write.
+    registered = _registration_state(state)
+    if registered is None:
+        return _registration_unavailable_response()
+    principal = (getattr(caller_context, "principal_player_id", None)
+                 if caller_context is not None else None)
+
+    def _resolved_delivery() -> Optional[dict]:
+        """W3-ISSUER-03: viewer-bound RESOLVED envelope (SAME_HUMAN)."""
+        if not principal:
+            return None
+        return turn_service.delivery_for_actor(
+            state, "population", principal, outcome=turn_service.DELIVERY_OUTCOME_RESOLVED,
+            viewer_id=principal,
+            command_receipt_ref=turn_service.delivery_command_ref(
+                state, "population", "resolve_population_slice", actor=principal))
+
+    if registered and not principal:
+        # §2.3-5: no presenting principal -> typed failure, never a forged SAME_HUMAN.
+        return api_response(False, "Population resolution requires a presenting principal", {
+            "retryable": False,
+        }, [{"code": turn_service.DELIVERY_MISSING_RECEIVER, "stage": "receiver",
+            "message": "resolution needs its presenting principal"}])
     # S-C (R1 §4.1 / delta §3.3#1): phase_ready is checked at the election-mutation
     # boundary (after the AI drain and the human-completion guard below) — a public
     # resolver denial MUST precede its business mutation.
     if state.get_phase_result("population") is not None:
         existing = state.get_phase_result("population")
-        return api_response(True, "Population phase already resolved", {
+        idempotent = {
             "phase_executed": state.is_phase_executed("population"),
             "election_results": existing.get("election_results", []) if existing else [],
-        })
+        }
+        if registered:
+            # An already-resolved slice still delivers the SAME viewer-bound
+            # confirmation (idempotent repeat, never a second business effect).
+            delivery = _resolved_delivery()
+            if delivery is not None:
+                idempotent["delivery"] = delivery
+        return api_response(True, "Population phase already resolved", idempotent)
     # S-C F5 / R-2 / R-4: the readiness gate MUST precede every denied operation's
     # BUSINESS work. A REGISTERED Hot-seat session is checked BEFORE any
     # begin_population_phase / AI drain / disbandment mutation, so a denied
@@ -1220,6 +1273,10 @@ def resolve_population_slice(state: GameState, *,
             "data": data,
         })
         logger.info("Population phase resolved", extra={"results": structured})
+        if registered:
+            delivery = _resolved_delivery()
+            if delivery is not None:
+                data["delivery"] = delivery
         return api_response(True, "Election resolved", data)
     except Exception as e:
         logger.exception("Population resolution failed")
@@ -1243,6 +1300,12 @@ def advance_population_phase(state: GameState, viewer_player_id: str, *,
     viewer = state.get_player(viewer_player_id)
     if not viewer:
         return api_response(False, "Viewer player not found")
+
+    # W3 / PL-03: resolve the registration fact BEFORE any business write. An
+    # UNKNOWN (raised / non-bool) read is a typed fail-closed refusal.
+    registered = _registration_state(state)
+    if registered is None:
+        return _registration_unavailable_response()
 
     # S-B Group 1 (SB-V01): public mutation boundary guard (direct-call coverage).
     decision = session_access.authorize_public(
@@ -1277,12 +1340,57 @@ def advance_population_phase(state: GameState, viewer_player_id: str, *,
     entry_receipt = turn_service.issue_committed_phase_entry_receipt(
         state, command_id="advance_population_phase", phase="senate",
         payload_digest=str(viewer_player_id))
-    return api_response(True, "Population phase advanced", {
+    data = {
         "phase_executed": True,
         "next_phase_id": "senate",
         "result": result,
         "entry_receipt": entry_receipt,
-    })
+    }
+    if not registered:
+        # D-W3-D16 / AC-W3-21: a never-registered CLI/legacy state keeps the
+        # historical response byte-for-byte (no new keys, no continuation).
+        return api_response(True, "Population phase advanced", data)
+
+    # W3-ISSUER-01 / §4.2: consume the committed entry EXACTLY ONCE (new senate
+    # scope) BEFORE the single continuation. Order is not exchangeable.
+    entered = turn_service.enter_phase(state, entry_receipt)
+    if not entered.get("success"):
+        reason = str(entered.get("reason") or "ENTRY_FAILED")
+        error = turn_service.delivery_error(
+            "COMMITTED_ENTRY_FAILED", stage="phase_entry", committed=True,
+            retry_class=turn_service.DELIVERY_RETRY_NONE, detail=reason)
+        failure_data = dict(data)
+        failure_data["delivery_error"] = error
+        return api_response(False, "Senate phase entry failed", failure_data, [{
+            "code": "COMMITTED_ENTRY_FAILED", "stage": "phase_entry",
+            "message": reason,
+        }])
+    from src.api import senate_api
+    cont = turn_service.continue_after_command(
+        state, ai_executor=senate_api._senate_ai_executor)
+    if cont.masked_failure:
+        error = turn_service.delivery_error(
+            "COMMITTED_CONTINUATION_FAILED", stage="continuation", committed=True,
+            retry_class=turn_service.DELIVERY_RETRY_NONE,
+            detail=str(cont.reason or "CONTINUATION_FAILED"))
+        failure_data = dict(data)
+        failure_data["delivery_error"] = error
+        failure_data["retryable"] = True
+        return api_response(False, "Senate continuation failed", failure_data, [{
+            "code": "COMMITTED_CONTINUATION_FAILED", "stage": "continuation",
+            "message": str(cont.reason or "CONTINUATION_FAILED"),
+        }])
+    delivery = turn_service.delivery_from_continuation(
+        state, "senate", cont, viewer_id=viewer_player_id,
+        command_receipt_ref=turn_service.delivery_command_ref(
+            state, "senate", "advance_population_phase", actor=viewer_player_id))
+    data["delivery"] = delivery
+    if delivery.get("next"):
+        nxt = delivery["next"]
+        data["awaiting_player_id"] = (
+            nxt.get("actor_player_id")
+            if nxt.get("controller") == turn_service.CONTROLLER_HUMAN else None)
+    return api_response(True, "Population phase advanced", data)
 
 
 # ---------------------------------------------------------------------------

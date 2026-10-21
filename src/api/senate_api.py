@@ -39,6 +39,26 @@ def _political_system(state: GameState) -> PoliticalSystem:
     return PoliticalSystem(state)
 
 
+#: W3 / PL-03: typed registration read failure (same semantics as session_api).
+REGISTRATION_UNAVAILABLE = "REGISTRATION_UNAVAILABLE"
+
+
+def _registration_state(state: GameState) -> Optional[bool]:
+    """Read the EXISTING registration fact; ``None`` = UNKNOWN (fail closed)."""
+    try:
+        registered = session_access.is_hotseat_registered(state)
+    except Exception:  # pragma: no cover - defensive
+        return None
+    return registered if isinstance(registered, bool) else None
+
+
+def _registration_unavailable_response() -> dict:
+    return api_response(False, "Hot-seat registration state unavailable", {
+        "retryable": True,
+    }, [{"code": REGISTRATION_UNAVAILABLE, "stage": "registration",
+        "message": "the hot-seat registration fact could not be read"}])
+
+
 def get_senate_initial_info(state: GameState) -> dict:
     """返回元老院阶段初始展示所需的所有信息。"""
     if not state:
@@ -641,7 +661,15 @@ def _attach_senate_delivery(state: GameState, response: dict, player_id: str,
     """
     if not isinstance(response, dict) or not response.get("success") or not run:
         return response
-    if not session_access.is_hotseat_registered(state):
+    registered = _registration_state(state)
+    if registered is None:
+        # The owning command already committed; an UNKNOWN registration fact must
+        # not silently downgrade to the CLI response. Typed failure (fail closed).
+        return api_response(False, "Hot-seat registration state unavailable", {
+            "retryable": True, "status": "masked_failure", "resolved": False,
+        }, [{"code": REGISTRATION_UNAVAILABLE, "stage": "registration",
+            "message": "the hot-seat registration fact could not be read"}])
+    if not registered:
         return response
     from src.api import session_turn_service as _turn
     cont = _turn.continue_after_command(state, ai_executor=_senate_ai_executor)
@@ -1176,6 +1204,10 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
     """返回 GUI 元老院只读视图，不执行提案、投票或结算业务。"""
     if not state:
         return api_response(False, "无效的游戏状态")
+    # W3 / PL-03: an UNKNOWN registration read is a typed fail-closed refusal
+    # BEFORE any projection is built (GUARD + typed extension, AC-W3-17).
+    if _registration_state(state) is None:
+        return _registration_unavailable_response()
     # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     try:
         viewer = state.get_player(viewer_player_id)
@@ -1651,6 +1683,22 @@ def propose_many(state: GameState, player_id: str, proposals: List[Dict[str, Any
         return api_response(False, "无效的游戏状态")
 
     # S-B-R3a (DG-01): guard applied by the @guarded decorator.
+    # W-12 (GA-02) / A-W3-07 / INV-W3-05: the MID-SESSION phase binding is signed
+    # HERE — at the owning API entry, after the guard and BEFORE any business
+    # write — never by the Store. The facility's own guard is the ONE acceptance
+    # predicate (``book.entries``): a book that already carries a phase entry (the
+    # advance path) is left untouched. A pre-existing SCOPE object is NOT a
+    # journal entry — read/obligation projections mint it legitimately before the
+    # owning write, and the entry is exactly what this binding has to issue.
+    from src.api import session_turn_service as _turn_bind
+    try:
+        _registered_bind = session_access.is_hotseat_registered(state)
+    except Exception:  # pragma: no cover - defensive
+        _registered_bind = None
+    if _registered_bind is True:
+        if not _turn_bind._book(state).entries:
+            _turn_bind.bind_phase_for_delivery(state, "senate")
+
     if isinstance(proposals, dict):
         request = dict(proposals)
     else:
@@ -2371,6 +2419,15 @@ def vote(state: GameState, player_id: str, proposal_ids: List[int], votes: List[
     if not state:
         return api_response(False, "无效的游戏状态")
     # S-B-R3a (DG-01): guard applied by the @guarded decorator.
+    # W-12 (GA-02) / A-W3-07 / INV-W3-05: owning-entry phase binding (never the Store).
+    from src.api import session_turn_service as _turn_bind
+    try:
+        _registered_bind = session_access.is_hotseat_registered(state)
+    except Exception:  # pragma: no cover - defensive
+        _registered_bind = None
+    if _registered_bind is True:
+        if not _turn_bind._book(state).entries:
+            _turn_bind.bind_phase_for_delivery(state, "senate")
     result = _political_system(state).record_vote(player_id, proposal_ids, votes)
     response = api_response(
         success=result.get("success", False),
@@ -2403,6 +2460,15 @@ def veto(state: GameState, player_id: str, proposal_ids: List[int]) -> dict:
         }, [{"code": "VETO_PAYLOAD_INVALID",
             "message": "veto decision payload must be an explicit list of ids"}])
     ids = list(proposal_ids)
+    # W-12 (GA-02) / A-W3-07 / INV-W3-05: owning-entry phase binding (never the Store).
+    from src.api import session_turn_service as _turn_bind
+    try:
+        _registered_bind = session_access.is_hotseat_registered(state)
+    except Exception:  # pragma: no cover - defensive
+        _registered_bind = None
+    if _registered_bind is True:
+        if not _turn_bind._book(state).entries:
+            _turn_bind.bind_phase_for_delivery(state, "senate")
     if not ids:
         # Rework-D3D6 D3 (FC-RW-01/03/05): an EXPLICIT EMPTY veto is a LAWFUL owner
         # decision — never routed through the always-failing ``record_veto([])``.
@@ -2575,6 +2641,9 @@ def finalize_senate_if_ready(state: GameState,
     """
     if not state:
         return api_response(False, "无效的游戏状态")
+    # W3 / PL-03: UNKNOWN registration read -> typed refusal, zero business write.
+    if _registration_state(state) is None:
+        return _registration_unavailable_response()
     # S-B-R3a (DG-01): guard applied by the @guarded decorator.
     finalization_id = senate_finalization_id(state)
     senate_session_id = finalization_id[1]

@@ -496,7 +496,11 @@ def test_d7d12_s1_ai_terminal_owner_is_masked_failure_not_same_seat():
         ai_players=("p2",))
     session_turn_service.mint_scope(state, "senate")   # scope.actor = p2 (AI)
     state.set_current_player("p1")
-    store, witness = _active_store(state, "p1", {"viewer_has_consul": True})
+    # B1 / AC-W3-18 (TA-06): a bare capability flag is NOT a projection — the
+    # registered strict gate needs phase_id / viewer_player_id / current_step.
+    store, witness = _active_store(state, "p1", {
+        "phase_id": "senate", "viewer_player_id": "p1", "current_step": "proposal",
+        "viewer_has_consul": True, "can_create_proposal": True})
 
     feedback = store.doSubmitSenateProposals([])
 
@@ -877,7 +881,9 @@ def test_d7d12_s1_continuation_runs_exactly_once(monkeypatch):
     # 4) proposal package (explicit empty decision)
     state, _ = _senate_state(
         proposal=False, decision_complete=False, current="p1")
-    store, _ = _active_store(state, "p1", {"viewer_has_consul": True})
+    store, _ = _active_store(state, "p1", {
+        "phase_id": "senate", "viewer_player_id": "p1", "current_step": "proposal",
+        "viewer_has_consul": True, "can_create_proposal": True})
     calls.clear()
     prop_fb = store.doSubmitSenateProposals([])
     assert prop_fb.get("success") is True, prop_fb
@@ -1271,14 +1277,21 @@ def test_d7d12_i1r2_core_column():
     base = _base_delivery(state, actor="p1", viewer="p2")
     assert _validation(state, base, viewer="p2")["ok"] is True, base
 
-    # The REAL Core current player is p1; p3 holds a genuine outstanding
-    # obligation while the delivery claims p3 as the receiver -> Core mismatch.
+    # A-W3-11 (TA-03): a CONTINUE delivery that names a LATER genuine obligation
+    # is now rejected by column O (queue head) BEFORE column K runs. The old
+    # input therefore no longer isolates K; it is kept as the O-head witness.
     obligation_p3 = _live_obligation(state, "p3")
     assert obligation_p3 is not None
+    later = json.loads(json.dumps(base))
+    later["next"]["actor_player_id"] = "p3"
+    later["next"]["disposition"] = "NEXT_HUMAN"
+    later["next"]["obligation_id"] = list(obligation_p3.obligation_id)
+    _deny(_validation(state, later, viewer="p2"), "DELIVERY_MISMATCH", "obligation")
+
+    # Column K witness: the QUEUE HEAD (p1) and its exact OID stay untouched;
+    # only the ACTUAL Core current is moved away from the delivered actor.
+    state.set_current_player("p2")
     moved = json.loads(json.dumps(base))
-    moved["next"]["actor_player_id"] = "p3"
-    moved["next"]["disposition"] = "NEXT_HUMAN"
-    moved["next"]["obligation_id"] = list(obligation_p3.obligation_id)
     _deny(_validation(state, moved, viewer="p2"), "DELIVERY_MISMATCH", "core")
 
     finalized, _ = _senate_state(
@@ -1467,7 +1480,9 @@ def test_d7d12_i1r2_ai_awaiting_nonempty_always_rejects():
                              ai_players=("p2",))
     session_turn_service.mint_scope(state, "senate")
     state.set_current_player("p1")
-    store, witness = _active_store(state, "p1", {"viewer_has_consul": True})
+    store, witness = _active_store(state, "p1", {
+        "phase_id": "senate", "viewer_player_id": "p1", "current_step": "proposal",
+        "viewer_has_consul": True, "can_create_proposal": True})
     feedback = store.doSubmitSenateProposals([])
     committed = store._committed_receipt or {}
     delivery = _delivery(committed)

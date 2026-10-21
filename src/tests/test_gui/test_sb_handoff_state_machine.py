@@ -267,16 +267,28 @@ def test_business_rejection_releases_barrier_same_seat():
 
 def test_retry_same_seat_recovery():
     state, pids, store, recv, barrier = _setup()
-    store.doCompletePlayer()               # pending B
-    # Force the failure state and make the actual Core target the same seat again.
-    state.set_current_player(pids[0])
+    store.doCompletePlayer()               # pending B; the txn records target B
+    # W3 / W-04 / A-W3-03 (SUPERSEDED assertion, TA-02): retry re-validates the
+    # RECORDED target. The Core cursor is NEVER a target source (reading it is
+    # already a violation), so it is left untouched.
     store._fail_masked("after_commit")
     assert store.seatLifecycle == SEAT_MASKED_FAILURE
 
     res = store.retryHandoff()
     assert res["accepted"] is True
-    assert store.seatLifecycle == SEAT_ACTIVE
-    assert store.viewerPlayerId == pids[0]
+    # TA-02a (W3-R2): the recorded target (B) is NOT the viewer (A), so the bounded
+    # retry re-arms a REAL pending handoff — it is an activation ONLY for the
+    # recorded same seat. The same-seat positive control now lives in
+    # test_w3_delivery_authority.py::test_ac_w3_08_retry_uses_the_recorded_envelope_target
+    # (in-scope envelope) and in test_w2b_projection.py::
+    # test_activation_failure_can_be_retried_without_replaying_a_command (legacy
+    # checkpoint branch). This nodeid keeps its historical NAME only.
+    assert store.seatLifecycle == SEAT_MASKED_PENDING
+    assert store._pending_player_id == pids[1]
+    assert store._pending_token                      # a FRESH single-use reservation
+    assert store.viewerPlayerId == ""                # no pre-confirm publication
+    assert barrier.calls[-1][0] == "pending"
+    assert barrier.calls[-1][2] == _faction_name(state, pids[1])
 
 
 # ===========================================================================
