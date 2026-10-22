@@ -1294,6 +1294,55 @@ class SessionTurnBook:
         self.consumed_receipts.clear()
 
 
+# ---------------------------------------------------------------------------
+# D16 — the ONE annual ledger publication boundary (FC-D16-06/08/09)
+# ---------------------------------------------------------------------------
+class YearPrepareError(RuntimeError):
+    """Typed pre-commit preparation failure (never a Core/advance failure)."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+def prepare_new_year_book(state: Any, target_turn: int) -> Optional[SessionTurnBook]:
+    """Build the DETACHED candidate ledger for the next year (no side effect).
+
+    Consumed ONLY by the annual use-case (``game_api.advance_year``) inside the
+    existing re-entry guard and BEFORE the Core commit. It never writes the state,
+    never mints a scope, never writes a cursor / receipt / completion: it returns
+    a detached ``SessionTurnBook`` whose single pointer publication happens AFTER
+    the Core commit succeeded (failure atomicity, FC-06).
+
+    * no live book -> ``None`` (a never-registered CLI state is not given a ledger);
+    * live book out of sync with the Core turn -> ``TURN_BOOK_OUT_OF_SYNC``;
+    * any other preparation problem -> ``YEAR_LEDGER_PREPARE_FAILED``.
+
+    The candidate inherits ``session_ns`` + the monotonic ``revision_counter`` then
+    reuses the EXISTING ``reset_for_new_year`` on the CANDIDATE only.
+    """
+    book = getattr(state, _BOOK_ATTR, None)
+    if book is None:
+        return None
+    turn = getattr(state, "turn", None)
+    core_turn = getattr(turn, "turn_number", None)
+    if not isinstance(core_turn, int):
+        raise YearPrepareError("YEAR_LEDGER_PREPARE_FAILED")
+    if int(book.turn_number) != int(core_turn):
+        raise YearPrepareError("TURN_BOOK_OUT_OF_SYNC")
+    if int(target_turn) != int(core_turn) + 1:
+        raise YearPrepareError("YEAR_LEDGER_PREPARE_FAILED")
+    try:
+        candidate = SessionTurnBook(book.session_ns)
+        candidate.turn_number = int(core_turn)
+        candidate.revision_counter = int(book.revision_counter)
+        candidate.reset_for_new_year()  # candidate only; the live book is untouched
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.exception("failed to prepare the new-year candidate book")
+        raise YearPrepareError("YEAR_LEDGER_PREPARE_FAILED") from exc
+    return candidate
+
+
 def _session_ns(state: Any) -> str:
     return f"session-{id(state)}"
 
@@ -1302,6 +1351,13 @@ def _book(state: Any) -> SessionTurnBook:
     book = getattr(state, _BOOK_ATTR, None)
     if book is None:
         book = SessionTurnBook(_session_ns(state))
+        # D16 (FC-D16-06/10): a LATE attach (mid-year / new-year cold start) binds
+        # the CURRENT Core turn. Core ``state.turn.turn_number`` is the single
+        # authority; an existing book is never re-bound on a read path.
+        turn = getattr(state, "turn", None)
+        core_turn = getattr(turn, "turn_number", None)
+        if isinstance(core_turn, int) and core_turn > 0:
+            book.turn_number = core_turn
         try:
             setattr(state, _BOOK_ATTR, book)
         except Exception:  # pragma: no cover - defensive
@@ -1905,12 +1961,27 @@ def _senate_schedule(state: Any, scope_id: str) -> List[Obligation]:
         no_host = False
     prop_sat = (bool(proposals) or decision_complete or no_host
                 or book.satisfied(prop_oid, scope_id, rev_now))
+    # G7-W3 restore (C1 / 02-INV-Exception): on a REGISTERED senate scope a still
+    # UNSATISFIED proposal owned by the ACTUAL AI consul is the HUMAN presenter's
+    # CONFIRMATION obligation, carried by the existing validated phase-entry actor
+    # G. The latched DECISION owner (``book.role_selections``) stays the AI: no
+    # owner record is rewritten, no other player is chosen, and a missing /
+    # non-HUMAN G keeps the ORIGINAL owner semantics (the continuation gate then
+    # fails closed instead of draining an AI package).
+    prop_actor = prop_role["actor_player_id"]
+    prop_ctrl = prop_role["controller"]
+    if (_is_registered(state) and not prop_sat
+            and prop_role["controller"] == CONTROLLER_AI
+            and G is not None and G != prop_role["actor_player_id"]
+            and controller_of(state, G) == CONTROLLER_HUMAN):
+        prop_actor = G
+        prop_ctrl = CONTROLLER_HUMAN
     out.append(Obligation(
         obligation_id=prop_oid, scope_id=scope_id, phase="senate",
         substep="proposal", actor_slot=("singleton", scope_id),
-        actor_player_id=prop_role["actor_player_id"],
+        actor_player_id=prop_actor,
         officer_id=prop_role["officer_id"],
-        controller=prop_role["controller"],
+        controller=prop_ctrl,
         required_operation="proposal", satisfied=prop_sat,
         satisfied_kind=(book.satisfies_kind(prop_oid) if prop_sat else None),
         source_fact="senate_proposals"))
@@ -2530,6 +2601,25 @@ def _continue_scheduled_phase(state: Any, phase: str, scope: _Scope, lease: Any,
         if snapshot.errors:
             return ContinuationResult(status=STATUS_FAILURE, masked_failure=True,
                                       reason=snapshot.errors[0], processed=tuple(processed))
+        # G7-W3 restore (C2): on a REGISTERED senate scope an UNSATISFIED proposal
+        # obligation MUST belong to a real, validated HUMAN presenter. The RAW
+        # obligation is inspected BEFORE ``outstanding()`` filters NONE and before
+        # ``ready()`` treats a non-executable row as unnecessary; otherwise a
+        # missing / non-HUMAN presenter would be auto-drained into an AI package
+        # or laundered into a structural completion. This gate also covers
+        # T-RECOVER. It never widens a validator and never returns NEXT_HUMAN.
+        if phase == "senate" and _is_registered(state):
+            _prop = next((o for o in snapshot.obligations
+                          if o.substep == "proposal"), None)
+            if _prop is not None and not _prop.satisfied and (
+                    _prop.controller != CONTROLLER_HUMAN
+                    or controller_of(state, _prop.actor_player_id)
+                    != CONTROLLER_HUMAN):
+                return ContinuationResult(
+                    status=STATUS_FAILURE, masked_failure=True,
+                    reason="SENATE_PRESENTER_CONFIRMATION_REQUIRED",
+                    outstanding=tuple(snapshot.outstanding()),
+                    processed=tuple(processed))
         outstanding = list(snapshot.outstanding())
         if not outstanding:
             if snapshot.ready():

@@ -205,11 +205,40 @@ def advance_year(state: GameState, player_id: str, force: bool = False) -> dict:
     # ④ 置位
     state._year_advance_in_progress = True
     try:
-        # ⑤ 原子原语
-        state.advance_year()
-    except Exception as e:
-        state.log_event(f"advance_year 异常: {e}", level=logging.ERROR)
-        return api_response(False, f"年度推进异常: {e}", errors=["advance_failed", str(e)])
+        # ④' D16 (FC-D16-06/08): DETACHED candidate ledger preparation. No
+        # authoritative side effect: the live book stays byte-identical unless the
+        # Core commit below really succeeds (failure atomicity, FC-06). The target
+        # turn is ALWAYS the pre-advance Core turn + 1 (never caller/GUI supplied).
+        candidate = None
+        prepare_code = None
+        try:
+            target_turn = (state.turn.turn_number if state.turn else 0) + 1
+            candidate = turn_service.prepare_new_year_book(state, target_turn)
+        except turn_service.YearPrepareError as exc:
+            prepare_code = exc.code
+        except Exception:
+            state.log_event("advance_year 账本预备异常", level=logging.ERROR)
+            prepare_code = "YEAR_LEDGER_PREPARE_FAILED"
+        if prepare_code is not None:
+            state.log_event(f"advance_year 账本预备失败: {prepare_code}",
+                            level=logging.DEBUG)
+            return api_response(
+                False,
+                "年度推进准备失败（年份未推进）",
+                errors=[{"code": prepare_code, "stage": "year_prepare",
+                         "committed": False}],
+            )
+        try:
+            # ⑤ 原子原语
+            state.advance_year()
+        except Exception as e:
+            state.log_event(f"advance_year 异常: {e}", level=logging.ERROR)
+            return api_response(False, f"年度推进异常: {e}", errors=["advance_failed", str(e)])
+        # ⑤' D16 (FC-D16-06/08/09): the ONE publication point — a plain attribute
+        # assignment of the pre-verified candidate. No callback / I/O / mint /
+        # receipt / validation / second business call happens here.
+        if candidate is not None:
+            state._session_turn_book = candidate
     finally:
         # ⑥ 复位
         state._year_advance_in_progress = False

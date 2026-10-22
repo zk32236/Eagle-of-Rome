@@ -1716,7 +1716,18 @@ class GuiSessionStore(QObject):
                 self._raise_feedback(feedback)
                 return feedback
             self._process_ai_factions_forum("retirement")
-            if self._advance_forum_to_next_human("retirement"):
+            _next = self._advance_forum_to_next_human("retirement")
+            if _next.get("status") == "BLOCKED":
+                # D16 (FC-D16-03/05/09): a failed selection NEVER opens the market
+                # and never invents a completion. The lawful own-seat finish above is
+                # kept; the other seats stay outstanding for the next legal retry.
+                feedback = self._feedback(
+                    False, "退休完成交接失败，请重试", "warning")
+                feedback["errors"] = [_next.get("error")]
+                self._refresh_forum_view()
+                self._raise_feedback(feedback)
+                return feedback
+            if _next.get("status") == "NEXT_HUMAN":
                 self._refresh_forum_view()
                 feedback = self._feedback(
                     False, "尚有其他玩家的退休操作未完成", "warning")
@@ -1751,24 +1762,62 @@ class GuiSessionStore(QObject):
         return decision.denial()
 
     def _advance_forum_to_next_human(self, substep: str):
-        """S-C F4 / D2: if a forum substep still has an outstanding HUMAN, make
-        that HUMAN the CURRENT actor via the coordinator's SOLE cursor writer
-        (``select_actor``) and RETURN that actor id — never a false completion and
-        never a bare cursor move. The caller MUST pair the cursor move with the
-        seat-authority handoff in the SAME masked transaction (FC-D2-03); a bare
-        ``select_actor`` followed by a stale-viewer read IS the D2 defect. Returns
-        ``None`` when no HUMAN is outstanding for this substep (no cursor move)."""
+        """S-C F4 / D2 / D16: resolve ONE forum substep's next step as a TYPED
+        three-value result (FC-D16-03) — never a bare actor / ``None``:
+
+          * ``NEXT_HUMAN``      — another HUMAN is the canonical head; the caller
+            pairs the cursor move with the seat handoff (sole writer: select_actor);
+          * ``SUBSTEP_COMPLETE`` — every controller of THIS substep has no
+            outstanding obligation and the schedule reported no error;
+          * ``BLOCKED``         — snapshot error / unknown status / malformed
+            selection / AI obligation still pending. A BLOCKED result forbids the
+            same-seat follow-up (no open_market / resolve_forum / population).
+
+        ``select_actor`` remains the ONLY cursor writer; no Core-cursor guessing and
+        no political faction rotation.
+        """
         from src.api import session_turn_service as _turn
         scope = _turn.mint_scope(self._state, "forum")
-        snapshot = _turn.obligations(self._state, "forum")
-        humans = [o for o in snapshot.outstanding()
-                  if o.substep == substep
-                  and o.controller == _turn.CONTROLLER_HUMAN]
-        if humans:
-            sel = _turn.select_actor(self._state, scope.scope_id)
-            if sel.get("success") and sel.get("actor"):
-                return sel.get("actor")
-        return None
+        sid = scope.scope_id
+
+        def _blocked(reason):
+            return {"status": "BLOCKED", "actor": None, "scope_id": sid,
+                    "error": {"code": "FORUM_NEXT_ACTOR_FAILED",
+                              "stage": "forum_select", "reason": reason}}
+
+        try:
+            snapshot = _turn.obligations(self._state, "forum")
+        except Exception as exc:
+            return _blocked(f"SNAPSHOT_ERROR:{type(exc).__name__}")
+        if snapshot.errors:
+            return _blocked(str(snapshot.errors[0]))
+        outstanding = [o for o in snapshot.outstanding() if o.substep == substep]
+        if not outstanding:
+            return {"status": "SUBSTEP_COMPLETE", "actor": None,
+                    "scope_id": sid, "error": None}
+        target = outstanding[0]
+        if target.controller == _turn.CONTROLLER_AI:
+            return _blocked("AI_OBLIGATION_PENDING")
+        if target.controller != _turn.CONTROLLER_HUMAN:
+            return _blocked("NOT_EXECUTABLE")
+        try:
+            sel = _turn.select_actor(
+                self._state, sid,
+                expected_revision=_turn.current_revision(self._state))
+        except Exception as exc:
+            return _blocked(f"SELECT_EXCEPTION:{type(exc).__name__}")
+        if not isinstance(sel, dict) or not sel.get("success"):
+            reason = sel.get("reason") if isinstance(sel, dict) else "MALFORMED_SELECT"
+            return _blocked(reason or "SELECT_FAILED")
+        actor = sel.get("actor")
+        if not actor:
+            return _blocked("SELECT_EMPTY_ACTOR")
+        if _turn.controller_of(self._state, actor) != _turn.CONTROLLER_HUMAN:
+            return _blocked("SELECT_NOT_HUMAN")
+        if actor != target.actor_player_id:
+            return _blocked("SELECT_NOT_CANONICAL_HEAD")
+        return {"status": "NEXT_HUMAN", "actor": actor, "scope_id": sid,
+                "error": None}
 
     def _record_forum_ledger_finish(self, player_id: str, substep: str,
                                     command: str) -> dict:
@@ -1875,7 +1924,16 @@ class GuiSessionStore(QObject):
             self._raise_feedback(feedback)
             return feedback
         self._process_ai_factions_forum("market")
-        if self._advance_forum_to_next_human("market"):
+        _next = self._advance_forum_to_next_human("market")
+        if _next.get("status") == "BLOCKED":
+            # D16 (FC-D16-03/05/09): zero resolve_forum / zero population advance.
+            feedback = self._feedback(
+                False, "市场完成交接失败，请重试", "warning")
+            feedback["errors"] = [_next.get("error")]
+            self._refresh_forum_view()
+            self._raise_feedback(feedback)
+            return feedback
+        if _next.get("status") == "NEXT_HUMAN":
             self._refresh_forum_view()
             feedback = self._feedback(
                 False, "尚有其他玩家的市场操作未完成", "warning")
@@ -2418,10 +2476,84 @@ class GuiSessionStore(QObject):
             item = self._variant_to_python(item)
             if isinstance(item, dict):
                 selected.append(item)
-        if self._senate_view.get("viewer_has_consul", False):
+        # G7-W3 restore (C4): a REGISTERED submit is routed ONLY by the two
+        # mutually exclusive viewer-bound DTO capabilities. Local obligations /
+        # controller / ``viewer_has_consul`` never re-authorise the command; a
+        # contradictory (both true) or absent authorisation fails closed.
+        valid_projection = False
+        ai_presenter_route = False
+        if registered_capability:
+            valid_projection = self._is_valid_senate_projection(
+                self._senate_view, self._viewer_id)
+            can_create_dto = bool(valid_projection and self.canCreateSenateProposal)
+            can_trigger_ai_dto = bool(valid_projection
+                                     and self.canTriggerAIProposer)
+            if can_create_dto == can_trigger_ai_dto:
+                feedback = self._feedback(
+                    False, "当前提案权不属于本玩家，不能代替其他玩家/无主持人提案", "warning")
+                self._raise_senate_feedback(feedback)
+                self.senateViewChanged.emit()
+                return feedback
+            # R1 (C4): the STEP itself is a precondition of dispatch, not only the
+            # capability bit. A registered projection that has left the proposal
+            # step (results / completed / ballot / veto / settlement_pending) is
+            # refused HERE, BEFORE any dispatch: no AI producer, no HUMAN submit,
+            # no masked owning flow. A stale/affirmative capability bit can never
+            # turn a non-proposal step into a trigger surface.
+            if self._senate_view.get("current_step") != "proposal":
+                feedback = self._feedback(
+                    False, "当前会期已离开提案阶段，不能提交提案", "warning")
+                _typed_errors = feedback.get("errors")
+                if not isinstance(_typed_errors, list):
+                    _typed_errors = []
+                    feedback["errors"] = _typed_errors
+                _typed_errors.append({
+                    "code": "STEP_NOT_PROPOSAL",
+                    "message": "当前会期已离开提案阶段，不能提交提案",
+                })
+                self._raise_senate_feedback(feedback)
+                self.senateViewChanged.emit()
+                return feedback
+            ai_presenter_route = can_trigger_ai_dto
+        if registered_capability and ai_presenter_route:
+            # The real AI decision owner stays the AI: the presenter only confirms
+            # the presentation. A D13-locked proposer refuses with ZERO dispatch
+            # (retry after a typed DENIED never unlocks or resubmits, C6).
+            if self.senateAiProposerBlocked:
+                feedback = self._feedback(
+                    False, self.AI_PROPOSER_BLOCK_REASON, "error")
+                self._raise_senate_feedback(feedback)
+                self.senateViewChanged.emit()
+                return feedback
+            from src.api import senate_api
+            if self._barrier_provider is not None:
+                # D13（Option 1）：AI proposer 也必须走同一 masked owning flow
+                # ——否则 AI-child `propose_many`（viewer = AI consul）在注册
+                # 热座下无 owning possession → DENIED（发布死锁）。origin 必须
+                # 在 begin/neutralize **之前**捕获（cont 不再回读公共投影）。
+                _ai_origin = self._senate_ai_proposer_origin()
+
+                def _dispatch_ai_proposals():
+                    submitted = self._adapter.call(
+                        senate_api.auto_submit_proposals, self._state)
+                    try:
+                        self._apply_senate_submit_feedback(submitted)
+                        if submitted.get("success"):
+                            self._senate_drafts = {}
+                    except Exception:  # pragma: no cover - defensive
+                        logger.exception(
+                            "masked AI senate submit bookkeeping failed")
+                    return submitted
+                return self._masked_senate_owning_flow(
+                    "doSubmitSenateProposals", "propose_many",
+                    _dispatch_ai_proposals,
+                    ai_proposer_origin=_ai_origin)
+            feedback = self._adapter.call(senate_api.auto_submit_proposals,
+                                          self._state)
+        elif registered_capability or self._senate_view.get(
+                "viewer_has_consul", False):
             if registered_capability and not (
-                    self._is_valid_senate_projection(self._senate_view, self._viewer_id)
-                    and self.canCreateSenateProposal):
+                    valid_projection and self.canCreateSenateProposal):
                 feedback = self._feedback(
                     False, "当前提案权不属于本玩家，不能代替其他玩家/无主持人提案", "warning")
                 self._raise_senate_feedback(feedback)
@@ -3970,11 +4102,37 @@ class GuiSessionStore(QObject):
         # viewer (still A) projection; re-neutralize so no stale viewer residue is
         # visible while masked/pending.
         self._neutralize_public_projection()
+        # D15-DIAG: read-only snapshot of the settle gate's own inputs (no token /
+        # lease / handle / any credential). Only the fail-closed branches below
+        # emit it; the SUCCESS path logs nothing.
+        try:
+            _diag_core = self._state.get_current_player().player_id
+        except Exception:  # pragma: no cover - defensive
+            _diag_core = None
+        _diag_env = delivery if isinstance(delivery, dict) else {}
+        _diag_next = _diag_env.get("next")
+        if not isinstance(_diag_next, dict):
+            _diag_next = {}
+        _diag = {
+            "core_current": _diag_core,
+            "envelope_actor": _diag_next.get("actor_player_id"),
+            "envelope_outcome": _diag_env.get("outcome"),
+            "envelope_controller": _diag_next.get("controller"),
+            "command_id": str((self._seat_txn or {}).get("command_id") or ""),
+            "txn_id": str(txn_id or ""),
+        }
         if delivery is not None:
             from src.api import session_turn_service
             verdict = session_turn_service.validate_delivery_result(
                 self._state, delivery, viewer_id=self._viewer_id, legacy=legacy)
             if not verdict.get("ok"):
+                _diag_err = verdict.get("error") or {}
+                logger.warning(
+                    "settle gate refused delivery: code=%s stage=%s",
+                    _diag_err.get("code"), _diag_err.get("stage"),
+                    extra=dict(_diag,
+                               code=str(_diag_err.get("code") or ""),
+                               stage=str(_diag_err.get("stage") or "")))
                 return self._delivery_fail(
                     txn_id, verdict.get("error") or {}, done)
             # Only a VALIDATED envelope is recorded for a later bounded retry.
@@ -3988,6 +4146,11 @@ class GuiSessionStore(QObject):
             nxt = delivery.get("next") or {}
             if outcome == session_turn_service.DELIVERY_OUTCOME_RESOLVED \
                     and nxt.get("controller") == session_turn_service.CONTROLLER_AI:
+                logger.warning(
+                    "settle gate refused delivery: code=%s stage=%s",
+                    "DELIVERY_INVALID", "terminal",
+                    extra=dict(_diag, code="DELIVERY_INVALID",
+                               stage="terminal"))
                 return self._delivery_fail(
                     txn_id,
                     session_turn_service.delivery_error(
@@ -3999,6 +4162,11 @@ class GuiSessionStore(QObject):
             self._last_delivery = None
         if not next_actor_id:
             from src.api import session_turn_service
+            _diag_code = session_turn_service.DELIVERY_MISSING_RECEIVER
+            logger.warning(
+                "settle gate refused delivery: code=%s stage=%s",
+                _diag_code, "settle",
+                extra=dict(_diag, code=str(_diag_code), stage="settle"))
             return self._delivery_fail(
                 txn_id,
                 session_turn_service.delivery_error(
@@ -5005,11 +5173,29 @@ class GuiSessionStore(QObject):
                 done(fail_result)
                 return
             try:
-                next_actor, rejection = self._dispatch_owning(
+                outcome, rejection = self._dispatch_owning(
                     txn, command_id, _owner_finish, command_id, substep)
                 if rejection is not None:
                     self._masked_business_rejection(txn_id, rejection, done=done)
                     return
+                # D16 (FC-D16-03/05/07): the selection result is a TYPED three-value
+                # result. Only SUBSTEP_COMPLETE may run the same-seat follow-up; a
+                # BLOCKED / malformed result is a NEUTRAL post-commit failure (the
+                # own-seat finish above really happened) — never a business rejection
+                # and never a fabricated handoff target.
+                status = outcome.get("status") if isinstance(outcome, dict) else None
+                if status not in ("NEXT_HUMAN", "SUBSTEP_COMPLETE"):
+                    self._last_delivery = None
+                    self._fail_masked(FAIL_AFTER_COMMIT, txn_id)
+                    if isinstance(outcome, dict) and outcome.get("error"):
+                        done(self._handoff_failure_feedback(
+                            delivery_error=outcome["error"]))
+                    else:
+                        done(self._handoff_failure_feedback(
+                            delivery_error={"code": "COMMIT_STATUS_UNPROVEN",
+                                            "stage": "forum_select"}))
+                    return
+                next_actor = outcome.get("actor") if status == "NEXT_HUMAN" else None
                 if next_actor and next_actor != self._viewer_id:
                     self._settle_seat_after_success(
                         txn_id, next_actor_id=next_actor, done=done)

@@ -907,8 +907,15 @@ def _registered_role_capabilities(state: GameState, viewer_player_id: str,
     veto = next((o for o in snap.obligations if o.substep == "veto"), None)
     sel_p = book.role_selections.get((scope_id, "proposal"), {}) or {}
     sel_v = book.role_selections.get((scope_id, "veto"), {}) or {}
-    p_ctrl = prop.controller if prop is not None else _turn.CONTROLLER_NONE
-    p_owner = prop.actor_player_id if prop is not None else None
+    # G7-W3 restore (C3): the ACTUAL registered decision owner comes from the
+    # LATCHED role selection (never from the presenter projection added to the
+    # schedule obligation). A presenter never becomes the owner metadata.
+    if sel_p:
+        p_owner = sel_p.get("actor_player_id")
+        p_ctrl = sel_p.get("controller") or _turn.CONTROLLER_NONE
+    else:
+        p_ctrl = prop.controller if prop is not None else _turn.CONTROLLER_NONE
+        p_owner = prop.actor_player_id if prop is not None else None
     v_ctrl = veto.controller if veto is not None else _turn.CONTROLLER_NONE
     v_owner = veto.actor_player_id if veto is not None else None
     # veto is REQUIRED iff the schedule derived the veto operation for a real
@@ -926,8 +933,17 @@ def _registered_role_capabilities(state: GameState, viewer_player_id: str,
     except Exception:  # pragma: no cover - defensive
         actionable_r = False
     human = _turn.CONTROLLER_HUMAN
-    prop_ok = bool(actionable_r and current_step == "proposal"
-                   and p_ctrl == human and p_owner == viewer_player_id)
+    prop_pending = bool(prop is not None and not prop.satisfied)
+    at_proposal = bool(actionable_r and current_step == "proposal")
+    # Mutually EXCLUSIVE presenter plane: the HUMAN owner submits for itself; the
+    # AI presenter only CONFIRMS the presentation (it never creates / selects /
+    # declares an empty package for the AI).
+    human_owner_ok = bool(at_proposal and prop_pending
+                          and p_ctrl == human and p_owner == viewer_player_id)
+    presenter_ok = bool(at_proposal and prop_pending
+                        and p_ctrl == _turn.CONTROLLER_AI
+                        and prop is not None and prop.controller == human
+                        and prop.actor_player_id == viewer_player_id)
     veto_ok = bool(actionable_r and current_step == "tribune_veto"
                    and v_ctrl == human and v_owner == viewer_player_id)
     return {
@@ -945,13 +961,13 @@ def _registered_role_capabilities(state: GameState, viewer_player_id: str,
         "registered_veto_controller": v_ctrl,
         "registered_veto_authority_reason": sel_v.get("authority_reason", ""),
         "registered_veto_satisfied": (bool(veto.satisfied) if veto is not None else False),
-        "registered_can_create_proposal": prop_ok,
-        "registered_can_select_proposal": prop_ok,
-        "registered_can_finish_empty": prop_ok,
+        "registered_can_create_proposal": human_owner_ok,
+        "registered_can_select_proposal": human_owner_ok,
+        "registered_can_finish_empty": human_owner_ok,
         "registered_can_veto": veto_ok,
-        # registered AI bits are ALWAYS False: the truth rides on
-        # registered_*_controller == 'AI' + the owner id, never a viewer button.
-        "registered_can_trigger_ai_proposer": False,
+        # G7-W3 restore (C3): the presenter (AI latched owner + verifiable HUMAN
+        # receiver of the confirmation obligation) gets the ONE AI-trigger bit.
+        "registered_can_trigger_ai_proposer": presenter_ok,
         "registered_can_auto_veto": False,
     }
 
@@ -1572,8 +1588,26 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
         # item5 (Disposition A): ADDITIVE registered-owner plane — never replaces
         # any legacy viewer-relative key; consumer switches read plane on
         # registered_seat. STRICTLY read-only (no book/scope mint).
-        data.update(_registered_role_capabilities(state, viewer_player_id,
-                                                  current_step))
+        registered_caps = _registered_role_capabilities(state, viewer_player_id,
+                                                        current_step)
+        data.update(registered_caps)
+        # G7-W3 restore (C3/C4): on a registered seat the TOP-LEVEL capability
+        # keys share the SAME producer as the registered plane, so Store/QML can
+        # never read a re-authorising legacy viewer-relative bit. The remaining
+        # legacy metadata (can_propose / viewer_has_consul / ...) stays
+        # informational only.
+        if registered_caps.get("registered_seat") and \
+                registered_caps.get("registered_schedule_valid"):
+            data["can_create_proposal"] = bool(
+                registered_caps["registered_can_create_proposal"])
+            data["can_select_proposal"] = bool(
+                registered_caps["registered_can_select_proposal"])
+            data["can_finish_proposal_selection"] = bool(
+                registered_caps["registered_can_finish_empty"])
+            data["can_finish_empty"] = bool(
+                registered_caps["registered_can_finish_empty"])
+            data["can_trigger_ai_proposer"] = bool(
+                registered_caps["registered_can_trigger_ai_proposer"])
         return api_response(True, "Senate phase view refreshed", data)
     except Exception as exc:
         return api_response(False, f"获取元老院视图失败: {exc}", errors=[str(exc)])
