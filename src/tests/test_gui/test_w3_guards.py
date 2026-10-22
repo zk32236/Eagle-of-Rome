@@ -33,6 +33,7 @@ from src.ui.gui.session_store import (
     GuiSessionStore,
     SEAT_ACTIVE,
     SEAT_MASKED_FAILURE,
+    SEAT_MASKED_PENDING,
 )
 
 VIEWER = "player1"
@@ -278,33 +279,104 @@ def test_n10_same_revision_dispatch_is_denied():
 
 
 # N11 — CONTINUE must name the GLOBAL queue head (A-W3-11 / W-08)
-def test_n11_continue_cannot_skip_the_queue_head():
-    state = _state()
-    store, delivery = _advance(state)
-    assert delivery is not None
-    # The real head delivery passes.
-    head = session_turn_service.validate_delivery_result(
-        state, delivery, viewer_id=VIEWER)
-    assert head["ok"] is True, head
+#
+# H2-b (AC05 ③): the fixture is now the EXACT three-HUMAN chain that reaches the
+# REAL vote queue head — three ACTUAL HUMAN players (the consul is never the AI
+# default), ``B`` = the product's own queue head, ``C`` = a REAL later ballot
+# obligation of the same scope, and ONLY the O column of the envelope changes.
+def _three_human_vote_head(*, proposal_rows=None):
+    """Drive the production Slots to the REAL vote-head delivery (3H).
 
-    # A LATER actor with its own real obligation id: every other column stays
-    # legal (same scope/revision/receipt, real actor, NEXT_HUMAN, real Core
-    # current is deliberately NOT touched here -> O must be the rejecting column).
+        entry (p1) -> cross-seat MASKED_PENDING (p2, the HUMAN consul)
+        -> real 「接管」 -> real proposal packet (p2) -> vote-head delivery
+
+    The seat machine, the schedule and the validator are the production ones;
+    ``B``/``C`` are read back from the product's own envelope/obligation ids.
+    """
+    state = _state(consul="human", third="human")
+    players = [state.get_player(pid) for pid in ("player1", "player2", "player3")]
+    assert len(players) == 3 and all(p is not None for p in players), players
+    assert [p.player_type for p in players] == [PlayerType.HUMAN] * 3, \
+        [p.player_type for p in players]
+    assert state.get_player("player2").faction_id == "populares"  # consul seat
+
+    store = _store(state)
+    assert store.doAdvancePopulation()["success"] is True
+    assert store.seatLifecycle == SEAT_MASKED_PENDING, store.seatLifecycle
+    assert store._pending_player_id == "player2", store._pending_player_id
+    assert store.requestTakeover()["accepted"] is True
+    assert store.seatLifecycle == SEAT_ACTIVE, store.seatLifecycle
+    assert store._viewer_id == "player2", store._viewer_id
+    store._refresh_senate_view()
+    assert store.canCreateSenateProposal is True, store._senate_view
+
+    rows = proposal_rows or [{"type": "land",
+                              "params": {"act_type": "distribution",
+                                         "amount_C": 10, "percent": 0.1}}]
+    submitted = store.doSubmitSenateProposals([dict(r) for r in rows])
+    assert submitted.get("success") is True, submitted
+    delivery = (store._committed_receipt or {}).get("data", {}).get("delivery")
+    assert isinstance(delivery, dict) and delivery.get("next"), \
+        store._committed_receipt
+    return state, store, delivery
+
+
+def _later_ballot_oid(state, delivery, actor):
+    """The REAL obligation id of ``actor``'s ballot in the delivery's scope."""
     scope_id = delivery["scope_id"]
     proposals = state.get_senate_proposals()
     assert proposals, "the fixture must have a ballot obligation"
-    later_oid = session_turn_service._book(state).oid(
-        "senate", "vote:%s" % proposals[0]["id"], ("player", "player3"),
-        scope_id)
-    later = _copy(delivery)
-    later["next"].update({
-        "actor_player_id": "player3", "controller": "HUMAN",
+    return session_turn_service._book(state).oid(
+        "senate", "vote:%s" % proposals[0]["id"], ("player", actor), scope_id)
+
+
+def _forged_later(delivery, actor, later_oid):
+    """The head envelope with ONLY the O (actor/obligation) column changed."""
+    forged = _copy(delivery)
+    forged["next"].update({
+        "actor_player_id": actor, "controller": "HUMAN",
         "disposition": "NEXT_HUMAN", "obligation_id": list(later_oid),
     })
+    return forged
+
+
+def _assert_only_the_o_column_changed(head, forged):
+    """Every non-O column stays byte-identical (the isolation proof)."""
+    changed_top = {k for k in set(head) | set(forged)
+                   if head.get(k) != forged.get(k)}
+    assert changed_top == {"next"}, changed_top
+    changed_next = {k for k in set(head["next"]) | set(forged["next"])
+                    if head["next"].get(k) != forged["next"].get(k)}
+    assert changed_next <= {"actor_player_id", "controller", "disposition",
+                            "obligation_id"}, changed_next
+    assert head["next"]["obligation_id"] != forged["next"]["obligation_id"]
+
+
+def test_n11_continue_cannot_skip_the_queue_head():
+    state, store, delivery = _three_human_vote_head()
+    # The REAL vote-head envelope (B = player1) passes.
+    head = session_turn_service.validate_delivery_result(
+        state, delivery, viewer_id=VIEWER)
+    assert head["ok"] is True, head
+    assert delivery["next"]["actor_player_id"] == VIEWER, delivery["next"]
+    assert delivery["next"]["controller"] == "HUMAN", delivery["next"]
+
+    # C = a REAL later ballot actor of the SAME scope; only the O column changes
+    later_oid = _later_ballot_oid(state, delivery, "player3")
+    later = _forged_later(delivery, "player3", later_oid)
+    _assert_only_the_o_column_changed(delivery, later)
+
     verdict = session_turn_service.validate_delivery_result(
         state, later, viewer_id="player3")
     assert verdict["ok"] is False
     assert verdict["error"]["stage"] == "obligation"
+    # B is unaffected by the rejected C envelope, and C was never consumed
+    assert session_turn_service.validate_delivery_result(
+        state, delivery, viewer_id=VIEWER)["ok"] is True
+    snap = session_turn_service.obligations(state, "senate")
+    row = next(o for o in snap.obligations
+               if str(o.obligation_id) == str(later_oid))
+    assert row.satisfied is False, row
 
 
 # N12 — registration read exception on the public view
@@ -469,24 +541,14 @@ def test_n11_obligation_rejects_the_later_actor_even_with_the_core_head_matched(
     No product mutation and no consumer fake is involved: only the real state and
     the real public validator.
     """
-    state = _state(third="human")
-    _, delivery = _advance(state)
-    assert delivery is not None
+    state, store, delivery = _three_human_vote_head()
     head = session_turn_service.validate_delivery_result(
         state, delivery, viewer_id=VIEWER)
     assert head["ok"] is True, head
 
-    scope_id = delivery["scope_id"]
-    proposals = state.get_senate_proposals()
-    assert proposals, "the fixture must carry a ballot obligation"
-    later_oid = session_turn_service._book(state).oid(
-        "senate", "vote:%s" % proposals[0]["id"], ("player", "player3"),
-        scope_id)
-    later = _copy(delivery)
-    later["next"].update({
-        "actor_player_id": "player3", "controller": "HUMAN",
-        "disposition": "NEXT_HUMAN", "obligation_id": list(later_oid),
-    })
+    later_oid = _later_ballot_oid(state, delivery, "player3")
+    later = _forged_later(delivery, "player3", later_oid)
+    _assert_only_the_o_column_changed(delivery, later)
 
     # (A) Core at the ORIGINAL head: O fires first (never "core").
     at_head = session_turn_service.validate_delivery_result(
@@ -502,6 +564,11 @@ def test_n11_obligation_rejects_the_later_actor_even_with_the_core_head_matched(
     assert isolated["ok"] is False, isolated
     assert isolated["error"]["stage"] == "obligation", isolated
     assert isolated["error"]["code"] == "DELIVERY_MISMATCH", isolated
+    # the C ballot obligation is still outstanding: nothing was consumed
+    snap = session_turn_service.obligations(state, "senate")
+    row = next(o for o in snap.obligations
+               if str(o.obligation_id) == str(later_oid))
+    assert row.satisfied is False, row
 
 
 # ===========================================================================

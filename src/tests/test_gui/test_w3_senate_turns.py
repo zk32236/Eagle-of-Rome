@@ -9,6 +9,8 @@ import os
 import sys
 from unittest.mock import patch
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("PYTHONUTF8", "1")
 os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
@@ -29,14 +31,32 @@ from src.core.systems.naval_system import NavalSystem
 from src.core.systems.political_system import PoliticalSystem
 from src.core.systems.war_system import WarSystem
 from src.ui.gui.session_store import (
+    FAIL_BEFORE_COMMIT,
     GuiSessionStore,
     SEAT_ACTIVE,
     SEAT_ACTIVATE,
     SEAT_MASKED_FAILURE,
     SEAT_MASKED_PENDING,
 )
+from src.tests.test_gui import _w3_real_gate
 
 VIEWER = "player1"
+
+
+@pytest.fixture(autouse=True)
+def _w3_real_window_hygiene():
+    """Test hygiene: a REAL gate window is a PER-TEST object.
+
+    Every case in this module opens real ``QQuickWindow``/QML surfaces (the REAL
+    first-gate carrier plus the shell's own window). Nothing closed them before,
+    so they stayed visible -- and kept rendering -- for the whole pytest process.
+    They are closed/destroyed here, at the end of the test that opened them, so
+    every later test sees the same Qt state it would see in a fresh process.
+    No assertion, expectation or product byte is affected.
+    """
+    baseline = _w3_real_gate.window_snapshot()
+    yield
+    _w3_real_gate.release_windows(baseline)
 
 
 def _entry_state(*, consul_controller="ai", budget=True):
@@ -190,8 +210,17 @@ def test_ac_w3_07_vote_arithmetic_matrix_is_unchanged():
 # AC-W3-10 — committed but no receiver -> typed, never same-seat (GUARD)
 # ===========================================================================
 def test_ac_w3_10_missing_receiver_is_typed_and_never_same_seat():
+    # H1: the GUARD negative control keeps the REAL owner commit (the real API
+    # forward, then the delivery is dropped) and now runs on the REAL GUI shell:
+    # its FIRST gate is completed by this transaction's own real QQuickWindow.
+    from src.tests.test_gui import test_w3_delivery_authority as f03
+
     state = _entry_state(consul_controller="ai")
-    store, _ = _store(state)
+    shell = f03._shell_runtime(state, "player1")
+    store, gui, driven = shell.store, shell.gui, shell.driven
+    f03._takeover_driven(shell)
+    gates = _w3_real_gate.RealGateHarness(shell, label="AC10-no-receiver")
+    gates.auto_driven_tail()
     real = store._adapter.advance_population
 
     def _drop_delivery(viewer):
@@ -201,10 +230,30 @@ def test_ac_w3_10_missing_receiver_is_typed_and_never_same_seat():
             feedback["data"].pop("awaiting_player_id", None)
         return feedback
 
-    with patch.object(store._adapter, "advance_population",
-                      side_effect=_drop_delivery):
-        result = store.doAdvancePopulation()
+    # The typed refusal is captured at the Store's own typed-failure exit (the
+    # exact object the synchronous caller receives): an async first gate makes the
+    # Slot return its lawful ``pending`` envelope before settlement.
+    captured = {}
+    real_delivery_fail = store._delivery_fail
 
+    def _delivery_fail_spy(txn_id, err, done=None):
+        result = real_delivery_fail(txn_id, err, done=done)
+        captured["result"] = result
+        return result
+
+    gates.arm_real()
+    with patch.object(store._adapter, "advance_population",
+                      side_effect=_drop_delivery), \
+            patch.object(store, "_delivery_fail", side_effect=_delivery_fail_spy):
+        pending = store.doAdvancePopulation()
+        assert (pending.get("data") or {}).get("pending") is True, pending
+        txn = str((store._async_gate or {}).get("txn_id") or "")
+        begin_generation = gates.generation()
+        gates.claim_first(txn, begin_generation=begin_generation)
+    gates.record_tail(txn)
+
+    result = captured.get("result")
+    assert result is not None, "the settle refusal must be typed"
     assert result["success"] is False
     err = result["data"]["delivery_error"]
     assert err["code"] == "DELIVERY_MISSING_RECEIVER"
@@ -215,6 +264,9 @@ def test_ac_w3_10_missing_receiver_is_typed_and_never_same_seat():
     assert state.is_phase_executed("population") is True
     assert session_turn_service._book(state).entries, "the entry was really consumed"
     assert store.viewerPlayerId == ""
+    # zero publication / zero activation on this refusal chain
+    gates.assert_tail_driven(txn, ok_required=False)
+    gates.emit("AC10-no-receiver")
 
 
 # ===========================================================================
@@ -346,6 +398,144 @@ def test_ac_w3_05_two_by_three_packet_matrix_completes_each_cell_once():
 
 
 # ===========================================================================
+# H2-a — AC-W3-11 E2①/E2②: the two REMOVED dynamic gaps
+#
+#   E2①: an ACTIVE seat with a LEGAL last_good/stale REQUIRED projection must
+#        refuse a NEW write BEFORE any side effect (owning dispatch == 0).
+#   E2②: a REAL REQUIRED staging failure must fail closed with
+#        SEAT_PUBLICATION_FAILED/staging, zero public publication, mask kept.
+# ===========================================================================
+def test_ac_w3_11_active_prewrite_stale_refuses_with_zero_owning_dispatch():
+    """E2① — the production pre-write freshness gate, driven dynamically.
+
+    The stale state is REAL: one DENIED read of a REQUIRED projection falls back
+    to the seat's own last_good (``_publish_private_read``) and marks it stale.
+    The write is then refused in ``_begin_masked_seat_transition`` BEFORE the
+    lease/barrier/dispatch: no arm gate, no producer call, no Core mutation.
+    """
+    from src.tests.test_gui import test_w3_delivery_authority as f03
+
+    state = _entry_state(consul_controller="human")
+    shell = f03._shell_runtime(state, "player1")
+    store, driven = shell.store, shell.driven
+    f03._takeover_driven(shell)
+
+    # entry -> cross-seat pending for the HUMAN consul p2 -> REAL takeover
+    store.doAdvancePopulation()
+    driven.render()
+    assert store.seatLifecycle == SEAT_MASKED_PENDING, store.seatLifecycle
+    assert store.requestTakeover()["accepted"] is True
+    driven.render()
+    driven.render()
+    assert store.seatLifecycle == SEAT_ACTIVE, store.seatLifecycle
+    store._refresh_senate_view()
+    assert store.canCreateSenateProposal is True, store._senate_view
+    cached = store._last_good_views.get("senate") or {}
+    assert cached.get("viewer") == store._viewer_id, cached
+
+    # ONE real DENIED read -> legal last_good served + REQUIRED stale mark
+    with patch.object(senate_api, "get_senate_view",
+                      side_effect=lambda *a, **k: session_access.denied_response()):
+        store._refresh_senate_view()
+    assert "senate" in store.staleResourceIds, store.staleResourceIds
+    assert store.freshnessWritesBlocked is True
+
+    dispatches, submits = [], []
+    real_dispatch = store._dispatch_owning
+    real_submit = store._adapter.submit_senate_proposals
+    receipt_before = store._committed_receipt
+
+    def _dispatch(txn, command, fn, *args):
+        dispatches.append(command)
+        return real_dispatch(txn, command, fn, *args)
+
+    def _submit(*a, **k):
+        submits.append(a)
+        return real_submit(*a, **k)
+
+    with patch.object(store, "_dispatch_owning", side_effect=_dispatch), \
+            patch.object(store._adapter, "submit_senate_proposals",
+                         side_effect=_submit):
+        result = store.doSubmitSenateProposals([])
+
+    # the owning dispatch count comes from the REAL dispatcher spy == 0
+    assert dispatches == [], dispatches
+    assert submits == [], submits
+    assert result["success"] is False, result
+    assert result["message"] == "暂未进入回合，请重试。", result
+    assert store.seatLifecycle == SEAT_MASKED_FAILURE
+    assert store.handoffMaskVisible is True
+    assert store.handoffFailureKind == FAIL_BEFORE_COMMIT
+    assert store.viewerPlayerId == ""
+    assert store._async_gate is None
+    assert store._committed_receipt is receipt_before
+
+
+def test_ac_w3_11_required_staging_failure_is_fail_closed():
+    """E2② — a REAL REQUIRED staging failure on the real shell.
+
+    ``_stage_activation`` reads the declared inventory through the real adapter;
+    the REQUIRED senate projection is DENIED by the real provider, so the WHOLE
+    bundle is refused (``None``) -> ``SEAT_PUBLICATION_FAILED / staging`` with a
+    PROVEN commit (the entry really committed), zero public publication and the
+    mask kept.
+    """
+    from src.tests.test_gui import test_w3_delivery_authority as f03
+
+    state = _entry_state(consul_controller="human")
+    shell = f03._shell_runtime(state, "player1")
+    store, driven = shell.store, shell.driven
+    gates = _w3_real_gate.RealGateHarness(shell, label="AC11-E2-2")
+    gates.auto_driven_tail()
+    f03._takeover_driven(shell)
+
+    applies, handles = [], []
+    real_apply = store._apply_staged
+    real_handle = session_access.issue_fresh_handle
+
+    def _apply(staged, *, target_id=None):
+        applies.append(target_id)
+        return real_apply(staged, target_id=target_id)
+
+    def _handle(state_obj):
+        handles.append(1)
+        return real_handle(state_obj)
+
+    # the entry transaction's FIRST gate is REAL; it commits and hands to p2
+    gates.arm_real()
+    with patch.object(store, "_apply_staged", side_effect=_apply), \
+            patch.object(session_access, "issue_fresh_handle", side_effect=_handle):
+        entry = store.doAdvancePopulation()
+        txn = str((store._async_gate or {}).get("txn_id") or "")
+        assert (entry.get("data") or {}).get("pending") is True, entry
+        gates.claim_first(txn, begin_generation=gates.generation())
+        assert store.seatLifecycle == SEAT_MASKED_PENDING, store.seatLifecycle
+        assert store.viewerPlayerId == ""
+
+        # the activation staging read is genuinely DENIED by the real provider
+        with patch.object(senate_api, "get_senate_view",
+                          side_effect=lambda *a, **k: session_access.denied_response()):
+            takeover = store.requestTakeover()
+        gates.record_tail(txn)
+
+    assert takeover.get("accepted") is True, takeover
+    result = store._activation_result or {}
+    err = (result.get("data") or {}).get("delivery_error") or {}
+    assert (err.get("code"), err.get("stage"), err.get("committed")) == (
+        "SEAT_PUBLICATION_FAILED", "staging", True), (err, result)
+    assert store.seatLifecycle == SEAT_MASKED_FAILURE, store.seatLifecycle
+    assert store.handoffMaskVisible is True
+    # zero publication: no apply, no fresh handle, neutral public projection
+    assert applies == [], applies
+    assert handles == [], handles
+    assert store.viewerPlayerId == ""
+    assert store._snapshot == {}
+    # only the REAL first gate exists: staging failed BEFORE any publish/unmask
+    assert [g["kind"] for g in gates.gates(txn)] == ["arm"], gates.gates(txn)
+    gates.emit("AC11-E2-2")
+
+
+# ===========================================================================
 # F05 (SA G5#2 §4.3) — a REAL RESOLVED terminal (never CONTINUE+SAME_HUMAN)
 # ===========================================================================
 def test_ac_w3_05b_resolved_terminal_is_delivered_to_its_result_owner():
@@ -462,7 +652,7 @@ def test_ac_w3_05b_resolved_terminal_is_delivered_to_its_result_owner():
 # production Store slots (packet -> MASKED_PENDING -> requestTakeover ->
 # activation -> next packet -> terminal). Two establishments: 3H and 1H2AI.
 # ===========================================================================
-def _chain_state(*, humans=3):
+def _chain_state(*, humans=3, budget=True):
     """Real 3-seat senate state at the population ENTRY boundary."""
     state = GameState.create_for_testing({})
     state.turn = GameTurn(turn_number=1, year=-264)
@@ -496,9 +686,11 @@ def _chain_state(*, humans=3):
                                          else PlayerType.AI)))
     state._turn_order = ["player1", "player2", "player3"]
     state.set_current_player("player1")
-    contract = state.create_contract(
-        ContractType.PUBLIC_WORKS, province_id=1, base_cost=100, current_turn=1)
-    contract.status = ContractStatus.PENDING
+    if budget:
+        contract = state.create_contract(
+            ContractType.PUBLIC_WORKS, province_id=1, base_cost=100,
+            current_turn=1)
+        contract.status = ContractStatus.PENDING
     state.record_phase_result("population", {
         "success": True, "message": "Election resolved",
         "data": {"election_results": []},
@@ -1237,9 +1429,26 @@ def test_ac_w3_04_senate_submit_control_chain_is_real():
     store, gui, driven = shell.store, shell.gui, shell.driven
     f03._takeover_driven(shell)
 
+    # ---- H1: ONE fresh real QQuickWindow per masked owning transaction ------
+    gates = _w3_real_gate.RealGateHarness(shell, label="AC04")
+    gates.auto_driven_tail()
+
     # p1 entry -> cross-seat pending for the HUMAN consul (p2) -> REAL takeover
+    gates.arm_real()
     store.doAdvancePopulation()
-    driven.render()
+    entry_txn = str((store._async_gate or {}).get("txn_id") or "")
+    entry_generation = gates.generation()
+    entry_first = gates.claim_first(entry_txn,
+                                    begin_generation=entry_generation)
+    _emit("GATE", packet="entry", owning_txn=entry_txn,
+          kind=entry_first["kind"], tier=entry_first["tier"],
+          ok=entry_first["ok"], generation=entry_first["generation"],
+          generation_at_begin=entry_generation,
+          receipt=entry_first["receipt"],
+          after_signals=entry_first["after_signals"],
+          swap_signals=entry_first["swap_signals"],
+          source_type=entry_first["source"],
+          source_id=entry_first["source_id"])
     assert store._pending_player_id == "player2", store._pending_player_id
     takeover_txn = (store._seat_txn or {}).get("txn_id", "")
     assert store.requestTakeover()["accepted"] is True
@@ -1247,6 +1456,11 @@ def test_ac_w3_04_senate_submit_control_chain_is_real():
     driven.render()
     assert store.seatLifecycle == SEAT_ACTIVE, store.seatLifecycle
     f03._pump(8, 5)
+    for tail in gates.assert_tail_driven(entry_txn):
+        _emit("GATE", packet="entry", owning_txn=entry_txn,
+              kind=tail["kind"], tier=tail["tier"], ok=tail["ok"],
+              generation=tail["generation"], receipt=tail["receipt"])
+    gates.record_tail(entry_txn)
 
     # the normal read refresh publishes the consul's card set to the live tree
     store._refresh_senate_view()
@@ -1360,22 +1574,39 @@ def test_ac_w3_04_senate_submit_control_chain_is_real():
                    for r in (_qml_eval(button, card_walk) or []))
 
         # ---- AC-W3-04: the REAL control click owns the transaction ----------
+        ordering = gates.watch_dispatch_ordering(lambda: len(calls))
+        gates.arm_real()              # the submit txn's OWN fresh real window
         gates_before = len(gui.gate_log)
         QTest.mouseClick(shell.window, Qt.MouseButton.LeftButton,
                          Qt.KeyboardModifier.NoModifier, point.toPoint())
-        f03._pump(2, 5)
         started = gui.gate_log[gates_before:]
         _emit("CLICK", new_gates=[(g["kind"], g["txn"]) for g in started],
               adapter_calls=len(calls),
               gate=dict(store._async_gate) if store._async_gate else None,
               seat=store.seatLifecycle)
-        # the owning dispatch may NOT run before the arm receipt
         assert len(started) == 1, started
         assert started[0]["kind"] == "arm"
         owning_txn = started[0]["txn"]
         assert owning_txn and owning_txn != takeover_txn
-        assert calls == [], "dispatch ran before the arm receipt"
+        # the owning dispatch may NOT run before the arm receipt: the count is
+        # sampled exactly at the receipt delivery, before the Store resumes.
+        assert ordering and ordering[-1]["txn"] == owning_txn, ordering
+        assert ordering[-1]["kind"] == "arm", ordering
+        assert ordering[-1]["dispatch_before_receipt"] == 0, ordering
         assert store.seatLifecycle not in (SEAT_ACTIVE,), store.seatLifecycle
+
+        submit_generation = gates.generation()
+        submit_first = gates.claim_first(owning_txn,
+                                         begin_generation=submit_generation)
+        _emit("GATE", packet="submit", owning_txn=owning_txn,
+              kind=submit_first["kind"], tier=submit_first["tier"],
+              ok=submit_first["ok"], generation=submit_first["generation"],
+              generation_at_begin=submit_generation,
+              receipt=submit_first["receipt"],
+              after_signals=submit_first["after_signals"],
+              swap_signals=submit_first["swap_signals"],
+              source_type=submit_first["source"],
+              source_id=submit_first["source_id"])
 
         driven.render()
         f03._pump(4, 5)
@@ -1398,6 +1629,11 @@ def test_ac_w3_04_senate_submit_control_chain_is_real():
     assert delivery["next"]["actor_player_id"] == "player1", delivery
     # the real propose_many really registered the package the card produced
     assert state.get_senate_proposals(), "propose_many registered nothing"
+    for tail in gates.assert_tail_driven(owning_txn):
+        _emit("GATE", packet="submit", owning_txn=owning_txn,
+              kind=tail["kind"], tier=tail["tier"], ok=tail["ok"],
+              generation=tail["generation"], receipt=tail["receipt"])
+    gates.record_tail(owning_txn)
     _emit("SUMMARY", UI_CLICK_REACHABLE=True, owning_txn=owning_txn,
           takeover_txn=takeover_txn, outcome=delivery.get("outcome"),
           cards=len(card_rows), expr_matched=True, negative_zero_dispatch=True,
@@ -1475,6 +1711,29 @@ def test_ac_w3_05_packet_granularity_same_chain():
             if rec.get("command") == want:
                 return str(ref), str(rec.get("receipt_id") or "")
         return "", ""
+
+    def _completion_snapshot():
+        """H1-5: the REAL post-packet completion state.
+
+        Read AFTER the packet: the phase schedule's own obligation rows (with
+        their own ``satisfied`` flag) plus the book's completion RECORDS. This is
+        the authority a ballot's completion may be read from; the pre-packet
+        queue head is never a completion source.
+        """
+        snap = session_turn_service.obligations(state, "senate")
+        obligations = [{"oid": str(o.obligation_id),
+                        "substep": o.substep,
+                        "actor": o.actor_player_id,
+                        "satisfied": bool(o.satisfied)}
+                       for o in snap.obligations]
+        records = [{"command_id": str(rec.command_id),
+                    "oid": str(rec.obligation_id),
+                    "kind": str(rec.satisfied_kind),
+                    "fact_ref": str(rec.authoritative_fact_ref),
+                    "entry_revision": int(rec.entry_revision),
+                    "satisfied_at_revision": int(rec.satisfied_at_revision)}
+                   for rec in book.records]
+        return {"obligations": obligations, "records": records}
 
     def _fail_spy(kind, txn_id="", route="activation"):
         failures.append((kind, txn_id, route))
@@ -1596,6 +1855,7 @@ def test_ac_w3_05_packet_granularity_same_chain():
         assert first["tier"] == "FRAME_WINDOW_REAL" and first["ok"] is True, first
         assert first["receipt"] == (txn, "arm"), first
         _settle()
+        completion = _completion_snapshot()
         receipt = store._committed_receipt or {}
         rdata = receipt.get("data") if isinstance(receipt.get("data"), dict) else {}
         delivery = rdata.get("delivery") if isinstance(rdata.get("delivery"), dict) else None
@@ -1606,6 +1866,7 @@ def test_ac_w3_05_packet_granularity_same_chain():
             "accepted": bool(receipt.get("success")),
             "delivery": delivery, "created": list(rdata.get("created") or []),
             "head": head, "owner_receipt_ref": ref, "owner_receipt_id": rid,
+            "completion": completion,
             "ballots": ballots[ballots_before:],
             "gates": [(g["kind"], g["tier"], g["ok"])
                       for g in gui.gate_log if g["txn"] == txn],
@@ -1701,21 +1962,48 @@ def test_ac_w3_05_packet_granularity_same_chain():
                    for b in ballots), ballots
 
         last_records = conts[-1]["records"] if conts else []
-        oid_by_packet = {p["packet"]: p["head"]["oids"] for p in packets}
 
-        def _oid_for(pkt, proposal, actor):
-            for oid in oid_by_packet.get(pkt, []):
-                if ("'vote:%d'" % proposal) in oid and ("'%s'" % actor) in oid:
-                    return oid
-            return ""
+        def _scheduled_vote(oid, proposal, actor):
+            return (("'vote:%d'" % proposal) in oid) and (("'%s'" % actor) in oid)
+
+        def _completion_for(pkt, proposal, actor):
+            """H1-5: read the ballot's completion from the REAL post-packet state.
+
+            Returns ``(obligation, completion_record)`` read AFTER the owning
+            packet: the schedule's own obligation row and the book's completion
+            record (if the product wrote one). The pre-packet queue head is never
+            used as a completion source.
+            """
+            packet = next(p for p in packets if p["packet"] == pkt)
+            snap = packet["completion"]
+            obligation = next((o for o in snap["obligations"]
+                               if _scheduled_vote(o["oid"], proposal, actor)), None)
+            record_row = next((r for r in snap["records"]
+                               if _scheduled_vote(r["oid"], proposal, actor)), None)
+            return obligation, record_row
 
         ballot_rows = []
         for b in ballots:
             pkt = next(p for p in packets if p["packet"] == b["packet"])
+            obligation, record_row = _completion_for(b["packet"], b["proposal"],
+                                                     b["actor"])
+            satisfied = bool(obligation and obligation["satisfied"])
+            backed = bool(satisfied and record_row)
             ballot_rows.append({
                 "key": (b["proposal"], b["actor"]), "txn": b["txn"],
                 "packet": b["packet"],
-                "oid_at_entry": _oid_for(b["packet"], b["proposal"], b["actor"]),
+                "satisfied": satisfied,
+                "scheduled_oid": (obligation["oid"] if obligation else ""),
+                # a COMPLETION oid is claimed only when the real schedule says
+                # satisfied AND a real completion record backs it
+                "satisfied_oid": (record_row["oid"] if backed else ""),
+                "completion_annotation": (
+                    "REAL_COMPLETION" if backed
+                    else ("SCHEDULE_SATISFIED_NO_COMPLETION_RECORD" if satisfied
+                          else "NOT_SATISFIED")),
+                "completion_fact_ref": (record_row["fact_ref"] if record_row
+                                        else ""),
+                "completion_kind": (record_row["kind"] if record_row else ""),
                 "packet_receipt": pkt["owner_receipt_id"],
                 "packet_fact_ref": pkt["owner_receipt_ref"],
                 "new_receipts_in_call": b["new_receipts"],
@@ -1724,15 +2012,33 @@ def test_ac_w3_05_packet_granularity_same_chain():
                                            for a in (d or {})),
             })
             _emit("BALLOT", chain="GRAN", proposal=b["proposal"], actor=b["actor"],
-                  owning_txn=b["txn"], satisfied_oid=ballot_rows[-1]["oid_at_entry"],
+                  owning_txn=b["txn"], satisfied=satisfied,
+                  scheduled_oid=ballot_rows[-1]["scheduled_oid"],
+                  satisfied_oid=ballot_rows[-1]["satisfied_oid"],
+                  completion=ballot_rows[-1]["completion_annotation"],
+                  completion_fact_ref=ballot_rows[-1]["completion_fact_ref"],
                   packet_receipt=ballot_rows[-1]["packet_receipt"],
                   fact_ref=ballot_rows[-1]["packet_fact_ref"],
                   new_receipts_in_call=b["new_receipts"],
                   approve=b["approve"])
-        assert all(r["oid_at_entry"] for r in ballot_rows), (ballot_rows,
-                                                             [len(c["records"])
-                                                              for c in conts])
-        assert len({r["oid_at_entry"] for r in ballot_rows}) == 6, ballot_rows
+        # every ballot identifies its OWN scheduled vote obligation and is really
+        # satisfied in the post-packet schedule
+        assert all(r["scheduled_oid"] for r in ballot_rows), ballot_rows
+        assert len({r["scheduled_oid"] for r in ballot_rows}) == 6, ballot_rows
+        assert all(r["satisfied"] for r in ballot_rows), ballot_rows
+        # the per-ballot owner COMPLETION receipt is reported honestly
+        not_collectible = [r["key"] for r in ballot_rows
+                           if not r["satisfied_oid"]]
+        _emit("BALLOT_COMPLETION", chain="GRAN",
+              real_completion=sum(1 for r in ballot_rows
+                                  if r["satisfied_oid"]),
+              not_collectible=not_collectible,
+              annotations=sorted(r["completion_annotation"]
+                                 for r in ballot_rows),
+              reason=("per-ballot owner completion receipt NOT_COLLECTIBLE: the "
+                      "product records ONE receipt per vote packet (shared by its "
+                      "ballots); the schedule row is the real completion "
+                      "authority available for each ballot"))
         vote_receipts = {p["owner_receipt_id"] for p in packets
                          if p["step"] == "senate_vote"}
         _emit("BALLOT_RECEIPTS", chain="GRAN",
@@ -1796,3 +2102,1423 @@ def test_ac_w3_05_packet_granularity_same_chain():
         for _p in patchers:
             _p.stop()
         _flush()
+
+
+# ===========================================================================
+# H2-b (AC-W3-05 ①② / AC-W3-18) — the REAL control interaction helpers
+#
+#   The card checkbox and the ``senateProposalSubmitButton`` MouseArea are the
+#   PRODUCTION ones; nothing here writes a Store property to imitate a click.
+# ===========================================================================
+def _h2b_emit(tag, **fields):
+    line = tag + " " + " ".join("%s=%r" % (k, v) for k, v in fields.items())
+    print(line)
+    path = os.environ.get("EOR_W3_H2B_TRACE", "")
+    if path:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+
+
+def _h2b_items(root):
+    """Every live QQuickItem of a QML subtree (the real tree, never a copy)."""
+    import shiboken6
+    from PySide6.QtQuick import QQuickItem
+    try:
+        item = shiboken6.Shiboken.wrapInstance(
+            shiboken6.Shiboken.getCppPointer(root)[0], QQuickItem)
+    except Exception:
+        return []
+    pending, out = [item], []
+    while pending:
+        node = pending.pop()
+        out.append(node)
+        pending.extend(node.childItems())
+    return out
+
+
+def _h2b_bill_card(window, key):
+    """The live bill card whose OWN ``billKey`` property is ``key``."""
+    from PySide6.QtCore import QObject
+    for obj in window.findChildren(QObject):
+        try:
+            value = obj.property("billKey")
+        except Exception:
+            continue
+        if value is not None and str(value) == str(key):
+            return obj
+    return None
+
+
+#: JS over the REAL stage tree: find the card by its OWN ``billKey`` and its OWN
+#: CheckBox control (``toggle`` invokable + ``checked``) — the production items.
+_H2B_WALK = ("(function(){var card=null,box=null;"
+             "function fc(it){if(!it||card)return;"
+             "if(it.billKey!==undefined&&String(it.billKey)===KEY){card=it;return;}"
+             "var ch=it.children||[];for(var i=0;i<ch.length;i++)fc(ch[i]);}"
+             "function fb(it){if(!it||box)return;"
+             "if(typeof it.toggle==='function'&&it.checked!==undefined){box=it;return;}"
+             "var ch=it.children||[];for(var i=0;i<ch.length;i++)fb(ch[i]);}"
+             "fc(root);if(card)fb(card);")
+
+
+def _h2b_card_probe(scope, key):
+    """Read the live card/control truth of ``key`` from the REAL QML tree."""
+    body = (_H2B_WALK + "return {card:!!card,box:!!box,"
+            "checked:box?(box.checked===true):null,"
+            "enabled:box?(box.enabled!==false):null,"
+            "editable:card?(card.editable!==false):null};})()")
+    value = _qml_eval(scope, body.replace("KEY", repr(str(key))))
+    return dict(value or {})
+
+
+def _h2b_card_box(scope, key):
+    """The live CheckBox CONTROL object of the card ``key`` (or None)."""
+    body = _H2B_WALK + "return box;})()"
+    return _qml_eval(scope, body.replace("KEY", repr(str(key))))
+
+
+def _h2b_card_toggle(scope, key):
+    """Toggle the card's OWN control (its ``toggle()`` invokable)."""
+    body = (_H2B_WALK + "if(!box)return 'NO_BOX';box.toggle();"
+            "return (box.checked===true)?'CHECKED':'UNCHECKED';})()")
+    return _qml_eval(scope, body.replace("KEY", repr(str(key))))
+
+
+def _h2b_click(shell, item, *, pump=True):
+    """A REAL mouse click at the item's own centre (never a property write)."""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtTest import QTest
+    point = item.mapToScene(QPointF(float(item.property("width")) / 2.0,
+                                    float(item.property("height")) / 2.0))
+    QTest.mouseClick(shell.window, Qt.MouseButton.LeftButton,
+                     Qt.KeyboardModifier.NoModifier, point.toPoint())
+    if pump:
+        QGuiApplication.processEvents()
+        QTest.qWait(10)
+        QGuiApplication.processEvents()
+    return point
+
+
+def _h2b_set_card(shell, scope, key, selected):
+    """Select/deselect ONE bill card through its OWN CheckBox control.
+
+    A REAL mouse click on the card's CheckBox is attempted first; when the
+    offscreen viewport clips the card, the SAME control's own ``toggle()``
+    invokable performs the interaction instead. The mechanism is returned so the
+    evidence never claims a click it did not deliver.
+    """
+    from PySide6.QtGui import QGuiApplication
+    probe = _h2b_card_probe(scope, key)
+    assert probe.get("card") is True, "no live bill card for %r" % (key,)
+    assert probe.get("box") is True, "no CheckBox control inside %r" % (key,)
+    want = bool(selected)
+    if bool(probe.get("checked")) == want:
+        return "ALREADY"
+    assert bool(probe.get("enabled")) is True, (key, probe)
+    box = _h2b_card_box(scope, key)
+    items = _h2b_items(box)
+    assert items, "the control object is not a live item: %r" % (key,)
+    _h2b_click(shell, items[0])
+    mechanism = "MOUSE_CLICK"
+    if bool(_h2b_card_probe(scope, key).get("checked")) != want:
+        _h2b_card_toggle(scope, key)
+        QGuiApplication.processEvents()
+        mechanism = "CONTROL_TOGGLE"
+    assert bool(_h2b_card_probe(scope, key).get("checked")) is want, \
+        (key, _h2b_card_probe(scope, key))
+    return mechanism
+
+
+def _h2b_settle(shell, gates, driven, *, rounds=10):
+    """Consume ONE seat transition through the production 「接管」 intent.
+
+    A gate that is still live is drained on the driven pair FIRST (later gates
+    are always driven); only a clean seat is taken over.
+    """
+    from src.tests.test_gui import test_w3_delivery_authority as f03
+    store = shell.store
+    for _ in range(rounds):
+        if store._seat_lifecycle == SEAT_ACTIVE and gates.live_gate() is False:
+            return True
+        if gates.live_gate():
+            driven.render()
+            f03._pump(2, 3)
+            continue
+        if store._seat_lifecycle == SEAT_MASKED_PENDING:
+            gates.bind_driven()
+            takeover = store.requestTakeover()
+            assert takeover.get("accepted") is True, takeover
+        else:
+            driven.render()
+        f03._pump(2, 3)
+    raise AssertionError("seat never became ACTIVE: %r" % (store._seat_lifecycle,))
+
+
+def _h2b_click_owning(shell, gates, item):
+    """A REAL control click that starts an owning txn; ``(txn, first_gate_row)``.
+
+    ``QTest`` pumps the event loop inside the click, so the arm gate can already
+    have been completed by the time the click returns: the transaction is read
+    from the gate the click REALLY started (never assumed from ``_async_gate``).
+    """
+    gui = shell.gui
+    before = len(gui.gate_log)
+    gates.arm_real()
+    _h2b_click(shell, item, pump=False)
+    new_rows = gui.gate_log[before:]
+    live = str((shell.store._async_gate or {}).get("txn_id") or "")
+    txn = live or (str(new_rows[0]["txn"]) if new_rows else "")
+    assert txn, ("the click started no owning transaction", new_rows)
+    assert all(r["txn"] == txn for r in new_rows), new_rows
+    assert new_rows[0]["kind"] == "arm", new_rows
+    # the gate's OWN generation is read while IT is the live gate; when the click
+    # already drove the chain past it, the receipt's frozen generation is used.
+    live_kind = str((shell.store._async_gate or {}).get("kind") or "")
+    gen_begin = gates.generation() if live_kind == "arm" else None
+    row = gates.claim_first(txn, begin_generation=gen_begin)
+    return txn, row
+
+
+# ===========================================================================
+# B-1 / B-2 (AC-W3-05 ①②) — TWO proposals registered by the REAL controls
+# (card checkbox + ``senateProposalSubmitButton``) and carried through ONE
+# chain; every cell's owner completion read from the REAL product facts.
+# ===========================================================================
+def test_ac_w3_05_two_proposals_from_the_real_controls_share_one_chain():
+    from src.tests.test_gui import test_w3_delivery_authority as f03
+
+    state = _chain_state(humans=3)
+    state._national_public_land = 1000          # real public land -> real drafts
+    book = session_turn_service._book(state)
+    shell = f03._shell_runtime(state, "player1")
+    store, gui, driven = shell.store, shell.gui, shell.driven
+    gates = _w3_real_gate.RealGateHarness(shell, label="AC05-controls")
+    gates.auto_driven_tail()
+
+    failures, retries, conts, packets, ballots = [], [], [], [], []
+    mechanisms = []
+    current = {"id": "", "command": "", "txn": ""}
+
+    real_fail = store._fail_masked
+    real_vote = state.record_senate_vote
+    real_cont = session_turn_service.continue_after_command
+
+    def _fail_spy(kind, txn_id="", route="activation"):
+        failures.append((kind, txn_id, route))
+        return real_fail(kind, txn_id, route)
+
+    def _cont_spy(*a, **k):
+        result = real_cont(*a, **k)
+        conts.append({"packet": current["id"], "command": current["command"],
+                      "status": getattr(result, "status", "")})
+        return result
+
+    def _vote_spy(actor, proposal_id, approve, *a, **k):
+        before = len(book.receipts)
+        result = real_vote(actor, proposal_id, approve, *a, **k)
+        ballots.append({"packet": current["id"], "actor": actor,
+                        "proposal": int(proposal_id), "approve": bool(approve),
+                        "txn": current["txn"],
+                        "new_receipts": len(book.receipts) - before,
+                        "votes_after": dict(state.get_senate_votes_copy() or {}),
+                        "proposals_after": [dict(p) for p in
+                                            state.get_senate_proposals()]})
+        return result
+
+    def _completion_snapshot():
+        """The REAL post-packet completion state (schedule rows + records)."""
+        snap = session_turn_service.obligations(state, "senate")
+        obligations = [{"oid": str(o.obligation_id), "substep": o.substep,
+                        "actor": o.actor_player_id,
+                        "satisfied": bool(o.satisfied)}
+                       for o in snap.obligations]
+        records = [{"oid": str(rec.obligation_id),
+                    "command_id": str(rec.command_id),
+                    "kind": str(rec.satisfied_kind),
+                    "fact_ref": str(rec.authoritative_fact_ref),
+                    "entry_revision": int(rec.entry_revision),
+                    "satisfied_at_revision": int(rec.satisfied_at_revision)}
+                   for rec in book.records]
+        return {"obligations": obligations, "records": records}
+
+    _ALIAS = {"advancePopulation": "advance_population_phase",
+              "doSubmitSenateProposals": "propose_many",
+              "doSubmitSenateVotes": "senate_vote",
+              "doSubmitSenateVetoes": "senate_veto_decision"}
+
+    def _new_fact(command, before):
+        want = _ALIAS.get(command, command)
+        for ref, rec in book.committed_facts.items():
+            if ref in before:
+                continue
+            if str(rec.get("command") or "") == want:
+                return str(ref), str(rec.get("receipt_id") or "")
+        return "", ""
+
+    def _receipt_for(command):
+        """The command's committed receipt (shared when the product signs ONE)."""
+        want = _ALIAS.get(command, command)
+        for ref, rec in book.committed_facts.items():
+            if str(rec.get("command") or "") == want:
+                return str(ref), str(rec.get("receipt_id") or "")
+        return "", ""
+
+    def _packet(pkt_id, step, command, invoke=None, click=None):
+        actor = store._viewer_id
+        scope = book.scopes["senate"].scope_id if "senate" in book.scopes else ""
+        ballots_before = len(ballots)
+        facts_before = set(book.committed_facts)
+        current["id"], current["command"] = pkt_id, command
+        gates_before = len(gui.gate_log)
+        gates.arm_real()               # THIS packet's own fresh real window
+        if click is not None:
+            _h2b_click(shell, click, pump=False)
+            result = None
+        else:
+            result = invoke()
+        new_rows = gui.gate_log[gates_before:]
+        gate = dict(store._async_gate or {})
+        txn = str(gate.get("txn_id") or "")
+        if not txn and new_rows:
+            txn = str(new_rows[0]["txn"])
+        current["txn"] = txn
+        if not txn:
+            _h2b_emit("PACKET_NO_TXN", chain="AC05-controls", packet=pkt_id,
+                      gate=gate, seat=store.seatLifecycle,
+                      step=store.senateCurrentStep,
+                      can_create=store.canCreateSenateProposal,
+                      viewer=store._viewer_id,
+                      submit_errors=store._senate_submit_errors,
+                      receipt=store._committed_receipt, result=result)
+        assert txn and new_rows, (pkt_id, gate, new_rows)
+        assert new_rows[0]["kind"] == "arm", new_rows
+        assert all(r["txn"] == txn for r in new_rows), new_rows
+        # the gate's OWN generation, read while IT is still the live gate
+        gen_begin = gates.generation() if str(gate.get("kind") or "") == "arm" \
+            else None
+        first = gates.claim_first(txn, begin_generation=gen_begin)
+        _h2b_settle(shell, gates, driven)
+        gates.record_tail(txn)
+        ref, rid = _new_fact(command, facts_before)
+        shared = False
+        if not rid:
+            # the product signs ONE receipt per vote package: the packet that did
+            # not append a new fact is linked to that SAME committed receipt.
+            ref, rid = _receipt_for(command)
+            shared = bool(rid)
+        receipt = store._committed_receipt or {}
+        rdata = receipt.get("data") if isinstance(receipt.get("data"), dict) else {}
+        record = {
+            "packet": pkt_id, "step": step, "actor": actor,
+            "owning_txn": txn, "scope": scope, "command": command,
+            "accepted": bool(receipt.get("success")),
+            "delivery": (rdata.get("delivery")
+                         if isinstance(rdata.get("delivery"), dict) else None),
+            "created": list(rdata.get("created") or []),
+            "owner_receipt_ref": ref, "owner_receipt_id": rid,
+            "receipt_shared": shared,
+            "gates": [(g["kind"], g["tier"], g["ok"])
+                      for g in gui.gate_log if g["txn"] == txn],
+            "ballots": ballots[ballots_before:],
+            "completion": _completion_snapshot(),
+            "pending": bool(((result or {}).get("data") or {}).get("pending")),
+        }
+        packets.append(record)
+        _h2b_emit("PACKET", chain="AC05-controls", packet=pkt_id, step=step,
+                  actor=actor, owning_txn=txn, command=command,
+                  accepted=record["accepted"], owner_receipt=rid,
+                  created=[c.get("proposal_id") for c in record["created"]],
+                  first_gate=(first["kind"], first["tier"], first["ok"],
+                              first["generation"],
+                              first["generation_at_begin"],
+                              first["after_signals"], first["swap_signals"],
+                              first["source"]),
+                  gates=record["gates"],
+                  ballot_keys=[(b["proposal"], b["actor"])
+                               for b in record["ballots"]])
+        current["id"], current["command"], current["txn"] = "", "", ""
+        return record
+
+    patchers = [
+        patch.object(store, "_fail_masked", side_effect=_fail_spy),
+        patch.object(store, "retryHandoff",
+                     side_effect=lambda *a, **k: retries.append(1)),
+        patch.object(state, "record_senate_vote", side_effect=_vote_spy),
+        patch.object(session_turn_service, "continue_after_command",
+                     side_effect=_cont_spy),
+    ]
+    for _p in patchers:
+        _p.start()
+    try:
+        # the startup takeover is a CONTROL (driven), never a packet
+        f03._takeover_driven(shell)
+
+        # ---- P1: the population ENTRY (p1) -> cross-seat pending for p2 -----
+        _packet("P1", "entry", "advancePopulation",
+                lambda: store.doAdvancePopulation())
+        assert "senate" in book.scopes, book.scopes
+        scope_id = book.scopes["senate"].scope_id
+        assert scope_id
+
+        # ---- P2: the TWO proposals are created by the REAL CONTROLS ---------
+        store._refresh_senate_view()
+        f03._pump(10, 5)                      # the Repeater builds the live cards
+        assert store.senateCurrentStep == "proposal", store.senateCurrentStep
+        assert store.canCreateSenateProposal is True, store._senate_view
+        from PySide6.QtCore import QObject
+        stage = shell.window.findChild(QObject, "senateStage")
+        button = shell.window.findChild(QObject, "senateProposalSubmitButton")
+        assert stage is not None and button is not None, (stage, button)
+        options = list(store.senateProposalOptions or [])
+        land_keys = [o["key"] for o in options if o.get("type") == "land"]
+        assert len(land_keys) == 2, [o.get("key") for o in options]
+        js_walk = ("(function(){var out=[];"
+                   "function walk(it){if(!it)return;"
+                   "if(it.billKey!==undefined)out.push(String(it.billKey));"
+                   "var ch=it.children||[];"
+                   "for(var i=0;i<ch.length;i++)walk(ch[i]);}"
+                   "walk(root);return out;})()")
+        _h2b_emit("CARDS", chain="AC05-controls",
+                  live_cards=list(_qml_eval(button, js_walk) or []),
+                  options=[(o.get("key"), o.get("type"), o.get("public_land"))
+                           for o in options],
+                  non_war=[(o.get("key"), o.get("type"))
+                           for o in _qml_eval(button,
+                                              "root.nonWarProposalOptions()") or []])
+        # every other selectable card is cleared THROUGH ITS OWN CONTROL, and
+        # the two land cards are checked THROUGH THEIR OWN CHECKBOXES.
+        for opt in options:
+            key = opt.get("key")
+            if key in land_keys:
+                continue
+            if opt.get("type") in ("war", "peace"):
+                continue
+            if _h2b_card_probe(button, key).get("card") is not True:
+                continue
+            mechanisms.append((key, _h2b_set_card(shell, button, key, False)))
+        for key in land_keys:
+            mechanisms.append((key, _h2b_set_card(shell, button, key, True)))
+        f03._pump(4, 5)
+        package = list(_qml_eval(button, "root.selectedProposals()") or [])
+        _h2b_emit("CONTROL", chain="AC05-controls",
+                  mechanisms=mechanisms,
+                  package=[(r.get("type"), (r.get("params") or {}).get("act_type"),
+                            (r.get("params") or {}).get("amount_C"))
+                           for r in package],
+                  button_enabled=button.property("enabled"),
+                  zero_land=_qml_eval(button, "root.hasZeroValueLandSelection()"))
+        assert len(package) == 2, package
+        assert all(r.get("type") == "land" for r in package), package
+        assert sorted((r.get("params") or {}).get("act_type")
+                      for r in package) == ["distribution", "sale"], package
+        # the click mechanism is disclosed, never assumed
+        assert all(m in ("MOUSE_CLICK", "CONTROL_TOGGLE", "ALREADY")
+                   for _k, m in mechanisms), mechanisms
+
+        proposals_before = {int(p["id"]) for p in state.get_senate_proposals()}
+        p2 = _packet("P2", "proposal", "doSubmitSenateProposals",
+                     click=button)
+        created = sorted(int(c["proposal_id"]) for c in p2["created"]
+                         if c.get("proposal_id") is not None)
+        assert len(created) == 2 and len(set(created)) == 2, created
+        assert set(created).isdisjoint(proposals_before), (created, proposals_before)
+        assert set(created) <= {int(p["id"])
+                                for p in state.get_senate_proposals()}, created
+        pids = created
+        _h2b_emit("PROPOSALS", chain="AC05-controls", ids=pids,
+                  source="senateProposalSubmitButton -> doSubmitSenateProposals",
+                  owner_receipt=p2["owner_receipt_id"], scope=scope_id,
+                  accepted=p2["accepted"])
+
+        # ---- P3..P5: the 2 x 3 ballot matrix, ONE packet per HUMAN --------
+        for idx in range(3):
+            store._refresh_senate_view()
+            view = dict(store._senate_view)
+            assert view.get("current_step") == "senate_vote", view
+            ids = sorted(int(s["id"]) for s in
+                         (view.get("submitted_proposals") or []))
+            assert ids == pids, (ids, pids)
+            _packet("P%d" % (3 + idx), "senate_vote", "doSubmitSenateVotes",
+                    lambda ids=ids: store.doSubmitSenateVotes(ids))
+
+        readiness = session_turn_service.senate_readiness(state)
+        _h2b_emit("READINESS", chain="AC05-controls", readiness=readiness)
+        assert readiness["required"] == 6, readiness
+        assert readiness["covered"] == 6, readiness
+        assert readiness["all_ballots_ready"] is True, readiness
+        assert readiness["veto_required"] is True, readiness
+        assert readiness["veto_satisfied"] is False, readiness
+
+        # ---- P6: the REAL tribune veto closes the ballot phase -------------
+        store._refresh_senate_view()
+        assert store.senateCurrentStep == "tribune_veto", store.senateCurrentStep
+        _packet("P6", "tribune_veto", "doSubmitSenateVetoes",
+                lambda: store.doSubmitSenateVetoes([pids[0]]))
+
+        # ---- B-1: ONE chain, TWO real proposals, SIX REAL first gates ------
+        assert [p["step"] for p in packets] == [
+            "entry", "proposal", "senate_vote", "senate_vote", "senate_vote",
+            "tribune_veto"], [p["step"] for p in packets]
+        assert [p["actor"] for p in packets] == [
+            "player1", "player2", "player1", "player2", "player3",
+            "player1"], [p["actor"] for p in packets]
+        assert all(p["accepted"] for p in packets), packets
+        assert len({p["owning_txn"] for p in packets}) == 6, packets
+        for p in packets:
+            kinds = [k for k, _t, _o in p["gates"]]
+            assert kinds[0] == "arm", (p["packet"], kinds)
+            assert p["gates"][0][1] == "FRAME_WINDOW_REAL", p["gates"]
+            assert p["gates"][0][2] is True, p["gates"]
+            assert all(t == "FRAME_BRIDGE_DRIVEN" and o is True
+                       for _k, t, o in p["gates"][1:]), p["gates"]
+        real_rows = [r for r in gates.rows if r["tier"] == _w3_real_gate.TIER_REAL]
+        assert len(real_rows) == 6, real_rows
+        # exactly ONE continuation per accepted packet
+        for p in packets:
+            hits = [c for c in conts if c["packet"] == p["packet"]]
+            assert len(hits) == 1, (p["packet"], hits)
+            assert hits[0]["status"] != session_turn_service.STATUS_FAILURE, hits
+
+        # ---- B-2: per-cell (proposal_id x player_id) completion linkage ----
+        players = ("player1", "player2", "player3")
+        core_votes = state.get_senate_votes_copy() or {}
+        _h2b_emit("CORE_VOTES", chain="AC05-controls",
+                  final_votes=core_votes,
+                  per_packet=[(b["packet"], b["proposal"], b["actor"],
+                               b["votes_after"]) for b in ballots])
+
+        def _core_vote(pid, actor, snapshot=None):
+            """The REAL Core ballot record of this cell (``{player: {pid: bool}}``)."""
+            row = (snapshot or {}).get(actor)
+            if isinstance(row, dict):
+                for key in (pid, str(pid)):
+                    if key in row:
+                        return bool(row[key])
+            return None
+
+        def _is_ballot(oid, pid, actor):
+            return (("'vote:%d'" % pid) in oid) and (("'%s'" % actor) in oid)
+
+        grid = []
+        for b in ballots:
+            pkt = next(p for p in packets if p["packet"] == b["packet"])
+            snap = pkt["completion"]
+            obligation = next((o for o in snap["obligations"]
+                               if _is_ballot(o["oid"], b["proposal"],
+                                             b["actor"])), None)
+            record_row = next((r for r in snap["records"]
+                               if _is_ballot(r["oid"], b["proposal"],
+                                             b["actor"])), None)
+            satisfied = bool(obligation and obligation["satisfied"])
+            row = {
+                "key": (b["proposal"], b["actor"]), "packet": b["packet"],
+                "owning_txn": b["txn"],
+                "ballot_written": b["txn"] == pkt["owning_txn"],
+                "core_vote": _core_vote(b["proposal"], b["actor"],
+                                        b["votes_after"]),
+                "scheduled_oid": (obligation["oid"] if obligation else ""),
+                "satisfied": satisfied,
+                "completion_fact_ref": (record_row["fact_ref"]
+                                         if record_row else ""),
+                "completion_kind": (record_row["kind"] if record_row else ""),
+                "packet_receipt": pkt["owner_receipt_id"],
+                "packet_fact_ref": pkt["owner_receipt_ref"],
+                "annotation": ("REAL_COMPLETION" if record_row else
+                               ("SCHEDULE_SATISFIED_NO_PER_BALLOT_RECEIPT"
+                                if satisfied else "NOT_SATISFIED")),
+                "new_receipts_in_call": b["new_receipts"],
+            }
+            grid.append(row)
+            _h2b_emit("GRID", chain="AC05-controls", proposal=b["proposal"],
+                      actor=b["actor"], owning_txn=row["owning_txn"],
+                      ballot_written=row["ballot_written"],
+                      core_vote=row["core_vote"],
+                      scheduled_oid=row["scheduled_oid"],
+                      satisfied=row["satisfied"],
+                      completion=row["annotation"],
+                      completion_fact_ref=row["completion_fact_ref"],
+                      packet_receipt=row["packet_receipt"],
+                      packet_fact_ref=row["packet_fact_ref"],
+                      new_receipts_in_call=row["new_receipts_in_call"])
+
+        expected_keys = {(pid, actor) for pid in pids for actor in players}
+        assert len(grid) == 6 and {g["key"] for g in grid} == expected_keys, grid
+        assert all(g["ballot_written"] for g in grid), grid
+        # the REAL Core vote record exists for EVERY cell (never an OID rename)
+        assert all(g["core_vote"] is True for g in grid), grid
+        # the REAL post-packet schedule row of EVERY cell is satisfied
+        assert all(g["satisfied"] for g in grid), grid
+        assert len({g["scheduled_oid"] for g in grid}) == 6, grid
+        # every cell points at ITS packet's owner receipt; the three vote packets
+        # share the ONE receipt the product signs per package (never invented).
+        assert all(g["packet_receipt"] for g in grid), grid
+        vote_receipts = {g["packet_receipt"] for g in grid}
+        assert len(vote_receipts) == 1, vote_receipts
+        assert len({g["owning_txn"] for g in grid}) == 3, grid
+        not_collectible = [g["key"] for g in grid
+                           if not g["completion_fact_ref"]]
+        _h2b_emit("GRID_COMPLETION", chain="AC05-controls",
+                  linked=sum(1 for g in grid if g["core_vote"] is True
+                             and g["satisfied"] and g["packet_receipt"]),
+                  real_completion=sum(1 for g in grid
+                                      if g["completion_fact_ref"]),
+                  not_collectible=not_collectible,
+                  reason=("per-ballot DEDICATED owner receipt NOT_COLLECTIBLE: the "
+                          "product signs ONE receipt per vote packet (shared by "
+                          "its ballots); the cell is linked through its REAL Core "
+                          "vote record + its own satisfied schedule row + its "
+                          "packet's owner receipt"))
+
+        # ---- the REAL senate terminal survives the whole chain -------------
+        last = packets[-1]["delivery"] or {}
+        assert last.get("outcome") == "RESOLVED", last
+        terminal = last.get("terminal") or {}
+        assert terminal.get("status") == "resolved", terminal
+        assert last.get("scope_id") == scope_id, last
+        canonical = senate_api.canonical_finalization(
+            state, expected_scope=last["scope_id"], claimed_terminal=terminal)
+        facts = canonical.get("facts") or {}
+        assert canonical.get("status") == "VALID", canonical
+        assert facts and all(facts.values()), facts
+        assert state.get_phase_result("senate") is not None
+        assert failures == [], failures
+        assert retries == [], retries
+        _h2b_emit("SUMMARY", chain="AC05-controls", packets=len(packets),
+                  proposals=pids, scope=scope_id,
+                  real_first_gates=len(real_rows),
+                  continuations=len(conts), ballots=len(ballots),
+                  grid_linked=sum(1 for g in grid if g["core_vote"] is True),
+                  grid_receipts=sum(1 for g in grid if g["completion_fact_ref"]),
+                  terminal=terminal.get("status"),
+                  canonical=canonical.get("status"))
+        gates.emit("AC05-controls")
+    finally:
+        for _p in patchers:
+            _p.stop()
+
+
+# ===========================================================================
+# B-4 (AC-W3-18) — the ZERO-LAND isolation control built from a REAL land
+# selection draft (never from removing a capability key)
+# ===========================================================================
+def test_ac_w3_18_zero_land_draft_isolation_control():
+    from PySide6.QtCore import QObject
+    from src.tests.test_gui import test_w3_delivery_authority as f03
+
+    state = _chain_state(humans=3)
+    state._national_public_land = 1000
+    shell = f03._shell_runtime(state, "player1")
+    store, gui, driven = shell.store, shell.gui, shell.driven
+    gates = _w3_real_gate.RealGateHarness(shell, label="AC18-zeroLand")
+    gates.auto_driven_tail()
+
+    # ---- setup leg (CONTROL, driven): startup -> entry -> consul seat ------
+    f03._takeover_driven(shell)
+    store.doAdvancePopulation()
+    driven.render()
+    assert store.seatLifecycle == SEAT_MASKED_PENDING, store.seatLifecycle
+    assert store.requestTakeover()["accepted"] is True
+    driven.render()
+    driven.render()
+    assert store.seatLifecycle == SEAT_ACTIVE, store.seatLifecycle
+    store._refresh_senate_view()
+    f03._pump(10, 5)                          # the Repeater builds the live cards
+    assert store.senateCurrentStep == "proposal", store.senateCurrentStep
+    assert store.canCreateSenateProposal is True, store._senate_view
+
+    stage = shell.window.findChild(QObject, "senateStage")
+    button = shell.window.findChild(QObject, "senateProposalSubmitButton")
+    assert stage is not None and button is not None, (stage, button)
+
+    options = list(store.senateProposalOptions or [])
+    land = [o for o in options if o.get("type") == "land"]
+    assert len(land) == 2, [o.get("key") for o in options]
+    key = land[0]["key"]
+    acts = sorted(o["params"]["act_type"] for o in land)
+
+    def _inputs():
+        return {
+            "canCreate": bool(store.canCreateSenateProposal),
+            "canTriggerAI": bool(store.canTriggerAIProposer),
+            "zeroLand": bool(_qml_eval(button,
+                                       "root.hasZeroValueLandSelection()")),
+            "aiBlocked": bool(store.senateAiProposerBlocked),
+        }
+
+    def _composite():
+        return bool(_qml_eval(button, _UI_ENABLED_EXPR))
+
+    # ---- select the land card (and clear every other card) via its control -
+    mechanisms = []
+    for opt in options:
+        other = opt.get("key")
+        if other == key or opt.get("type") in ("war", "peace"):
+            continue
+        if _h2b_card_probe(button, other).get("card") is not True:
+            continue
+        mechanisms.append((other, _h2b_set_card(shell, button, other, False)))
+    mechanisms.append((key, _h2b_set_card(shell, button, key, True)))
+    f03._pump(4, 5)
+
+    # ---- state P: the real NON-zero land draft -----------------------------
+    positive = _inputs()
+    assert positive == {"canCreate": True, "canTriggerAI": False,
+                        "zeroLand": False, "aiBlocked": False}, positive
+    assert bool(button.property("enabled")) is True
+    assert bool(button.property("enabled")) is _composite()
+    package = list(_qml_eval(button, "root.selectedProposals()") or [])
+    assert [r.get("type") for r in package] == ["land"], package
+    assert int(package[0]["params"]["amount_C"]) == int(
+        land[0]["params"]["amount_C"]), package
+    _h2b_emit("LAND_POSITIVE", chain="AC18-zeroLand", key=key, acts=acts,
+              public_land=land[0].get("public_land"),
+              amount_C=package[0]["params"]["amount_C"], inputs=positive,
+              enabled=button.property("enabled"),
+              composite=_composite(), mechanisms=mechanisms)
+
+    # ---- state Z: a REAL ZERO-LAND draft through the SAME draft setter -----
+    # The production slider is ``from: 1`` (it can never express 0); the zero
+    # value is therefore written through ``setBillParam`` — the EXACT function
+    # the slider's own ``onValueChanged`` calls. No capability key is touched.
+    _qml_eval(button, "root.setBillParam('%s', 'amount_C', 0)" % key)
+    f03._pump(4, 5)
+    zero = _inputs()
+    assert zero == {"canCreate": True, "canTriggerAI": False,
+                    "zeroLand": True, "aiBlocked": False}, zero
+    assert bool(button.property("enabled")) is False
+    assert bool(button.property("enabled")) is _composite()
+    # the CAPABILITY is unchanged: the card/checkbox is still editable/usable
+    landed = _h2b_card_probe(button, key)
+    assert landed.get("card") is True and landed.get("box") is True, landed
+    assert landed.get("enabled") is True, landed
+    assert landed.get("checked") is True, landed
+    assert store.canCreateSenateProposal is True
+    _h2b_emit("LAND_ZERO", chain="AC18-zeroLand", key=key, inputs=zero,
+              enabled=button.property("enabled"), composite=_composite(),
+              card_editable=landed.get("editable"),
+              card_checked=landed.get("checked"),
+              store_can_create=store.canCreateSenateProposal)
+
+    # a REAL click on the disabled control dispatches NOTHING
+    calls = []
+    gate_count = len(gui.gate_log)
+    proposals_before = {int(p["id"]) for p in state.get_senate_proposals()}
+    real_submit = store._adapter.submit_senate_proposals
+
+    def _submit_spy(*a, **k):
+        calls.append(a)
+        return real_submit(*a, **k)
+
+    with patch.object(store._adapter, "submit_senate_proposals",
+                      side_effect=_submit_spy):
+        _h2b_click(shell, button)
+        f03._pump(4, 5)
+    assert calls == [], calls
+    assert len(gui.gate_log) == gate_count
+    assert store.seatLifecycle == SEAT_ACTIVE, store.seatLifecycle
+    assert {int(p["id"]) for p in state.get_senate_proposals()} == \
+        proposals_before
+
+    # ---- restore a legal draft -> the SAME control really submits ----------
+    _qml_eval(button, "root.setBillParam('%s', 'amount_C', 10)" % key)
+    f03._pump(4, 5)
+    assert _inputs()["zeroLand"] is False
+    assert bool(button.property("enabled")) is True == _composite()
+
+    txn, row = _h2b_click_owning(shell, gates, button)
+    _h2b_settle(shell, gates, driven)
+
+    receipt = store._committed_receipt or {}
+    assert receipt.get("success") is True, receipt
+    created = list((receipt.get("data") or {}).get("created") or [])
+    assert len(created) == 1, created
+    new_ids = {int(p["id"]) for p in state.get_senate_proposals()} - proposals_before
+    assert {int(c["proposal_id"]) for c in created} == new_ids, (created, new_ids)
+    assert row["tier"] == _w3_real_gate.TIER_REAL and row["ok"] is True, row
+    assert row["receipt"] == (txn, "arm"), row
+    gates.assert_tail_driven(txn)
+    gates.record_tail(txn)
+    _h2b_emit("LAND_SUBMIT", chain="AC18-zeroLand", owning_txn=txn,
+              tier=row["tier"], ok=row["ok"], generation=row["generation"],
+              gen_begin=row["generation_at_begin"],
+              after=row["after_signals"], swap=row["swap_signals"],
+              created=[c.get("proposal_id") for c in created])
+    gates.emit("AC18-zeroLand")
+
+
+# ===========================================================================
+# B-5 (AC-W3-18) — the INDEPENDENT blocked isolation control: the AI proposer
+# is refused (never zero-land, never a removed capability key), and the block
+# is CONSUMED BY IDENTITY (a real new Core turn clears it).
+# ===========================================================================
+def _h2b_ai_consul_state():
+    """A registered hot-seat whose CONSUL is the AI player: the HUMAN viewer may
+    only TRIGGER the AI proposer (``canTriggerAIProposer``), never propose."""
+    state = GameState.create_for_testing({})
+    state.turn = GameTurn(turn_number=1, year=-264)
+    for phase in ["mortality", "revenue", "forum", "population"]:
+        state.mark_phase_executed(phase)
+    state._war_system = WarSystem(state)
+    state._military_system = MilitarySystem(state)
+    state._naval_system = NavalSystem(state)
+    for fid in ("optimates", "populares"):
+        state.add_faction(Faction(id=fid, name=fid.title(), treasury=50))
+    consul = Figure(id=8, name="ai-consul", faction_id="populares", age=40)
+    consul.office = "consul"
+    consul.class_tier = ClassTier.NOBILE
+    consul.influence = 50
+    state.add_member(consul)
+    state.get_faction("populares").member_ids.append(8)
+    tribune = Figure(id=9, name="tribune", faction_id="optimates", age=35)
+    tribune.office = "tribune"
+    tribune.class_tier = ClassTier.PLEBEIAN
+    state.add_member(tribune)
+    state.get_faction("optimates").member_ids.append(9)
+    state.add_player(Player(player_id="player1", faction_id="optimates",
+                            player_type=PlayerType.HUMAN))
+    state.add_player(Player(player_id="player2", faction_id="populares",
+                            player_type=PlayerType.AI))
+    state._turn_order = ["player1", "player2"]
+    state.set_current_player("player1")
+    session_access.register_hotseat_session(state, "player1", epoch=0)
+    return state
+
+
+def test_ac_w3_18_ai_proposer_blocked_isolation_control():
+    from PySide6.QtCore import QObject
+    from src.tests.test_gui import test_w3_delivery_authority as f03
+
+    state = _h2b_ai_consul_state()
+    shell = f03._shell_runtime(state, "player1")
+    store, gui, driven = shell.store, shell.gui, shell.driven
+    gates = _w3_real_gate.RealGateHarness(shell, label="AC18-aiBlocked")
+    gates.auto_driven_tail()
+    f03._takeover_driven(shell)
+    store._refresh_senate_view()
+    assert store.senateCurrentStep == "proposal", store.senateCurrentStep
+
+    button = shell.window.findChild(QObject, "senateProposalSubmitButton")
+    assert button is not None, "senateProposalSubmitButton not in the live tree"
+
+    def _inputs():
+        return {
+            "canCreate": bool(store.canCreateSenateProposal),
+            "canTriggerAI": bool(store.canTriggerAIProposer),
+            "zeroLand": bool(_qml_eval(button,
+                                       "root.hasZeroValueLandSelection()")),
+            "aiBlocked": bool(store.senateAiProposerBlocked),
+        }
+
+    def _composite():
+        return bool(_qml_eval(button, _UI_ENABLED_EXPR))
+
+    # ---- the UNBLOCKED truth table: the AI trigger is a legal control ------
+    before = _inputs()
+    assert before == {"canCreate": False, "canTriggerAI": True,
+                      "zeroLand": False, "aiBlocked": False}, before
+    assert bool(button.property("enabled")) is True
+    assert bool(button.property("enabled")) is _composite()
+    _h2b_emit("AI_INPUTS", chain="AC18-aiBlocked", phase="before",
+              inputs=before, enabled=button.property("enabled"),
+              composite=_composite())
+
+    # ---- the REAL control click -> the AI owning chain (REAL first gate) ---
+    # The refusal is the PRODUCTION guard's own typed DENIED (the same envelope
+    # ``session_access.denied_response()`` builds); nothing is monkeypatched and
+    # the AI producer is only OBSERVED (no fake return value).
+    ai_calls = []
+    real_auto = senate_api.auto_submit_proposals
+
+    def _observe_auto(state_, *a, **k):
+        ai_calls.append(1)
+        return real_auto(state_, *a, **k)
+
+    with patch.object(senate_api, "auto_submit_proposals",
+                      side_effect=_observe_auto):
+        txn, row = _h2b_click_owning(shell, gates, button)
+        _h2b_settle(shell, gates, driven)
+    _h2b_emit("AI_PUBLISH", chain="AC18-aiBlocked", ai_producer_calls=len(ai_calls),
+              seat=store.seatLifecycle, blocked=store.senateAiProposerBlocked,
+              origin=store._senate_ai_proposer_origin(),
+              step=store.senateCurrentStep,
+              submit_errors=store._senate_submit_errors,
+              receipt_success=(store._committed_receipt or {}).get("success"),
+              receipt_message=(store._committed_receipt or {}).get("message"))
+
+    assert store.seatLifecycle == SEAT_ACTIVE, store.seatLifecycle
+    assert store.senateAiProposerBlocked is True
+    assert store._senate_ai_proposer_block_key == (
+        "turn-1", "proposal", "player1"), store._senate_ai_proposer_block_key
+    assert any((item.get("code") or "") == "DENIED"
+               for item in (store._senate_submit_errors or [])), \
+        store._senate_submit_errors
+    assert row["tier"] == _w3_real_gate.TIER_REAL and row["ok"] is True, row
+    assert row["receipt"] == (txn, "arm"), row
+    gates.assert_tail_driven(txn)
+    gates.record_tail(txn)
+
+    # ---- the BLOCKED truth table (not zero-land, not a missing key) ------
+    blocked = _inputs()
+    assert blocked == {"canCreate": False, "canTriggerAI": True,
+                       "zeroLand": False, "aiBlocked": True}, blocked
+    assert bool(button.property("enabled")) is False
+    assert bool(button.property("enabled")) is _composite()
+    _h2b_emit("AI_INPUTS", chain="AC18-aiBlocked", phase="blocked",
+              inputs=blocked, enabled=button.property("enabled"),
+              composite=_composite(), block_key=store._senate_ai_proposer_block_key,
+              owning_txn=txn, tier=row["tier"], ok=row["ok"],
+              generation=row["generation"],
+              gen_begin=row["generation_at_begin"],
+              after=row["after_signals"], swap=row["swap_signals"])
+    gates.emit("AC18-aiBlocked")
+
+    # a second REAL click dispatches NOTHING (no second AI publish attempt)
+    gate_count = len(gui.gate_log)
+    ai_calls_before_second = len(ai_calls)
+    with patch.object(senate_api, "auto_submit_proposals",
+                      side_effect=_observe_auto):
+        _h2b_click(shell, button)
+        f03._pump(4, 5)
+    assert len(ai_calls) == ai_calls_before_second, ai_calls
+    assert len(gui.gate_log) == gate_count
+
+    # ---- the block is CONSUMED BY IDENTITY: a REAL new Core turn clears it -
+    state.turn.turn_number = 2
+    store._refresh_senate_view()
+    assert store.senateAiProposerBlocked is False, store.senateAiProposerBlocked
+    assert store._senate_ai_proposer_block_key is None
+    _h2b_emit("AI_IDENTITY_CONSUMED", chain="AC18-aiBlocked",
+              turn=state.turn.turn_number, inputs=_inputs(),
+              enabled=button.property("enabled"))
+
+
+# ===========================================================================
+# H2-c (AC-W3-01 / AC-W3-03 / AC-W3-12) — the 1H2AI long chain.
+#
+#   ONE HUMAN (player1) + TWO AI (player2 / player3), entered at the population
+#   boundary on the REAL GUI shell. EVERY AI decision (the consul proposal and
+#   both AI vote ballots) is produced by the REAL coordinator executor
+#   (``continue_after_command(ai_executor=...)``), never by this file and never
+#   by a synchronous witness. Every packet's FIRST gate is its own fresh real
+#   ``QQuickWindow`` (FRAME_WINDOW_REAL); every later gate is
+#   FRAME_BRIDGE_DRIVEN. The chain must finish with FAIL_AFTER_COMMIT == 0,
+#   retryHandoff == 0 and every handoff completed.
+# ===========================================================================
+def _h2c_wrap_executor(real_exec, *, current, calls, depth):
+    """Observe the REAL coordinator AI executor; its return is kept verbatim.
+
+    Nothing is substituted: the wrapped object is the production callable the
+    continuation really carries (``_senate_ai_executor(state, target)``), and its
+    OWN ``ExecutionOutcome`` is recorded.
+    """
+    from src.api import session_turn_service as _turn
+
+    def _run(*a, **k):
+        if len(a) >= 2:
+            target = a[1]
+        else:
+            target = k.get("target") or k.get("obligation")
+        depth["inside"] += 1
+        try:
+            result = real_exec(*a, **k)
+        finally:
+            depth["inside"] -= 1
+        status = getattr(result, "kind", None)
+        receipts = [str(x) for x in (getattr(result, "receipts", ()) or ())]
+        calls.append({
+            "packet": current["id"],
+            "target_type": type(target).__name__,
+            "actor": getattr(target, "actor_player_id", None),
+            "substep": getattr(target, "substep", ""),
+            "status": status,
+            "kind": status,
+            "accepted": status == _turn.OUTCOME_ACCEPTED,
+            "command_id": getattr(result, "command_id", ""),
+            "receipts": receipts,
+            "created": receipts,
+            "created_count": len(receipts),
+            "owner_completion": bool(getattr(result, "owner_completion", None)),
+            "detail": getattr(result, "detail", ""),
+        })
+        return result
+    return _run
+
+
+def _h2c_drive_1h2ai(chain_label):
+    """Drive the REAL 1H2AI chain on the live shell; return every observation."""
+    from src.tests.test_gui import test_w3_delivery_authority as f03
+
+    state = _chain_state(humans=1)
+    state._national_public_land = 1000
+    book = session_turn_service._book(state)
+    shell = f03._shell_runtime(state, "player1")
+    store, gui, driven = shell.store, shell.gui, shell.driven
+    gates = _w3_real_gate.RealGateHarness(shell, label=chain_label)
+    gates.auto_driven_tail()
+
+    packets, conts, ballots, exec_calls = [], [], [], []
+    failures, retries, handoffs, feedbacks = [], [], [], []
+    lifecycles = []
+    current = {"id": "", "txn": ""}
+    depth = {"inside": 0}
+    exec_wrappers = {}
+
+    real_fail = store._fail_masked
+    real_cont = session_turn_service.continue_after_command
+    real_vote = state.record_senate_vote
+
+    def _fail_spy(kind, txn_id="", route="activation"):
+        failures.append((kind, txn_id, route))
+        return real_fail(kind, txn_id, route)
+
+    def _retry_spy(*a, **k):
+        retries.append(1)
+        return {"accepted": False}
+
+    def _wrap_exec(real_exec):
+        key = id(real_exec)
+        wrapper = exec_wrappers.get(key)
+        if wrapper is None:
+            wrapper = _h2c_wrap_executor(real_exec, current=current,
+                                         calls=exec_calls, depth=depth)
+            exec_wrappers[key] = wrapper
+        return wrapper
+
+    def _cont_spy(*a, **k):
+        carried = k.get("ai_executor")
+        if carried is not None:
+            k["ai_executor"] = _wrap_exec(carried)
+        elif len(a) >= 2 and callable(a[1]):
+            carried = a[1]
+            a = (a[0], _wrap_exec(carried)) + tuple(a[2:])
+        result = real_cont(*a, **k)
+        conts.append({"packet": current["id"],
+                      "carried_executor": carried is not None,
+                      "status": getattr(result, "status", "")})
+        return result
+
+    def _vote_spy(actor, proposal_id, approve, *a, **k):
+        result = real_vote(actor, proposal_id, approve, *a, **k)
+        ballots.append({"packet": current["id"], "actor": actor,
+                        "proposal": int(proposal_id),
+                        "approve": bool(approve),
+                        "from_executor": depth["inside"] > 0,
+                        "txn": current["txn"]})
+        return result
+
+    def _packet(pkt_id, step, invoke):
+        current["id"] = pkt_id
+        gates_before = len(gui.gate_log)
+        ballots_before = len(ballots)
+        exec_before = len(exec_calls)
+        gates.arm_real()
+        result = invoke()
+        new_rows = gui.gate_log[gates_before:]
+        gate = dict(store._async_gate or {})
+        txn = str(gate.get("txn_id") or "")
+        if not txn and new_rows:
+            txn = str(new_rows[0]["txn"])
+        assert txn and new_rows, (pkt_id, gate, new_rows)
+        assert new_rows[0]["kind"] == "arm", (pkt_id, new_rows)
+        assert all(r["txn"] == txn for r in new_rows), (pkt_id, new_rows)
+        current["txn"] = txn
+        gen_begin = gates.generation() if str(gate.get("kind") or "") == "arm" \
+            else None
+        first = gates.claim_first(txn, begin_generation=gen_begin)
+        _h2b_settle(shell, gates, driven)
+        gates.assert_tail_driven(txn)
+        gates.record_tail(txn)
+        receipt = store._committed_receipt or {}
+        data = receipt.get("data") if isinstance(receipt.get("data"), dict) else {}
+        delivery = data.get("delivery") if isinstance(data.get("delivery"), dict) \
+            else None
+        record = {
+            "packet": pkt_id, "step": step, "txn": txn,
+            "accepted": bool(receipt.get("success")),
+            "delivery": delivery,
+            "created": list(data.get("created") or []),
+            "gates": [(g["kind"], g["tier"], g["ok"])
+                      for g in gui.gate_log if g["txn"] == txn],
+            "first": first,
+            "seat": store.seatLifecycle,
+            "ballots": ballots[ballots_before:],
+            "exec": exec_calls[exec_before:],
+            "conts": [c for c in conts if c["packet"] == pkt_id],
+            "result": result,
+        }
+        packets.append(record)
+        _h2b_emit("H2C_PACKET", chain=chain_label, packet=pkt_id, step=step,
+                  owning_txn=txn, accepted=record["accepted"],
+                  outcome=(delivery or {}).get("outcome"),
+                  next_actor=((delivery or {}).get("next") or {}).get(
+                      "actor_player_id"),
+                  created=[c.get("proposal_id") for c in record["created"]],
+                  first_gate=(first["kind"], first["tier"], first["ok"],
+                              first["generation"],
+                              first["generation_at_begin"],
+                              first["after_signals"], first["swap_signals"]),
+                  gates=record["gates"],
+                  continuations=len(record["conts"]),
+                  executor_calls=[(c["substep"], c["actor"], c["accepted"])
+                                  for c in record["exec"]],
+                  ballots=[(b["proposal"], b["actor"], b["from_executor"])
+                           for b in record["ballots"]])
+        current["id"], current["txn"] = "", ""
+        return record
+
+    store.handoffFinished.connect(
+        lambda txn, ok: handoffs.append({"txn": txn, "ok": bool(ok)}))
+    store.feedbackRaised.connect(
+        lambda kind, message: feedbacks.append((str(kind), str(message))))
+    store.seatLifecycleChanged.connect(
+        lambda: lifecycles.append(store.seatLifecycle))
+
+    patchers = [
+        patch.object(store, "_fail_masked", side_effect=_fail_spy),
+        patch.object(store, "retryHandoff", side_effect=_retry_spy),
+        patch.object(state, "record_senate_vote", side_effect=_vote_spy),
+        patch.object(session_turn_service, "continue_after_command",
+                     side_effect=_cont_spy),
+    ]
+    for _p in patchers:
+        _p.start()
+    try:
+        f03._takeover_driven(shell)          # startup seat: CONTROL (driven)
+        handoffs.clear()                     # count only the chain's handoffs
+        feedbacks.clear()
+        lifecycles.clear()
+
+        # ---- the population ENTRY: its continuation drives the AI consul ----
+        entry = _packet("P1", "entry", lambda: store.doAdvancePopulation())
+        assert entry["accepted"], entry
+        assert state.get_senate_proposals(), "the AI consul proposed nothing"
+        assert "senate" in book.scopes, book.scopes
+        snap = session_turn_service.obligations(state, "senate")
+        after_entry = {
+            "proposals": [dict(p) for p in state.get_senate_proposals()],
+            "decision_complete": bool(state.senate_proposal_decision_complete),
+            "propose_facts": [(str(ref), str(rec.get("command") or ""),
+                               str(rec.get("receipt_id") or ""))
+                              for ref, rec in book.committed_facts.items()
+                              if str(rec.get("command") or "") in
+                              ("propose_many", "auto_submit_proposals")],
+            "obligations": [{"oid": str(o.obligation_id),
+                             "substep": o.substep,
+                             "actor": o.actor_player_id,
+                             "controller": o.controller,
+                             "satisfied": bool(o.satisfied)}
+                            for o in snap.obligations],
+        }
+
+        store._refresh_senate_view()
+        assert store.senateCurrentStep == "senate_vote", store.senateCurrentStep
+        view = dict(store._senate_view)
+        pids = sorted(int(s["id"]) for s in (view.get("submitted_proposals") or []))
+        assert pids, view
+
+        # ---- the HUMAN ballot packet: the continuation drains both AI seats --
+        _packet("P2", "senate_vote",
+                lambda: store.doSubmitSenateVotes(pids))
+
+        store._refresh_senate_view()
+        assert store.senateCurrentStep == "tribune_veto", store.senateCurrentStep
+        _packet("P3", "tribune_veto",
+                lambda: store.doSubmitSenateVetoes([pids[0]]))
+    finally:
+        for _p in patchers:
+            _p.stop()
+
+    return {
+        "state": state, "book": book, "shell": shell, "store": store,
+        "gui": gui, "gates": gates, "packets": packets, "conts": conts,
+        "ballots": ballots, "exec_calls": exec_calls, "failures": failures,
+        "retries": retries, "handoffs": handoffs, "feedbacks": feedbacks,
+        "lifecycles": lifecycles, "after_entry": after_entry,
+    }
+
+
+def test_ac_w3_12_one_human_two_ai_chain_runs_every_ai_decision_through_the_real_executor():
+    """C-1 / C-2 / C-4: the 1H2AI REAL chain with executor provenance."""
+    run = _h2c_drive_1h2ai("AC12-1H2AI")
+    state, store = run["state"], run["store"]
+    packets = run["packets"]
+
+    # ---- C-1: the three packets, each its OWN owning txn + REAL first gate --
+    assert [p["step"] for p in packets] == ["entry", "senate_vote",
+                                            "tribune_veto"], packets
+    assert len({p["txn"] for p in packets}) == 3, packets
+    for p in packets:
+        kinds = [k for k, _t, _o in p["gates"]]
+        assert kinds[0] == "arm", (p["packet"], kinds)
+        assert p["gates"][0] == ("arm", _w3_real_gate.TIER_REAL, True), p["gates"]
+        assert all(t == _w3_real_gate.TIER_DRIVEN and o is True
+                   for _k, t, o in p["gates"][1:]), p["gates"]
+        # exactly ONE coordinator continuation per accepted packet
+        assert len(p["conts"]) == 1, (p["packet"], p["conts"])
+        assert p["conts"][0]["carried_executor"] is True, p["conts"]
+        assert p["conts"][0]["status"] != session_turn_service.STATUS_FAILURE
+        assert p["accepted"], p
+    real_rows = [r for r in run["gates"].rows
+                 if r["tier"] == _w3_real_gate.TIER_REAL]
+    assert len(real_rows) == 3, real_rows
+    # no AI seat is ever parked behind a HUMAN pending
+    assert store._pending_player_id == "", store._pending_player_id
+    assert SEAT_MASKED_PENDING not in run["lifecycles"], run["lifecycles"]
+
+    # ---- C-2: the NON-EMPTY AI proposal comes from the REAL executor --------
+    proposal_calls = [c for c in run["exec_calls"] if c["substep"] == "proposal"]
+    assert proposal_calls, run["exec_calls"]
+    assert all(c["actor"] == "player2" for c in proposal_calls), proposal_calls
+    assert all(c["accepted"] for c in proposal_calls), proposal_calls
+    created = [pid for c in proposal_calls for pid in c["created"]]
+    assert created, proposal_calls
+    registered = sorted(int(p["id"]) for p in run["after_entry"]["proposals"])
+    assert sorted(int(pid) for pid in created) == registered, (created, registered)
+    assert all(c["command_id"] == "auto_submit_proposals" for c in proposal_calls), \
+        proposal_calls
+    # the proposal obligation is REALLY completed (owner completion, not a guess)
+    prop = [o for o in run["after_entry"]["obligations"]
+            if o["substep"] == "proposal"]
+    assert prop and all(o["satisfied"] for o in prop), prop
+    assert run["after_entry"]["decision_complete"] is True
+    # the receipt is the product's OWN committed fact for its proposal writer
+    assert run["after_entry"]["propose_facts"], run["after_entry"]
+    assert all(rid for _ref, _cmd, rid in run["after_entry"]["propose_facts"]), \
+        run["after_entry"]
+    # a HUMAN prefix is NOT in the evidence: the proposal packet was the ENTRY
+    assert packets[0]["step"] == "entry"
+    assert not [p for p in packets if p["step"] == "proposal"], packets
+
+    # ---- every AI ballot is cast INSIDE the real executor -------------------
+    ai_ballots = [b for b in run["ballots"] if b["actor"] in ("player2", "player3")]
+    assert ai_ballots, run["ballots"]
+    assert all(b["from_executor"] for b in ai_ballots), ai_ballots
+    assert {b["actor"] for b in ai_ballots} == {"player2", "player3"}, ai_ballots
+    assert all(b["proposal"] in registered for b in run["ballots"]), run["ballots"]
+    vote_calls = [c for c in run["exec_calls"]
+                  if str(c["substep"]).startswith("vote:")]
+    assert {c["actor"] for c in vote_calls} >= {"player2", "player3"}, vote_calls
+    assert all(c["accepted"] for c in vote_calls), vote_calls
+    # the HUMAN ballot(s) are the same-seat packet, never an AI executor call
+    human_ballots = [b for b in run["ballots"] if b["actor"] == "player1"]
+    assert human_ballots and not any(b["from_executor"] for b in human_ballots), \
+        human_ballots
+
+    # ---- the REAL senate terminal survives the whole chain -----------------
+    last = packets[-1]["delivery"] or {}
+    assert last.get("outcome") == "RESOLVED", last
+    terminal = last.get("terminal") or {}
+    assert terminal.get("status") == "resolved", terminal
+    canonical = senate_api.canonical_finalization(
+        state, expected_scope=last.get("scope_id"), claimed_terminal=terminal)
+    facts4 = canonical.get("facts") or {}
+    assert canonical.get("status") == "VALID", canonical
+    assert facts4 and all(facts4.values()), facts4
+    assert state.get_phase_result("senate") is not None
+    assert store.handoffMaskVisible is False
+
+    # ---- C-4: runtime COUNTS (never constants) -----------------------------
+    after_commit = [f for f in run["failures"] if f[0] == "after_commit"]
+    assert after_commit == [], run["failures"]
+    assert run["failures"] == [], run["failures"]
+    assert run["retries"] == [], run["retries"]
+    ok_handoffs = [h for h in run["handoffs"] if h["ok"]]
+    assert ok_handoffs and len(ok_handoffs) == len(run["handoffs"]), run["handoffs"]
+    assert {h["txn"] for h in run["handoffs"]} == {p["txn"] for p in packets}, \
+        run["handoffs"]
+    error_events = [f for f in run["feedbacks"] if f[0] == "error"]
+    assert error_events == [], run["feedbacks"]
+    _h2b_emit("H2C_COUNTS", chain="AC12-1H2AI",
+              packets=len(packets),
+              after_commit=len(after_commit),
+              failures=len(run["failures"]),
+              retry_handoff_calls=len(run["retries"]),
+              handoffs=len(run["handoffs"]),
+              handoff_ok=len(ok_handoffs),
+              handoff_txns=[h["txn"] for h in run["handoffs"]],
+              failure_copy_events=len(error_events),
+              feedback_events=len(run["feedbacks"]),
+              executor_calls=len(run["exec_calls"]),
+              ai_ballots=len(ai_ballots),
+              continuations=len(run["conts"]),
+              terminal=terminal.get("status"),
+              canonical=canonical.get("status"))
+    run["gates"].emit("AC12-1H2AI")
+
+
+def test_ac_w3_03_successful_explicit_empty_batch_is_a_positive_control():
+    """C-3: an EXPLICIT successful empty batch (decision_complete, 0 proposals).
+
+    This is the positive carrier AC03 was missing: the AI consul really submits
+    an EMPTY package through the real executor, the product records
+    ``senate_proposal_decision_complete`` with ZERO proposals, and the chain
+    reaches the REAL terminal. It is NOT the N13 failure negative control.
+    """
+    from src.tests.test_gui import test_w3_delivery_authority as f03
+
+    state = _chain_state(humans=1, budget=False)
+    state.config.testing.propose_war_chance = 0.0
+    state.config.testing.always_declare = False
+    state.config.political_rules.land_proposal.sale_chance = 0.0
+    state.config.political_rules.land_proposal.distribution_chance = 0.0
+    shell = f03._shell_runtime(state, "player1")
+    store, gui, driven = shell.store, shell.gui, shell.driven
+    gates = _w3_real_gate.RealGateHarness(shell, label="AC03-empty-batch")
+    gates.auto_driven_tail()
+
+    calls, failures, retries, handoffs, feedbacks = [], [], [], [], []
+    current = {"id": "", "txn": ""}
+    depth = {"inside": 0}
+    wrappers = {}
+    real_fail = store._fail_masked
+    real_cont = session_turn_service.continue_after_command
+
+    def _fail_spy(kind, txn_id="", route="activation"):
+        failures.append((kind, txn_id, route))
+        return real_fail(kind, txn_id, route)
+
+    def _wrap(real_exec):
+        key = id(real_exec)
+        if key not in wrappers:
+            wrappers[key] = _h2c_wrap_executor(real_exec, current=current,
+                                              calls=calls, depth=depth)
+        return wrappers[key]
+
+    def _cont_spy(*a, **k):
+        carried = k.get("ai_executor")
+        if carried is not None:
+            k["ai_executor"] = _wrap(carried)
+        elif len(a) >= 2 and callable(a[1]):
+            carried = a[1]
+            a = (a[0], _wrap(carried)) + tuple(a[2:])
+        assert carried is not None, "the entry continuation carries no executor"
+        return real_cont(*a, **k)
+
+    pm_calls = []
+    real_pm = senate_api.propose_many
+
+    def _pm_spy(state_, *a, **k):
+        package = a[1] if len(a) > 1 else k.get("package")
+        if not isinstance(package, dict):
+            package = {}
+        result = real_pm(state_, *a, **k)
+        pm_calls.append({
+            "success": bool((result or {}).get("success")),
+            "war_drafts": len(package.get("war_drafts") or []),
+            "proposals": len(package.get("proposals") or []),
+            "created": len(((result or {}).get("data") or {}).get("created") or []),
+            "decision_complete_now": bool(
+                getattr(state_, "senate_proposal_decision_complete", False)),
+            "all_ballots_ready_now": bool(
+                session_turn_service.senate_readiness(state_).get(
+                    "all_ballots_ready")),
+        })
+        return result
+
+    store.handoffFinished.connect(
+        lambda txn, ok: handoffs.append({"txn": txn, "ok": bool(ok)}))
+    store.feedbackRaised.connect(
+        lambda kind, message: feedbacks.append((str(kind), str(message))))
+
+    with patch.object(store, "_fail_masked", side_effect=_fail_spy), \
+            patch.object(store, "retryHandoff",
+                         side_effect=lambda *a, **k: retries.append(1)), \
+            patch.object(session_turn_service, "continue_after_command",
+                         side_effect=_cont_spy), \
+            patch.object(senate_api, "propose_many", side_effect=_pm_spy):
+        f03._takeover_driven(shell)
+        handoffs.clear()
+        feedbacks.clear()
+        current["id"] = "P1"
+        gates.arm_real()
+        before = len(gui.gate_log)
+        entry = store.doAdvancePopulation()
+        new_rows = gui.gate_log[before:]
+        gate = dict(store._async_gate or {})
+        txn = str(gate.get("txn_id") or "") or str(new_rows[0]["txn"])
+        current["txn"] = txn
+        assert new_rows and new_rows[0]["kind"] == "arm", (gate, new_rows)
+        gen_begin = gates.generation() if str(gate.get("kind") or "") == "arm" \
+            else None
+        first = gates.claim_first(txn, begin_generation=gen_begin)
+        _h2b_settle(shell, gates, driven)
+        gates.assert_tail_driven(txn)
+        gates.record_tail(txn)
+
+    receipt = store._committed_receipt or {}
+    data = receipt.get("data") if isinstance(receipt.get("data"), dict) else {}
+    delivery = data.get("delivery") if isinstance(data.get("delivery"), dict) else {}
+    _h2b_emit("H2C_EMPTY_PROBE", chain="AC03-empty-batch",
+              step=store.senateCurrentStep,
+              can_create=store.canCreateSenateProposal,
+              can_trigger=store.canTriggerAIProposer,
+              decision_complete=state.senate_proposal_decision_complete,
+              proposals=len(state.get_senate_proposals()),
+              outcome=(delivery or {}).get("outcome"),
+              next_actor=((delivery or {}).get("next") or {}).get("actor_player_id"),
+              seat=store.seatLifecycle, viewer=store._viewer_id,
+              submit_errors=store._senate_submit_errors,
+              calls=[(c["substep"], c["actor"], c["status"], c["created_count"])
+                     for c in calls],
+              propose_many=pm_calls)
+
+    # ---- the empty decision is REAL and EXPLICIT (not a failure) ------------
+    assert receipt.get("success") is True, receipt
+    assert state.get_senate_proposals() == [], state.get_senate_proposals()
+    assert calls, "the AI executor was never invoked"
+    assert all(c["substep"] == "proposal" for c in calls), calls
+    assert all(c["accepted"] for c in calls), calls
+    assert all(c["created_count"] == 0 for c in calls), calls
+    # the product ITSELF wrote the EXPLICIT empty decision at that submit
+    # (``decision_complete_now``); the terminal finalization clears the flag
+    # again, so the END-of-chain read is False — both are real product facts.
+    assert pm_calls, "the AI proposal writer was never called"
+    assert all(c["proposals"] == 0 and c["war_drafts"] == 0 for c in pm_calls), \
+        pm_calls
+    assert all(c["created"] == 0 for c in pm_calls), pm_calls
+    assert [c for c in pm_calls if c["decision_complete_now"] is True], pm_calls
+    assert state.senate_proposal_decision_complete is False
+    # zero ballots exist, so readiness is trivially complete AT the decision
+    readiness = session_turn_service.senate_readiness(state)
+    assert readiness["required"] == 0 and readiness["covered"] == 0, readiness
+
+    # ---- the outcome is the REAL RESOLVED terminal (positive control) -------
+    assert delivery.get("outcome") == "RESOLVED", (delivery, entry)
+    terminal = delivery.get("terminal") or {}
+    assert terminal.get("status") == "resolved", terminal
+    canonical = senate_api.canonical_finalization(
+        state, expected_scope=delivery.get("scope_id"), claimed_terminal=terminal)
+    assert canonical.get("status") == "VALID", canonical
+    facts4 = canonical.get("facts") or {}
+    assert facts4 and all(facts4.values()), facts4
+    assert state.get_phase_result("senate") is not None
+
+    # ---- strictly distinguished from the N13 failure negative control ------
+    assert "delivery_error" not in data, data
+    assert store.handoffFailureKind == "", store.handoffFailureKind
+    assert store.seatLifecycle == SEAT_ACTIVE, store.seatLifecycle
+    assert failures == [], failures
+    assert retries == [], retries
+    assert all(h["ok"] for h in handoffs), handoffs
+    assert [f for f in feedbacks if f[0] == "error"] == [], feedbacks
+    assert first["tier"] == _w3_real_gate.TIER_REAL and first["ok"] is True, first
+    _h2b_emit("H2C_EMPTY_BATCH", chain="AC03-empty-batch",
+              owning_txn=txn, accepted=receipt.get("success"),
+              proposals=len(state.get_senate_proposals()),
+              decision_complete=state.senate_proposal_decision_complete,
+              decision_complete_at_submit=[c["decision_complete_now"]
+                                           for c in pm_calls],
+              executor_calls=[(c["substep"], c["actor"], c["accepted"],
+                               c["created_count"], c["status"])
+                              for c in calls],
+              outcome=delivery.get("outcome"),
+              terminal=terminal.get("status"),
+              canonical=canonical.get("status"),
+              after_commit=len([f for f in failures if f[0] == "after_commit"]),
+              retry_calls=len(retries),
+              handoffs=len(handoffs),
+              first_gate=(first["kind"], first["tier"], first["ok"],
+                          first["generation"], first["after_signals"],
+                          first["swap_signals"]))
+    gates.emit("AC03-empty-batch")

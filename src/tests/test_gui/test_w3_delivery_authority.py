@@ -40,6 +40,7 @@ from src.core.entities.figure import ClassTier, Figure
 from src.core.entities.player import Player, PlayerType
 from src.core.game_state import GameState
 from src.ui.gui.session_store import (
+    FAIL_AFTER_COMMIT,
     FAIL_BEFORE_COMMIT,
     GuiSessionStore,
     SEAT_ACTIVATE,
@@ -47,8 +48,25 @@ from src.ui.gui.session_store import (
     SEAT_MASKED_FAILURE,
     SEAT_MASKED_PENDING,
 )
+from src.tests.test_gui import _w3_real_gate as real_gate
 
 VIEWER = "player1"
+
+
+@pytest.fixture(autouse=True)
+def _w3_real_window_hygiene():
+    """Test hygiene: a REAL gate window is a PER-TEST object.
+
+    Every case here opens real ``QQuickWindow``/QML surfaces (the REAL first-gate
+    carrier plus the shell's own window). Nothing closed them before, so they
+    stayed visible -- and kept rendering -- for the whole pytest process. They
+    are closed/destroyed here, at the end of the test that opened them, so every
+    later test sees the same Qt state it would see in a fresh process. No
+    assertion, expectation or product byte is affected.
+    """
+    baseline = real_gate.window_snapshot()
+    yield
+    real_gate.release_windows(baseline)
 
 
 # ---------------------------------------------------------------------------
@@ -318,9 +336,26 @@ def test_ac_w3_06_partial_coverage_never_presents_results():
 # AC-W3-08 — retry never reads the Core cursor as a target
 # ===========================================================================
 def test_ac_w3_08_retry_without_recorded_envelope_is_typed_stop():
+    # H1: the entry chain's FIRST gate is completed by its OWN real
+    # QQuickWindow; the later gates of the same txn are driven.
     state = _entry_state(consul_controller="ai")
-    store, _ = _store(state)
+    shell = _shell_runtime(state, "player1")
+    store, gui, driven = shell.store, shell.gui, shell.driven
+    _takeover_driven(shell)
+    gates = real_gate.RealGateHarness(shell, label="AC08-no-record")
+    gates.auto_driven_tail()
+
+    gates.arm_real()
     assert store.doAdvancePopulation()["success"] is True
+    entry_txn = str((store._async_gate or {}).get("txn_id") or "")
+    begin_generation = gates.generation()
+    gates.claim_first(entry_txn, begin_generation=begin_generation)
+    driven.render()                            # publication-under-mask (driven)
+    driven.render()                            # final reveal (driven)
+    assert store.seatLifecycle == SEAT_ACTIVE, store.seatLifecycle
+    gates.assert_tail_driven(entry_txn)
+    gates.record_tail(entry_txn)
+    gates.emit("AC08-no-record")
 
     store._seat_lifecycle = SEAT_MASKED_FAILURE
     store._last_delivery = None
@@ -345,18 +380,53 @@ def test_ac_w3_08_retry_without_recorded_envelope_is_typed_stop():
 
 
 def test_ac_w3_08_retry_uses_the_recorded_envelope_target():
+    # H1: BOTH masked owning txns of this chain (the failed entry and the bounded
+    # retry) complete their FIRST gate on their OWN fresh real QQuickWindow; the
+    # failure itself is the production bridge's OWN fail-close (a surface
+    # recreation while the final-reveal gate is live), never a boolean witness.
     state = _entry_state(consul_controller="ai")
-    store, witness = _store(state, witness=_Witness(unmask=False))
-    feedback = store.doAdvancePopulation()
-    assert feedback["success"] is False
-    assert store.seatLifecycle == SEAT_MASKED_FAILURE
+    shell = _shell_runtime(state, "player1")
+    store, gui, driven = shell.store, shell.gui, shell.driven
+    _takeover_driven(shell)
+    gates = real_gate.RealGateHarness(shell, label="AC08-recorded-target")
+    gates.auto_driven_tail()
+
+    # ---- first attempt: REAL first gate, then the final-reveal gate misses ----
+    gates.arm_real()
+    pending = store.doAdvancePopulation()
+    assert (pending.get("data") or {}).get("pending") is True, pending
+    entry_txn = str((store._async_gate or {}).get("txn_id") or "")
+    begin_generation = gates.generation()
+    gates.claim_first(entry_txn, begin_generation=begin_generation)
+    driven.render()                            # publication-under-mask (driven)
+    assert gates.live_gate() is True, "the final-reveal gate must be live"
+    gates.fail_live_gate_by_rebind()           # production fail-close, no bool
+    gates.record_tail(entry_txn)
+
+    assert store.seatLifecycle == SEAT_MASKED_FAILURE, store.seatLifecycle
+    settled = store._activation_result or {}
+    assert settled.get("success") is False, settled
+    typed = ((settled.get("data") or {}).get("delivery_error") or {})
+    assert typed.get("code") == "SEAT_PUBLICATION_FAILED", typed
+    assert typed.get("stage") == "unmask_frame", typed
+    assert typed.get("committed") is True, typed
     assert store._last_delivery is not None
     recorded = store._last_delivery["delivery"]["next"]["actor_player_id"]
 
-    witness.unmask = True
+    # ---- the bounded retry is its OWN masked owning txn: REAL first gate -----
+    gates.arm_real()
     retry = store.retryHandoff()
     assert retry["accepted"] is True
+    retry_txn = str((store._async_gate or {}).get("txn_id") or "")
+    assert retry_txn and retry_txn != entry_txn, (retry_txn, entry_txn)
+    retry_generation = gates.generation()
+    gates.claim_first(retry_txn, begin_generation=retry_generation)
+    driven.render()                            # publication-under-mask (driven)
+    driven.render()                            # final reveal (driven)
     assert store.seatLifecycle == SEAT_ACTIVE
+    gates.assert_tail_driven(retry_txn)
+    gates.record_tail(retry_txn)
+    gates.emit("AC08-recorded-target")
     # the target came from the recorded envelope (SAME_HUMAN viewer), not Core order
     assert recorded == VIEWER
 
@@ -365,8 +435,17 @@ def test_ac_w3_08_retry_uses_the_recorded_envelope_target():
 # AC-W3-09 — legacy fields cannot change the seat
 # ===========================================================================
 def test_ac_w3_09_contradictory_legacy_is_rejected_by_the_validator():
+    # H1: the negative control keeps its REAL forward API then corrupts ONLY the
+    # legacy field; its FIRST gate is now the control's own real QQuickWindow and
+    # the typed rejection is captured at the Store's own typed-failure exit (the
+    # exact object the synchronous caller receives) because an async first gate
+    # makes the Slot return its lawful ``pending`` envelope first.
     state = _entry_state(consul_controller="ai")
-    store, _ = _store(state)
+    shell = _shell_runtime(state, "player1")
+    store, gui, driven = shell.store, shell.gui, shell.driven
+    _takeover_driven(shell)
+    gates = real_gate.RealGateHarness(shell, label="AC09-legacy")
+    gates.auto_driven_tail()
     real = store._adapter.advance_population
 
     def _corrupt(viewer):
@@ -375,14 +454,34 @@ def test_ac_w3_09_contradictory_legacy_is_rejected_by_the_validator():
             feedback["data"]["awaiting_player_id"] = "player9"
         return feedback
 
-    with patch.object(store._adapter, "advance_population", side_effect=_corrupt):
-        feedback = store.doAdvancePopulation()
+    captured = {}
+    real_delivery_fail = store._delivery_fail
 
+    def _delivery_fail_spy(txn_id, err, done=None):
+        result = real_delivery_fail(txn_id, err, done=done)
+        captured["result"] = result
+        return result
+
+    gates.arm_real()
+    with patch.object(store._adapter, "advance_population", side_effect=_corrupt), \
+            patch.object(store, "_delivery_fail", side_effect=_delivery_fail_spy):
+        pending = store.doAdvancePopulation()
+        assert (pending.get("data") or {}).get("pending") is True, pending
+        legacy_txn = str((store._async_gate or {}).get("txn_id") or "")
+        begin_generation = gates.generation()
+        gates.claim_first(legacy_txn, begin_generation=begin_generation)
+    gates.record_tail(legacy_txn)
+
+    feedback = captured.get("result")
+    assert feedback is not None, "the legacy rejection must be typed at settle"
     assert feedback["success"] is False
     err = feedback["data"]["delivery_error"]
     assert err["code"] in ("DELIVERY_MISMATCH", "DELIVERY_INVALID")
     assert err["stage"] in ("legacy", "receiver")
     assert store.seatLifecycle == SEAT_MASKED_FAILURE
+    # no later gate of this txn may ever be REAL
+    gates.assert_tail_driven(legacy_txn, ok_required=False)
+    gates.emit("AC09-legacy")
 
 
 # ===========================================================================
@@ -1558,24 +1657,35 @@ def _c1_snapshot(feedback):
     }
 
 
-def _c1_refusal(shape):
+def _c1_refusal_shapes():
     """The three CONSTRUCTIBLE producer refusal shapes named by C1-C."""
+    return ("data_none",
+            "data_present_no_delivery_error",
+            "data_with_producer_diagnostic")
+
+
+def _c1_produce(store, shape, submit):
+    """Return a REAL producer refusal for ``shape`` (H1-4).
+
+    ``submit`` is the UNPATCHED production adapter call (``propose_many`` through
+    the adapter). Every return value below is produced by the production writer
+    itself; no refusal object is hand-built -- only the INPUT that makes the
+    producer refuse is test data.
+    """
     if shape == "data_none":
-        return {"success": False, "message": "提案包校验未通过",
-                "errors": [{"code": "PACKAGE_REJECTED",
-                             "message": "提案包校验未通过"}],
-                "data": None}
-    if shape == "data_missing_key":
-        return {"success": False, "message": "提案字段缺失",
-                "errors": [{"code": "MISSING_FIELD", "field": "war_id"}],
-                "data": {"hint": "check the war selection"}}
+        # senate_api.propose_many L1682-1683: the ``if not state`` guard returns
+        # ``api_response(False, "无效的游戏状态")`` -> ``data`` is None. The Store
+        # path never dispatches with a None state, so this REAL producer return is
+        # obtained directly (a genuine producer object, never a fixture dict).
+        return senate_api.propose_many(None, "player2", [])
+    if shape == "data_present_no_delivery_error":
+        # A real non-war validation refusal: ``data`` is the package envelope and
+        # carries NO ``delivery_error`` key (so any rewrite would be observable).
+        return submit("player2", [{"type": "land", "params": {}}])
     if shape == "data_with_producer_diagnostic":
-        return {"success": False, "message": "提案包已拒绝",
-                "errors": [{"code": "PACKAGE_REJECTED"}],
-                "data": {"status": "rejected",
-                         "delivery_error": {"code": "PACKAGE_REJECTED",
-                                            "stage": "validation",
-                                            "committed": False}}}
+        # A real war validation refusal carrying the producer's OWN diagnostic
+        # block (``checks_skipped`` prerequisite codes).
+        return submit("player2", [{"type": "war", "params": {"war_id": "nope"}}])
     raise AssertionError("unknown refusal shape: %r" % (shape,))
 
 
@@ -1593,16 +1703,21 @@ def _c1_active_consul():
     return state, store
 
 
-def _c1_submit(store, refusal=None, *, before_return=None, read_fault=False):
+def _c1_submit(store, shape=None, *, before_return=None, read_fault=False):
     """The REAL Slot with ONE declared boundary fault; records the refusal object
-    EXACTLY as it was handed to the Store plus the fresh-handle / call counts."""
+    EXACTLY as it was handed to the Store plus the fresh-handle / call counts.
+
+    ``shape`` (H1-4) selects a REAL producer refusal (see ``_c1_produce``); when
+    omitted the adapter's own production call is used unchanged.
+    """
     captured = {"calls": 0, "handles": 0}
     real_submit = store._adapter.submit_senate_proposals
     real_handle = session_access.issue_fresh_handle
 
     def _submit_spy(*a, **k):
         captured["calls"] += 1
-        obj = refusal if refusal is not None else real_submit(*a, **k)
+        obj = (_c1_produce(store, shape, real_submit) if shape is not None
+               else real_submit(*a, **k))
         captured["refusal"] = _c1_snapshot(obj)
         if before_return is not None:
             before_return()
@@ -1651,16 +1766,19 @@ def _c1_assert_false_exit(store, state, code, stage):
     assert store._snapshot == {}, store._snapshot
 
 
-@pytest.mark.parametrize("shape", ["data_none", "data_missing_key",
-                                   "data_with_producer_diagnostic"])
+@pytest.mark.parametrize("shape", _c1_refusal_shapes())
 def test_ac_w3_19_refusal_four_fields_survive_a_failed_recovery(shape):
     """C1-C: the rejected object's four public fields are preserved byte for
-    byte across a FAILED same-seat recovery, and the diagnostic is private."""
+    byte across a FAILED same-seat recovery, and the diagnostic is private.
+
+    H1-4: the refusal is now PRODUCED by the real writer (``_c1_produce``); the
+    three shapes are real ``data is None`` / real data-without-``delivery_error``
+    / real data-with-producer-diagnostic returns.
+    """
     state, store = _c1_active_consul()
     rev_before = session_access.core_business_revision(state)
-    refusal = _c1_refusal(shape)
 
-    result, captured = _c1_submit(store, refusal, read_fault=True)
+    result, captured = _c1_submit(store, shape, read_fault=True)
 
     # C1-A provenance: the owning command is a PROVEN non-commit (zero Core
     # business revision advance) -> the whole recovery is commit_proven=False.
@@ -1669,6 +1787,17 @@ def test_ac_w3_19_refusal_four_fields_survive_a_failed_recovery(shape):
 
     after = _c1_snapshot(result)
     before = captured["refusal"]
+    # the refusal really came from the producer (its own four fields)
+    assert before["values"]["success"] is False, before
+    assert before["values"]["message"], before
+    if shape == "data_none":
+        assert before["values"]["data"] is None, before
+    else:
+        assert isinstance(before["values"]["data"], dict), before
+        assert "delivery_error" not in before["values"]["data"], before
+    if shape == "data_with_producer_diagnostic":
+        skipped = before["values"]["data"].get("checks_skipped") or []
+        assert skipped and skipped[0]["prerequisite_codes"], before
     assert after["present"] == before["present"], (after, before)
     assert after["types"] == before["types"], (after, before)
     assert after["json"] == before["json"], (after, before)
@@ -1688,8 +1817,8 @@ def test_ac_w3_19_core_mismatch_exit_is_jointly_classified():
         # witness only -- the Core is never a target source).
         state.set_current_player(VIEWER)
 
-    result, captured = _c1_submit(store, _c1_refusal("data_missing_key"),
-                                  before_return=_core_moves)
+    result, captured = _c1_submit(
+        store, "data_present_no_delivery_error", before_return=_core_moves)
     assert result["success"] is False, result
     assert captured["calls"] == 1, captured
     _c1_assert_false_exit(store, state, "DELIVERY_MISMATCH", "core")
@@ -1702,7 +1831,7 @@ def test_ac_w3_19_publish_frame_exit_is_jointly_classified():
     witness = _GateWitness(publish=False)
     store.setHandoffBarrierProvider(witness)
 
-    result, captured = _c1_submit(store, _c1_refusal("data_none"))
+    result, captured = _c1_submit(store, "data_none")
     assert result["success"] is False, result
     assert ("publish",) == tuple(c[0] for c in witness.calls if c[0] == "publish")
     _c1_assert_false_exit(store, state, "SEAT_PUBLICATION_FAILED", "publish_frame")
@@ -1715,7 +1844,7 @@ def test_ac_w3_19_unmask_frame_exit_is_jointly_classified():
     witness = _GateWitness(unmask=False)
     store.setHandoffBarrierProvider(witness)
 
-    result, captured = _c1_submit(store, _c1_refusal("data_none"))
+    result, captured = _c1_submit(store, "data_none")
     assert result["success"] is False, result
     _c1_assert_false_exit(store, state, "SEAT_PUBLICATION_FAILED", "unmask_frame")
     assert captured["handles"] == 0, captured
@@ -1784,6 +1913,349 @@ def test_ac_w3_19_every_activation_exit_shares_one_commit_classification():
     assert "preserved" not in rejection, rejection
     assert 'data["delivery_error"] = ' not in rejection, rejection
     assert 'preserved["data"]' not in rejection, rejection
+
+
+# ===========================================================================
+# H2-a — AC-W3-19: the REAL-SHELL exit matrix
+#
+#   Every case runs on the REAL GUI shell (real Store + real QML tree + the
+#   UNMODIFIED HandoffFrameBridge). The owning transaction's FIRST gate is
+#   completed by its OWN real QQuickWindow (FRAME_WINDOW_REAL); every later gate
+#   is FRAME_BRIDGE_DRIVEN. Refusal objects are REAL producer returns; the
+#   staging fault is a REAL producer denial envelope consumed by the REAL
+#   ``_stage_activation`` inventory loop (no patched return value).
+# ===========================================================================
+def _ac19_active_consul_shell(label):
+    """REAL shell with the HUMAN consul (p2) ACTIVE and a REAL last_good.
+
+    The population -> senate ENTRY transaction gets a REAL first gate; the seat
+    then crosses to p2 and is activated through the REAL 「接管」 intent with
+    driven later gates.
+    """
+    state = _entry_state(consul_controller="human")
+    shell = _shell_runtime(state, "player1")
+    store, driven = shell.store, shell.driven
+    _takeover_driven(shell)                       # startup seat (driven)
+    gates = real_gate.RealGateHarness(shell, label=label)
+    gates.auto_driven_tail()
+    gates.arm_real()
+    store.doAdvancePopulation()
+    txn = str((store._async_gate or {}).get("txn_id") or "")
+    assert txn, "the entry txn must begin its arm gate"
+    gates.claim_first(txn, begin_generation=gates.generation())
+    gates.record_tail(txn)
+    assert store.seatLifecycle == SEAT_MASKED_PENDING, store.seatLifecycle
+    assert store.requestTakeover()["accepted"] is True
+    driven.render()                                # publish-under-mask
+    driven.render()                                # final reveal
+    assert store.seatLifecycle == SEAT_ACTIVE, store.seatLifecycle
+    store._refresh_senate_view()
+    assert store.canCreateSenateProposal is True, store._senate_view
+    return state, shell, gates
+
+
+def _ac19_submit_gates(shell, label):
+    """Start ONE submit transaction on the shell with a REAL first gate."""
+    gates = real_gate.RealGateHarness(shell, label=label)
+    gates.auto_driven_tail()
+    gates.arm_real()
+    return gates
+
+
+def _ac19_spies(store):
+    """Observation-only spies: publication / fresh handle."""
+    box = {"applies": [], "handles": []}
+    real_apply = store._apply_staged
+    real_handle = session_access.issue_fresh_handle
+
+    def _apply(staged, *, target_id=None):
+        box["applies"].append(target_id)
+        return real_apply(staged, target_id=target_id)
+
+    def _handle(state_obj):
+        box["handles"].append(1)
+        return real_handle(state_obj)
+
+    return box, patch.object(store, "_apply_staged", side_effect=_apply), \
+        patch.object(session_access, "issue_fresh_handle", side_effect=_handle)
+
+
+def _ac19_zero_publication(store, box):
+    assert store.viewerPlayerId == "", store.viewerPlayerId
+    assert store._snapshot == {}, store._snapshot
+    assert box["applies"] == [], box["applies"]
+    assert box["handles"] == [], box["handles"]
+
+
+def test_ac_w3_19_staging_exit_real_shell_is_jointly_classified():
+    """commit-pre ``staging``: the REAL inventory loop refuses the bundle; the
+    original producer refusal keeps its four public fields and the typed
+    ``{code,stage,committed:false}`` record stays PRIVATE."""
+    state, shell, _ = _ac19_active_consul_shell("AC19-staging")
+    store = shell.store
+    gates = _ac19_submit_gates(shell, "AC19-staging-submit")
+    box, p_apply, p_handle = _ac19_spies(store)
+    real_submit = store._adapter.submit_senate_proposals
+    real_read = store._adapter.read_envelope
+
+    def _submit(*a, **k):
+        return _c1_produce(store, "data_present_no_delivery_error", real_submit)
+
+    def _read(source, *a, **k):
+        if getattr(source, "__name__", "") == "get_senate_view":
+            return session_access.denied_response()
+        return real_read(source, *a, **k)
+
+    rev = session_access.core_business_revision(state)
+    with p_apply, p_handle, \
+            patch.object(store._adapter, "submit_senate_proposals",
+                         side_effect=_submit), \
+            patch.object(store._adapter, "read_envelope", side_effect=_read):
+        pending = store.doSubmitSenateProposals([
+            {"type": "land", "params": {"act_type": "distribution",
+                                        "amount_C": 10, "percent": 0.1}}])
+        txn = str((store._async_gate or {}).get("txn_id") or "")
+        assert (pending.get("data") or {}).get("pending") is True, pending
+        gates.claim_first(txn, begin_generation=gates.generation())
+        gates.record_tail(txn)
+
+    # a PROVEN non-commit: no Core business revision advance, no replay
+    assert session_access.core_business_revision(state) == rev
+    diag = store._w3_recovery_diagnostic or {}
+    assert (diag.get("code"), diag.get("stage"), diag.get("committed")) == (
+        "SEAT_PUBLICATION_FAILED", "staging", False), diag
+    assert store.handoffFailureKind == FAIL_BEFORE_COMMIT
+    assert session_access.has_failed_recoverable_mandate(state) is False
+    assert store.seatLifecycle == SEAT_MASKED_FAILURE
+    # four public fields preserved; the diagnostic never enters the refusal
+    refusal = store._committed_receipt
+    assert refusal.get("success") is False, refusal
+    assert "delivery_error" not in (refusal.get("data") or {}), refusal
+    _ac19_zero_publication(store, box)
+    assert [g["kind"] for g in gates.gates(txn)] == ["arm"]
+    assert store._async_gate is None
+    gates.emit("AC19-staging")
+
+
+def test_ac_w3_19_core_exit_real_shell_is_commit_pre():
+    """commit-pre ``core``: the REAL Core read-back disagrees with the recovery
+    target; the diagnostic is ``DELIVERY_MISMATCH/core/committed:false``."""
+    state, shell, _ = _ac19_active_consul_shell("AC19-core")
+    store = shell.store
+    gates = _ac19_submit_gates(shell, "AC19-core-submit")
+    box, p_apply, p_handle = _ac19_spies(store)
+    real_submit = store._adapter.submit_senate_proposals
+
+    def _submit(*a, **k):
+        out = _c1_produce(store, "data_present_no_delivery_error", real_submit)
+        # REAL Core mutation: the current player no longer matches the target.
+        state.set_current_player("player1")
+        return out
+
+    proposals_before = len(state.get_senate_proposals())
+    with p_apply, p_handle, \
+            patch.object(store._adapter, "submit_senate_proposals",
+                         side_effect=_submit):
+        pending = store.doSubmitSenateProposals([
+            {"type": "land", "params": {"act_type": "distribution",
+                                        "amount_C": 10, "percent": 0.1}}])
+        txn = str((store._async_gate or {}).get("txn_id") or "")
+        assert (pending.get("data") or {}).get("pending") is True, pending
+        gates.claim_first(txn, begin_generation=gates.generation())
+        gates.record_tail(txn)
+
+    # no NEW business fact from the refused command (the Core CURRENT move above
+    # is the declared witness mutation, not this command's commit)
+    assert len(state.get_senate_proposals()) == proposals_before
+    diag = store._w3_recovery_diagnostic or {}
+    assert (diag.get("code"), diag.get("stage"), diag.get("committed")) == (
+        "DELIVERY_MISMATCH", "core", False), diag
+    assert store.handoffFailureKind == FAIL_BEFORE_COMMIT
+    assert session_access.has_failed_recoverable_mandate(state) is False
+    assert store.seatLifecycle == SEAT_MASKED_FAILURE
+    _ac19_zero_publication(store, box)
+    assert [g["kind"] for g in gates.gates(txn)] == ["arm"]
+    gates.emit("AC19-core")
+
+
+def test_ac_w3_19_publish_frame_exit_real_shell_is_commit_pre():
+    """commit-pre ``publish_frame``: the REAL bridge fail-closes the live gate;
+    nothing is published and no fresh handle is issued."""
+    state, shell, _ = _ac19_active_consul_shell("AC19-publish")
+    store = shell.store
+    gates = _ac19_submit_gates(shell, "AC19-publish-submit")
+    box, p_apply, p_handle = _ac19_spies(store)
+    real_submit = store._adapter.submit_senate_proposals
+
+    def _submit(*a, **k):
+        return _c1_produce(store, "data_present_no_delivery_error", real_submit)
+
+    with p_apply, p_handle, \
+            patch.object(store._adapter, "submit_senate_proposals",
+                         side_effect=_submit):
+        pending = store.doSubmitSenateProposals([
+            {"type": "land", "params": {"act_type": "distribution",
+                                        "amount_C": 10, "percent": 0.1}}])
+        txn = str((store._async_gate or {}).get("txn_id") or "")
+        assert (pending.get("data") or {}).get("pending") is True, pending
+        gates.claim_first(txn, begin_generation=gates.generation())
+        assert (store._async_gate or {}).get("kind") == "publish", store._async_gate
+        gates.fail_live_gate_by_rebind()          # production fail-close (ok=False)
+        gates.record_tail(txn)
+
+    diag = store._w3_recovery_diagnostic or {}
+    assert (diag.get("code"), diag.get("stage"), diag.get("committed")) == (
+        "SEAT_PUBLICATION_FAILED", "publish_frame", False), diag
+    assert store.handoffFailureKind == FAIL_BEFORE_COMMIT
+    assert session_access.has_failed_recoverable_mandate(state) is False
+    assert store.seatLifecycle == SEAT_MASKED_FAILURE
+    _ac19_zero_publication(store, box)
+    rows = gates.gates(txn)
+    assert rows[0]["kind"] == "arm" and rows[0]["tier"] == real_gate.TIER_REAL
+    assert rows[-1]["kind"] == "publish" and rows[-1]["ok"] is False, rows[-1]
+    gates.emit("AC19-publish")
+
+
+def test_ac_w3_19_unmask_frame_exit_real_shell_is_commit_pre():
+    """commit-pre ``unmask_frame``: publication succeeded under the mask but the
+    final reveal fails; the authority commit is still a PROVEN non-commit of the
+    refused business command."""
+    state, shell, _ = _ac19_active_consul_shell("AC19-unmask")
+    store = shell.store
+    gates = _ac19_submit_gates(shell, "AC19-unmask-submit")
+    box, p_apply, p_handle = _ac19_spies(store)
+    real_submit = store._adapter.submit_senate_proposals
+
+    def _submit(*a, **k):
+        return _c1_produce(store, "data_present_no_delivery_error", real_submit)
+
+    with p_apply, p_handle, \
+            patch.object(store._adapter, "submit_senate_proposals",
+                         side_effect=_submit):
+        pending = store.doSubmitSenateProposals([
+            {"type": "land", "params": {"act_type": "distribution",
+                                        "amount_C": 10, "percent": 0.1}}])
+        txn = str((store._async_gate or {}).get("txn_id") or "")
+        assert (pending.get("data") or {}).get("pending") is True, pending
+        gates.claim_first(txn, begin_generation=gates.generation())
+        assert (store._async_gate or {}).get("kind") == "publish", store._async_gate
+        shell.driven.render()                     # publish-under-mask OK
+        assert (store._async_gate or {}).get("kind") == "unmask", store._async_gate
+        gates.fail_live_gate_by_rebind()          # production fail-close (ok=False)
+        gates.record_tail(txn)
+
+    diag = store._w3_recovery_diagnostic or {}
+    assert (diag.get("code"), diag.get("stage"), diag.get("committed")) == (
+        "SEAT_PUBLICATION_FAILED", "unmask_frame", False), diag
+    assert store.handoffFailureKind == FAIL_BEFORE_COMMIT
+    assert session_access.has_failed_recoverable_mandate(state) is False
+    assert store.seatLifecycle == SEAT_MASKED_FAILURE
+    _ac19_zero_publication(store, box)
+    kinds = [g["kind"] for g in gates.gates(txn)]
+    assert kinds == ["arm", "publish", "unmask"], kinds
+    gates.emit("AC19-unmask")
+
+
+def test_ac_w3_19_target_faction_exit_is_a_real_committed_failure():
+    """commit-post ``target_faction``: the business command REALLY committed
+    (phase executed) and only then the delivery target is unusable. This is the
+    ONLY kind of exit allowed to say ``committed:true`` + after-commit copy."""
+    state = _entry_state(consul_controller="human")
+    shell = _shell_runtime(state, "player1")
+    store, driven = shell.store, shell.driven
+    _takeover_driven(shell)
+    gates = real_gate.RealGateHarness(shell, label="AC19-target-faction")
+    gates.auto_driven_tail()
+    box, p_apply, p_handle = _ac19_spies(store)
+    real_adv = store._adapter.advance_population
+    real_hf = store._handoff_failure_feedback
+    captured = {}
+
+    def _adv(viewer):
+        feedback = real_adv(viewer)
+        if feedback.get("success"):
+            # REAL Core data mutation AFTER the commit: the delivered target no
+            # longer resolves to a faction (``_safe_faction_name`` -> "").
+            state.get_player("player2")._faction_id = ""
+        return feedback
+
+    def _hf(delivery_error=None):
+        out = real_hf(delivery_error)
+        if delivery_error:
+            captured["result"] = out
+        return out
+
+    gates.arm_real()
+    with p_apply, p_handle, \
+            patch.object(store._adapter, "advance_population", side_effect=_adv), \
+            patch.object(store, "_handoff_failure_feedback", side_effect=_hf):
+        pending = store.doAdvancePopulation()
+        txn = str((store._async_gate or {}).get("txn_id") or "")
+        assert (pending.get("data") or {}).get("pending") is True, pending
+        gates.claim_first(txn, begin_generation=gates.generation())
+        gates.record_tail(txn)
+
+    result = captured.get("result")
+    assert result is not None, "the committed delivery failure must be typed"
+    err = (result.get("data") or {}).get("delivery_error") or {}
+    assert (err.get("code"), err.get("stage"), err.get("committed")) == (
+        "DELIVERY_MISMATCH", "target_faction", True), err
+    assert result["success"] is False
+    assert result["message"] == "操作已记录，界面尚未准备好。请重试进入回合。"
+    assert store.handoffFailureKind == FAIL_AFTER_COMMIT
+    assert store.seatLifecycle == SEAT_MASKED_FAILURE
+    # the commit is REAL (the entry is really consumed; no rollback/replay)
+    assert state.is_phase_executed("population") is True
+    assert session_turn_service._book(state).entries
+    _ac19_zero_publication(store, box)
+    assert [g["kind"] for g in gates.gates(txn)] == ["arm"]
+    gates.emit("AC19-target-faction")
+
+
+def test_ac_w3_19_unproven_dispatch_real_shell_omits_the_committed_key():
+    """AC19 dispatch-without-proof: ``COMMIT_STATUS_UNPROVEN / dispatch`` with
+    the ``committed`` key ABSENT (never a fabricated boolean) and the GENERIC
+    pre-commit copy; the mask only, nothing replayed."""
+    state, shell, _ = _ac19_active_consul_shell("AC19-unproven")
+    store = shell.store
+    gates = _ac19_submit_gates(shell, "AC19-unproven-submit")
+    box, p_apply, p_handle = _ac19_spies(store)
+    real_hf = store._handoff_failure_feedback
+    captured = {}
+
+    def _hf(delivery_error=None):
+        out = real_hf(delivery_error)
+        if delivery_error:
+            captured["result"] = out
+            captured["error"] = delivery_error
+        return out
+
+    gates.arm_real()
+    with p_apply, p_handle, \
+            patch.object(store._adapter, "submit_senate_proposals",
+                         side_effect=RuntimeError("provider exploded")), \
+            patch.object(store, "_handoff_failure_feedback", side_effect=_hf):
+        pending = store.doSubmitSenateProposals([
+            {"type": "land", "params": {"act_type": "distribution",
+                                        "amount_C": 10, "percent": 0.1}}])
+        txn = str((store._async_gate or {}).get("txn_id") or "")
+        assert (pending.get("data") or {}).get("pending") is True, pending
+        gates.claim_first(txn, begin_generation=gates.generation())
+        gates.record_tail(txn)
+
+    err = captured.get("error") or {}
+    assert err.get("code") == "COMMIT_STATUS_UNPROVEN", err
+    assert err.get("stage") == "dispatch", err
+    assert "committed" not in err, err
+    result = captured.get("result") or {}
+    assert result.get("success") is False, result
+    assert result.get("message") == "暂未进入回合，请重试。", result
+    assert store.handoffFailureKind == FAIL_BEFORE_COMMIT
+    assert session_access.has_failed_recoverable_mandate(state) is False
+    assert store.seatLifecycle == SEAT_MASKED_FAILURE
+    _ac19_zero_publication(store, box)
+    assert [g["kind"] for g in gates.gates(txn)] == ["arm"]
+    gates.emit("AC19-unproven")
 
 
 # ===========================================================================
@@ -1934,3 +2406,274 @@ def test_ac_w3_04_senate_submit_control_click_probe():
                           button.property("enabled"),
                           button.property("visible"),
                           (point.x(), point.y())))
+
+
+# ===========================================================================
+# H1-1 — the REAL-gate facility's own minimum self-check
+#
+#   (a) a FRESH real QQuickWindow completes a bridge gate through its OWN
+#       afterRendering + frameSwapped pair (the FT (b) predicate);
+#   (b) a driven source (same signal pair only) completes a gate as
+#       FRAME_BRIDGE_DRIVEN and is never recorded as REAL.
+# ===========================================================================
+def test_w3_real_gate_helper_self_check():
+    from src.tests.test_gui import _w3_real_gate as real_gate
+
+    result = real_gate.self_check_bridge_pair()
+    assert result["tiers"] == (real_gate.TIER_REAL, real_gate.TIER_DRIVEN)
+    assert result["real"][:3] == ("txn-selfcheck-real", "arm", True), result
+    assert result["driven"] == ("txn-selfcheck-driven", "publish", True), result
+    signals = result["real_signals"]
+    assert signals["after"] >= 1 and signals["swap"] >= 1, signals
+
+
+def test_w3_refusal_shapes_are_real_producer_returns():
+    """H1-4 provenance control: each C1-C refusal shape is a REAL producer
+    return, never a hand-built dict, and carries the four public fields."""
+    for shape in _c1_refusal_shapes():
+        state, store = _c1_active_consul()
+        out = _c1_produce(store, shape, store._adapter.submit_senate_proposals)
+        assert out["success"] is False, (shape, out)
+        assert out.get("message"), (shape, out)
+        assert "errors" in out and "data" in out, (shape, out)
+        if shape == "data_none":
+            assert out["data"] is None, (shape, out)
+            assert out["errors"] == [], (shape, out)
+        elif shape == "data_present_no_delivery_error":
+            assert isinstance(out["data"], dict), (shape, out)
+            assert "delivery_error" not in out["data"], (shape, out)
+            assert out["errors"][0]["code"] == "NON_WAR_PROPOSAL_INVALID", out
+        else:
+            assert isinstance(out["data"], dict), (shape, out)
+            skipped = out["data"].get("checks_skipped") or []
+            assert skipped and skipped[0]["prerequisite_codes"], (shape, out)
+            assert out["errors"][0]["code"] == "WAR_TARGET_INVALID", out
+
+
+# ===========================================================================
+# H2-c (AC-W3-01 / AC-W3-16) — issuer/consumer cross-reference.
+#
+#   AC-W3-16 PASS_PREDICATE: the ISSUER SET is contained in W3-ISSUER-01..07 and
+#   every CONSUMER point calls ``validate_delivery_result``. The static
+#   inventory is only the supplementary half; the primary half is the REAL
+#   Slot -> Adapter -> owner -> Store -> frame path recorded in the SAME batch
+#   (AC01 entry packet below + the AC12 1H2AI chain / AC05 3H chain of
+#   ``test_w3_senate_turns.py``).
+# ===========================================================================
+W3_ISSUERS = (
+    ("W3-ISSUER-01", "session_api", "advance_population_phase"),
+    ("W3-ISSUER-02", "session_api", "submit_population_votes"),
+    ("W3-ISSUER-03", "session_api", "resolve_population_slice"),
+    ("W3-ISSUER-04", "senate_api", "propose_many"),
+    ("W3-ISSUER-05", "senate_api", "vote"),
+    ("W3-ISSUER-06", "senate_api", "veto"),
+    ("W3-ISSUER-07", "senate_api", "finalize_senate_if_ready"),
+)
+
+
+def _h2c_issuer_line(module_name, symbol):
+    """(file, first-line, last-line) of a production issuer symbol."""
+    module = {"session_api": session_api, "senate_api": senate_api}[module_name]
+    func = inspect.unwrap(getattr(module, symbol))
+    lines, start = inspect.getsourcelines(func)
+    return (inspect.getsourcefile(func), start, start + len(lines) - 1)
+
+
+def _h2c_delivery_call_sites():
+    """AST census: every call that CONSTRUCTS a DeliveryResultV1 in ``src``."""
+    import ast
+
+    hits = []
+    root = os.path.join(PROJECT_ROOT, "src")
+    for dirpath, _dirnames, filenames in os.walk(root):
+        if os.sep + "tests" + os.sep in dirpath + os.sep:
+            continue
+        for name in sorted(filenames):
+            if not name.endswith(".py"):
+                continue
+            path = os.path.join(dirpath, name)
+            with open(path, encoding="utf-8") as handle:
+                tree = ast.parse(handle.read(), filename=path)
+            stack = []
+
+            class _Visitor(ast.NodeVisitor):
+                def visit_FunctionDef(self, node):
+                    stack.append(node.name)
+                    self.generic_visit(node)
+                    stack.pop()
+
+                visit_AsyncFunctionDef = visit_FunctionDef
+
+                def visit_Call(self, node):
+                    func = node.func
+                    if isinstance(func, ast.Name):
+                        fname = func.id
+                    elif isinstance(func, ast.Attribute):
+                        fname = func.attr
+                    else:
+                        fname = ""
+                    if fname in ("delivery_from_continuation", "delivery_for_actor"):
+                        hits.append({
+                            "file": os.path.relpath(path, PROJECT_ROOT),
+                            "function": stack[-1] if stack else "<module>",
+                            "call": fname,
+                            "line": node.lineno,
+                        })
+                    self.generic_visit(node)
+
+            _Visitor().visit(tree)
+    return hits
+
+
+def test_ac_w3_01_entry_delivery_is_the_issuers_own_object_and_is_validated():
+    """AC01: the entry's consumed envelope IS the issuer's returned object and
+    the Store validates it before any seat decision (REAL first gate)."""
+    from src.tests.test_gui import _w3_real_gate
+
+    state = _entry_state(consul_controller="ai", third="ai")
+    book = session_turn_service._book(state)
+    shell = _shell_runtime(state, "player1")
+    store, gui, driven = shell.store, shell.gui, shell.driven
+    _takeover_driven(shell)
+    gates = _w3_real_gate.RealGateHarness(shell, label="AC01-issuer")
+    gates.auto_driven_tail()
+
+    issued, validated = [], []
+    real_delivery = session_turn_service.delivery_from_continuation
+    real_validate = session_turn_service.validate_delivery_result
+
+    def _delivery_spy(state_, phase, cont, *a, **k):
+        out = real_delivery(state_, phase, cont, *a, **k)
+        issued.append({"delivery": out, "phase": phase,
+                       "status": getattr(cont, "status", "")})
+        return out
+
+    def _validate_spy(state_, delivery, **k):
+        verdict = real_validate(state_, delivery, **k)
+        validated.append({"delivery": delivery, "ok": bool(verdict.get("ok")),
+                          "verdict": verdict})
+        return verdict
+
+    gates.arm_real()
+    with patch.object(session_turn_service, "delivery_from_continuation",
+                      side_effect=_delivery_spy), \
+            patch.object(session_turn_service, "validate_delivery_result",
+                         side_effect=_validate_spy):
+        store.doAdvancePopulation()
+        txn = str((store._async_gate or {}).get("txn_id") or "")
+        assert txn, "the entry owning txn must begin its arm gate"
+        gates.claim_first(txn, begin_generation=gates.generation())
+        for _ in range(8):
+            if store.seatLifecycle == SEAT_ACTIVE and not gates.live_gate():
+                break
+            driven.render()
+            _pump(2, 3)
+        gates.record_tail(txn)
+
+    # ---- the issuer layer really CONSTRUCTED the envelope ONCE ------------
+    assert len(issued) == 1, issued
+    delivery = issued[0]["delivery"]
+    assert isinstance(delivery, dict), issued[0]
+    assert delivery.get("outcome") in ("CONTINUE", "RESOLVED"), delivery
+    committed = (store._committed_receipt or {}).get("data") or {}
+    entry_receipt = committed.get("entry_receipt")
+    assert entry_receipt is not None, store._committed_receipt
+    assert book.entries and book.entries[-1]["receipt_id"] == \
+        entry_receipt["receipt_id"], book.entries
+
+    # ---- the CONSUMER consumed THAT object (identity, never a rebuild) ------
+    recorded = committed.get("delivery")
+    assert recorded is delivery, (id(recorded), id(delivery))
+    assert validated, "the Store never called validate_delivery_result"
+    assert any(v["delivery"] is delivery for v in validated), \
+        [id(v["delivery"]) for v in validated]
+    assert all(v["ok"] for v in validated), validated
+
+    # ---- AC01 CONTINUE: next == the REAL outstanding head, K consistent -----
+    nxt = delivery.get("next") or {}
+    head = session_turn_service.obligations(state, "senate").outstanding()[0]
+    assert nxt.get("actor_player_id") == head.actor_player_id, (nxt, head)
+    assert nxt.get("obligation_id") == list(head.obligation_id), (nxt, head)
+    assert nxt.get("controller") == head.controller, (nxt, head)
+    assert state.get_current_player().player_id == nxt["actor_player_id"]
+    # the AI consul proposal is a REAL owner completion (never a HUMAN prefix)
+    prop = [o for o in session_turn_service.obligations(state, "senate").obligations
+            if o.substep == "proposal"]
+    assert prop and all(o.satisfied for o in prop), prop
+    assert state.get_senate_proposals(), "the AI proposal must be registered"
+    assert store.handoffFailureKind == ""
+    assert store.seatLifecycle == SEAT_ACTIVE, store.seatLifecycle
+    assert all(g["ok"] is True for g in gates.gates(txn)), gates.gates(txn)
+    gates.emit("AC01-issuer")
+
+    print("H2C_ISSUER_CONSUMER label=AC01-issuer "
+          "issuer=session_api.advance_population_phase "
+          "delivery_id=%d validated_once=%s validator_line=%d" % (
+              id(delivery), len(validated) == 1,
+              _h2c_issuer_line("session_api", "advance_population_phase")[1]))
+
+
+def test_ac_w3_16_issuer_inventory_and_consumer_validator_cross_reference():
+    """AC16: issuer set ⊆ W3-ISSUER-01..07 and every consumer validates."""
+    rows = []
+    for issuer_id, module_name, symbol in W3_ISSUERS:
+        module = {"session_api": session_api, "senate_api": senate_api}[module_name]
+        assert hasattr(module, symbol), (issuer_id, symbol)
+        path, start, end = _h2c_issuer_line(module_name, symbol)
+        rows.append((issuer_id, os.path.relpath(path, PROJECT_ROOT), symbol,
+                     start, end))
+    assert len(rows) == 7, rows
+    for issuer_id, rel, symbol, start, end in rows:
+        print("H2C_ISSUER %s file=%s symbol=%s lines=%d-%d"
+              % (issuer_id, rel, symbol, start, end))
+
+    # ---- no module outside the API issuer layer constructs a delivery ------
+    hits = _h2c_delivery_call_sites()
+    assert hits, "the delivery constructor census found nothing"
+    allowed_files = {
+        os.path.join("src", "api", "session_turn_service.py"),
+        os.path.join("src", "api", "session_api.py"),
+        os.path.join("src", "api", "senate_api.py"),
+    }
+    assert {h["file"] for h in hits} <= allowed_files, hits
+    issuer_symbols = {symbol for _i, _m, symbol in W3_ISSUERS}
+    for hit in hits:
+        assert hit["file"] in allowed_files, hit
+        hit["issuer_entry"] = (hit["function"] if hit["function"] in issuer_symbols
+                               else "internal-helper-of-issuer-layer")
+        print("H2C_CONSTRUCTOR file=%s function=%s issuer=%s call=%s line=%d"
+              % (hit["file"], hit["function"], hit["issuer_entry"],
+                 hit["call"], hit["line"]))
+    # the seven issuers are the only BUSINESS entries that can hand one out
+    issued_entries = {
+        symbol for _i, module_name, symbol in W3_ISSUERS
+        if hasattr({"session_api": session_api, "senate_api": senate_api}
+                   [module_name], symbol)
+    }
+    assert len(issued_entries) == 7, issued_entries
+
+    # ---- the Store neither issues nor binds a phase entry ------------------
+    store_src = inspect.getsource(GuiSessionStore)
+    assert "self._receiver_delivery(" not in store_src, "Store still synthesises"
+    assert "session_turn_service.bind_phase_for_delivery(" not in store_src, \
+        "Store still binds"
+    assert "validate_delivery_result(" in store_src
+
+    # ---- every consumer point funnels into the ONE validator ----------------
+    settle_src, settle_line = inspect.getsourcelines(
+        GuiSessionStore._settle_seat_after_success)
+    settle_text = "".join(settle_src)
+    assert "validate_delivery_result(" in settle_text
+    assert "next_actor_id = nxt.get(\"actor_player_id\")" in settle_text
+    senate_src, senate_line = inspect.getsourcelines(
+        GuiSessionStore._settle_after_senate_command)
+    senate_text = "".join(senate_src)
+    assert "_settle_seat_after_success(" in senate_text
+    print("H2C_CONSUMER file=src/ui/gui/session_store.py "
+          "symbol=_settle_seat_after_success lines=%d-%d validator=%s"
+          % (settle_line, settle_line + len(settle_src) - 1,
+             "validate_delivery_result" in settle_text))
+    print("H2C_CONSUMER file=src/ui/gui/session_store.py "
+          "symbol=_settle_after_senate_command lines=%d-%d funnels=%s"
+          % (senate_line, senate_line + len(senate_src) - 1,
+             "_settle_seat_after_success(" in senate_text))
