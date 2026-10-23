@@ -884,6 +884,7 @@ def _registered_role_capabilities(state: GameState, viewer_player_id: str,
         "registered_can_veto": False,
         "registered_can_trigger_ai_proposer": False,
         "registered_can_auto_veto": False,
+        "registered_can_confirm_ai_veto": False,
     }
     if not session_access.is_hotseat_registered(state):
         return neutral
@@ -916,8 +917,16 @@ def _registered_role_capabilities(state: GameState, viewer_player_id: str,
     else:
         p_ctrl = prop.controller if prop is not None else _turn.CONTROLLER_NONE
         p_owner = prop.actor_player_id if prop is not None else None
-    v_ctrl = veto.controller if veto is not None else _turn.CONTROLLER_NONE
-    v_owner = veto.actor_player_id if veto is not None else None
+    # G7 (AC-S2): the ACTUAL veto owner comes from the LATCHED role selection
+    # (never from the presenter projection added to the schedule obligation), so an
+    # AI-owned veto can never be read as a HUMAN veto right. Same rule the proposal
+    # plane above already applies.
+    if sel_v:
+        v_owner = sel_v.get("actor_player_id")
+        v_ctrl = sel_v.get("controller") or _turn.CONTROLLER_NONE
+    else:
+        v_ctrl = veto.controller if veto is not None else _turn.CONTROLLER_NONE
+        v_owner = veto.actor_player_id if veto is not None else None
     # veto is REQUIRED iff the schedule derived the veto operation for a real
     # passed candidate with an actual owner: the obligation's ``required_operation``
     # is the veto step AND the schedule latched a real owner (``controller != NONE``;
@@ -946,6 +955,17 @@ def _registered_role_capabilities(state: GameState, viewer_player_id: str,
                         and prop.actor_player_id == viewer_player_id)
     veto_ok = bool(actionable_r and current_step == "tribune_veto"
                    and v_ctrl == human and v_owner == viewer_player_id)
+    # G7 (AC-S2-01): the verified HUMAN presenter of an ACTUAL AI veto. The
+    # schedule carries the presenter projection (HUMAN/G) while the latched owner
+    # stays the AI; the veto is still outstanding; only THIS viewer, only at the
+    # real veto step. It grants the CONFIRMATION gesture — never a veto choice.
+    confirm_ai_veto = bool(
+        actionable_r and current_step == "tribune_veto"
+        and v_ctrl == _turn.CONTROLLER_AI
+        and veto is not None and veto.required_operation == "veto"
+        and not veto.satisfied
+        and veto.controller == human
+        and veto.actor_player_id == viewer_player_id)
     return {
         "registered_seat": True,
         "registered_schedule_valid": True,
@@ -969,6 +989,7 @@ def _registered_role_capabilities(state: GameState, viewer_player_id: str,
         # receiver of the confirmation obligation) gets the ONE AI-trigger bit.
         "registered_can_trigger_ai_proposer": presenter_ok,
         "registered_can_auto_veto": False,
+        "registered_can_confirm_ai_veto": confirm_ai_veto,
     }
 
 
@@ -1608,6 +1629,17 @@ def get_senate_view(state: GameState, viewer_player_id: str) -> dict:
                 registered_caps["registered_can_finish_empty"])
             data["can_trigger_ai_proposer"] = bool(
                 registered_caps["registered_can_trigger_ai_proposer"])
+            # G7 (AC-S2-01/04): the ACTUAL AI owner keeps the veto decision; the
+            # verified HUMAN presenter only CONFIRMS it. The legacy viewer-relative
+            # projection reads NONE for that presenter, so the registered truth is
+            # published explicitly (read-only projection — it grants no authority
+            # and the Store still has to pass the protected confirmation entry).
+            data["can_confirm_ai_veto"] = bool(
+                registered_caps.get("registered_can_confirm_ai_veto"))
+            if data["can_confirm_ai_veto"]:
+                data["veto_control_mode"] = "AI"
+                data["can_auto_veto"] = True
+                data["can_veto"] = False
         return api_response(True, "Senate phase view refreshed", data)
     except Exception as exc:
         return api_response(False, f"获取元老院视图失败: {exc}", errors=[str(exc)])
@@ -2565,11 +2597,24 @@ class _FinalizationStageError(RuntimeError):
 
 
 def senate_finalization_id(state: GameState) -> tuple:
-    """幂等键：`(session_id, senate_session_id, protocol_version=2)`（SA §D.1.1）。"""
+    """幂等键：`(session_id, senate_session_id, protocol_version=2)`（SA §D.1.1）。
+
+    AC-S1-01（D18/D19，分支 C）：**键**按年独立。年度边界之后 `GameState` 中
+    冻结的 `turn-<n>` 会期身份仍可能指向上一年；作为 finalization 幂等键时必须
+    回落为当前回合的 `turn-<turn>`，否则旧年键会命中「receipt 有、当年
+    phase_result 已被年度边界清空」的 WRONG 态（readiness_error，提案权双 false）。
+    非 `turn-<n>` 形态的自定义会期身份（如外部显式指定）原样保留；同一年内键
+    不变，幂等重放与同年 `WRONG` 判定语义完全不变。
+    """
     senate_session_id = state.get_senate_session()
+    turn = state.turn.turn_number if state.turn else 0
+    current_turn_session_id = f"turn-{turn}"
     if not senate_session_id:
-        turn = state.turn.turn_number if state.turn else 0
-        senate_session_id = f"turn-{turn}"
+        senate_session_id = current_turn_session_id
+    elif (str(senate_session_id) != current_turn_session_id
+          and str(senate_session_id).startswith("turn-")
+          and str(senate_session_id)[len("turn-"):].isdigit()):
+        senate_session_id = current_turn_session_id
     session_id = getattr(state, "session_id", None) or senate_session_id
     return (session_id, senate_session_id, SENATE_FINALIZATION_PROTOCOL_VERSION)
 

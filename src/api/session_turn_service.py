@@ -2060,6 +2060,19 @@ def _senate_schedule(state: Any, scope_id: str) -> List[Obligation]:
     veto_ctrl = veto_role["controller"]
     veto_off = veto_role["officer_id"]
     veto_sat = (not veto_required) or book.satisfied(veto_oid, scope_id, rev_now)
+    # G7 (AC-S2-01/02): on a REGISTERED senate scope a REQUIRED but UNSATISFIED
+    # veto owned by the ACTUAL AI tribune is the verified HUMAN presenter G's
+    # CONFIRMATION obligation — the SAME single-authority projection the proposal
+    # presenter already uses. The latched DECISION owner (``book.role_selections``)
+    # stays the AI: no owner record is rewritten, no other player is chosen, and a
+    # missing / non-HUMAN G keeps the original AI row so the continuation gate
+    # fails closed instead of auto-draining the decider.
+    if (_is_registered(state) and veto_required and not veto_sat
+            and veto_role["controller"] == CONTROLLER_AI
+            and G is not None and G != veto_role["actor_player_id"]
+            and controller_of(state, G) == CONTROLLER_HUMAN):
+        veto_actor = G
+        veto_ctrl = CONTROLLER_HUMAN
     out.append(Obligation(
         obligation_id=veto_oid, scope_id=scope_id, phase="senate",
         substep="veto", actor_slot=("singleton", scope_id),

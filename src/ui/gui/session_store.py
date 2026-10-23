@@ -2800,6 +2800,69 @@ class GuiSessionStore(QObject):
                 veto_mode = "HUMAN"
         if veto_mode == "AI":
             from src.api import senate_api
+            from src.api import session_access as _sa_veto
+            try:
+                _registered_veto = bool(
+                    _sa_veto.is_hotseat_registered(self._state))
+            except Exception:  # pragma: no cover - defensive
+                _registered_veto = True  # fail closed on an unknown registration
+            if _registered_veto:
+                # G7 (AC-S2-02/03): the ONE protected confirmation entry for an
+                # ACTUAL AI tribune. The AI keeps the decision; this gesture only
+                # releases it, exactly once. Every repeated / stale / foreign
+                # gesture is a typed DENIED BEFORE any lease, dispatch or decider:
+                # the projection is re-read fresh (never the cached copy) and the
+                # seat must be the ACTIVE owner of this transaction.
+                if self._seat_lifecycle != SEAT_ACTIVE or self._handoff_busy:
+                    denied = self._feedback(False, "当前无法执行本席操作", "warning")
+                    errors = denied.get("errors")
+                    if not isinstance(errors, list):
+                        errors = []
+                        denied["errors"] = errors
+                    errors.append({
+                        "code": "DENIED",
+                        "message": "AI_VETO_CONFIRM_SEAT_BUSY",
+                    })
+                    self._raise_senate_feedback(denied)
+                    self.senateViewChanged.emit()
+                    return denied
+                self._refresh_senate_view()
+                if not (self._is_valid_senate_projection(
+                        self._senate_view, self._viewer_id)
+                        and self._senate_view.get("current_step") == "tribune_veto"
+                        and bool(self._senate_view.get("can_confirm_ai_veto"))):
+                    denied = self._feedback(
+                        False, "当前否决确认权不属于本玩家", "warning")
+                    errors = denied.get("errors")
+                    if not isinstance(errors, list):
+                        errors = []
+                        denied["errors"] = errors
+                    errors.append({
+                        "code": "DENIED",
+                        "message": "AI_VETO_CONFIRM_NOT_OWNER",
+                    })
+                    self._raise_senate_feedback(denied)
+                    self.senateViewChanged.emit()
+                    return denied
+                def _dispatch_ai_veto_confirmation():
+                    # The EXISTING AI-tribune algorithm (single producer) runs once
+                    # on this gesture. The owning SENATE API layer then attaches the
+                    # ONE typed delivery envelope — the SAME issuer ``vote`` /
+                    # ``veto`` use, which runs the existing continuation exactly
+                    # once (completion / readiness / canonical finalization). The
+                    # Store only CONSUMES the envelope: it constructs none, binds
+                    # no phase entry and accepts no HUMAN-chosen veto id.
+                    confirmed = self._adapter.call(
+                        senate_api.apply_auto_tribune_vetoes, self._state, None,
+                        self._viewer_id)
+                    if confirmed.get("success"):
+                        confirmed = senate_api._attach_senate_delivery(
+                            self._state, confirmed, self._viewer_id,
+                            receipt_ref="apply_auto_tribune_vetoes")
+                    return confirmed
+
+                return self._masked_senate_owning_flow(
+                    "doSubmitSenateVetoes", "veto", _dispatch_ai_veto_confirmation)
             auto_feedback = self._adapter.call(
                 senate_api.apply_auto_tribune_vetoes, self._state, None, self._viewer_id
             )
