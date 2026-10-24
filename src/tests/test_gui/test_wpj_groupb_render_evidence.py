@@ -6,7 +6,7 @@
 `store.senateVetoControlMode`）→ 真实 `Main.qml` 离屏渲染（QT_QPA_PLATFORM=offscreen）
 → `window.grabWindow()` → PNG。
 
-证据落 `03-da-evidence/GroupB/{Group-B-1,Group-B-2}/`：
+证据默认落 pytest tmp 派生根（以下相对布局不变）：
 - Group-B-1：凯旋行三态（可投「赞成」/ 不可投「不可投」[灰] / 已投「已投」[灰]）
 - Group-B-2：保民官否决归属（HUMAN「判定否决 → 公示结果」/ AI「AI判定否决 → 公示结果」/ NONE「无保民官，跳过否决」）
 
@@ -26,10 +26,9 @@ PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-EVIDENCE_BASE = (
-    "/mnt/e/OpenClaw/Projects/EOR/workspace/EOR20260821-01 GUI-BETA-R1"
-    "/WP-J_Player-Visible-Feedback-and-Actionability/03-da-evidence/GroupB"
-)
+import pytest  # noqa: E402
+
+from src.tests._evidence_root import evidence_root  # noqa: E402
 
 from src.api import session_api, forum_api  # noqa: E402
 from src.core.entities.war import War, WarStatus  # noqa: E402
@@ -37,6 +36,13 @@ from src.ui.gui.models.candidate_list_model import CandidateListModel  # noqa: E
 from src.ui.gui.models.event_list_model import EventListModel  # noqa: E402
 from src.ui.gui.models.figure_list_model import FigureListModel  # noqa: E402
 from src.ui.gui.session_store import GuiSessionStore  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def evidence(tmp_path_factory):
+    """W2a：证据写根由 helper 派生（默认 tmp 派生根；归档区在模块内不可达）。"""
+    return evidence_root(tmp_path_factory.mktemp("wpj-groupb"), namespace="wpj-groupb")
+
 
 _ENGINES = []
 
@@ -169,9 +175,8 @@ def _sha256(path):
     return h.hexdigest()
 
 
-def _emit(slice_dir, name, capture, state_prep, phase, viewport):
-    out_dir = os.path.join(EVIDENCE_BASE, slice_dir)
-    os.makedirs(out_dir, exist_ok=True)
+def _emit(evidence, slice_dir, name, capture, state_prep, phase, viewport):
+    out_dir = evidence.ensure_dir(slice_dir)
     png = os.path.join(out_dir, name)
     meta = os.path.join(out_dir, name[:-4] + ".runtime.json")
     row = {
@@ -219,15 +224,15 @@ def _forum_store_with_resolved_war():
     return store, state, viewer, war
 
 
-def test_render_group_b1_triumph_three_states():
+def test_render_group_b1_triumph_three_states(evidence):
     rows = []
     # (1) retirement 子环节 → 不可投
     store, state, viewer, _war = _forum_store_with_resolved_war()
     assert store.forumCurrentStep == "retirement"
     engine, _ = _create_engine(store)
     name = "group-b-1-triumph-readonly-1440x900.png"
-    cap = _capture(engine, os.path.join(EVIDENCE_BASE, "Group-B-1", name))
-    rows.append(_emit("Group-B-1", name, cap,
+    cap = _capture(engine, evidence.path("Group-B-1", name))
+    rows.append(_emit(evidence, "Group-B-1", name, cap,
                       "create_gui_prototype_session(forum)+resolved_war+retirement",
                       "forum", (1440, 900)))
 
@@ -238,8 +243,8 @@ def test_render_group_b1_triumph_three_states():
     assert store.forumCurrentStep == "market"
     engine, _ = _create_engine(store)
     name = "group-b-1-triumph-actionable-1440x900.png"
-    cap = _capture(engine, os.path.join(EVIDENCE_BASE, "Group-B-1", name))
-    rows.append(_emit("Group-B-1", name, cap,
+    cap = _capture(engine, evidence.path("Group-B-1", name))
+    rows.append(_emit(evidence, "Group-B-1", name, cap,
                       "create_gui_prototype_session(forum)+resolved_war+open_market",
                       "forum", (1440, 900)))
 
@@ -248,12 +253,12 @@ def test_render_group_b1_triumph_three_states():
     store.selectPhase("forum")
     engine, _ = _create_engine(store)
     name = "group-b-1-triumph-voted-1440x900.png"
-    cap = _capture(engine, os.path.join(EVIDENCE_BASE, "Group-B-1", name))
-    rows.append(_emit("Group-B-1", name, cap,
+    cap = _capture(engine, evidence.path("Group-B-1", name))
+    rows.append(_emit(evidence, "Group-B-1", name, cap,
                       "create_gui_prototype_session(forum)+open_market+doVoteTriumph(true)",
                       "forum", (1440, 900)))
 
-    manifest = os.path.join(EVIDENCE_BASE, "Group-B-1", "triumph-screenshots.manifest.json")
+    manifest = evidence.path("Group-B-1", "triumph-screenshots.manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupb-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -305,7 +310,7 @@ def _senate_store_with_mode(mode):
     return store, state, viewer
 
 
-def test_render_group_b2_veto_attribution_three_modes():
+def test_render_group_b2_veto_attribution_three_modes(evidence):
     from src.tests.test_gui.test_wpj_groupb_senate_attribution_gui import (
         HUMAN_COPY, AI_COPY, NONE_COPY, _find_text,
     )
@@ -314,11 +319,11 @@ def test_render_group_b2_veto_attribution_three_modes():
         store, _state, _viewer = _senate_store_with_mode(mode)
         engine, _ = _create_engine(store)
         name = f"group-b-2-senate-veto-{name_tag}-1440x900.png"
-        cap = _capture(engine, os.path.join(EVIDENCE_BASE, "Group-B-2", name))
-        rows.append(_emit("Group-B-2", name, cap,
+        cap = _capture(engine, evidence.path("Group-B-2", name))
+        rows.append(_emit(evidence, "Group-B-2", name, cap,
                           f"create_gui_prototype_session(senate)+tribune_setup({mode})",
                           "senate", (1440, 900)))
-    manifest = os.path.join(EVIDENCE_BASE, "Group-B-2", "veto-attribution-screenshots.manifest.json")
+    manifest = evidence.path("Group-B-2", "veto-attribution-screenshots.manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupb-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)

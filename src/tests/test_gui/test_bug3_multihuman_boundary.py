@@ -50,6 +50,8 @@ class TestBug3MultihumanBoundary:
             pytest.skip(f"Only {len(selection_map)} offices have candidates, need 5")
 
         # B3-FC05 TA-F2: 经 session_api.submit_population_votes() 真实 completion 路径
+        # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）
+        state.set_batch_completed(viewer_id, True)
         result = session_api.submit_population_votes(state, viewer_id, selection_map)
         assert result["success"] is True, \
             f"B3-FC05 TA-F2: submit must succeed, got errors={result.get('errors')}"

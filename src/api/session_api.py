@@ -83,6 +83,24 @@ def create_gui_prototype_session(
     canonical_scenario = snapshot.canonical_name
     scenario_report = snapshot.report_copy()
 
+    # ---- W4-A1 / D7 (PM K-1 = C-α): 会话级 canonical market plan K ----
+    # 唯一合法来源 = validator 已深度冻结、且已证明 faction<->player 双射的
+    # ``snapshot.frozen_report["factions"]``（有序行）。锚 = 真实 faction id
+    # ``optimates`` 映射的 actor；其余座位保留已验证场景的 controller 相对次序。
+    # 不用 ``player_ids``（它被 sorted）、不用 dict 顺序、不用 HUMAN 列表，不按名称排序。
+    # 缺/重复 O、重复 actor、未知 player → 整个会话 fail-closed（不伪造 O）。
+    _faction_rows = snapshot.frozen_report["factions"]
+    _anchor_rows = [row for row in _faction_rows if row.get("id") == "optimates"]
+    _seat_ids = [row.get("player_id") for row in _faction_rows if row.get("player_id")]
+    if len(_anchor_rows) != 1 or not _anchor_rows[0].get("player_id") \
+            or len(set(_seat_ids)) != len(_seat_ids):
+        message = ("SCENARIO_INVALID: canonical plan requires exactly one "
+                   f"optimates anchor for {canonical_scenario}")
+        logger.error(message)
+        return api_response(False, message, errors=[message])
+    _canonical_plan = (_anchor_rows[0]["player_id"],) + tuple(
+        pid for pid in _seat_ids if pid != _anchor_rows[0]["player_id"])
+
     try:
         state = GameState(config_path)
         # 已选择场景：仅经由有界新入口消费快照；应用失败必须 fail-closed
@@ -92,6 +110,16 @@ def create_gui_prototype_session(
         except Exception as load_exc:  # noqa: BLE001 - convert any application failure to SCENARIO_INVALID
             message = ("SCENARIO_INVALID: failed to apply selected scenario "
                        f"{canonical_scenario}: {load_exc}")
+            logger.error(message)
+            return api_response(False, message, errors=[message])
+
+        # W4-A1: bind K ONCE, read-only. Stored as a SESSION-PRIVATE attribute on
+        # the state (never a GameState/Core field, never the save game, never the
+        # scenario JSON); a later re-bind only confirms the same value.
+        _bound = turn_service.canonical_market_plan(state, bind=_canonical_plan)
+        if not _bound.get("success"):
+            message = ("SCENARIO_INVALID: canonical market plan rejected for "
+                       f"{canonical_scenario} ({_bound.get('message', '')})")
             logger.error(message)
             return api_response(False, message, errors=[message])
 
@@ -151,6 +179,7 @@ def create_gui_prototype_session(
             "human_players": human_players,
             "start_phase": start_phase,
             "scenario": scenario_report,
+            "canonical_market_plan": list(_canonical_plan),
         })
     except Exception as e:
         logger.exception("Session creation failed")
@@ -788,6 +817,28 @@ def submit_population_votes(
          "figure_id": selection_map.get(office, 0) if cand_data.get(office) else 0}
         for office in _POPULATION_OFFICES
     ]
+
+    # ── G1 (PC02-WITHDRAWAL, Owner 2026-10-23) ─────────────────────────────
+    # canonical = 本座位「庆典 → 投票 → 切席」；per-actor only，NO global barrier。
+    # 谓词与视图 get_population_view 的 campaign_done 同义（session_api.py:593），
+    # 不新造真相源；拒绝时零投票/obligation/receipt/impact 写入（batch_vote 之前）。
+    # AI 不得经此入口（AI 的庆典→投票是代码顺序事实，见 _drain_ai_population_turns）。
+    _actor = state.get_player(player_id)
+    if _actor is not None:
+        _own_candidates = sum(
+            1 for _rows in cand_data.values()
+            for _cand in _rows if _cand.get("faction_id") == _actor.faction_id
+        )
+        if not (state.get_batch_completed(player_id) or _own_candidates == 0):
+            return api_response(False, "Campaign must be completed before voting", {
+                "campaign_done": False,
+                "retryable": True,
+            }, [{
+                "code": "CAMPAIGN_REQUIRED",
+                "message": "请先完成本席位庆典，再提交投票",
+            }])
+    # ───────────────────────────────────────────────────────────────────────
+
     batch_result = population_api.batch_vote(state, player_id, entries, caller_context=caller_context)
     if not batch_result.get("success"):
         return batch_result

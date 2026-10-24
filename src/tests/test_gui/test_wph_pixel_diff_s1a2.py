@@ -1,5 +1,16 @@
 # src/tests/test_gui/test_wph_pixel_diff_s1a2.py
-"""WP-H / S1 Attempt-2 — before/after 像素比对（OD-H-02）。
+"""RETIRED (W1a, 2026-10-23) — 见 TA-W1a-02；本文件按**已被取代**退役（模块级 skip，零删除）。
+
+退役理由（`02-sa-design/W1a/02-Migration-and-Negatives.md` §5.2，G3 登记）：
+- `WP-H-QML-Hygie/03-da-evidence/S1/baseline-captures` 目录已不存在 ⇒ 恒 skip；
+- `before-*.png` 是 launch `8bb067a` 的历史捕获，**不可重建**（重拍 = 拿今天的代码冒充 before）；
+- 报告 `pixel-diff-report.md` 写回输入目录（输入==输出，违反本任务目标）；
+- OD-H-02 像素通道属已 CLOSED 的 WP-H / S1 Attempt-2；后续视觉验收由 WP-E 系列承担。
+重建触发：同 BL-W1A-01（W2 停写后评估）。`PAIRS` / `TOLERANCE` / `_pair_diff()` 原样保留
+（迁到新基线目录可直接复用；模块级 skip ⇒ 不可达）。
+
+---
+历史说明（原文保留）——WP-H / S1 Attempt-2 before/after 像素比对（OD-H-02）。
 
 读 `03-da-evidence/S1/baseline-captures/{before,after}-*.png`（G7 截图链产物），
 逐像素比对并产 `pixel-diff-report.md`。
@@ -31,6 +42,13 @@ PAIRS = (
 )
 
 TOLERANCE = 0.005  # OD-H-02：差异 0 / ≤ 极小容差（含采集时钟区域时标）
+
+# TA-W1a-02（G3 §2）：模块级退役 —— skip 计数不变，**理由变更**（G5 按理由登记）。
+pytestmark = pytest.mark.skip(
+    reason="RETIRED_W1A: WP-H-QML-Hygie baseline-captures 目录不存在，"
+           "before 基线不可重建（launch 8bb067a 历史捕获）；"
+           "OD-H-02 通道已被后续视觉链取代（TA-W1a-02）",
+)
 
 
 def _sha256(path):

@@ -207,6 +207,9 @@ def _run(tag, scenario, preference, *, stop_after_senate=False):
                 store._refresh_population_view()
                 selections = (preference(store, viewer)
                               if callable(preference) else {})
+                # PC02W TD-01 (2026-10-23): 逐席位庆典前置（G1 per-actor gate），断言零变更。
+                for _pid in pids:
+                    state.set_batch_completed(_pid, True)
                 pop_fail = probe._play_population(store, selections)
                 store._refresh_population_view()
                 store._refresh_snapshot()

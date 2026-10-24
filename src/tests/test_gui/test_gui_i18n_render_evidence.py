@@ -10,7 +10,9 @@ Production chain only: ``create_gui_prototype_session`` -> real ``GuiSessionStor
 no HTML capture. Locale before/after, ``localeChanged`` emissions and the
 authoritative GameState fingerprint before/after are recorded in the manifest.
 
-Evidence: ``03-da-evidence/GUI-I18N-S2/render/``.
+默认证据根：pytest tmp 派生根（`<tmp>/.eor-evidence/`，经
+`src.tests._evidence_root.evidence_root`）；正式证据**不在回归中重生成**
+（原任务的正式 render 证据已由 G5 封存，回归产物只是验证副产品）。
 """
 import hashlib
 import json
@@ -27,11 +29,9 @@ PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-EVIDENCE_BASE = (
-    "/mnt/e/OpenClaw/Projects/EOR/workspace/EOR20261009-01 GUI-i18n-Fundation"
-    "/03-da-evidence/GUI-I18N-S2/render"
-)
+import pytest  # noqa: E402
 
+from src.tests._evidence_root import evidence_root  # noqa: E402
 from src.api import session_api  # noqa: E402
 from src.ui.gui.localization import DEFAULT_LOCALE, gui_localization  # noqa: E402
 from src.ui.gui.models.candidate_list_model import CandidateListModel  # noqa: E402
@@ -47,6 +47,12 @@ class _DummyGuiApp:
 # Keep the engine/window alive: collecting a live QQmlApplicationEngine with
 # created objects is a known PySide6 crash/deadlock source under suite load.
 _LIVE = []
+
+
+@pytest.fixture(scope="module")
+def evidence(tmp_path_factory):
+    """W1a：证据写根由 helper 派生（默认 tmp 派生根）。"""
+    return evidence_root(tmp_path_factory.mktemp("gui-i18n-s2"))
 
 
 def _get_app():
@@ -198,7 +204,7 @@ def _proof_snapshot(root):
     }
 
 
-def test_render_proof_surface_zh_en_zh_same_session():
+def test_render_proof_surface_zh_en_zh_same_session(evidence):
     _get_app()
     store, state = _make_store()
     engine, qml_dir = _create_engine(store)
@@ -222,13 +228,13 @@ def test_render_proof_surface_zh_en_zh_same_session():
         _get_app().processEvents()
         snapshot = _proof_snapshot(window)
         name = f"gui-i18n-s2-{tag}-{locale}-1440x900.png"
-        grab = _grab(window, os.path.join(EVIDENCE_BASE, name))
+        grab = _grab(window, evidence.path(name))
         frames.append({
             "frame": tag,
             "locale": locale,
             "png": name,
             "grab": grab,
-            "png_sha256": _sha256(os.path.join(EVIDENCE_BASE, name)) if grab else None,
+            "png_sha256": _sha256(evidence.path(name)) if grab else None,
             "proof_texts": snapshot,
         })
 
@@ -246,8 +252,8 @@ def test_render_proof_surface_zh_en_zh_same_session():
         "frames": frames,
         "captured_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    os.makedirs(EVIDENCE_BASE, exist_ok=True)
-    with open(os.path.join(EVIDENCE_BASE, "render-manifest.json"), "w", encoding="utf-8") as fh:
+    evidence.ensure_dir()
+    with open(evidence.path("render-manifest.json"), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
 

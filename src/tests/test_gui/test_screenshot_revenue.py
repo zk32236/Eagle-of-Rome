@@ -11,13 +11,12 @@ WP-01 ATTEMPT-3: Revenue 结算后截图生成。
   完整结算并验证所有字段，以此作为结算后状态的间接证明
 
 输出目录：
-  /mnt/e/.../WP-01/03-da-evidence/screenshots/
+  默认落 pytest tmp 派生根（`<tmp>/.eor-evidence/wp01-revenue/`）；正式证据不在回归中重生成。
 """
 import os
 import sys
 import json
-
-SCREENSHOTS_DIR = "/mnt/e/OpenClaw/Projects/EOR/workspace/EOR20260729-01_GUI-Alignment/WP-01/03-da-evidence/screenshots"
+import tempfile
 
 PROJECT_ROOT = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..")
@@ -32,6 +31,16 @@ from src.core.entities.province import Province
 from src.core.entities.contract import Contract, ContractType, ContractStatus
 from src.core.game_state import GameState
 from src.core.service.economic_service import EconomicService
+
+import pytest
+
+from src.tests._evidence_root import evidence_root
+
+
+@pytest.fixture(scope="module")
+def evidence_dir(tmp_path_factory):
+    """W1b：证据写根由 helper 派生（默认 tmp 派生根；归档区在模块内不可达）。"""
+    return evidence_root(tmp_path_factory.mktemp("wp01-revenue"), namespace="wp01-revenue")
 
 
 def _full_revenue_state():
@@ -114,7 +123,7 @@ def _full_revenue_state():
     return state
 
 
-def test_screenshot_revenue_settled_v2():
+def test_screenshot_revenue_settled_v2(evidence_dir):
     """
     生成 revenue-settled-v2.png 证据：
     通过 EconomicService.settle_revenue_phase() 执行完整结算，
@@ -181,18 +190,18 @@ def test_screenshot_revenue_settled_v2():
     print(f"Faction rows: {json.dumps({k: {'stipend': v['stipend'], 'tax': v['tax'], 'total': v['total']} for k, v in faction_rows.items()}, indent=2, ensure_ascii=False)}")
 
     # 写入 JSON 证据文件
-    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
-    ev_path = os.path.join(SCREENSHOTS_DIR, "wp01-revenue-settled-v2-evidencia.json")
+    shots = evidence_dir.ensure_dir()
+    ev_path = os.path.join(shots, "wp01-revenue-settled-v2-evidencia.json")
     with open(ev_path, "w", encoding="utf-8") as f:
         json.dump(evidence, f, indent=2, ensure_ascii=False)
 
     # 尝试 QML 离屏渲染
-    success = _try_qml_screenshot("wp01-revenue-settled-v2.png", data)
+    success = _try_qml_screenshot(evidence_dir, "wp01-revenue-settled-v2.png", data)
     if not success:
         print("QML offscreen rendering not available — DTO verification evidence saved.")
 
 
-def test_screenshot_revenue_faction_names_v2():
+def test_screenshot_revenue_faction_names_v2(evidence_dir):
     """
     生成 revenue-faction-names-v2.png 证据：
     派系区块使用 faction_id → factionDisplayName() 映射为展示名。
@@ -256,24 +265,23 @@ def test_screenshot_revenue_faction_names_v2():
     print(f"\n--- Evidence: revenue-faction-names-v2 ---")
     print(json.dumps(evidence, indent=2, ensure_ascii=False))
 
-    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
-    ev_path = os.path.join(SCREENSHOTS_DIR, "wp01-revenue-faction-names-v2-evidencia.json")
+    shots = evidence_dir.ensure_dir()
+    ev_path = os.path.join(shots, "wp01-revenue-faction-names-v2-evidencia.json")
     with open(ev_path, "w", encoding="utf-8") as f:
         json.dump(evidence, f, indent=2, ensure_ascii=False)
 
     # 尝试 QML 离屏渲染
-    success = _try_qml_screenshot("wp01-revenue-faction-names-v2.png", data, style_data.get("map"))
+    success = _try_qml_screenshot(evidence_dir, "wp01-revenue-faction-names-v2.png", data, style_data.get("map"))
     if not success:
         print("QML offscreen rendering not available — faction name mapping evidence saved.")
 
 
-def _try_qml_screenshot(filename: str, settled_data: dict, style_map: dict = None) -> bool:
+def _try_qml_screenshot(root, filename: str, settled_data: dict, style_map: dict = None) -> bool:
     """
     尝试 PySide6 QQuickRenderControl 离屏渲染 RevenueStage QML。
     如果不支持则返回 False。
     """
-    out_path = os.path.join(SCREENSHOTS_DIR, filename)
-    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+    out_path = os.path.join(root.ensure_dir(), filename)
 
     try:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -291,7 +299,8 @@ def _try_qml_screenshot(filename: str, settled_data: dict, style_map: dict = Non
         )
         engine.addImportPath(qml_dir)
 
-        test_qml = os.path.join(os.path.dirname(__file__), "_revenue_screenshot_test.qml")
+        fd, test_qml = tempfile.mkstemp(suffix=".qml", prefix="wp01-revenue-")
+        os.close(fd)
 
         qml_content = f'''
 import QtQuick 2.15

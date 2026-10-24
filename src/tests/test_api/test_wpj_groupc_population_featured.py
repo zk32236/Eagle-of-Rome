@@ -167,6 +167,8 @@ def test_featured_resolved_is_election_winner():
         for office, rows in view["data"]["candidates"].items() if rows
     }
     assert selection, "需可投票 candidate 集"
+    # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）——本用例走真实生产链到达 resolved。
+    state.set_batch_completed(viewer, True)
     resolve = session_api.submit_population_votes(state, viewer, selection)
     assert resolve["success"], resolve.get("message")
 

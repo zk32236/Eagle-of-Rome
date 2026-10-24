@@ -1056,6 +1056,8 @@ class TestTH09LongJourney:
             # 4) Population：真实投票 → complete → advance
             assert store.populationCandidates, "population candidates required"
             sel = _population_selection(store)
+            # PC02W TD-01 (2026-10-23): 本席位庆典前置（G1 per-actor gate），断言零变更。
+            store._state.set_batch_completed(viewer, True)
             step("submitPopulationVotes", lambda: store.submitPopulationVotes(sel))
             step("doCompletePlayer", store.doCompletePlayer)
             step("doAdvancePopulation", store.doAdvancePopulation)

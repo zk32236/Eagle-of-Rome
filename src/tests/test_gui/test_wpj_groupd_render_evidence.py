@@ -6,7 +6,7 @@
 `forum_api.open_market` → `initialize_forum_turn`）→ 真实 `Main.qml` 离屏渲染
 （QT_QPA_PLATFORM=offscreen）→ `window.grabWindow()` → PNG。
 
-证据落 `03-da-evidence/GroupD/{Group-D-Aftermath,Group-D-Rebellion}/`：
+证据默认落 pytest tmp 派生根（以下相对布局不变）：
 - Group-D-Aftermath：人口公示框内战后反馈行（凯旋仪式已举行 + 军团解散计数）
   + 空 payload 回落（FC-D07）。
 - Group-D-Rebellion：广场公告框内起义警示行（西西里起义）。
@@ -27,10 +27,9 @@ PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-EVIDENCE_BASE = (
-    "/mnt/e/OpenClaw/Projects/EOR/workspace/EOR20260821-01 GUI-BETA-R1"
-    "/WP-J_Player-Visible-Feedback-and-Actionability/03-da-evidence/GroupD"
-)
+import pytest  # noqa: E402
+
+from src.tests._evidence_root import evidence_root  # noqa: E402
 
 from src.api import session_api, population_api, forum_api  # noqa: E402
 from src.core.entities.war import War, WarStatus  # noqa: E402
@@ -38,6 +37,13 @@ from src.ui.gui.models.candidate_list_model import CandidateListModel  # noqa: E
 from src.ui.gui.models.event_list_model import EventListModel  # noqa: E402
 from src.ui.gui.models.figure_list_model import FigureListModel  # noqa: E402
 from src.ui.gui.session_store import GuiSessionStore  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def evidence(tmp_path_factory):
+    """W2a：证据写根由 helper 派生（默认 tmp 派生根；归档区在模块内不可达）。"""
+    return evidence_root(tmp_path_factory.mktemp("wpj-groupd"), namespace="wpj-groupd")
+
 
 _ENGINES = []
 
@@ -176,9 +182,8 @@ def _sha256(path):
     return h.hexdigest()
 
 
-def _emit(slice_dir, name, capture, state_prep, phase, viewport):
-    out_dir = os.path.join(EVIDENCE_BASE, slice_dir)
-    os.makedirs(out_dir, exist_ok=True)
+def _emit(evidence, slice_dir, name, capture, state_prep, phase, viewport):
+    out_dir = evidence.ensure_dir(slice_dir)
     png = os.path.join(out_dir, name)
     meta = os.path.join(out_dir, name[:-4] + ".runtime.json")
     row = {
@@ -231,7 +236,7 @@ def _attach_resolved_war(state, commander_id, legion_numbers=(1, 2)):
 # Group-D-Aftermath
 # ---------------------------------------------------------------------------
 
-def test_render_population_aftermath_and_empty():
+def test_render_population_aftermath_and_empty(evidence):
     rows = []
     for (w, h, tag) in ((1440, 900, "1440x900"), (1280, 720, "1280x720")):
         state, viewer = _session_store("population")
@@ -244,8 +249,8 @@ def test_render_population_aftermath_and_empty():
         assert store.populationOutcome.get("triumphs"), "populationOutcome 必须非空"
         engine, _ = _create_engine(store)
         name = f"population-aftermath-{tag}.png"
-        cap = _capture(engine, os.path.join(EVIDENCE_BASE, "Group-D-Aftermath", name), w, h)
-        rows.append(_emit("Group-D-Aftermath", name, cap,
+        cap = _capture(engine, evidence.path("Group-D-Aftermath", name), w, h)
+        rows.append(_emit(evidence, "Group-D-Aftermath", name, cap,
                           "create_gui_prototype_session(population)+resolved_war(triumph+2 legions)"
                           "+process_population_disbandments", "population", (w, h)))
         _teardown(engine)
@@ -258,13 +263,13 @@ def test_render_population_aftermath_and_empty():
     assert store.populationOutcome.get("triumphs") == []
     engine, _ = _create_engine(store)
     name = "population-aftermath-empty-1440x900.png"
-    cap = _capture(engine, os.path.join(EVIDENCE_BASE, "Group-D-Aftermath", name), 1440, 900)
-    rows.append(_emit("Group-D-Aftermath", name, cap,
+    cap = _capture(engine, evidence.path("Group-D-Aftermath", name), 1440, 900)
+    rows.append(_emit(evidence, "Group-D-Aftermath", name, cap,
                       "create_gui_prototype_session(population)+no_disbandment(empty)",
                       "population", (1440, 900)))
     _teardown(engine)
 
-    manifest = os.path.join(EVIDENCE_BASE, "Group-D-Aftermath", "aftermath-screenshots.manifest.json")
+    manifest = evidence.path("Group-D-Aftermath", "aftermath-screenshots.manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupd-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -276,7 +281,7 @@ def test_render_population_aftermath_and_empty():
 # Group-D-Rebellion
 # ---------------------------------------------------------------------------
 
-def test_render_forum_rebellion():
+def test_render_forum_rebellion(evidence):
     rows = []
     for (w, h, tag) in ((1440, 900, "1440x900"), (1280, 720, "1280x720")):
         state, viewer = _session_store("forum")
@@ -290,13 +295,13 @@ def test_render_forum_rebellion():
         assert store.forumRebellionEvents, "forumRebellionEvents 必须非空"
         engine, _ = _create_engine(store)
         name = f"forum-rebellion-{tag}.png"
-        cap = _capture(engine, os.path.join(EVIDENCE_BASE, "Group-D-Rebellion", name), w, h)
-        rows.append(_emit("Group-D-Rebellion", name, cap,
+        cap = _capture(engine, evidence.path("Group-D-Rebellion", name), w, h)
+        rows.append(_emit(evidence, "Group-D-Rebellion", name, cap,
                           "create_gui_prototype_session(forum)+province(1).grievance=3+open_market"
                           "(initialize_forum_turn/check_province_unrest)", "forum", (w, h)))
         _teardown(engine)
 
-    manifest = os.path.join(EVIDENCE_BASE, "Group-D-Rebellion", "rebellion-screenshots.manifest.json")
+    manifest = evidence.path("Group-D-Rebellion", "rebellion-screenshots.manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupd-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)

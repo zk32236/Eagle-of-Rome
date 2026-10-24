@@ -67,6 +67,7 @@ if PROJECT_ROOT not in sys.path:
 
 import pytest
 
+from src.tests._evidence_root import evidence_root
 from src.api import senate_api, session_access, session_turn_service as sts
 from src.ui.gui.session_store import SEAT_ACTIVE, SEAT_MASKED_PENDING
 
@@ -85,17 +86,18 @@ probe = _load_probe()
 
 SCENARIO_1H2AI = probe.SCENARIO_1H2AI
 
-EVIDENCE_DIR = os.environ.get(
-    "G7_S2_EVIDENCE_DIR",
-    "/mnt/e/OpenClaw/Projects/EOR/workspace/EOR20261013-02 GUI-Readiness/"
-    "03-da-evidence/G7-AI-Veto-Confirm/02-RED-GREEN",
-)
+
+@pytest.fixture(scope="module")
+def evidence(tmp_path_factory):
+    """W1b：证据写根由 helper 派生（默认 tmp 派生根；归档区在模块内不可达）。"""
+    base = os.environ.get("G7_S2_EVIDENCE_DIR") or tmp_path_factory.mktemp("w3-ai-veto")
+    return evidence_root(base, namespace="w3-ai-veto")
 
 
-def _dump(name, obj):
+def _dump(root, name, obj):
     """Persist one machine-readable observation (test evidence only)."""
-    os.makedirs(EVIDENCE_DIR, exist_ok=True)
-    path = os.path.join(EVIDENCE_DIR, name)
+    root.ensure_dir()
+    path = root.path(name)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(obj, fh, ensure_ascii=False, indent=2, sort_keys=True,
                   default=str)
@@ -374,6 +376,9 @@ def _run_chain(carrier, *, retarget=True, publish=True, ai_votes=True,
     assert _settle(store), checks
     store._refresh_population_view()
     picks = preference(store, viewer, state)
+    # PC02W TD-01 (2026-10-23): 逐席位庆典前置（G1 per-actor gate），断言零变更。
+    for _pid in pids:
+        state.set_batch_completed(_pid, True)
     checks["population"] = probe._play_population(store, picks)
     store._refresh_population_view()
     store._refresh_snapshot()
@@ -450,7 +455,7 @@ def _gate_carrier(monkeypatch, *, hold_rng=False, **kwargs):
 # ===========================================================================
 # S2-01 — before the human gesture: zero AI veto decision, nothing finalized
 # ===========================================================================
-def test_s2_01_ai_veto_waits_for_human_confirmation(monkeypatch):
+def test_s2_01_ai_veto_waits_for_human_confirmation(monkeypatch, evidence):
     carrier = _gate_carrier(monkeypatch)
     view = carrier.view
     facts = {
@@ -472,7 +477,7 @@ def test_s2_01_ai_veto_waits_for_human_confirmation(monkeypatch):
         "store_can_submit_veto": carrier.store.canSubmitSenateVeto,
         "latch": _latch(carrier.state),
     }
-    _dump("s2-01.json", facts)
+    _dump(evidence, "s2-01.json", facts)
 
     assert view.get("current_step") == "tribune_veto", facts
     assert carrier.checks["proposal_ids"], facts
@@ -493,7 +498,7 @@ def test_s2_01_ai_veto_waits_for_human_confirmation(monkeypatch):
 # ===========================================================================
 # S2-02 — one click: exactly one AI traversal, one real decision, one receipt
 # ===========================================================================
-def test_s2_02_single_click_runs_the_ai_decision_once(monkeypatch):
+def test_s2_02_single_click_runs_the_ai_decision_once(monkeypatch, evidence):
     carrier = _gate_carrier(monkeypatch)
     candidates = list(carrier.view.get("veto_candidate_ids") or [])
     assert candidates, carrier.view
@@ -517,7 +522,7 @@ def test_s2_02_single_click_runs_the_ai_decision_once(monkeypatch):
         "completion_facts": (result.get("data") or {}).get("completion_facts"),
         "store_can_advance": carrier.store.canAdvanceSenate,
     }
-    _dump("s2-02.json", facts)
+    _dump(evidence, "s2-02.json", facts)
 
     assert confirmed.get("success") is True, facts
     # Exactly ONE traversal over the passed-only candidate set.
@@ -542,7 +547,7 @@ def test_s2_02_single_click_runs_the_ai_decision_once(monkeypatch):
 # ===========================================================================
 # S2-03 — non-presenter on an OUTSTANDING gate / stale handle: typed DENIED
 # ===========================================================================
-def test_s2_03_foreign_and_stale_confirmations_are_denied(monkeypatch):
+def test_s2_03_foreign_and_stale_confirmations_are_denied(monkeypatch, evidence):
     """The protected confirmation entry, exercised while the gate is LIVE.
 
     SA R1: the previous revision only read ``other_view`` AFTER the gate had been
@@ -649,7 +654,7 @@ def test_s2_03_foreign_and_stale_confirmations_are_denied(monkeypatch):
         "veto_records": len(_veto_records(carrier.state)),
         "auto_veto_producer": carrier.producers.auto_vetoes,
     }
-    _dump("s2-03.json", facts)
+    _dump(evidence, "s2-03.json", facts)
 
     # (A) the confirmation capability does not exist for a non-presenter.
     assert foreign_caps.get("registered_can_confirm_ai_veto") is False, facts
@@ -688,7 +693,7 @@ def test_s2_03_foreign_and_stale_confirmations_are_denied(monkeypatch):
 # ===========================================================================
 # S2-04 — a real HUMAN tribune keeps the original path (AI executor = 0)
 # ===========================================================================
-def test_s2_04_human_tribune_path_is_unchanged(monkeypatch):
+def test_s2_04_human_tribune_path_is_unchanged(monkeypatch, evidence):
     carrier = _gate_carrier(monkeypatch, retarget=False)
     view = carrier.view
     assert view.get("current_step") == "tribune_veto", view
@@ -707,7 +712,7 @@ def test_s2_04_human_tribune_path_is_unchanged(monkeypatch):
         "step": carrier.view.get("current_step"),
         "latch": _latch(carrier.state),
     }
-    _dump("s2-04.json", facts)
+    _dump(evidence, "s2-04.json", facts)
 
     assert done.get("success") is True, facts
     assert carrier.deciders.calls[before:] == [], facts
@@ -718,7 +723,7 @@ def test_s2_04_human_tribune_path_is_unchanged(monkeypatch):
 # ===========================================================================
 # S2-05 — a legitimate EMPTY step still skips (never a permanent WAITING)
 # ===========================================================================
-def test_s2_05a_no_proposal_still_skips(monkeypatch):
+def test_s2_05a_no_proposal_still_skips(monkeypatch, evidence):
     carrier = _gate_carrier(monkeypatch, publish=False)
     facts = {
         "step": carrier.view.get("current_step"),
@@ -728,14 +733,14 @@ def test_s2_05a_no_proposal_still_skips(monkeypatch):
         "senate_result": carrier.state.get_phase_result("senate") is not None,
         "can_advance": carrier.store.canAdvanceSenate,
     }
-    _dump("s2-05a.json", facts)
+    _dump(evidence, "s2-05a.json", facts)
     assert carrier.deciders.calls == [], facts
     assert carrier.producers.auto_vetoes == 0, facts
     assert carrier.view.get("current_step") == "results", facts
     assert carrier.state.get_phase_result("senate") is not None, facts
 
 
-def test_s2_05b_zero_passed_candidates_converge_to_terminal(monkeypatch):
+def test_s2_05b_zero_passed_candidates_converge_to_terminal(monkeypatch, evidence):
     """Lawful NONE (no passed candidate) through the REAL continuation.
 
     SA R2: the previous revision accepted ``settlement_pending`` here, i.e. it
@@ -761,7 +766,7 @@ def test_s2_05b_zero_passed_candidates_converge_to_terminal(monkeypatch):
         "canonical": senate_api.canonical_finalization(carrier.state).get(
             "status"),
     }
-    _dump("s2-05b.json", facts)
+    _dump(evidence, "s2-05b.json", facts)
     assert view.get("veto_candidate_ids") == [], facts
     assert carrier.deciders.calls == [], facts
     assert carrier.producers.auto_vetoes == 0, facts
@@ -774,7 +779,7 @@ def test_s2_05b_zero_passed_candidates_converge_to_terminal(monkeypatch):
     assert facts["canonical"] == "VALID", facts
 
 
-def test_s2_05c_resolver_backed_none_converges_through_production(monkeypatch):
+def test_s2_05c_resolver_backed_none_converges_through_production(monkeypatch, evidence):
     """Lawful NONE built BEFORE the vote, so the PRODUCTION path must converge.
 
     SA R2: removing the office after the gate had already opened and then calling
@@ -803,7 +808,7 @@ def test_s2_05c_resolver_backed_none_converges_through_production(monkeypatch):
         "canonical": senate_api.canonical_finalization(carrier.state).get(
             "status"),
     }
-    _dump("s2-05c.json", facts)
+    _dump(evidence, "s2-05c.json", facts)
     assert carrier.deciders.calls == [], facts
     assert carrier.producers.auto_vetoes == 0, facts
     assert len(_veto_records(carrier.state)) == 0, facts
@@ -818,7 +823,7 @@ def test_s2_05c_resolver_backed_none_converges_through_production(monkeypatch):
 # ===========================================================================
 # S2-06 — Year-2 REAL AI-veto gate: new scope, old handle cannot release it
 # ===========================================================================
-def test_s2_06_year_two_gate_and_year_one_handle_isolation(monkeypatch):
+def test_s2_06_year_two_gate_and_year_one_handle_isolation(monkeypatch, evidence):
     """SA R3: a genuine Year-2 AI-veto gate, then a Year-1 handle replay.
 
     Year 1 is driven through the real chain and confirmed once. The year is then
@@ -945,7 +950,7 @@ def test_s2_06_year_two_gate_and_year_one_handle_isolation(monkeypatch):
             "seat_recovered": recovered,
             "gate_after": gate_after_replay,
         }
-        _dump("s2-06.json", facts)
+        _dump(evidence, "s2-06.json", facts)
 
         assert replay.get("success") is True, facts
         # Exactly ONE traversal of the YEAR-2 candidates (the stale view is gone).
@@ -971,7 +976,7 @@ def test_s2_06_year_two_gate_and_year_one_handle_isolation(monkeypatch):
             "canonical": senate_api.canonical_finalization(state).get("status"),
             "step": carrier.view.get("current_step"),
         }
-        _dump("s2-06.json", facts)
+        _dump(evidence, "s2-06.json", facts)
         assert extra.get("success") is False, facts
         assert len(carrier.deciders.calls) == after_replay["decider_calls"], facts
         assert len(_veto_records(state)) == 1, facts
@@ -984,7 +989,7 @@ def test_s2_06_year_two_gate_and_year_one_handle_isolation(monkeypatch):
 # ===========================================================================
 # S2-07 — real Qt first frame: button / mask / activation / last_good source
 # ===========================================================================
-def test_s2_07_real_qml_button_mask_and_activation(monkeypatch):
+def test_s2_07_real_qml_button_mask_and_activation(monkeypatch, evidence):
     from PySide6.QtCore import QObject, QUrl
     from PySide6.QtGui import QGuiApplication
     from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, qmlRegisterType
@@ -1054,7 +1059,7 @@ def test_s2_07_real_qml_button_mask_and_activation(monkeypatch):
     button_after = root.findChild(QObject, "senateVetoSubmitButton")
     frame_facts["button_enabled_after"] = bool(
         button_after.property("enabled") if button_after is not None else False)
-    _dump("s2-07.json", frame_facts)
+    _dump(evidence, "s2-07.json", frame_facts)
 
     assert clicked.get("success") is True, frame_facts
     assert len(carrier.deciders.calls) > 0, frame_facts

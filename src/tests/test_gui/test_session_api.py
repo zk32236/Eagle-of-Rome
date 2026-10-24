@@ -275,6 +275,8 @@ class TestSessionApi:
         selection_map = {
             office: rows[0]["id"] for office, rows in candidates.items() if rows
         }
+        # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）
+        state.set_batch_completed(player_id, True)
         submitted = session_api.submit_population_votes(state, player_id, selection_map)
         assert submitted.get("success"), (
             f"test_resolve_population_slice_two_step_contract: submit failed: "
@@ -377,6 +379,8 @@ class TestSessionApi:
         selection_map = {
             office: rows[0]["id"] for office, rows in candidates.items() if rows
         }
+        # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）
+        state.set_batch_completed(player_id, True)
         submitted = session_api.submit_population_votes(state, player_id, selection_map)
         assert submitted.get("success"), (
             f"test_advance_population_double_advance_returns_failure: submit failed: "

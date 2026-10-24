@@ -23,16 +23,16 @@ Owner 2026-10-09 G7-Test-R5 Q1（一层诉求、两点）：
 import json
 import os
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 SENATE_QML = os.path.join(PROJECT_ROOT, "src", "ui", "gui", "qml", "stages", "SenateStage.qml")
 WAR_QML = os.path.join(PROJECT_ROOT, "src", "ui", "gui", "qml", "components", "WarProposalCard.qml")
 
-EVIDENCE_BASE = (
-    "/mnt/e/OpenClaw/Projects/EOR/workspace/EOR20260821-01 GUI-BETA-R1"
-    "/WP-J_Player-Visible-Feedback-and-Actionability/03-da-evidence/GroupC"
-)
+from src.tests._evidence_root import evidence_root  # noqa: E402
+
 _EVID_DIR = "Group-C-G7TestR5Delta"
 
 # ② 行身份文本唯一识别子串（沿 Group C 定位器）
@@ -51,6 +51,12 @@ EMOJI_ESCAPES = (r"\u274C", r"\u274c", r"\u2705", r"\uFE0F", r"\ufe0f")
 
 # 复用 render_evidence 的离屏生产链 helper（route=DIRECT_PRODUCTION）
 from src.tests.test_gui import test_wpj_groupc_render_evidence as R  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def evidence(tmp_path_factory):
+    """W2a：证据写根由 helper 派生（默认 tmp 派生根；归档区在模块内不可达）。"""
+    return evidence_root(tmp_path_factory.mktemp("wpj-groupc-r5"), namespace="wpj-groupc-r5")
 
 
 def _senate():
@@ -181,7 +187,7 @@ def _panel2_rows(stage_root, labels):
     return out
 
 
-def test_r5_render_tribune_veto_panel2_glyph_shown_and_no_checkbox():
+def test_r5_render_tribune_veto_panel2_glyph_shown_and_no_checkbox(evidence):
     """FC-C37(1)（★关键）：`tribune_veto` 帧 ② 每行**显示结果字形**（`vote_results` 口径：
     passed→✓，非通过→✗，无数据→空白）**且 ② 行无勾选框**（FC-C36）。1280×720 及更大视口。"""
     rows = []
@@ -192,9 +198,9 @@ def test_r5_render_tribune_veto_panel2_glyph_shown_and_no_checkbox():
         labels = [l for l in by_label if l]
         engine, _ = R._create_engine(store)
         name = f"group-c-g7testr5-tribune-veto-panel2-{tag}.png"
-        png = os.path.join(EVIDENCE_BASE, _EVID_DIR, name)
+        png = evidence.path(_EVID_DIR, name)
         cap = R._capture(engine, png, w, h)
-        rows.append(R._emit(_EVID_DIR, name, cap,
+        rows.append(R._emit(evidence, _EVID_DIR, name, cap,
                             "create_gui_prototype_session(senate)+doSubmitSenateProposals+doSubmitSenateVotes",
                             "tribune_veto", (w, h)))
         window = engine.rootObjects()[0]
@@ -221,7 +227,7 @@ def test_r5_render_tribune_veto_panel2_glyph_shown_and_no_checkbox():
             shown += 1
         assert shown >= 1, f"tribune_veto 步 须至少 1 行 ② 显结果字形（FC-C35，{tag}）"
         R._teardown(engine)
-    with open(os.path.join(EVIDENCE_BASE, _EVID_DIR, "g7testr5-tribune-veto-manifest.json"),
+    with open(evidence.path(_EVID_DIR, "g7testr5-tribune-veto-manifest.json"),
               "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupc-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -229,7 +235,7 @@ def test_r5_render_tribune_veto_panel2_glyph_shown_and_no_checkbox():
     assert all(r["capture_ok"] for r in rows), rows
 
 
-def test_r5_render_results_panel2_vetoed_green_and_panel3_red():
+def test_r5_render_results_panel2_vetoed_green_and_panel3_red(evidence):
     """FC-C37(2)：`results` 帧 ② 同规则显字形；**`vetoed` 行 ② 显绿 ✓（≠ ✗）**（`veto` 不改写 ②）；
     **③ 显红 ✗**（`resultMark`，共享谓词未动）。1280×720 及更大视口。"""
     rows = []
@@ -242,9 +248,9 @@ def test_r5_render_results_panel2_vetoed_green_and_panel3_red():
             f"须有 vetoed 行（{tag}）"
         engine, _ = R._create_engine(store)
         name = f"group-c-g7testr5-results-panel2-{tag}.png"
-        png = os.path.join(EVIDENCE_BASE, _EVID_DIR, name)
+        png = evidence.path(_EVID_DIR, name)
         cap = R._capture(engine, png, w, h)
-        rows.append(R._emit(_EVID_DIR, name, cap,
+        rows.append(R._emit(evidence, _EVID_DIR, name, cap,
                             "create_gui_prototype_session(senate)+doSubmitSenateProposals"
                             "+doSubmitSenateVotes+doSubmitSenateVetoes(veto_first)",
                             "results", (w, h)))
@@ -285,7 +291,7 @@ def test_r5_render_results_panel2_vetoed_green_and_panel3_red():
                 continue
         assert red_texts, f"③ results 态须显红 ✗（共享 resultMark，{tag}）"
         R._teardown(engine)
-    with open(os.path.join(EVIDENCE_BASE, _EVID_DIR, "g7testr5-results-manifest.json"),
+    with open(evidence.path(_EVID_DIR, "g7testr5-results-manifest.json"),
               "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupc-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -293,13 +299,13 @@ def test_r5_render_results_panel2_vetoed_green_and_panel3_red():
     assert all(r["capture_ok"] for r in rows), rows
 
 
-def test_r5_render_panel3_tribune_veto_keeps_checkbox():
+def test_r5_render_panel3_tribune_veto_keeps_checkbox(evidence):
     """FC-C37(2)：③ `tribune_veto` 帧**保留勾选框**（提交否决前；`FC-C36` 仅 ②）。"""
     for (w, h, tag) in ((1440, 900, "1440x900"), (1280, 720, "1280x720")):
         store = R._senate_veto_store_with_selection()[0]
         engine, _ = R._create_engine(store)
         name = f"group-c-g7testr5-panel3-tribune-veto-{tag}.png"
-        cap = R._capture(engine, os.path.join(EVIDENCE_BASE, _EVID_DIR, name), w, h)
+        cap = R._capture(engine, evidence.path(_EVID_DIR, name), w, h)
         assert cap and cap not in ("timeout",), f"截图须成功（{tag}）: {cap}"
         window = engine.rootObjects()[0]
         _root, stage_root = R._find_stage_root(window)
@@ -310,14 +316,14 @@ def test_r5_render_panel3_tribune_veto_keeps_checkbox():
     assert True
 
 
-def test_r5_render_geometry_1280x720_and_larger():
+def test_r5_render_geometry_1280x720_and_larger(evidence):
     """FC-C37(5)：senate_vote 步于 1280×720 与更大视口渲染成功、窗口/阶段根几何非零（非回归）。"""
     for (w, h, tag) in ((1440, 900, "1440x900"), (1280, 720, "1280x720")):
         store = R._senate_vote_store_with_long_proposal()[0]
         assert store.senateCurrentStep == "senate_vote"
         engine, _ = R._create_engine(store)
         name = f"group-c-g7testr5-geometry-{tag}.png"
-        cap = R._capture(engine, os.path.join(EVIDENCE_BASE, _EVID_DIR, name), w, h)
+        cap = R._capture(engine, evidence.path(_EVID_DIR, name), w, h)
         assert cap and cap not in ("timeout",), f"截图须成功（{tag}）: {cap}"
         window = engine.rootObjects()[0]
         assert (window.width() or 0) > 0 and (window.height() or 0) > 0, f"窗口几何须非零（{tag}）"
@@ -327,14 +333,14 @@ def test_r5_render_geometry_1280x720_and_larger():
     assert True
 
 
-def test_r5_render_live_headed_recheck_recorded():
+def test_r5_render_live_headed_recheck_recorded(evidence):
     """FC-C37(4) 有头/窗口化 live 复验如实登记：本 DA 运行环境为**无头 WSL**（无 DISPLAY；
     测试进程强制 offscreen）⇒ **NOT_APPLICABLE（不伪造）**；以离屏 RENDER_AUTOMATED 替代。
     注意：离屏 RENDER 的 ② 行样本为 land 提案；「含战争行」的有头复验待有头环境补做。"""
     display = os.environ.get("DISPLAY")
     plat = os.environ.get("QT_QPA_PLATFORM")
-    out = os.path.join(EVIDENCE_BASE, _EVID_DIR, "g7testr5-live-headed.runtime.json")
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    out = evidence.path(_EVID_DIR, "g7testr5-live-headed.runtime.json")
+    evidence.ensure_dir(_EVID_DIR)
     record = {
         "schema": "wpj-groupc-live-headed/v1",
         "requested": "有头/窗口化 live 复验（真实 app.py；非 offscreen；含战争行 ② 勾选框隐藏）",

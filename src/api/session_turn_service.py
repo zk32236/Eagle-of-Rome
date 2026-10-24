@@ -1617,6 +1617,876 @@ def _phase_receipt_registry(book: "SessionTurnBook") -> Dict[str, Any]:
     return reg
 
 
+# ---------------------------------------------------------------------------
+# W4-A1 / PC04-L1 — the market round (T_B) + its boundary receipts (NEW, disjoint)
+#
+# These facts are SESSION-owned: they live on the already-existing turn book
+# (attached to the state, never serialized as Core state) exactly like the phase
+# receipts above. Nothing here is a Core field, a save-game key or a scenario key.
+# The market round is NOT a second scheduler: ``select_actor`` stays the SOLE
+# cursor writer and the canonical plan only ORDERS the existing obligations.
+# ---------------------------------------------------------------------------
+
+#: Per-forum-scope market round record (``scope_id -> {state, receipt_id, actor}``).
+_MARKET_ROUNDS_ATTR = "_market_rounds"
+#: Per-forum-scope FAILED-commit hold (``scope_id -> {reason, actor, ...}``).
+#: It is NOT the round record: the round/receipt/consumed facts are restored to
+#: their exact pre-command values, and this separate service-private fact only
+#: makes the failure DECIDABLE (W1/W2 stay closed until a later full commit).
+_MARKET_ROUND_HOLDS_ATTR = "_market_round_holds"
+#: Service-private boundary receipt registry (R_open / R_boundary snapshots).
+_BOUNDARY_RECEIPTS_ATTR = "_forum_boundary_receipts"
+#: Receipt ids already consumed by a committed T_B (once-only).
+_BOUNDARY_CONSUMED_ATTR = "_consumed_boundary_receipts"
+#: Service-private T_B attempt records (session-private; never persisted).
+_TB_ATTEMPTS_ATTR = "_market_round_attempts"
+#: Monotonic session-private attempt generation (never persisted).
+_TB_GENERATION_ATTR = "_market_round_generation"
+#: R_BOUNDARY ids whose PHYSICAL finalize flag has been written (not authorization).
+_BOUNDARY_FINALIZED_ATTR = "_forum_boundary_finalized"
+#: Session-owned canonical market plan K (captured from the validated scenario).
+_CANONICAL_PLAN_ATTR = "_canonical_market_plan"
+#: The EXACT owner-initialization marker around open_market's synchronous edge.
+_OWNER_INIT_ATTR = "_forum_owner_initialization"
+
+MARKET_ROUND_UNSELECTED = "UNSELECTED"
+MARKET_ROUND_SELECTED = "SELECTED"
+
+#: T_B attempt / fence states. The live fence (PREPARING / R / U) lives in the
+#: HOLD registry so a single read makes a closed market window visible.
+TB_PREPARING = "TB_PREPARING"
+TB_COMMITTED = "COMMITTED"
+TB_RECOVERABLE_HOLD = "RECOVERABLE_HOLD"
+TB_UNKNOWN_HOLD = "UNKNOWN_HOLD"
+
+TB_DECISION_UNCOMMITTED = "UNCOMMITTED"
+TB_DECISION_COMMITTED = "COMMITTED"
+
+BOUNDARY_RECEIPT_OPEN = "R_OPEN"
+BOUNDARY_RECEIPT_BOUNDARY = "R_BOUNDARY"
+_BOUNDARY_RECEIPT_KINDS: Tuple[str, ...] = (
+    BOUNDARY_RECEIPT_OPEN, BOUNDARY_RECEIPT_BOUNDARY)
+
+
+def _market_round_registry(state_or_book: Any) -> Dict[str, Any]:
+    """The THIRD, disjoint session registry: market round state per forum scope.
+
+    Accepts the GameState or its ``SessionTurnBook`` (the owning API only holds the
+    state). An absent registry is an EMPTY dict — never a wildcard, never a union
+    with the two Store helper registries (which live in ``session_store``).
+    """
+    book = (state_or_book if isinstance(state_or_book, SessionTurnBook)
+            else _book(state_or_book))
+    reg = getattr(book, _MARKET_ROUNDS_ATTR, None)
+    if reg is None:
+        reg = {}
+        try:
+            setattr(book, _MARKET_ROUNDS_ATTR, reg)
+        except Exception:  # pragma: no cover - defensive
+            pass
+    return reg
+
+
+def _market_round_holds(state_or_book: Any) -> Dict[str, Any]:
+    """Session-private FAILED-commit holds, keyed by forum scope.
+
+    A hold is written ONLY by :func:`abort_forum_market_round` after the three T_B
+    mutations (R_OPEN consumption / R_BOUNDARY issue / round record) have been
+    rolled back. It is a separate registry so the conservation assertion holds:
+    ``rounds`` / ``receipts`` / ``consumed`` / cursor keep their pre-command
+    values, while the failure is still observable and keeps the gates CLOSED.
+    """
+    book = (state_or_book if isinstance(state_or_book, SessionTurnBook)
+            else _book(state_or_book))
+    reg = getattr(book, _MARKET_ROUND_HOLDS_ATTR, None)
+    if reg is None:
+        reg = {}
+        try:
+            setattr(book, _MARKET_ROUND_HOLDS_ATTR, reg)
+        except Exception:  # pragma: no cover - defensive
+            pass
+    return reg
+
+
+def _tb_attempt_registry(state_or_book: Any) -> Dict[str, Any]:
+    """The session-private T_B attempt registry (``scope_id -> record``).
+
+    Only a COMMITTED attempt is retained here as the immutable historical
+    binding; the live PREPARING/R/U fence lives in ``_market_round_holds`` so
+    that a single read makes the closed window visible.
+    """
+    book = (state_or_book if isinstance(state_or_book, SessionTurnBook)
+            else _book(state_or_book))
+    reg = getattr(book, _TB_ATTEMPTS_ATTR, None)
+    if reg is None:
+        reg = {}
+        try:
+            setattr(book, _TB_ATTEMPTS_ATTR, reg)
+        except Exception:  # pragma: no cover - defensive
+            pass
+    return reg
+
+
+def tb_attempt_status(state: Any,
+                      scope_id: Optional[str] = None) -> Optional[dict]:
+    """READ-ONLY exact T_B status for this forum scope (``None`` = none).
+
+    The live fence (PREPARING / RECOVERABLE_HOLD / UNKNOWN_HOLD) wins over the
+    historical COMMITTED record. It is a decision-state read only: it grants no
+    authority and writes nothing.
+    """
+    book = _book(state)
+    scope = scope_id or mint_scope(state, "forum").scope_id
+    live = _market_round_holds(book).get(scope)
+    if live is not None:
+        return dict(live)
+    record = _tb_attempt_registry(book).get(scope)
+    return dict(record) if record is not None else None
+
+
+def tb_preflight_open_receipt(state: Any, receipt: Any,
+                              scope_id: str) -> dict:
+    """Validate the PRESENTED R_OPEN identity against the registered snapshot.
+
+    The caller-held dict only names an identity; every altered field (session /
+    turn / scope / revision / kind) is a typed refusal with NO side effect. This
+    read-only preflight runs BEFORE the attempt is installed.
+    """
+    book = _book(state)
+    reg = getattr(book, _BOUNDARY_RECEIPTS_ATTR, None) or {}
+    rid = receipt.get("receipt_id") if isinstance(receipt, dict) else None
+    snap = reg.get(rid) if rid else None
+    if snap is None:
+        return {"success": False, "code": "FORUM_BOUNDARY_RECEIPT_INVALID",
+                "message": "a market boundary receipt is required"}
+    for field in ("kind", "session_id", "turn", "scope_id", "revision"):
+        if field in receipt and receipt.get(field) != snap.get(field):
+            code = ("FORUM_BOUNDARY_RECEIPT_KIND_MISMATCH"
+                    if field == "kind" else "FORUM_BOUNDARY_RECEIPT_STALE")
+            return {"success": False, "code": code,
+                    "message": f"the presented receipt field {field} is not exact"}
+    if snap.get("kind") != BOUNDARY_RECEIPT_OPEN:
+        return {"success": False, "code": "FORUM_BOUNDARY_RECEIPT_KIND_MISMATCH",
+                "message": "the presented receipt is not an R_OPEN"}
+    if snap.get("session_id") != _session_ns(state) \
+            or int(snap.get("turn", -1)) != int(book.turn_number):
+        return {"success": False, "code": "FORUM_BOUNDARY_RECEIPT_STALE",
+                "message": "the receipt belongs to another session/turn"}
+    if snap.get("scope_id") != scope_id:
+        return {"success": False, "code": "FORUM_BOUNDARY_RECEIPT_STALE",
+                "message": "the receipt belongs to another forum scope"}
+    if int(snap.get("revision", -1)) != current_revision(state):
+        return {"success": False, "code": "FORUM_BOUNDARY_RECEIPT_STALE",
+                "message": "the receipt revision is stale"}
+    consumed = getattr(book, _BOUNDARY_CONSUMED_ATTR, None) or set()
+    if rid in consumed:
+        return {"success": False, "code": "FORUM_BOUNDARY_RECEIPT_CONSUMED",
+                "message": "the market boundary receipt was already consumed"}
+    return {"success": True, "receipt_id": rid}
+
+
+def new_tb_boundary_receipt_id() -> str:
+    """Reserve the exact R_BOUNDARY identity BEFORE the issuer runs."""
+    return uuid.uuid4().hex
+
+
+def new_tb_attempt_identity(state: Any) -> dict:
+    """Reserve the EXACT attempt identity BEFORE ``begin_tb_attempt`` installs.
+
+    The root holds this identity before any write, so an exception thrown by the
+    begin call *after* the atomic install can still be located exactly (R1/R2).
+    """
+    book = _book(state)
+    try:
+        generation = int(getattr(book, _TB_GENERATION_ATTR, 0)) + 1
+    except Exception:  # pragma: no cover - defensive
+        generation = 1
+    try:
+        setattr(book, _TB_GENERATION_ATTR, generation)
+    except Exception:  # pragma: no cover - defensive
+        pass
+    return {"attempt_id": uuid.uuid4().hex, "generation": generation}
+
+
+def begin_tb_attempt(state: Any, *, scope_id: str, actor: str,
+                     open_receipt_id: str, boundary_receipt_id: str,
+                     cursor_before: Optional[str],
+                     pre_round: Any = None,
+                     attempt_id: Optional[str] = None,
+                     generation: Optional[int] = None,
+                     revision_before: Optional[int] = None,
+                     pre_consumed: Optional[set] = None,
+                     pre_boundary_present: bool = False) -> dict:
+    """Atomically install the COMPLETE attempt record BEFORE the first effect.
+
+    The record is visible to both gates immediately (``TB_PREPARING``). It carries
+    an exact ``attempt_id``/``generation`` and the pre-state it owns (consumed set,
+    round snapshot, boundary presence) so every later compare/compensation is an
+    exact identity compare (R2), never "the current/latest record".
+    """
+    book = _book(state)
+    holds = _market_round_holds(book)
+    current = holds.get(scope_id)
+    if current is not None and current.get("state") == TB_PREPARING:
+        return {"success": False, "code": "MARKET_ROUND_BUSY",
+                "scope_id": scope_id, "attempt_id": current.get("attempt_id")}
+    if attempt_id is None or generation is None:
+        identity = new_tb_attempt_identity(state)
+        attempt_id = attempt_id or identity["attempt_id"]
+        generation = generation if generation is not None else identity["generation"]
+    if pre_consumed is None:
+        pre_consumed = set(getattr(book, _BOUNDARY_CONSUMED_ATTR, None) or set())
+    hold = {
+        "state": TB_PREPARING,
+        "decision": TB_DECISION_UNCOMMITTED,
+        "attempt_id": attempt_id,
+        "generation": int(generation),
+        "scope_id": scope_id,
+        "session_id": _session_ns(state),
+        "turn": int(book.turn_number),
+        "actor": actor,
+        "open_receipt_id": open_receipt_id,
+        "boundary_receipt_id": boundary_receipt_id,
+        "consumed_receipt_id": None,
+        "cursor_before": cursor_before,
+        "pre_round": pre_round,
+        "pre_consumed": set(pre_consumed),
+        "pre_boundary_present": bool(pre_boundary_present),
+        "revision_before": (int(revision_before)
+                            if revision_before is not None
+                            else current_revision(state)),
+        "stage": "begin",
+        "writer_effect": "none",
+    }
+    holds[scope_id] = hold
+    return dict(hold)
+
+
+def _tb_exact_hold(book: Any, scope_id: str,
+                   attempt_id: Optional[str]) -> Optional[dict]:
+    """The live hold IFF it is EXACTLY ``attempt_id`` (never a later attempt)."""
+    hold = _market_round_holds(book).get(scope_id)
+    if hold is None:
+        return None
+    if attempt_id is not None and hold.get("attempt_id") != attempt_id:
+        return None
+    return hold
+
+
+def tb_note_consumed(state: Any, scope_id: str, receipt_id: str,
+                     attempt_id: Optional[str] = None) -> None:
+    hold = _tb_exact_hold(_book(state), scope_id, attempt_id)
+    if hold is not None and hold.get("decision") != TB_DECISION_COMMITTED:
+        hold["consumed_receipt_id"] = receipt_id
+
+
+def tb_probe_decision(state: Any, scope_id: str,
+                      attempt_id: Optional[str]) -> str:
+    """READ-ONLY exact decision probe: COMMITTED / UNCOMMITTED / ABSENT."""
+    book = _book(state)
+    record = _tb_attempt_registry(book).get(scope_id)
+    if record is not None and record.get("decision") == TB_DECISION_COMMITTED:
+        if attempt_id is None or record.get("attempt_id") == attempt_id:
+            return TB_DECISION_COMMITTED
+    hold = _tb_exact_hold(book, scope_id, attempt_id)
+    if hold is not None:
+        if hold.get("decision") == TB_DECISION_COMMITTED:
+            return TB_DECISION_COMMITTED
+        return TB_DECISION_UNCOMMITTED
+    return "ABSENT"
+
+
+def _tb_apply_committed_decision(state: Any, scope_id: str, attempt_id: str,
+                                 record: dict) -> None:
+    """The SINGLE non-reversible decision primitive (R4).
+
+    The only raise-capable step is the exact identity compare at the top. Once the
+    two-field ``update`` below lands, every later bookkeeping step is non-throwing
+    and the decision is COMMITTED for good. Tests may wrap THIS leaf to inject a
+    pre-write failure (before the real call) or a post-write failure (call real,
+    then raise): the root's read-only probe classifies both without any stringly
+    dispatch (R3).
+
+    Returns a typed result. Bookkeeping failures after the linearization write are
+    RECORDED, never swallowed (P1): the HOLD — the only remaining carrier of the
+    COMMITTED decision — is kept with ``state=UNKNOWN_HOLD`` (the ``decision``
+    field stays COMMITTED: AC02 forbids any downgrade) so both gates stay CLOSED
+    and the caller cannot report success.
+    """
+    book = _book(state)
+    holds = _market_round_holds(book)
+    hold = holds.get(scope_id)
+    if hold is None or hold.get("attempt_id") != attempt_id:
+        raise RuntimeError("TB_STALE_ATTEMPT")
+    hold.update({"state": TB_COMMITTED, "decision": TB_DECISION_COMMITTED})
+    # ---- after the linearization write: NOTHING may raise ----
+    # P1: neither bookkeeping step may be swallowed. If either does not land, the
+    # hold is the ONLY carrier of the COMMITTED decision and must NOT be popped.
+    residuals: list = []
+    try:
+        _tb_attempt_registry(book)[scope_id] = dict(record)
+    except Exception as exc:  # noqa: BLE001 - recorded, never silent
+        residuals.append(f"ATTEMPT_COPY:{exc}")
+    try:
+        _market_round_registry(book)[scope_id] = {
+            "state": MARKET_ROUND_SELECTED,
+            "receipt_id": record["receipt_id"],
+            "actor": record["actor"],
+            "attempt_id": attempt_id,
+            "generation": record.get("generation"),
+            "finalized": True,
+        }
+    except Exception as exc:  # noqa: BLE001 - recorded, never silent
+        residuals.append(f"ROUND_WRITE:{exc}")
+    # Read-back: a swallowed / no-op write is the SAME defect as a raised one.
+    try:
+        if _tb_attempt_registry(book).get(scope_id) is None:
+            residuals.append("ATTEMPT_COPY:MISSING")
+    except Exception as exc:  # noqa: BLE001 - read-back failure is a residual
+        residuals.append(f"ATTEMPT_COPY:{exc}")
+    try:
+        landed = _market_round_registry(book).get(scope_id)
+    except Exception as exc:  # noqa: BLE001 - read-back failure is a residual
+        landed = None
+        residuals.append(f"ROUND_WRITE:{exc}")
+    if landed is None or landed.get("state") != MARKET_ROUND_SELECTED \
+            or landed.get("attempt_id") != attempt_id:
+        residuals.append("ROUND_WRITE:MISSING")
+    if residuals:
+        # Conservative, decidable fence: decision stays COMMITTED (never
+        # downgraded), the live state says UNKNOWN_HOLD, both gates stay CLOSED.
+        try:
+            hold["state"] = TB_UNKNOWN_HOLD
+            hold["decision"] = TB_DECISION_COMMITTED
+            hold["bookkeeping_residuals"] = tuple(residuals)
+            hold["cursor_byte_rollback"] = "NOT_GUARANTEED"
+            holds[scope_id] = hold
+        except Exception:  # noqa: BLE001 - the fence write must never raise
+            pass
+        return {"success": False, "code": "COMMIT_BOOKKEEPING_INCOMPLETE",
+                "decision": TB_DECISION_COMMITTED,
+                "attempt_id": attempt_id,
+                "residuals": tuple(residuals)}
+    holds.pop(scope_id, None)
+    return {"success": True, "attempt_id": attempt_id, "residuals": ()}
+
+
+def tb_commit_attempt(state: Any, *, scope_id: str, boundary_receipt_id: str,
+                      actor: str, attempt_id: Optional[str] = None) -> dict:
+    """Exact compare then the ONE decision primitive (terminal; never downgraded).
+
+    A stale/foreign call is a read-only refusal and never touches the current
+    attempt (R2). Verification is complete before the primitive: the decision
+    write itself is the last fallible step (and is followed only by non-throwing
+    bookkeeping).
+    """
+    book = _book(state)
+    hold = _tb_exact_hold(book, scope_id, attempt_id)
+    if hold is None:
+        return {"success": False, "code": "STALE_ATTEMPT",
+                "reason": "STALE_ATTEMPT", "refused": True}
+    if hold.get("decision") == TB_DECISION_COMMITTED:
+        return dict(_tb_attempt_registry(book).get(scope_id) or hold)
+    record = {
+        "state": TB_COMMITTED,
+        "decision": TB_DECISION_COMMITTED,
+        "attempt_id": hold.get("attempt_id"),
+        "generation": hold.get("generation"),
+        "scope_id": scope_id,
+        "session_id": _session_ns(state),
+        "turn": int(book.turn_number),
+        "actor": actor,
+        "initial_actor": hold.get("actor"),
+        "open_receipt_id": hold.get("open_receipt_id"),
+        "consumed_receipt_id": (hold.get("consumed_receipt_id")
+                                or hold.get("open_receipt_id")),
+        "receipt_id": boundary_receipt_id,
+        "revision_before": hold.get("revision_before"),
+    }
+    applied = _tb_apply_committed_decision(
+        state, scope_id, hold.get("attempt_id"), record)
+    if applied.get("success") is False:
+        # Typed, non-silent failure: the decision IS committed but its ledger /
+        # round bookkeeping did not land, so the root must NOT answer success.
+        return dict(applied)
+    return dict(record)
+
+
+def tb_seal_unknown(state: Any, scope_id: str, reason: str,
+                    attempt_id: Optional[str] = None) -> dict:
+    """NON-THROWING conservative fence: the first write is UNKNOWN_HOLD.
+
+    With ``attempt_id`` this is an EXACT compare: a stale callback can neither
+    create a fence nor overwrite a newer PREPARING/COMMITTED attempt (R2).
+    """
+    book = _book(state)
+    holds = _market_round_holds(book)
+    hold = holds.get(scope_id)
+    if attempt_id is not None and (hold is None
+                                   or hold.get("attempt_id") != attempt_id):
+        return {"success": False, "code": "STALE_ATTEMPT",
+                "reason": "STALE_ATTEMPT", "no_op": True}
+    if hold is None:
+        hold = {"scope_id": scope_id, "attempt_id": attempt_id,
+                "decision": TB_DECISION_UNCOMMITTED}
+        holds[scope_id] = hold
+    if hold.get("decision") == TB_DECISION_COMMITTED:
+        return dict(hold)
+    hold["state"] = TB_UNKNOWN_HOLD
+    hold["reason"] = str(reason or "COMMIT_FAILED")
+    hold["cursor_byte_rollback"] = "NOT_GUARANTEED"
+    return dict(hold)
+
+
+def tb_finalize_failure(state: Any, *, scope_id: str, reason: str,
+                        unknown: bool,
+                        attempt_id: Optional[str] = None) -> dict:
+    """Idempotently restore THIS attempt's service facts, then classify the hold.
+
+    Exact identity compare (R2): a stale finalizer returns a read-only refusal and
+    never touches a newer attempt. Restoring receipts/consumed/round is a targeted
+    compensation of facts this attempt owns; it never touches the Core cursor and
+    never claims a byte rollback. Only a fully proven no-write failure is refined
+    to RECOVERABLE.
+    """
+    book = _book(state)
+    hold = _tb_exact_hold(book, scope_id, attempt_id)
+    if attempt_id is not None and hold is None:
+        return {"success": False, "code": "STALE_ATTEMPT",
+                "reason": "STALE_ATTEMPT", "refused": True}
+    if hold is None:
+        hold = {"scope_id": scope_id, "attempt_id": attempt_id,
+                "decision": TB_DECISION_UNCOMMITTED}
+    if hold.get("decision") == TB_DECISION_COMMITTED:
+        return dict(hold)
+    boundary_id = hold.get("boundary_receipt_id")
+    open_id = hold.get("open_receipt_id")
+    consumed_id = hold.get("consumed_receipt_id") or open_id
+    receipts = getattr(book, _BOUNDARY_RECEIPTS_ATTR, None)
+    if receipts is not None and boundary_id and not hold.get("pre_boundary_present"):
+        receipts.pop(boundary_id, None)
+    consumed = getattr(book, _BOUNDARY_CONSUMED_ATTR, None)
+    pre_consumed = hold.get("pre_consumed")
+    _tb_restore_consumed_exact(consumed, pre_consumed, consumed_id)
+    rounds = _market_round_registry(book)
+    pre_round = hold.get("pre_round")
+    if pre_round is None:
+        rounds.pop(scope_id, None)
+    else:
+        rounds[scope_id] = pre_round
+    hold["reason"] = str(reason or hold.get("reason") or "COMMIT_FAILED")
+    if unknown:
+        hold["state"] = TB_UNKNOWN_HOLD
+        hold["cursor_byte_rollback"] = "NOT_GUARANTEED"
+    else:
+        hold["state"] = TB_RECOVERABLE_HOLD
+        hold.pop("cursor_byte_rollback", None)
+    _market_round_holds(book)[scope_id] = hold
+    return dict(hold)
+
+
+def forum_market_round_hold(state: Any,
+                            scope_id: Optional[str] = None) -> Optional[dict]:
+    """The decidable HOLD fact for this forum scope (``None`` when not held)."""
+    book = _book(state)
+    scope = scope_id or mint_scope(state, "forum").scope_id
+    hold = _market_round_holds(book).get(scope)
+    return dict(hold) if hold is not None else None
+
+
+def clear_forum_market_round_hold(state: Any,
+                                  scope_id: Optional[str] = None) -> None:
+    """Drop the HOLD fact — ONLY after a fully committed T_B."""
+    book = _book(state)
+    scope = scope_id or mint_scope(state, "forum").scope_id
+    _market_round_holds(book).pop(scope, None)
+
+
+def stage_round_for_attempt(state: Any, *, scope_id: str, attempt_id: str,
+                            boundary_receipt_id: str, actor: str) -> dict:
+    """Write the PROVISIONAL round record (UNSELECTED) before the writer (R8)."""
+    book = _book(state)
+    if _tb_exact_hold(book, scope_id, attempt_id) is None:
+        raise RuntimeError("TB_STALE_ATTEMPT")
+    record = {
+        "state": MARKET_ROUND_UNSELECTED,
+        "receipt_id": boundary_receipt_id,
+        "actor": actor,
+        "attempt_id": attempt_id,
+        "finalized": False,
+    }
+    _market_round_registry(book)[scope_id] = record
+    return dict(record)
+
+
+def _tb_write_boundary_finalized(state: Any, boundary_receipt_id: str) -> None:
+    """PHYSICAL finalize flag write #1 (not authorization; T08 real edge)."""
+    book = _book(state)
+    reg = getattr(book, _BOUNDARY_FINALIZED_ATTR, None)
+    if reg is None:
+        reg = set()
+        setattr(book, _BOUNDARY_FINALIZED_ATTR, reg)
+    reg.add(boundary_receipt_id)
+
+
+def _tb_write_round_finalized(state: Any, scope_id: str,
+                              attempt_id: str) -> None:
+    """PHYSICAL finalize flag write #2 (round binding; T08 real edge)."""
+    record = _market_round_registry(_book(state)).get(scope_id)
+    if record is None or record.get("attempt_id") != attempt_id:
+        raise RuntimeError("TB_STALE_ROUND")
+    record["finalized"] = True
+
+
+def finalize_tb_boundary(state: Any, *, scope_id: str, attempt_id: str,
+                         boundary_receipt_id: str, actor: str) -> dict:
+    """Bind the PHYSICAL boundary finalize to the provisional round record.
+
+    Two distinct physical writes (boundary flag, then round flag). A failure at
+    either edge is still PREPARING/U: ``committed=True`` on the receipt is NOT
+    authorization (T08).
+    """
+    book = _book(state)
+    if _tb_exact_hold(book, scope_id, attempt_id) is None:
+        raise RuntimeError("TB_STALE_ATTEMPT")
+    receipts = getattr(book, _BOUNDARY_RECEIPTS_ATTR, None) or {}
+    snap = receipts.get(boundary_receipt_id)
+    if snap is None or snap.get("kind") != BOUNDARY_RECEIPT_BOUNDARY \
+            or snap.get("committed") is not True \
+            or snap.get("scope_id") != scope_id \
+            or snap.get("session_id") != _session_ns(state) \
+            or int(snap.get("turn", -1)) != int(book.turn_number) \
+            or snap.get("actor") != actor:
+        raise RuntimeError("TB_BOUNDARY_NOT_FINALIZABLE")
+    _tb_write_boundary_finalized(state, boundary_receipt_id)
+    _tb_write_round_finalized(state, scope_id, attempt_id)
+    hold = _tb_exact_hold(book, scope_id, attempt_id)
+    if hold is not None:
+        hold["stage"] = "finalized"
+    return {"success": True, "boundary_receipt_id": boundary_receipt_id}
+
+
+def _tb_verify_cursor_readback(state: Any, actor: str) -> bool:
+    """Real Core getter readback (the real value, never the injected one)."""
+    current = state.get_current_player()
+    return getattr(current, "player_id", None) == actor
+
+
+def tb_close_uncommitted_failure(state: Any, *, scope_id: str, attempt_id: str,
+                                 reason: str, unknown: bool) -> dict:
+    """Root failure closure: exact probe -> U fence -> targeted compensation.
+
+    Never depends on a returned dict from begin/consume/issue, never dispatches on
+    injection strings, and never touches a newer/foreign attempt (R1–R4).
+    """
+    probe = tb_probe_decision(state, scope_id, attempt_id)
+    if probe == TB_DECISION_COMMITTED:
+        return {"success": False, "code": "ALREADY_COMMITTED",
+                "reason": "ALREADY_COMMITTED"}
+    if probe != TB_DECISION_UNCOMMITTED:
+        return {"success": False, "code": "ATTEMPT_ABSENT",
+                "reason": "ATTEMPT_ABSENT"}
+    tb_seal_unknown(state, scope_id, reason, attempt_id=attempt_id)
+    residual: list = []
+    try:
+        aborted = abort_forum_market_round(
+            state, scope_id=scope_id, reason=reason, attempt_id=attempt_id)
+        if not aborted.get("success", True) or aborted.get("refused"):
+            residual.append("ABORT_INCOMPLETE")
+        if aborted.get("residuals"):
+            residual.extend(str(item) for item in aborted.get("residuals") or ())
+    except Exception as exc:  # noqa: BLE001 - compensation must not erase the fence
+        residual.append(f"ABORT_EXCEPTION:{exc}")
+    return tb_finalize_failure(
+        state, scope_id=scope_id, reason=reason,
+        unknown=bool(unknown or residual), attempt_id=attempt_id)
+
+
+def _tb_abort_remove_boundary(book: Any, boundary_id: Optional[str]) -> None:
+    receipts = getattr(book, _BOUNDARY_RECEIPTS_ATTR, None)
+    if receipts is not None and boundary_id:
+        receipts.pop(boundary_id, None)
+
+
+def _tb_restore_consumed_exact(consumed: Any, pre_consumed: Optional[set],
+                               consumed_id: Optional[str]) -> None:
+    """Undo ONLY this attempt's OWN consumption (exact ownership; P3).
+
+    ``pre_consumed`` is the ownership baseline frozen at ``begin``: an id inside
+    it was already consumed BEFORE this attempt (it must stay), and the only id
+    this attempt may remove is ``consumed_id`` when it is NOT in that baseline.
+    A receipt consumed by another scope/attempt between ``begin`` and the
+    compensation is not this attempt's fact and therefore SURVIVES — never a
+    whole-set overwrite, never a replay of ``pre_consumed`` over foreign entries.
+    """
+    if consumed is None:
+        return
+    baseline = set(pre_consumed) if pre_consumed is not None else set()
+    if consumed_id and consumed_id not in baseline:
+        consumed.discard(consumed_id)
+    for rid in baseline:
+        if rid not in consumed:
+            consumed.add(rid)
+
+
+def _tb_abort_restore_consumed(book: Any, pre_consumed: Optional[set],
+                               consumed_id: Optional[str]) -> None:
+    _tb_restore_consumed_exact(
+        getattr(book, _BOUNDARY_CONSUMED_ATTR, None), pre_consumed, consumed_id)
+
+
+def _tb_abort_restore_round(book: Any, scope_id: str, pre_round: Any) -> None:
+    rounds = _market_round_registry(book)
+    if pre_round is None:
+        rounds.pop(scope_id, None)
+    else:
+        rounds[scope_id] = pre_round
+
+
+def abort_forum_market_round(state: Any, *, scope_id: str,
+                             consumed_receipt: Optional[str] = None,
+                             boundary_receipt: Optional[str] = None,
+                             previous_round: Any = None,
+                             reason: str = "",
+                             actor: Optional[str] = None,
+                             attempt_id: Optional[str] = None) -> dict:
+    """ROLL BACK one failed T_B commit segment and leave a DECIDABLE hold.
+
+    All-or-nothing: the R_OPEN consumption is un-consumed (so the receipt is still
+    the pending fence), the issued R_BOUNDARY is removed from the registry and the
+    round record is restored to its exact pre-command value (normally: absent).
+    Nothing is silently swallowed — the caller still returns/re-raises the typed
+    failure — and the HOLD fact keeps ``forum_boundary_pending`` /
+    ``market_obligation_matches`` CLOSED, so the legacy admit branch is
+    unreachable for this scope.
+    """
+    book = _book(state)
+    # EXACT compare: a stale callback (old attempt id) is a read-only refusal and
+    # never touches a newer PREPARING/C attempt (R2/T12).
+    hold = _tb_exact_hold(book, scope_id, attempt_id)
+    if attempt_id is not None and hold is None:
+        return {"success": False, "code": "STALE_ATTEMPT",
+                "refused": True, "reason": "STALE_ATTEMPT"}
+    # COMMITTED is terminal: an abort NEVER erases a selected round, even when
+    # every presented identity happens to match. A stale/late abort is a
+    # read-only refusal (T03/T12).
+    current_scope = mint_scope(state, "forum").scope_id \
+        if _current_phase(state) == "forum" else None
+    if current_scope is not None and scope_id != current_scope:
+        return {"success": False, "code": "FORUM_BOUNDARY_STATE_INVALID",
+                "refused": True, "reason": "STALE_SCOPE"}
+    record = _market_round_registry(book).get(scope_id)
+    if record is not None and record.get("state") == MARKET_ROUND_SELECTED:
+        return {"success": False, "code": "FORUM_BOUNDARY_STATE_INVALID",
+                "refused": True, "reason": "ALREADY_COMMITTED"}
+    if hold is not None and hold.get("decision") == TB_DECISION_COMMITTED:
+        return {"success": False, "code": "FORUM_BOUNDARY_STATE_INVALID",
+                "refused": True, "reason": "ALREADY_COMMITTED"}
+    # FIRST write is the conservative fence; no receipt/consumed/round edit
+    # happens before it (T11 abort.entry/ownership edges).
+    if hold is None:
+        hold = tb_seal_unknown(state, scope_id, reason or "COMMIT_FAILED",
+                               attempt_id=attempt_id)
+    else:
+        hold["state"] = TB_UNKNOWN_HOLD
+        hold["reason"] = str(reason or "COMMIT_FAILED")
+        hold["cursor_byte_rollback"] = "NOT_GUARANTEED"
+    boundary_id = boundary_receipt if boundary_receipt is not None \
+        else (hold.get("boundary_receipt_id") if hold else None)
+    consumed_id = consumed_receipt if consumed_receipt is not None \
+        else (hold.get("consumed_receipt_id") if hold else None)
+    pre_round = previous_round if previous_round is not None \
+        else (hold.get("pre_round") if hold else None)
+    pre_consumed = hold.get("pre_consumed") if hold else None
+    residual: list = []
+    # Each compensation leaf is individually exact and individually fenced: a
+    # failure leaves UNKNOWN_HOLD and records the residual, never a legacy admit.
+    try:
+        _tb_abort_remove_boundary(book, boundary_id)
+    except Exception as exc:  # noqa: BLE001
+        residual.append(f"BOUNDARY_REMOVE:{exc}")
+    try:
+        _tb_abort_restore_consumed(book, pre_consumed, consumed_id)
+    except Exception as exc:  # noqa: BLE001
+        residual.append(f"CONSUMED_RESTORE:{exc}")
+    try:
+        _tb_abort_restore_round(book, scope_id, pre_round)
+    except Exception as exc:  # noqa: BLE001
+        residual.append(f"ROUND_RESTORE:{exc}")
+    if hold is not None:
+        hold.update({"reason": str(reason or "COMMIT_FAILED"), "actor": actor,
+                     "consumed_receipt": consumed_id,
+                     "boundary_receipt": boundary_id,
+                     "residuals": tuple(residual)})
+        _market_round_holds(book)[scope_id] = hold
+        out = dict(hold)
+        out["success"] = not bool(residual)
+        return out
+    return {"success": False, "code": "NO_ATTEMPT", "residuals": tuple(residual)}
+
+
+def forum_market_round_committed(state: Any,
+                                 scope_id: Optional[str] = None) -> dict:
+    """READ-ONLY re-read of an ALREADY COMMITTED T_B (never a new write).
+
+    The SELECTED round dictionary alone is NOT proof: the referenced R_BOUNDARY
+    snapshot must still exist in the service registry and be bound to this
+    session / turn / forum scope / selected actor, with ``committed=True``. Only
+    then is the committed target returned (same typed shape as the first call).
+    """
+    book = _book(state)
+    scope = scope_id or mint_scope(state, "forum").scope_id
+    record = _market_round_registry(book).get(scope)
+    if record is None or record.get("state") != MARKET_ROUND_SELECTED:
+        return {"success": False, "code": "FORUM_BOUNDARY_RECEIPT_INVALID",
+                "message": "no committed market round exists for this scope"}
+    attempt = _tb_attempt_registry(book).get(scope)
+    if attempt is None and record.get("legacy_manual") is not True:
+        # Same strictness as L0 (P4): a SELECTED round with NO attempt record and
+        # no explicit legacy origin is not a committed fact. Without this the
+        # duplicate root call re-read it as success while both gates stayed
+        # CLOSED (the P1 symptom on the re-read path).
+        return {"success": False, "code": "FORUM_BOUNDARY_STATE_INVALID",
+                "message": "no committed market attempt backs this round"}
+    if attempt is not None:
+        # L0 (R7): the exact immutable decision/initial binding, never the live
+        # cursor. A damaged initial binding fails closed (never legacy).
+        if attempt.get("decision") != TB_DECISION_COMMITTED \
+                or attempt.get("session_id") != _session_ns(state) \
+                or int(attempt.get("turn", -1)) != int(book.turn_number) \
+                or attempt.get("scope_id") != scope \
+                or attempt.get("receipt_id") != record.get("receipt_id") \
+                or attempt.get("actor") != record.get("actor"):
+            return {"success": False, "code": "FORUM_BOUNDARY_STATE_INVALID",
+                    "message": "the committed attempt initial binding is invalid"}
+        open_id = attempt.get("consumed_receipt_id") \
+            or attempt.get("open_receipt_id")
+        consumed = getattr(book, _BOUNDARY_CONSUMED_ATTR, None) or set()
+        if open_id and open_id not in consumed:
+            return {"success": False, "code": "FORUM_BOUNDARY_STATE_INVALID",
+                    "message": "the committed attempt source was not consumed"}
+    snap = (getattr(book, _BOUNDARY_RECEIPTS_ATTR, None) or {}).get(
+        record.get("receipt_id"))
+    if snap is None \
+            or snap.get("kind") != BOUNDARY_RECEIPT_BOUNDARY \
+            or snap.get("committed") is not True \
+            or snap.get("scope_id") != scope \
+            or snap.get("session_id") != _session_ns(state) \
+            or int(snap.get("turn", -1)) != int(book.turn_number) \
+            or snap.get("actor") != record.get("actor"):
+        return {"success": False, "code": "FORUM_BOUNDARY_STATE_INVALID",
+                "message": "the committed market boundary receipt is missing"}
+    return {"success": True, "data": {
+        "actor": record.get("actor"),
+        "scope_id": scope,
+        "boundary_receipt": dict(snap),
+        "round": MARKET_ROUND_SELECTED,
+        "decision": TB_DECISION_COMMITTED,
+        "attempt_id": (attempt or {}).get("attempt_id"),
+        "initial_actor": (attempt or {}).get("initial_actor", record.get("actor")),
+    }}
+
+
+def issue_forum_boundary_receipt(state: Any, *, command_id: str, kind: str,
+                                 scope_id: Optional[str] = None,
+                                 actor: Optional[str] = None,
+                                 receipt_id: Optional[str] = None) -> dict:
+    """ISSUER (service-private): the PC04 owner boundary receipt.
+
+    ``kind`` is ``R_OPEN`` (O_M committed) or ``R_BOUNDARY`` (T_B committed). The
+    snapshot is immutable, bound to session/turn/forum-scope/kind/actor and to the
+    CURRENT ledger revision; ``committed=True`` is set HERE so a GUI cannot forge
+    it. The returned dict is a separate mutable copy — mutating it never alters the
+    registered fact.
+    """
+    if kind not in _BOUNDARY_RECEIPT_KINDS:
+        raise ValueError(f"unknown boundary receipt kind: {kind!r}")
+    book = _book(state)
+    scope = scope_id
+    if not scope:
+        scope_obj = book.scopes.get("forum")
+        scope = scope_obj.scope_id if scope_obj else ""
+    reg = getattr(book, _BOUNDARY_RECEIPTS_ATTR, None)
+    if reg is None:
+        reg = {}
+        try:
+            setattr(book, _BOUNDARY_RECEIPTS_ATTR, reg)
+        except Exception:  # pragma: no cover - defensive
+            pass
+    rid = str(receipt_id) if receipt_id else uuid.uuid4().hex
+    if rid in reg:
+        raise ValueError("reserved boundary receipt id already exists")
+    snap = types.MappingProxyType({
+        "receipt_id": rid,
+        "kind": kind,
+        "committed": True,
+        "command_id": str(command_id),
+        "session_id": _session_ns(state),
+        "turn": int(book.turn_number),
+        "scope_id": str(scope or ""),
+        "actor": actor,
+        "revision": current_revision(state),
+    })
+    reg[snap["receipt_id"]] = snap
+    return dict(snap)
+
+
+def consume_forum_boundary_receipt(state: Any, receipt: Any, *,
+                                   scope_id: Optional[str] = None,
+                                   revision: Optional[int] = None,
+                                   kind: Optional[str] = None) -> dict:
+    """Consume the ENGINE-ISSUED boundary receipt EXACTLY ONCE.
+
+    The presented object only names an identity: the authoritative fields are read
+    from the registered immutable snapshot (a caller-held copy can never widen
+    this). A missing / unregistered / kind-mismatched / cross-session / cross-turn
+    / stale-revision / already-consumed receipt is a typed refusal with ZERO
+    business effect.
+    """
+    book = _book(state)
+    reg = getattr(book, _BOUNDARY_RECEIPTS_ATTR, None) or {}
+    rid = receipt.get("receipt_id") if isinstance(receipt, dict) else None
+    snap = reg.get(rid) if rid else None
+    if snap is None:
+        return {"success": False, "code": "FORUM_BOUNDARY_RECEIPT_INVALID",
+                "message": "a market boundary receipt is required"}
+    # The PRESENTED copy must MATCH the registered immutable snapshot. A caller
+    # cannot alter session/turn/scope/revision/kind on a valid receipt id (T10).
+    for field in ("kind", "session_id", "turn", "scope_id", "revision"):
+        if field in receipt and receipt.get(field) != snap.get(field):
+            code = ("FORUM_BOUNDARY_RECEIPT_KIND_MISMATCH"
+                    if field == "kind" else "FORUM_BOUNDARY_RECEIPT_STALE")
+            return {"success": False, "code": code,
+                    "message": f"the presented receipt field {field} is not exact"}
+    if kind is not None and snap.get("kind") != kind:
+        return {"success": False, "code": "FORUM_BOUNDARY_RECEIPT_KIND_MISMATCH",
+                "message": "the presented receipt is not of the required kind"}
+    if snap.get("session_id") != _session_ns(state) \
+            or int(snap.get("turn", -1)) != int(book.turn_number):
+        return {"success": False, "code": "FORUM_BOUNDARY_RECEIPT_STALE",
+                "message": "the receipt belongs to another session/turn"}
+    if scope_id is not None and snap.get("scope_id") != scope_id:
+        return {"success": False, "code": "FORUM_BOUNDARY_RECEIPT_STALE",
+                "message": "the receipt belongs to another forum scope"}
+    rev = current_revision(state) if revision is None else int(revision)
+    if int(snap.get("revision", -1)) != rev:
+        return {"success": False, "code": "FORUM_BOUNDARY_RECEIPT_STALE",
+                "message": "the receipt revision is stale"}
+    consumed = getattr(book, _BOUNDARY_CONSUMED_ATTR, None)
+    if consumed is None:
+        consumed = set()
+        try:
+            setattr(book, _BOUNDARY_CONSUMED_ATTR, consumed)
+        except Exception:  # pragma: no cover - defensive
+            pass
+    if rid in consumed:
+        return {"success": False, "code": "FORUM_BOUNDARY_RECEIPT_CONSUMED",
+                "message": "the market boundary receipt was already consumed"}
+    consumed.add(rid)
+    return {"success": True, "receipt_id": rid, "kind": snap.get("kind"),
+            "scope_id": snap.get("scope_id"), "actor": snap.get("actor")}
+
+
 def issue_committed_phase_entry_receipt(
         state: Any, *, command_id: str, phase: str, actor: Optional[str] = None,
         txn_id: str = "", domain_scope_id: str = "", payload_digest: str = "",
@@ -3262,16 +4132,53 @@ def recover_continuation(state: Any, lease: Any = None,
 FORUM_SUBSTEPS: Tuple[str, ...] = ("retirement", "market")
 
 
-def _forum_obligations(state: Any, scope_id: str, substep: str) -> List[Obligation]:
+def _canonical_plan_ids(state: Any) -> Optional[Tuple[str, ...]]:
+    """The session-owned canonical plan K, or ``None`` when this session never
+    captured one (never-registered CLI / synthetic states keep the historical
+    registration order).
+
+    W4-A1 / D7 (PM K-1 = C-α): K is captured ONCE from the validated scenario's
+    immutable faction rows (``session_api``) and stored as a session-private fact
+    on the state (the same service-owned pattern as the access registry — it is
+    NEVER a Core field, never serialized, never a scenario key). It is never
+    rebuilt from a dict / a HUMAN list / the current viewer.
+    """
+    plan = getattr(state, _CANONICAL_PLAN_ATTR, None)
+    return tuple(plan) if plan else None
+
+
+def _forum_obligations(state: Any, scope_id: str, substep: str,
+                       order: Optional[Sequence[str]] = None) -> List[Obligation]:
     """Per-controller forum substep obligations (retirement | market).
 
     Satisfied ONLY by an owner-recorded explicit finish in the ONE session ledger
     (``complete_actor`` with an explicit-finish/structural kind) — never a cached
     DTO boolean. A seat finishes; it does not have to retire or bid.
+
+    Ordering (D7): the CANONICAL plan K when the session captured one (optimates
+    anchor + declared faction order); otherwise the historical registration order
+    of a never-registered / synthetic state. The canonical order only ORDERS the
+    existing obligations — it never adds/removes a seat: any executable player the
+    plan does not name is appended in registration order (fail-safe completeness),
+    and the anchor's absence/duplication is refused at capture time.
     """
     book = _book(state)
     out: List[Obligation] = []
-    for player in state.get_all_players():
+    plan = tuple(order) if order is not None else _canonical_plan_ids(state)
+    players: List[Any] = []
+    if plan:
+        seen = set()
+        for pid in plan:
+            player = state.get_player(pid) if hasattr(state, "get_player") else None
+            if player is not None and pid not in seen:
+                players.append(player)
+                seen.add(pid)
+        for player in state.get_all_players():
+            if player.player_id not in seen:
+                players.append(player)
+    else:
+        players = list(state.get_all_players())
+    for player in players:
         pid = player.player_id
         controller = controller_of(state, pid)
         if controller == CONTROLLER_NONE:
@@ -3331,3 +4238,249 @@ def owner_barrier(state: Any, phase: Optional[str] = None,
         return None
     return {"code": "PHASE_NOT_READY", "reason": "PHASE_NOT_READY",
             "message": f"{phase} phase is not ready"}
+
+
+# ---------------------------------------------------------------------------
+# W4-A1 / PC04-L1 — T_B (market boundary) predicates
+#
+# W0/W1 ("boundary pending") and W2 ("lawful market obligation") are PURE READ
+# predicates consumed by the 58 endpoint bodies in ``forum_api``. They grant NO
+# authority and write NOTHING: the ONE selection remains ``select_actor``.
+# ---------------------------------------------------------------------------
+def _tb_has_unconsumed_open(book: Any, scope: str) -> bool:
+    receipts = getattr(book, _BOUNDARY_RECEIPTS_ATTR, None) or {}
+    consumed = getattr(book, _BOUNDARY_CONSUMED_ATTR, None) or set()
+    return any(
+        r.get("kind") == BOUNDARY_RECEIPT_OPEN
+        and r.get("scope_id") == scope
+        and r.get("receipt_id") not in consumed
+        for r in receipts.values())
+
+
+def _tb_l0_denial(state: Any, scope: str) -> Optional[dict]:
+    """L0: exact committed initial binding (never the live cursor).
+
+    Checks the decision, session/turn/scope, the exact round<->receipt binding and
+    the consumed source. An attempt-less SELECTED round is REFUSED unless the round
+    record declares the explicit legacy origin (``legacy_manual``; TA-W4A1b-01) —
+    production no longer keeps a fail-open compatibility branch. A present attempt
+    is ALWAYS held to the exact immutable binding.
+    """
+    book = _book(state)
+    attempt = _tb_attempt_registry(book).get(scope)
+    record = _market_round_registry(book).get(scope)
+    receipts = getattr(book, _BOUNDARY_RECEIPTS_ATTR, None) or {}
+    if attempt is None:
+        if record is None or record.get("state") != MARKET_ROUND_SELECTED:
+            return None
+        if record.get("legacy_manual") is not True:
+            return {"code": "FORUM_BOUNDARY_STATE_INVALID",
+                    "reason": "L0_ATTEMPT_MISSING",
+                    "message": "no committed market attempt backs this round"}
+        snap = receipts.get(record.get("receipt_id"))
+        if snap is None or snap.get("kind") != BOUNDARY_RECEIPT_BOUNDARY \
+                or snap.get("committed") is not True \
+                or snap.get("scope_id") != scope \
+                or snap.get("session_id") != _session_ns(state) \
+                or int(snap.get("turn", -1)) != int(book.turn_number) \
+                or snap.get("actor") != record.get("actor"):
+            return {"code": "FORUM_BOUNDARY_STATE_INVALID",
+                    "reason": "L0_RECEIPT_INVALID",
+                    "message": "the committed market boundary receipt is invalid"}
+        return None
+    if attempt.get("decision") != TB_DECISION_COMMITTED:
+        return {"code": "FORUM_BOUNDARY_STATE_INVALID",
+                "reason": "L0_NOT_COMMITTED",
+                "message": "the attempt is not the committed decision"}
+    if attempt.get("session_id") != _session_ns(state) \
+            or int(attempt.get("turn", -1)) != int(book.turn_number) \
+            or attempt.get("scope_id") != scope:
+        return {"code": "FORUM_BOUNDARY_STATE_INVALID",
+                "reason": "L0_IDENTITY",
+                "message": "the committed attempt identity is stale"}
+    if record is None or record.get("state") != MARKET_ROUND_SELECTED \
+            or record.get("receipt_id") != attempt.get("receipt_id") \
+            or record.get("actor") != attempt.get("actor"):
+        return {"code": "FORUM_BOUNDARY_STATE_INVALID",
+                "reason": "L0_ROUND_BINDING",
+                "message": "the selected round does not match the attempt"}
+    snap = receipts.get(attempt.get("receipt_id"))
+    if snap is None or snap.get("kind") != BOUNDARY_RECEIPT_BOUNDARY \
+            or snap.get("committed") is not True \
+            or snap.get("scope_id") != scope \
+            or snap.get("session_id") != _session_ns(state) \
+            or int(snap.get("turn", -1)) != int(book.turn_number) \
+            or snap.get("actor") != attempt.get("actor"):
+        return {"code": "FORUM_BOUNDARY_STATE_INVALID",
+                "reason": "L0_RECEIPT_INVALID",
+                "message": "the committed boundary receipt is invalid"}
+    open_id = attempt.get("consumed_receipt_id") or attempt.get("open_receipt_id")
+    consumed = getattr(book, _BOUNDARY_CONSUMED_ATTR, None) or set()
+    if open_id and open_id not in consumed:
+        return {"code": "FORUM_BOUNDARY_STATE_INVALID",
+                "reason": "L0_SOURCE_NOT_CONSUMED",
+                "message": "the committed attempt source was not consumed"}
+    return None
+
+
+def _tb_market_window_check(state: Any, scope_id: Optional[str],
+                            actor: Optional[str], *, predicate: str) -> Optional[dict]:
+    """The ONE shared HOLD-first kernel (R5), thin-wrapped by both gates.
+
+    Order: fence/HOLD -> committed L0 -> predicate-specific layer -> legacy.
+    An explicit scope that is NOT this session's current forum scope is reduced to
+    the current scope (P5): a foreign scope id must never be a fail-open bypass.
+    The O_M initializer exception is reachable ONLY from ``predicate='pending'``;
+    ``predicate='w2'`` NEVER inherits it and NEVER fails open on a real pending
+    R_OPEN with no round (R6).
+    """
+    from src.api import session_access
+    if not session_access.is_hotseat_registered(state):
+        return None
+    if _current_phase(state) != "forum":
+        return None
+    book = _book(state)
+    current = mint_scope(state, "forum").scope_id
+    scope = scope_id or current
+    if scope_id and scope_id != current:
+        # P5: the market window is a property of THIS session's current forum
+        # scope; answering for a foreign scope would admit gameplay on a real
+        # pending window.
+        scope = current
+    hold = _market_round_holds(book).get(scope)
+    if hold is not None and hold.get("state") != TB_COMMITTED:
+        if hold.get("state") == TB_PREPARING:
+            return {"code": "FORUM_BOUNDARY_PENDING",
+                    "reason": "TB_PREPARING",
+                    "message": "a market round attempt is preparing"}
+        return {"code": "FORUM_BOUNDARY_PENDING",
+                "reason": "MARKET_ROUND_HOLD",
+                "message": "the forum market round commit is on hold"}
+    attempt = _tb_attempt_registry(book).get(scope)
+    record = _market_round_registry(book).get(scope)
+    committed = bool((attempt is not None
+                      and attempt.get("decision") == TB_DECISION_COMMITTED)
+                     or (record is not None
+                         and record.get("state") == MARKET_ROUND_SELECTED))
+    if committed:
+        denial = _tb_l0_denial(state, scope)
+        if denial is not None:
+            return denial
+        if predicate == "pending":
+            return None
+        plan = canonical_market_plan(state, scope)
+        if not plan.get("success"):
+            return {"code": "FORUM_BOUNDARY_STATE_INVALID",
+                    "reason": plan.get("code", "CANONICAL_PLAN_INVALID"),
+                    "message": "the canonical market plan is not usable"}
+        head = plan.get("head")
+        if head is None or not actor or head.actor_player_id != actor:
+            return {"code": "MARKET_OBLIGATION_MISMATCH",
+                    "reason": "ACTOR_NOT_SCHEDULED",
+                    "message": "it is not this seat's market obligation"}
+        return None
+    # ---- uncommitted (no live hold, no exact COMMITTED decision) ----
+    if predicate == "pending":
+        # The O_M exact owner-initialization edge is the ONE exception, and only
+        # for the pending predicate. It is evaluated AFTER every HOLD and it is
+        # the EXACT production marker value (a bare truthy marker is not enough).
+        if getattr(book, _OWNER_INIT_ATTR, None) == "open_market":
+            return None
+        if record is not None:
+            return {"code": "FORUM_BOUNDARY_PENDING",
+                    "reason": "MARKET_ROUND_UNSELECTED",
+                    "message": "the forum market round has not been selected"}
+        if _tb_has_unconsumed_open(book, scope):
+            return {"code": "FORUM_BOUNDARY_PENDING",
+                    "reason": "MARKET_ROUND_UNSELECTED",
+                    "message": "the forum market round has not been selected"}
+        return None
+    # W2: a real pending R_OPEN with NO round is CLOSED (fail-closed), never the
+    # historical ``None -> legacy admit`` hole (R6).
+    if record is not None:
+        return {"code": "FORUM_BOUNDARY_PENDING",
+                "reason": "MARKET_ROUND_UNSELECTED",
+                "message": "the forum market round has not been selected"}
+    if _tb_has_unconsumed_open(book, scope):
+        return {"code": "FORUM_BOUNDARY_PENDING",
+                "reason": "MARKET_ROUND_UNSELECTED",
+                "message": "the forum market round has not been selected"}
+    return None
+
+
+def forum_boundary_pending(state: Any, scope_id: Optional[str] = None) -> Optional[dict]:
+    """W0/W1 thin wrapper over the shared HOLD-first kernel."""
+    return _tb_market_window_check(state, scope_id, None, predicate="pending")
+
+
+def market_obligation_matches(state: Any, actor: Optional[str],
+                              scope_id: Optional[str] = None) -> Optional[dict]:
+    """W2 thin wrapper over the SAME HOLD-first kernel (R5/R6/R7)."""
+    return _tb_market_window_check(state, scope_id, actor, predicate="w2")
+
+
+def canonical_market_plan(state: Any, scope_id: Optional[str] = None, *,
+                          bind: Optional[Sequence[str]] = None,
+                          substep: str = "market") -> dict:
+    """D7 canonical market plan (K) — capture or derive the FIRST obligation.
+
+    ``bind=<K>`` validates and STORES the session-owned immutable tuple K (the
+    capture point is ``session_api.create_gui_prototype_session``; K is derived
+    from the validated snapshot's faction rows, never from a dict / HUMAN list).
+
+    Without ``bind`` it returns the first EXECUTABLE, UNSATISFIED market
+    obligation in K order — an owner-proven ``EXPLICIT_FINISH``/``STRUCTURAL_NONE``
+    simply removes that seat from the head, it is never re-derived from a viewer.
+    """
+    if bind is not None:
+        try:
+            plan = tuple(str(pid) for pid in bind)
+        except TypeError:
+            return {"success": False, "code": "CANONICAL_PLAN_INVALID",
+                    "message": "the canonical plan must be a sequence of player ids"}
+        # ONCE-BOUND invariant: a re-bind of the SAME value is a read-only
+        # confirmation; ANY different value is a typed refusal. K is never
+        # replaced, so a seat can never be re-ordered or cut out after capture.
+        existing = _canonical_plan_ids(state)
+        if existing is not None:
+            if plan == tuple(existing):
+                return {"success": True, "plan": tuple(existing),
+                        "anchor": existing[0], "read_only": True}
+            return {"success": False, "code": "CANONICAL_PLAN_ALREADY_BOUND",
+                    "message": "the canonical market plan is already bound and "
+                               "is read-only"}
+        if not plan or len(set(plan)) != len(plan):
+            return {"success": False, "code": "CANONICAL_PLAN_INVALID",
+                    "message": "the canonical plan must be non-empty and unique"}
+        anchor = None
+        getter = getattr(state, "get_player_by_faction", None)
+        if callable(getter):
+            anchor = getter("optimates")
+        if anchor is None or plan[0] != anchor.player_id:
+            return {"success": False, "code": "CANONICAL_PLAN_INVALID",
+                    "message": "the canonical plan must start at the optimates seat"}
+        for pid in plan:
+            if state.get_player(pid) is None:
+                return {"success": False, "code": "CANONICAL_PLAN_INVALID",
+                        "message": f"unknown canonical actor: {pid}"}
+        # COMPLETENESS: the captured plan must name EVERY executable seat. A plan
+        # that omits a seat would let the capture point cut a controller out of K
+        # (the schedule appends it afterwards, but K itself would be a lie).
+        missing = [p.player_id for p in state.get_all_players()
+                   if controller_of(state, p.player_id) != CONTROLLER_NONE
+                   and p.player_id not in plan]
+        if missing:
+            return {"success": False, "code": "CANONICAL_PLAN_INCOMPLETE",
+                    "message": "the canonical plan must name every executable "
+                               f"seat (missing: {sorted(missing)})"}
+        setattr(state, _CANONICAL_PLAN_ATTR, plan)
+        return {"success": True, "plan": plan, "anchor": plan[0]}
+    plan = _canonical_plan_ids(state)
+    if not plan:
+        return {"success": False, "code": "CANONICAL_PLAN_MISSING",
+                "message": "this session captured no canonical market plan"}
+    scope = scope_id or mint_scope(state, "forum").scope_id
+    items = _forum_obligations(state, scope, substep, order=plan)
+    head = next((o for o in items if o.is_executable and not o.satisfied), None)
+    return {"success": True, "plan": tuple(plan), "scope_id": scope,
+            "head": head}

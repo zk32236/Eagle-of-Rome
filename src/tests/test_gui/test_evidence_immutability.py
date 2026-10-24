@@ -1,5 +1,16 @@
 # src/tests/test_gui/test_evidence_immutability.py
-"""P1-PC-WPE-HARNESS-01 — 冻结截图证据 SHA 保全守卫（确定性，零重生成）。
+"""RETIRED (W1a, 2026-10-23) — 见 TA-W1a-01；本文件按**已被取代**退役（模块级 skip，零删除）。
+
+退役理由（`02-sa-design/W1a/02-Migration-and-Negatives.md` §5.1，G3 登记）：
+- `P1-HARNESS-01/evidence-manifest.sha256` 目录不存在 ⇒ 默认运行恒红（known13 #4）；
+- 冻结 26 件中 24/26 在位（PROVISIONAL）；
+- 同一棵树仍被 `test_wpe_r5_screenshots.py`（A-15）每轮 `makedirs` 重建 ⇒ 「字节不变」在
+  事实层不成立；用当前（已被重写）字节重算 manifest = 把漂移合法化，不可接受。
+重建触发：W2 完成「全部 writer 迁移 + 归档停写」后，以**树外** manifest 重建该哨兵（BL-W1A-01）。
+`_FROZEN_SET` / `_regen_manifest()` 原样保留（历史真值 + 重建输入；模块级 skip ⇒ 不可达）。
+
+---
+历史说明（原文保留）——P1-PC-WPE-HARNESS-01 冻结截图证据 SHA 保全守卫（确定性，零重生成）。
 
 - 纯文件读 + hashlib.sha256：零 Qt / 零离屏渲染 / 零网络 / 零时间戳 → 任何环境确定性。
 - 只 open(path, "rb") 读，绝不写任何证据文件；不调用 _capture/grabWindow/_make_store。
@@ -16,12 +27,20 @@
 import hashlib
 import os
 
+import pytest
+
 EVIDENCE_ROOT = (
     "/mnt/e/OpenClaw/Projects/EOR/workspace/EOR20260821-01 GUI-BETA-R1"
     "/03-da-evidence"
 )
 DEFAULT_MANIFEST = os.path.join(EVIDENCE_ROOT, "P1-HARNESS-01", "evidence-manifest.sha256")
 MANIFEST = os.environ.get("P1_HARNESS_MANIFEST") or DEFAULT_MANIFEST
+
+# TA-W1a-01（G3 §2）：模块级退役 —— 任何函数都不执行（含 _regen_manifest 的归档写能力）。
+pytestmark = pytest.mark.skip(
+    reason="RETIRED_W1A: P1-HARNESS-01 manifest 缺失 + 冻结树仍被 A-15 重写，"
+           "不变量事实层不成立；停写后于 W2 重建树外 manifest 守卫（TA-W1a-01）",
+)
 
 # 冻结覆盖集（26 文件；relpath 相对 EVIDENCE_ROOT）
 _FROZEN_SET = [

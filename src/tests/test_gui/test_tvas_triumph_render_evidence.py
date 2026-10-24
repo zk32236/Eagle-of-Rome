@@ -46,7 +46,9 @@ Boundary / anomaly cases (SA ruling ``SA-Ruling-viewer_vote-boundary-2026-10-12.
       TC-4  bridge identity pin: measured QML-side form of ``None`` (null/undefined)
       TC-5  legal present-``None`` equivalence + anomaly leg writes NO vote
 
-Evidence root: this task's ``03-da-evidence/RENDER/`` (NOT the WP-J / any other task).
+默认证据根：pytest tmp 派生根（`<tmp>/.eor-evidence/`，经
+``src.tests._evidence_root.evidence_root``）；正式证据**不在回归中重生成**
+（本任务的正式 RENDER 证据已由 G5 封存；``TASK_DIR`` 仍作为设计件只读身份绑定使用）。
 """
 import copy
 import hashlib
@@ -54,6 +56,8 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
+
+import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("PYTHONUTF8", "1")
@@ -67,7 +71,6 @@ TASK_DIR = (
     "/mnt/e/OpenClaw/Projects/EOR/workspace"
     "/EOR20261012-01 Triumph Vote Abstention Semantics"
 )
-EVIDENCE_BASE = TASK_DIR + "/03-da-evidence/RENDER"
 
 # R-05: seven-file candidate write-set + three-way (candidate/test/design) identity.
 _CANDIDATE_FILES = (
@@ -95,10 +98,17 @@ from src.ui.gui.models.candidate_list_model import CandidateListModel  # noqa: E
 from src.ui.gui.models.event_list_model import EventListModel  # noqa: E402
 from src.ui.gui.models.figure_list_model import FigureListModel  # noqa: E402
 from src.ui.gui.session_store import GuiSessionStore  # noqa: E402
+from src.tests._evidence_root import evidence_root  # noqa: E402
 from PySide6.QtCore import Property, QObject, Signal, Slot  # noqa: E402
 
 _ENGINES = []
 _GRAB_STATE = {}
+
+
+@pytest.fixture(scope="module")
+def evidence(tmp_path_factory):
+    """W1a：证据写根由 helper 派生（默认 tmp 派生根；归档区在模块内不可达）。"""
+    return evidence_root(tmp_path_factory.mktemp("tvas-render"))
 
 # --- R-01: harness-local CJK font injection ---------------------------------
 # The offscreen platform has no CJK font installed (only DejaVu/Ubuntu), so every
@@ -825,7 +835,7 @@ def _assert_cell(tag, proof, expected):
         raise AssertionError(kind)
 
 
-def _capture_cell(tag, open_market, vote, readonly_mode, expected):
+def _capture_cell(root, tag, open_market, vote, readonly_mode, expected):
     store, state, viewer, war = _build(open_market, vote, readonly_mode)
 
     # C-1/C-4: verify the cell was reached via the real producer projection.
@@ -840,7 +850,7 @@ def _capture_cell(tag, open_market, vote, readonly_mode, expected):
 
     engine, _ = _create_engine(store)
     name = f"tvas-triumph-{tag}-{OUT_W}x{OUT_H}.png"
-    out_png = os.path.join(EVIDENCE_BASE, "captures", name)
+    out_png = root.path("captures", name)
 
     window = _load_window(engine)
     scope = _find_object(_content_root(window), "forumStage")
@@ -1033,28 +1043,28 @@ def _visible_against_count(scope):
     return _visible_against_in(scope)
 
 
-def test_render_fc13_six_cell_matrix():
+def test_render_fc13_six_cell_matrix(evidence):
     _get_app()
     _ensure_cjk_fonts()
-    os.makedirs(os.path.join(EVIDENCE_BASE, "captures"), exist_ok=True)
+    evidence.ensure_dir("captures")
 
     frames = [
-        _capture_cell("1-actionable-null", True, None, False,
+        _capture_cell(evidence, "1-actionable-null", True, None, False,
                       {"kind": "dual", "action": "actionable", "viewer_vote": None,
                        "anchor": LBL_FOR}),
-        _capture_cell("2-actionable-for", True, True, False,
+        _capture_cell(evidence, "2-actionable-for", True, True, False,
                       {"kind": "voted_for", "action": "actionable", "viewer_vote": True,
                        "anchor": LBL_VOTED_FOR}),
-        _capture_cell("3-actionable-against", True, False, False,
+        _capture_cell(evidence, "3-actionable-against", True, False, False,
                       {"kind": "voted_against", "action": "actionable", "viewer_vote": False,
                        "anchor": LBL_VOTED_AGAINST}),
-        _capture_cell("4-readonly-null", False, None, False,
+        _capture_cell(evidence, "4-readonly-null", False, None, False,
                       {"kind": "readonly", "action": "readonly", "viewer_vote": None,
                        "anchor": LBL_BLOCKED}),
-        _capture_cell("5-readonly-for", True, True, True,
+        _capture_cell(evidence, "5-readonly-for", True, True, True,
                       {"kind": "voted_for", "action": "readonly", "viewer_vote": True,
                        "anchor": LBL_VOTED_FOR}),
-        _capture_cell("6-readonly-against", True, False, True,
+        _capture_cell(evidence, "6-readonly-against", True, False, True,
                       {"kind": "voted_against", "action": "readonly", "viewer_vote": False,
                        "anchor": LBL_VOTED_AGAINST}),
     ]
@@ -1091,8 +1101,8 @@ def test_render_fc13_six_cell_matrix():
         "identity": _identity_block(),
         "captured_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    os.makedirs(EVIDENCE_BASE, exist_ok=True)
-    with open(os.path.join(EVIDENCE_BASE, "render-manifest.json"), "w", encoding="utf-8") as fh:
+    evidence.ensure_dir()
+    with open(evidence.path("render-manifest.json"), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
 
@@ -1101,7 +1111,7 @@ def test_render_fc13_six_cell_matrix():
     assert all(f["capture_ok"] for f in frames), frames
 
 
-def test_render_fc13_anomaly_dto_fail_closed():
+def test_render_fc13_anomaly_dto_fail_closed(evidence):
     """TC-2 + TC-3: FC-13 fail-closed boundary (SA ruling 2026-10-12).
 
     TC-2 (``viewer_vote`` key missing) + TC-3 (present NON-BOOL value domain, >=2 types:
@@ -1214,14 +1224,14 @@ def test_render_fc13_anomaly_dto_fail_closed():
         "cjk_fonts": dict(_CJK_FONTS_STATE),
         "captured_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    os.makedirs(EVIDENCE_BASE, exist_ok=True)
-    with open(os.path.join(EVIDENCE_BASE, "fc13-anomaly-dto.identity.json"),
+    evidence.ensure_dir()
+    with open(evidence.path("fc13-anomaly-dto.identity.json"),
               "w", encoding="utf-8") as fh:
         json.dump(anomaly, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
 
 
-def test_render_fc13_tc1_key_presence_discriminator():
+def test_render_fc13_tc1_key_presence_discriminator(evidence):
     """TC-1 (decisive): two rows differing ONLY in the ``viewer_vote`` key PRESENCE.
 
     present-key ``None`` -> LEGAL abstention -> [\u8d5e\u6210][\u53cd\u5bf9] both visible+enabled.
@@ -1308,14 +1318,14 @@ def test_render_fc13_tc1_key_presence_discriminator():
         "cjk_fonts": dict(_CJK_FONTS_STATE),
         "captured_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    os.makedirs(EVIDENCE_BASE, exist_ok=True)
-    with open(os.path.join(EVIDENCE_BASE, "fc13-boundary-tc1.identity.json"),
+    evidence.ensure_dir()
+    with open(evidence.path("fc13-boundary-tc1.identity.json"),
               "w", encoding="utf-8") as fh:
         json.dump(tc1, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
 
 
-def test_render_fc13_tc5_legal_present_null_equivalence_and_no_write():
+def test_render_fc13_tc5_legal_present_null_equivalence_and_no_write(evidence):
     """TC-5: present-key ``None`` is LEGAL (dual action == TC-1 row A) and the anomaly
     (key-absent) leg writes NO vote.
 
@@ -1390,8 +1400,8 @@ def test_render_fc13_tc5_legal_present_null_equivalence_and_no_write():
         "cjk_fonts": dict(_CJK_FONTS_STATE),
         "captured_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    os.makedirs(EVIDENCE_BASE, exist_ok=True)
-    with open(os.path.join(EVIDENCE_BASE, "fc13-boundary-tc5.identity.json"),
+    evidence.ensure_dir()
+    with open(evidence.path("fc13-boundary-tc5.identity.json"),
               "w", encoding="utf-8") as fh:
         json.dump(tc5, fh, ensure_ascii=False, indent=2)
         fh.write("\n")

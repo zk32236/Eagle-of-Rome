@@ -228,10 +228,15 @@ def initialize_forum_turn(state: GameState, *, caller_context=None,
     Side effects: war trigger/escalate (015), fleet completion, figures(+hero, 009),
     contracts (014), province unrest. Shared by GUI / CLI / AI.
     """
+    # W4-A1 / PC04-L1 (P-1/P-2): the O_M owner-initialization marker is the ONLY
+    # exact exception (open_market's synchronous call edge); a bare public call is
+    # refused while the market boundary is pending.
+    _boundary = turn_service.forum_boundary_pending(state)
+    if _boundary is not None:
+        return api_response(False, _boundary["message"], errors=[_boundary["code"]])
     pending = state.get_forum_pending()
     if pending.get("forum_initialized"):
         return api_response(True, "Forum already initialized", data={})   # exactly-once guard
-
     # V12-F02: owner-step checkpoints live in Core's turn-local forum pending,
     # not a Store flag. The existing pending save/load and year-clear lifecycle
     # preserves/clears this list alongside the effects it witnesses. Checkpoint
@@ -372,7 +377,15 @@ def open_market(state: GameState, player_id: str, *, caller_context=None,
         _presented_kw["caller_context"] = caller_context
     if ai_capability is not None:
         _presented_kw["ai_capability"] = ai_capability
-    init_result = initialize_forum_turn(state, **_presented_kw)
+    # W4-A1 / PC04-L1: the EXACT O_M owner-initialization edge. The marker is
+    # session-owned, set immediately before the synchronous nested initializer and
+    # cleared in ``finally`` (no await, no re-entrancy, no second entry point).
+    _init_book = turn_service._book(state)
+    setattr(_init_book, "_forum_owner_initialization", "open_market")
+    try:
+        init_result = initialize_forum_turn(state, **_presented_kw)
+    finally:
+        setattr(_init_book, "_forum_owner_initialization", None)
     # V11-F01 (S-C-A3-R12): the canonical initializer is a guarded owner boundary.
     # Thread the SAME controlled owner authority the caller PRESENTED (no public
     # auto-fill, no bypass flag, S-B unchanged) into the nested canonical
@@ -399,6 +412,226 @@ def open_market(state: GameState, player_id: str, *, caller_context=None,
     )
 
 
+@session_access.guarded(session_access.OP_MUTATE,
+                        command="start_forum_market_round",
+                        viewer_param="player_id")
+def start_forum_market_round(state: GameState, player_id: str, *,
+                             market_receipt: Optional[dict] = None) -> dict:
+    """PC04 T_B — the ONE market boundary selection (W4-A1).
+
+    Admission is the ENGINE-ISSUED ``R_OPEN`` receipt for this exact forum scope
+    (issued by the O_M owner boundary in the SAME serial segment; the A2 wave adds
+    that issuer call). The body, with NO await between the steps:
+
+      1. derive the canonical plan K and its first outstanding market obligation;
+      2. consume the R_OPEN receipt EXACTLY ONCE (typed refusal otherwise);
+      3. CAS the round ``UNSELECTED -> SELECTED``;
+      4. issue the committed ``R_BOUNDARY`` receipt;
+      5. select the canonical head through the SOLE cursor writer ``select_actor``.
+
+    Idempotent: a second trigger on an already SELECTED round only re-reads the
+    COMMITTED fact (no second cursor write, no second receipt, no re-run) after the
+    service has re-verified the R_BOUNDARY snapshot binding. Any failure of the
+    commit segment is ALL-OR-NOTHING: the R_OPEN consumption, the issued
+    R_BOUNDARY and the round record are rolled back to their exact pre-command
+    values and a decidable HOLD is left, so the legacy admit branch stays
+    unreachable for this scope. No extra HUMAN "start market" gesture: this root
+    IS the structural entry.
+    """
+    ok, resp = _check_player_permission(state, player_id)
+    if not ok:
+        return resp
+
+    scope_id = turn_service.current_scope_id(state, "forum") \
+        or turn_service.mint_scope(state, "forum").scope_id
+    rounds = turn_service._market_round_registry(state)
+    existing = rounds.get(scope_id)
+    status = turn_service.tb_attempt_status(state, scope_id)
+    status_state = (status or {}).get("state")
+
+    # COMMITTED is terminal: only a read-only re-read of the SAME initial binding.
+    if status_state == turn_service.TB_COMMITTED or (
+            existing is not None
+            and existing.get("state") == turn_service.MARKET_ROUND_SELECTED):
+        committed = turn_service.forum_market_round_committed(state, scope_id)
+        if not committed.get("success"):
+            return api_response(False, committed["message"],
+                                errors=[committed["code"]])
+        return api_response(True, "Market round already started",
+                            data=committed["data"])
+
+    # PREPARING / UNKNOWN_HOLD: the window stays closed and NO second effect is
+    # created. RECOVERABLE_HOLD may retry (fresh admission + full proof) by
+    # atomically replacing the old fence with a new PREPARING attempt.
+    if status_state in (turn_service.TB_PREPARING, turn_service.TB_UNKNOWN_HOLD):
+        return api_response(False, "Market round is busy or on hold",
+                            errors=["FORUM_BOUNDARY_PENDING"])
+
+    # Read-only preflight BEFORE any attempt is installed (pre-install failures
+    # leave the original state untouched; T03/T10).
+    plan = turn_service.canonical_market_plan(state, scope_id)
+    if not plan.get("success"):
+        return api_response(False, plan.get("message", "canonical plan invalid"),
+                            errors=[plan.get("code", "CANONICAL_PLAN_INVALID")])
+    head = plan.get("head")
+    if head is None or not head.actor_player_id:
+        return api_response(False, "No executable market obligation",
+                            errors=["MARKET_OBLIGATION_MISSING"])
+    preflight = turn_service.tb_preflight_open_receipt(
+        state, market_receipt, scope_id)
+    if not preflight.get("success"):
+        return api_response(False, preflight["message"],
+                            errors=[preflight["code"]])
+
+    cursor_before = turn_service._entry_actor(state)
+    previous_round = existing
+    identity = turn_service.new_tb_attempt_identity(state)
+    attempt_id = identity["attempt_id"]
+    boundary_id = turn_service.new_tb_boundary_receipt_id()
+    book = turn_service._book(state)
+    receipts = getattr(book, turn_service._BOUNDARY_RECEIPTS_ATTR, None) or {}
+    consumed_now = set(getattr(book,
+                               turn_service._BOUNDARY_CONSUMED_ATTR, None) or set())
+
+    consumed_id = None
+    failure = None
+    stage = {"name": "begin"}
+    writer_effect = {"value": "none"}
+    try:
+        # R1: begin is INSIDE the protected region. Its exact identity was
+        # reserved above, so an exception after the atomic install is still
+        # locatable and sealable (never a residual PREPARING).
+        began = turn_service.begin_tb_attempt(
+            state, scope_id=scope_id, actor=head.actor_player_id,
+            open_receipt_id=(market_receipt or {}).get("receipt_id"),
+            boundary_receipt_id=boundary_id, cursor_before=cursor_before,
+            pre_round=previous_round, attempt_id=attempt_id,
+            generation=identity["generation"],
+            revision_before=turn_service.current_revision(state),
+            pre_consumed=consumed_now,
+            pre_boundary_present=boundary_id in receipts)
+        if not began.get("success", True):
+            return api_response(False, "Market round is busy",
+                                errors=[began.get("code", "MARKET_ROUND_BUSY")])
+        stage["name"] = "consume"
+        consumed = turn_service.consume_forum_boundary_receipt(
+            state, market_receipt, scope_id=scope_id,
+            kind=turn_service.BOUNDARY_RECEIPT_OPEN)
+        if not consumed.get("success"):
+            failure = consumed.get("code") or "CONSUME_FAILED"
+        else:
+            consumed_id = consumed["receipt_id"]
+            turn_service.tb_note_consumed(state, scope_id, consumed_id,
+                                          attempt_id=attempt_id)
+            stage["name"] = "issuer"
+            # The reserved ID is written by the real issuer; a post-insert raise
+            # can therefore be cleaned by the EXACT pre-ID (never "latest").
+            turn_service.issue_forum_boundary_receipt(
+                state, command_id="start_forum_market_round",
+                kind=turn_service.BOUNDARY_RECEIPT_BOUNDARY, scope_id=scope_id,
+                actor=head.actor_player_id, receipt_id=boundary_id)
+            stage["name"] = "round"
+            turn_service.stage_round_for_attempt(
+                state, scope_id=scope_id, attempt_id=attempt_id,
+                boundary_receipt_id=boundary_id,
+                actor=head.actor_player_id)
+            stage["name"] = "select"
+            selected = turn_service.select_actor(state, scope_id)
+            if not selected.get("success"):
+                failure = selected.get("reason") or "SELECT_FAILED"
+                writer_effect["value"] = "none"   # setter False => no write
+            elif selected.get("actor") != head.actor_player_id:
+                failure = "HEAD_READBACK_MISMATCH"
+                writer_effect["value"] = "written"
+            else:
+                writer_effect["value"] = "written"
+                stage["name"] = "readback"
+                if not turn_service._tb_verify_cursor_readback(
+                        state, head.actor_player_id):
+                    failure = "CURSOR_READBACK_MISMATCH"
+            if failure is None:
+                stage["name"] = "finalize"
+                turn_service.finalize_tb_boundary(
+                    state, scope_id=scope_id, attempt_id=attempt_id,
+                    boundary_receipt_id=boundary_id,
+                    actor=head.actor_player_id)
+    except Exception as exc:  # noqa: BLE001 - classification is exact, not stringly
+        reason = f"{type(exc).__name__}: {exc}"
+        if stage["name"] == "select" and writer_effect["value"] != "written":
+            # Independent cursor fact: value inequality is only used when the
+            # scheduled head differs from the pre-cursor (so a same-value write
+            # cannot masquerade as "not written").
+            post = turn_service._entry_actor(state)
+            if cursor_before != head.actor_player_id and post == cursor_before:
+                writer_effect["value"] = "none"
+            elif post == head.actor_player_id \
+                    and cursor_before != head.actor_player_id:
+                writer_effect["value"] = "written"
+            else:
+                writer_effect["value"] = "unproven"
+        turn_service.tb_close_uncommitted_failure(
+            state, scope_id=scope_id, attempt_id=attempt_id, reason=reason,
+            unknown=(writer_effect["value"] != "none"))
+        logging.getLogger("EOR-GUI").exception(
+            "T_B market round failed; the exact uncommitted attempt is fenced")
+        raise
+
+    if failure is not None:
+        unknown = (failure in ("HEAD_READBACK_MISMATCH",
+                               "CURSOR_READBACK_MISMATCH")
+                   or writer_effect["value"] != "none")
+        turn_service.tb_close_uncommitted_failure(
+            state, scope_id=scope_id, attempt_id=attempt_id, reason=failure,
+            unknown=bool(unknown))
+        return api_response(False, "Market round selection failed",
+                            errors=[failure])
+
+    # Region B: the decision is the LAST fallible step; no abort handler here.
+    try:
+        outcome = turn_service.tb_commit_attempt(
+            state, scope_id=scope_id, boundary_receipt_id=boundary_id,
+            actor=head.actor_player_id, attempt_id=attempt_id)
+    except Exception:  # noqa: BLE001 - read-only exact probe, never a string branch
+        outcome = turn_service.tb_probe_decision(state, scope_id, attempt_id)
+        if outcome == turn_service.TB_DECISION_COMMITTED:
+            raise                     # COMMITTED is terminal; never abort
+        if outcome == turn_service.TB_DECISION_UNCOMMITTED:
+            turn_service.tb_close_uncommitted_failure(
+                state, scope_id=scope_id, attempt_id=attempt_id,
+                reason="COMMIT_FAILED", unknown=True)
+        else:
+            # Indeterminate: keep the conservative fence; never guess uncommitted.
+            turn_service.tb_seal_unknown(
+                state, scope_id, "COMMIT_INDETERMINATE", attempt_id=attempt_id)
+        raise
+
+    # Region B2 (P2): a typed refusal from the decision primitive is NEVER
+    # reported as success. A record whose decision is already COMMITTED is
+    # terminal (its bookkeeping did not land, the conservative HOLD fence is
+    # already closed) — it is never aborted and never re-committed.
+    if (outcome or {}).get("success") is False:
+        code = outcome.get("code") or "COMMIT_REFUSED"
+        if (outcome.get("decision") == turn_service.TB_DECISION_COMMITTED
+                or outcome.get("state") == turn_service.TB_COMMITTED):
+            return api_response(False, "Market round commit is incomplete",
+                                errors=[code])
+        turn_service.tb_close_uncommitted_failure(
+            state, scope_id=scope_id, attempt_id=attempt_id,
+            reason=str(code), unknown=True)
+        return api_response(False, "Market round commit was refused",
+                            errors=[code])
+
+    # Region C: response only. No abort handler; a response fault keeps COMMITTED.
+    boundary = (getattr(turn_service._book(state),
+                        turn_service._BOUNDARY_RECEIPTS_ATTR, {}) or {}).get(boundary_id)
+    return api_response(True, "Market round started", data={
+        "actor": head.actor_player_id,
+        "scope_id": scope_id,
+        "boundary_receipt": dict(boundary) if boundary is not None else {},
+        "round": turn_service.MARKET_ROUND_SELECTED,
+    })
+
+
 def _generate_market_figures(state: GameState) -> List[Figure]:
     """
     Generate figures for the forum market.
@@ -421,6 +654,14 @@ def recruit_figure(state: GameState, player_id: str, figure_id: int, amount: int
     ok, resp = _check_player_permission(state, player_id)
     if not ok:
         return resp
+
+    # W4-A1 / PC04-L1: W1 (boundary pending) + W2 (this seat's obligation).
+    boundary = turn_service.forum_boundary_pending(state)
+    if boundary is not None:
+        return api_response(False, boundary["message"], errors=[boundary["code"]])
+    mismatch = turn_service.market_obligation_matches(state, player_id)
+    if mismatch is not None:
+        return api_response(False, mismatch["message"], errors=[mismatch["code"]])
 
     if amount <= 0:
         return api_response(False, i18n.get("error_invalid_amount"))
@@ -471,6 +712,14 @@ def place_bid(state: GameState, player_id: str, figure_id: int, contract_id: int
     ok, resp = _check_player_permission(state, player_id)
     if not ok:
         return resp
+
+    # W4-A1 / PC04-L1: W1 (boundary pending) + W2 (this seat's obligation).
+    boundary = turn_service.forum_boundary_pending(state)
+    if boundary is not None:
+        return api_response(False, boundary["message"], errors=[boundary["code"]])
+    mismatch = turn_service.market_obligation_matches(state, player_id)
+    if mismatch is not None:
+        return api_response(False, mismatch["message"], errors=[mismatch["code"]])
 
     # 合同校验
     contract = state.get_contract(contract_id)
@@ -611,6 +860,14 @@ def buy_land(state: GameState, player_id: str, figure_id: int, amount: int) -> d
     if not ok:
         return resp
 
+    # W4-A1 / PC04-L1: W1 (boundary pending) + W2 (this seat's obligation).
+    boundary = turn_service.forum_boundary_pending(state)
+    if boundary is not None:
+        return api_response(False, boundary["message"], errors=[boundary["code"]])
+    mismatch = turn_service.market_obligation_matches(state, player_id)
+    if mismatch is not None:
+        return api_response(False, mismatch["message"], errors=[mismatch["code"]])
+
     if amount <= 0:
         return api_response(False, i18n.get("error_invalid_amount"))
 
@@ -656,6 +913,14 @@ def vote_triumph(state: GameState, player_id: str, war_id: str, vote: bool) -> d
     if not ok:
         return resp
 
+    # W4-A1 / PC04-L1: W1 (boundary pending) + W2 (this seat's obligation).
+    boundary = turn_service.forum_boundary_pending(state)
+    if boundary is not None:
+        return api_response(False, boundary["message"], errors=[boundary["code"]])
+    mismatch = turn_service.market_obligation_matches(state, player_id)
+    if mismatch is not None:
+        return api_response(False, mismatch["message"], errors=[mismatch["code"]])
+
     war_system = state.get_war_system()
     if not war_system:
         return api_response(False, "战争系统不可用")
@@ -689,6 +954,19 @@ def vote_triumph(state: GameState, player_id: str, war_id: str, vote: bool) -> d
                         viewer_param="player_id")
 def transact_land(state: GameState, player_id: str, seller_id: int, buyer_id: int,
                   land: int, price: int, bypass_permission: bool = False) -> dict:
+    # W4-A1 / PC04-L1 (W0/W1 + W2): the owner boundary precedes EVERY argument /
+    # permission-bypass branch, so a raw call can neither self-exempt with
+    # ``bypass_permission`` nor write before the market round selected its head.
+    # A never-registered CLI state stays exempt (historical semantics).
+    if bypass_permission and session_access.is_hotseat_registered(state):
+        return api_response(False, "Owner boundary cannot be bypassed",
+                            errors=["FORUM_BOUNDARY_BYPASS_DENIED"])
+    boundary = turn_service.forum_boundary_pending(state)
+    if boundary is not None:
+        return api_response(False, boundary["message"], errors=[boundary["code"]])
+    mismatch = turn_service.market_obligation_matches(state, player_id)
+    if mismatch is not None:
+        return api_response(False, mismatch["message"], errors=[mismatch["code"]])
     player = None
     if not bypass_permission:
         ok, resp = _check_player_permission(state, player_id)
@@ -758,6 +1036,10 @@ def resolve_forum(state: GameState) -> dict:
     barrier = turn_service.owner_barrier(state, "forum", "market")
     if barrier is not None:
         return api_response(False, barrier["message"], errors=[barrier["code"]])
+    # W4-A1 / PC04-L1 (P-1/P-2): no settlement before the market boundary exists.
+    _boundary = turn_service.forum_boundary_pending(state)
+    if _boundary is not None:
+        return api_response(False, _boundary["message"], errors=[_boundary["code"]])
     execute_land_acts(state)          # ← 新增：canonical land-acts hook（幂等，resolution-time）
     pending = state.get_forum_pending()
     results = []
@@ -1156,6 +1438,11 @@ def advance_forum_phase(state: GameState, viewer_player_id: str) -> dict:
     if not viewer:
         return api_response(False, "Viewer player not found")
 
+    # W4-A1 / PC04-L1 (P-1/P-2): boundary pending before any phase-advance write.
+    _boundary = turn_service.forum_boundary_pending(state)
+    if _boundary is not None:
+        return api_response(False, _boundary["message"], errors=[_boundary["code"]])
+
     if state.is_phase_executed("forum"):
         return api_response(False, "Forum phase already executed")
 
@@ -1197,6 +1484,10 @@ def resolve_land_trades(state: GameState) -> dict:
     """
     结算土地交易（仅在交易市场环节调用），返回交易结果。
     """
+    # W4-A1 / PC04-L1 (P-1/P-2): no settlement before the market boundary exists.
+    _boundary = turn_service.forum_boundary_pending(state)
+    if _boundary is not None:
+        return api_response(False, _boundary["message"], errors=[_boundary["code"]])
     pending = state.get_forum_pending()
     results = []
 
@@ -1500,6 +1791,12 @@ def generate_figures(state: GameState) -> dict:
         })
     """
     try:
+        # W4-A1 / PC04-L1 (P-1/P-2): the O_M exact exception is the owner-recorded
+        # marker set by ``open_market`` around its synchronous initializer edge;
+        # a bare call is refused while the boundary is pending.
+        _boundary = turn_service.forum_boundary_pending(state)
+        if _boundary is not None:
+            return api_response(False, _boundary["message"], errors=[_boundary["code"]])
         figures = system_generate_figures(state)
         figure_list = []
         for fig in figures:
@@ -1576,6 +1873,11 @@ def generate_contracts(state: GameState) -> dict:
     budget_margin = config.get("economic_rules.project_budget_margin", 0.2)
     tax_duration = config.get("economic_rules.tax_contract_duration", 5)
     works_duration = config.get("economic_rules.works_contract_duration", 3)
+
+    # W4-A1 / PC04-L1 (P-1/P-2): bare call refused while the boundary is pending.
+    _boundary = turn_service.forum_boundary_pending(state)
+    if _boundary is not None:
+        return api_response(False, _boundary["message"], errors=[_boundary["code"]])
 
     try:
         # ---------- 1. Renewal contracts (conquered provinces only) ----------
@@ -1828,6 +2130,10 @@ def check_province_unrest(state: GameState) -> dict:
         })
     """
     try:
+        # W4-A1 / PC04-L1 (P-1/P-2): bare call refused while the boundary is pending.
+        _boundary = turn_service.forum_boundary_pending(state)
+        if _boundary is not None:
+            return api_response(False, _boundary["message"], errors=[_boundary["code"]])
         from src.core.systems.province_unrest_system import ProvinceUnrestSystem
 
         system = ProvinceUnrestSystem(state)
@@ -1891,6 +2197,10 @@ def execute_land_acts(state: GameState) -> dict:
         })
     """
     try:
+        # W4-A1 / PC04-L1 (P-1/P-2): no land-act execution before the boundary.
+        _boundary = turn_service.forum_boundary_pending(state)
+        if _boundary is not None:
+            return api_response(False, _boundary["message"], errors=[_boundary["code"]])
         acts = state.get_pending_land_acts()
         if not acts:
             return api_response(True, "No pending land acts", data={"executed_acts": []})

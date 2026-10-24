@@ -448,6 +448,8 @@ def _run_ac14_branch(runtime, branch):
 @_rng_isolated
 def test_ac14_s2_submit_population_votes_awaiting_branch(runtime_factory):
     runtime = runtime_factory()
+    # PC02W TD-01 (2026-10-23): 本席位庆典前置（G1 per-actor gate），断言零变更。
+    runtime.store._state.set_batch_completed(runtime.store.viewerPlayerId, True)
     _run_ac14_branch(runtime, lambda store: store.submitPopulationVotes({}))
 
 

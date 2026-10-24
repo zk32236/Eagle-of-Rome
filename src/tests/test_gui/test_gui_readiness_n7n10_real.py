@@ -237,6 +237,8 @@ def test_n7r_real_producer_returns_masked_safe_failure(monkeypatch):
     state, pids = _positioned_population_state()
     viewer = pids[0]
     _seam_missing_decider(monkeypatch)
+    # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）
+    state.set_batch_completed(viewer, True)
 
     env = session_api.submit_population_votes(state, viewer, {})
     assert env.get("success") is False
@@ -259,6 +261,8 @@ def test_n7r_post_commit_boundary_is_non_identical_and_stable(monkeypatch):
     digest_pre = _pub_digest(state)
 
     _seam_missing_decider(monkeypatch)
+    # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）；不进入 digest 采集面
+    state.set_batch_completed(viewer, True)
     session_api.submit_population_votes(state, viewer, {})
     digest_post_commit = _pub_digest(state)
 
@@ -277,6 +281,8 @@ def test_n7r_post_commit_boundary_is_non_identical_and_stable(monkeypatch):
 def test_n7r_real_envelope_is_recognised_by_the_real_store(monkeypatch):
     state, pids = _positioned_population_state()
     _seam_missing_decider(monkeypatch)
+    # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）
+    state.set_batch_completed(pids[0], True)
     env = session_api.submit_population_votes(state, pids[0], {})
     assert GuiSessionStore._is_masked_continuation_failure(env) is True
 
@@ -303,6 +309,8 @@ def test_n7r_real_consumer_routes_to_continuation(monkeypatch):
             lambda *a, **k: sts.ContinuationResult(status=sts.STATUS_RESOLVED))
 
     _seam_missing_decider(monkeypatch)
+    # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）
+    state.set_batch_completed(viewer, True)
     store.submitPopulationVotes({})
 
     assert store.seatLifecycle == SEAT_MASKED_FAILURE
@@ -454,6 +462,8 @@ def test_recovery_owner_entry_makes_real_progress(monkeypatch):
     assert store.seatLifecycle == SEAT_ACTIVE
 
     _seam_missing_decider(monkeypatch)
+    # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）
+    state.set_batch_completed(viewer, True)
     store.submitPopulationVotes({})
     assert store.seatLifecycle == SEAT_MASKED_FAILURE
 
@@ -492,6 +502,8 @@ def test_recovery_is_not_activation_retry(monkeypatch):
     store.setHandoffBarrierProvider(witness)
     store.initialize(viewer)
     _seam_missing_decider(monkeypatch)
+    # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）
+    state.set_batch_completed(viewer, True)
     store.submitPopulationVotes({})
     assert store.seatLifecycle == SEAT_MASKED_FAILURE
     assert witness.failure_routes()[-1] == RECOVER_ROUTE_CONTINUATION
@@ -520,6 +532,8 @@ def test_sd_n9_recovery_does_not_replay_human(monkeypatch):
     state, pids = _positioned_population_state()
     viewer = pids[0]
     _seam_missing_decider(monkeypatch)
+    # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）
+    state.set_batch_completed(viewer, True)
     session_api.submit_population_votes(state, viewer, {})
     human_votes_before = [v for v in state.get_population_votes() if v[0] == viewer]
 
@@ -542,6 +556,8 @@ def test_positive_control_after_every_negative(monkeypatch):
     state, pids = _positioned_population_state()
     viewer = pids[0]
     _seam_missing_decider(monkeypatch)
+    # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）
+    state.set_batch_completed(viewer, True)
     session_api.submit_population_votes(state, viewer, {})
     monkeypatch.undo()
     res = sts.continue_after_command(

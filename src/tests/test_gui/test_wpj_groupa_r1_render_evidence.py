@@ -5,7 +5,7 @@
 `GuiSessionStore` → 真实生产动作（selectPhase / doExecuteMortality / 战斗写路径）→
 真实 `Main.qml` 离屏渲染（QT_QPA_PLATFORM=offscreen）→ `window.grabWindow()` → PNG。
 
-证据落 `03-da-evidence/Group-A/R1/`：
+证据默认落 pytest tmp 派生根（以下相对布局不变）：
 - A-4-stepbar/：步骤条间距（forum 2 节点；1280×720 与 1440×900）。
 - A-6-combat/：多战争步骤条（N≥2）+ N=0（全灰）。
 - A-5-mortality/：死亡行归公明细（生产者按人供数）。
@@ -26,11 +26,9 @@ PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-EVIDENCE_BASE = (
-    "/mnt/e/OpenClaw/Projects/EOR/workspace/EOR20260821-01 GUI-BETA-R1"
-    "/WP-J_Player-Visible-Feedback-and-Actionability/03-da-evidence/Group-A"
-)
+import pytest  # noqa: E402
 
+from src.tests._evidence_root import evidence_root  # noqa: E402
 from src.api import combat_api, session_api  # noqa: E402
 from src.core.entities.entities import Faction, GameTurn  # noqa: E402
 from src.core.entities.figure import Figure  # noqa: E402
@@ -43,6 +41,12 @@ from src.ui.gui.models.candidate_list_model import CandidateListModel  # noqa: E
 from src.ui.gui.models.event_list_model import EventListModel  # noqa: E402
 from src.ui.gui.models.figure_list_model import FigureListModel  # noqa: E402
 from src.ui.gui.session_store import GuiSessionStore  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def evidence(tmp_path_factory):
+    """W2a：证据写根由 helper 派生（默认 tmp 派生根；归档区在模块内不可达）。"""
+    return evidence_root(tmp_path_factory.mktemp("wpj-groupa-r1"), namespace="wpj-groupa-r1")
 
 
 class _DummyGuiApp:
@@ -189,9 +193,8 @@ def _sha256(path):
     return h.hexdigest()
 
 
-def _emit(slice_dir, name, capture, state_prep, phase, viewport, extra=None):
-    out_dir = os.path.join(EVIDENCE_BASE, "R1", slice_dir)
-    os.makedirs(out_dir, exist_ok=True)
+def _emit(evidence, slice_dir, name, capture, state_prep, phase, viewport, extra=None):
+    out_dir = evidence.ensure_dir("R1", slice_dir)
     png = os.path.join(out_dir, name)
     meta = os.path.join(out_dir, name[:-4] + ".runtime.json")
     row = {
@@ -269,7 +272,7 @@ def _combat_state(wars_spec):
 # A-4 step bar spacing (1280×720 & 1440×900)
 # ---------------------------------------------------------------------------
 
-def test_render_r1_a4_stepbar_two_viewports():
+def test_render_r1_a4_stepbar_two_viewports(evidence):
     from src.api import forum_api
     rows = []
     for (w, h, tag) in ((1280, 720, "1280x720"), (1440, 900, "1440x900")):
@@ -279,8 +282,8 @@ def test_render_r1_a4_stepbar_two_viewports():
         assert steps and len(steps) >= 2, steps
         engine, _ = _create_engine(store)
         name = "stepbar-forum-%s.png" % tag
-        cap = _capture(engine, os.path.join(EVIDENCE_BASE, "R1", "A-4-stepbar", name), w, h)
-        rows.append(_emit("A-4-stepbar", name, cap,
+        cap = _capture(engine, evidence.path("R1", "A-4-stepbar", name), w, h)
+        rows.append(_emit(evidence, "A-4-stepbar", name, cap,
                           "create_gui_prototype_session(forum)+selectPhase(forum)",
                           "forum", (w, h)))
         _teardown(engine)
@@ -291,7 +294,7 @@ def test_render_r1_a4_stepbar_two_viewports():
 # A-6 combat steps (multi-war + N=0)
 # ---------------------------------------------------------------------------
 
-def test_render_r1_a6_combat_multi_war():
+def test_render_r1_a6_combat_multi_war(evidence):
     store, state, viewer = _combat_state([
         ("war_a", "皮洛士战争", 1),
         ("war_b", "西西里叛乱", 2),
@@ -302,23 +305,23 @@ def test_render_r1_a6_combat_multi_war():
     assert len(steps) == 3, steps
     engine, _ = _create_engine(store)
     name = "combat-multi-war-1440x900.png"
-    cap = _capture(engine, os.path.join(EVIDENCE_BASE, "R1", "A-6-combat", name), 1440, 900)
-    row = _emit("A-6-combat", name, cap,
+    cap = _capture(engine, evidence.path("R1", "A-6-combat", name), 1440, 900)
+    row = _emit(evidence, "A-6-combat", name, cap,
                 "combat_state(3 wars: 2 commanded + 1 no-commander)+selectPhase(combat)",
                 "combat", (1440, 900), extra={"n_wars": 3, "slot_count": len(steps)})
     _teardown(engine)
     assert row["capture_ok"], row
 
 
-def test_render_r1_a6_combat_n0():
+def test_render_r1_a6_combat_n0(evidence):
     store, state, viewer = _prototype_store("combat")
     store.selectPhase("combat")
     steps = store.phaseSteps
     assert len(steps) == 3 and all(s["state"] == "not_applicable" for s in steps), steps
     engine, _ = _create_engine(store)
     name = "combat-n0-1440x900.png"
-    cap = _capture(engine, os.path.join(EVIDENCE_BASE, "R1", "A-6-combat", name), 1440, 900)
-    row = _emit("A-6-combat", name, cap,
+    cap = _capture(engine, evidence.path("R1", "A-6-combat", name), 1440, 900)
+    row = _emit(evidence, "A-6-combat", name, cap,
                 "create_gui_prototype_session(combat)+selectPhase(combat) [N=0]",
                 "combat", (1440, 900), extra={"n_wars": 0, "slot_count": len(steps)})
     _teardown(engine)
@@ -345,7 +348,7 @@ def _force_death_with_assets(state, count=2):
         m._land_private = (idx + 1) * 3
 
 
-def test_render_r1_a5_mortality_confiscation_rows():
+def test_render_r1_a5_mortality_confiscation_rows(evidence):
     store, state, _ = _prototype_store("mortality")
     _force_death_with_assets(state, 2)
     fb = store.doExecuteMortality()
@@ -359,8 +362,8 @@ def test_render_r1_a5_mortality_confiscation_rows():
     assert any(imp.get("wealth_confiscated", 0) >= 1 for imp in deaths), deaths
     engine, _ = _create_engine(store)
     name = "mortality-confiscation-rows-1440x900.png"
-    cap = _capture(engine, os.path.join(EVIDENCE_BASE, "R1", "A-5-mortality", name), 1440, 900)
-    row = _emit("A-5-mortality", name, cap,
+    cap = _capture(engine, evidence.path("R1", "A-5-mortality", name), 1440, 900)
+    row = _emit(evidence, "A-5-mortality", name, cap,
                 "create_gui_prototype_session(mortality)+force_death_deck+set_assets+doExecuteMortality+selectPhase",
                 "mortality", (1440, 900), extra={"death_count": len(deaths)})
     _teardown(engine)

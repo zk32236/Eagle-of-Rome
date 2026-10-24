@@ -262,6 +262,8 @@ def _play_population(store, limit=12):
         if store.seatLifecycle == SEAT_MASKED_PENDING:
             assert store.requestTakeover()["accepted"] is True
             continue
+        # PC02W TD-01 (2026-10-23): 本席位庆典前置（G1 per-actor gate），断言零变更。
+        store._state.set_batch_completed(store.viewerPlayerId, True)
         fb = store.submitPopulationVotes(selections)
         assert fb.get("success") is True, fb
     assert store.populationResolved is True, "population never resolved"

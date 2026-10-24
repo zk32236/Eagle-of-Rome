@@ -33,6 +33,7 @@ from PySide6.QtQuick import QQuickItem
 
 from src.api import session_api
 from src.core.entities.player import Player, PlayerType
+from src.tests._evidence_root import evidence_root
 from src.ui.gui.localization import gui_localization
 from src.ui.gui.session_store import (
     GuiSessionStore,
@@ -41,10 +42,6 @@ from src.ui.gui.session_store import (
 )
 
 QML_DIR = os.path.join(PROJECT_ROOT, "src", "ui", "gui", "qml")
-SCREENSHOT_DIR = (
-    "/mnt/e/OpenClaw/Projects/EOR/workspace/EOR20261013-02 GUI-Readiness"
-    "/03-da-evidence/D7D12-W2a/impl/screenshots"
-)
 
 
 def _load_cjk_font():
@@ -471,16 +468,16 @@ def _grab_png(win, path):
     return image.width(), image.height()
 
 
-def test_capture_startup_page_zh_and_en_png(startup_runtime):
+def test_capture_startup_page_zh_and_en_png(startup_runtime, tmp_path):
     """G4 AC-01/04/06: real startup page pixels, one PNG per locale."""
     win, overlay, store = startup_runtime
-    os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+    shot_dir = evidence_root(tmp_path, namespace="w2a-startup").ensure_dir()
     gui_localization.setLocale("zh-CN")
 
     overlay.showMaskedStartup("", "single_human")
     _events(8)
 
-    zh_path = os.path.join(SCREENSHOT_DIR, "startup_zh.png")
+    zh_path = os.path.join(shot_dir, "startup_zh.png")
     zh_w, zh_h = _grab_png(win, zh_path)
     assert _find(win, "grHandoffStart").property("text") == "开始游戏"
     assert _pending_copy(win)["startupIntroTerritory"] == "罗马领土：意大利(本土)"
@@ -492,7 +489,7 @@ def test_capture_startup_page_zh_and_en_png(startup_runtime):
         assert _pending_copy(win)["startupIntroTerritory"] == (
             "Roman territory: Italy (homeland)"
         )
-        en_path = os.path.join(SCREENSHOT_DIR, "startup_en.png")
+        en_path = os.path.join(shot_dir, "startup_en.png")
         en_w, en_h = _grab_png(win, en_path)
     finally:
         gui_localization.setLocale("zh-CN")
@@ -500,7 +497,7 @@ def test_capture_startup_page_zh_and_en_png(startup_runtime):
     zh_sha = _sha256_file(zh_path)
     en_sha = _sha256_file(en_path)
     captured_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    log_path = os.path.join(SCREENSHOT_DIR, "capture.log")
+    log_path = os.path.join(shot_dir, "capture.log")
     with open(log_path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("W2a startup-page automated capture\n")
         fh.write(

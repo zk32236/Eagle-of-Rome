@@ -45,6 +45,9 @@ class TestBug3Wp02bDrain:
         human_players = result["data"]["human_players"]
         viewer_id = human_players[0]
         state.set_current_player(viewer_id)
+        # PC02-WITHDRAWAL (2026-10-23): 庆典前置 — 本座位先完成庆典才允许投票（G1）。
+        # 不改变任何既有断言；drain 语义不受影响。
+        state.set_batch_completed(viewer_id, True)
         return state, viewer_id
 
     # ── Production-path tests (Track 2) ──────────────────────────────────

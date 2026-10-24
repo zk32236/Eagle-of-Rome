@@ -5,7 +5,9 @@
 真实生产动作（doExecuteMortality / open_market / selectPhase）→ 真实 `Main.qml`
 离屏渲染（QT_QPA_PLATFORM=offscreen）→ `window.grabWindow()` → PNG。
 
-证据落 `03-da-evidence/Group-A/{Group-A-1,Group-A-2,Group-A-3}/`：
+证据默认落 pytest tmp 派生根（`<tmp>/.eor-evidence/Group-A-{1,2,3}/`，经
+`src.tests._evidence_root.evidence_root`）；正式证据**不在回归中重生成**
+（原件已由 G5 封存，回归产物只是验证副产品）：
 - Group-A-1：mortality 死亡影响行（强制死亡事件牌组 → 死亡行可见）
 - Group-A-2：六阶段权威步骤条（StepBar 唯一渲染 owner）
 - Group-A-3：Forum 市场子环节操作按钮（1280×720 与 1440×900）
@@ -26,16 +28,20 @@ PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-EVIDENCE_BASE = (
-    "/mnt/e/OpenClaw/Projects/EOR/workspace/EOR20260821-01 GUI-BETA-R1"
-    "/WP-J_Player-Visible-Feedback-and-Actionability/03-da-evidence/Group-A"
-)
+import pytest  # noqa: E402
 
+from src.tests._evidence_root import evidence_root  # noqa: E402
 from src.api import session_api  # noqa: E402
 from src.ui.gui.models.candidate_list_model import CandidateListModel  # noqa: E402
 from src.ui.gui.models.event_list_model import EventListModel  # noqa: E402
 from src.ui.gui.models.figure_list_model import FigureListModel  # noqa: E402
 from src.ui.gui.session_store import GuiSessionStore  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def evidence(tmp_path_factory):
+    """W1a：证据写根由 helper 派生（默认 tmp 派生根；归档区在模块内不可达）。"""
+    return evidence_root(tmp_path_factory.mktemp("wpj-groupa"))
 
 
 class _DummyGuiApp:
@@ -214,9 +220,8 @@ def _sha256(path):
     return h.hexdigest()
 
 
-def _emit(slice_dir, name, capture, state_prep, phase, viewport):
-    out_dir = os.path.join(EVIDENCE_BASE, slice_dir)
-    os.makedirs(out_dir, exist_ok=True)
+def _emit(root, slice_dir, name, capture, state_prep, phase, viewport):
+    out_dir = root.ensure_dir(slice_dir)
     png = os.path.join(out_dir, name)
     meta = os.path.join(out_dir, name[:-4] + ".runtime.json")
     row = {
@@ -237,7 +242,7 @@ def _emit(slice_dir, name, capture, state_prep, phase, viewport):
     return row
 
 
-def test_render_group_a1_mortality_death_rows():
+def test_render_group_a1_mortality_death_rows(evidence):
     store, state, _ = _make_store("mortality")
     _force_death(state, 2)
     fb = store.doExecuteMortality()
@@ -249,16 +254,16 @@ def test_render_group_a1_mortality_death_rows():
     ]
     assert deaths, "强制死亡牌组必须产出 figure_death impacts"
     engine, _ = _create_engine(store)
-    cap = _capture(engine, os.path.join(
-        EVIDENCE_BASE, "Group-A-1", "group-a-1-mortality-death-rows-1440x900.png"))
-    row = _emit("Group-A-1", "group-a-1-mortality-death-rows-1440x900.png", cap,
+    cap = _capture(engine, evidence.path(
+        "Group-A-1", "group-a-1-mortality-death-rows-1440x900.png"))
+    row = _emit(evidence, "Group-A-1", "group-a-1-mortality-death-rows-1440x900.png", cap,
                 "create_gui_prototype_session(mortality)+force_death_deck+doExecuteMortality+selectPhase",
                 "mortality", (1440, 900))
     _teardown(engine)
     assert row["capture_ok"], f"capture failed: {cap!r}"
 
 
-def test_render_group_a2_six_phase_steps():
+def test_render_group_a2_six_phase_steps(evidence):
     rows = []
     for phase in ("mortality", "revenue", "forum", "population", "senate", "combat"):
         store, state, _ = _make_store(phase)
@@ -267,12 +272,12 @@ def test_render_group_a2_six_phase_steps():
         assert steps, f"{phase}: phaseSteps 必须非空"
         engine, _ = _create_engine(store)
         name = f"group-a-2-steps-{phase}-1440x900.png"
-        cap = _capture(engine, os.path.join(EVIDENCE_BASE, "Group-A-2", name))
-        rows.append(_emit("Group-A-2", name, cap,
+        cap = _capture(engine, evidence.path("Group-A-2", name))
+        rows.append(_emit(evidence, "Group-A-2", name, cap,
                           f"create_gui_prototype_session({phase})+selectPhase({phase})",
                           phase, (1440, 900)))
         _teardown(engine)
-    manifest = os.path.join(EVIDENCE_BASE, "Group-A-2", "steps-screenshots.manifest.json")
+    manifest = evidence.path("Group-A-2", "steps-screenshots.manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupa-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -280,7 +285,7 @@ def test_render_group_a2_six_phase_steps():
     assert all(r["capture_ok"] for r in rows), rows
 
 
-def test_render_group_a3_forum_market_buttons():
+def test_render_group_a3_forum_market_buttons(evidence):
     from src.api import forum_api
     rows = []
     for (w, h, tag) in ((1280, 720, "1280x720"), (1440, 900, "1440x900")):
@@ -292,12 +297,12 @@ def test_render_group_a3_forum_market_buttons():
         assert store.forumCurrentStep == "market"
         engine, _ = _create_engine(store)
         name = f"group-a-3-forum-market-{tag}.png"
-        cap = _capture(engine, os.path.join(EVIDENCE_BASE, "Group-A-3", name), w, h)
-        rows.append(_emit("Group-A-3", name, cap,
+        cap = _capture(engine, evidence.path("Group-A-3", name), w, h)
+        rows.append(_emit(evidence, "Group-A-3", name, cap,
                           "create_gui_prototype_session(forum)+forum_api.open_market+selectPhase(forum)",
                           "forum", (w, h)))
         _teardown(engine)
-    manifest = os.path.join(EVIDENCE_BASE, "Group-A-3", "forum-screenshots.manifest.json")
+    manifest = evidence.path("Group-A-3", "forum-screenshots.manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupa-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)

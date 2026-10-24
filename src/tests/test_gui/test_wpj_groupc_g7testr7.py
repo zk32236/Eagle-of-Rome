@@ -18,6 +18,8 @@ import json
 import os
 import sys
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("PYTHONUTF8", "1")
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
@@ -29,15 +31,19 @@ if PROJECT_ROOT not in sys.path:
 SENATE_QML = os.path.join(PROJECT_ROOT, "src", "ui", "gui", "qml", "stages", "SenateStage.qml")
 STORE_PY = os.path.join(PROJECT_ROOT, "src", "ui", "gui", "session_store.py")
 
-EVIDENCE_BASE = (
-    "/mnt/e/OpenClaw/Projects/EOR/workspace/EOR20260821-01 GUI-BETA-R1"
-    "/WP-J_Player-Visible-Feedback-and-Actionability/03-da-evidence/GroupC"
-)
+from src.tests._evidence_root import evidence_root  # noqa: E402
+
 _EVID_DIR = "Group-C-G7TestR7Delta"
 
 from src.api import session_api  # noqa: E402
 from src.ui.gui.session_store import GuiSessionStore  # noqa: E402
 from src.tests.test_gui import test_wpj_groupc_render_evidence as R  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def evidence(tmp_path_factory):
+    """W2a：证据写根由 helper 派生（默认 tmp 派生根；归档区在模块内不可达）。"""
+    return evidence_root(tmp_path_factory.mktemp("wpj-groupc-r7"), namespace="wpj-groupc-r7")
 
 
 def _senate():
@@ -256,7 +262,7 @@ def _setup_senate_vote_selection(ids):
     return _fn
 
 
-def test_r7_render_senate_vote_default_unchecked_and_toggle():
+def test_r7_render_senate_vote_default_unchecked_and_toggle(evidence):
     """FC-C41(3)：`senate_vote` 帧 ② 每行勾选框**默认未勾选**；写入 ② 选择集 ⇒ 该行**勾选**
     （真实可切换选择态）。1280×720 及更大视口。"""
     rows = []
@@ -268,8 +274,8 @@ def test_r7_render_senate_vote_default_unchecked_and_toggle():
         # 默认未勾选
         engine, _ = R._create_engine(store)
         name = f"group-c-g7testr7-default-unchecked-{tag}.png"
-        cap = R._capture(engine, os.path.join(EVIDENCE_BASE, _EVID_DIR, name), w, h)
-        rows.append(R._emit(_EVID_DIR, name, cap,
+        cap = R._capture(engine, evidence.path(_EVID_DIR, name), w, h)
+        rows.append(R._emit(evidence, _EVID_DIR, name, cap,
                             "create_gui_prototype_session(senate)+doSubmitSenateProposals"
                             "+long_war_name(war_proposal)",
                             "senate_vote", (w, h)))
@@ -286,9 +292,9 @@ def test_r7_render_senate_vote_default_unchecked_and_toggle():
         target_label, target_id = p2[0][0], by_label[p2[0][0]].get("id")
         engine2, _ = R._create_engine(store)
         name2 = f"group-c-g7testr7-toggled-{tag}.png"
-        cap2 = R._capture(engine2, os.path.join(EVIDENCE_BASE, _EVID_DIR, name2), w, h,
+        cap2 = R._capture(engine2, evidence.path(_EVID_DIR, name2), w, h,
                           setup=_setup_senate_vote_selection([target_id]))
-        rows.append(R._emit(_EVID_DIR, name2, cap2,
+        rows.append(R._emit(evidence, _EVID_DIR, name2, cap2,
                             "create_gui_prototype_session(senate)+doSubmitSenateProposals"
                             "+selectedSenateVoteIds=[id]",
                             "senate_vote", (w, h)))
@@ -298,7 +304,7 @@ def test_r7_render_senate_vote_default_unchecked_and_toggle():
         assert p2b.get(target_label) is not None and p2b[target_label].property("checked"), \
             f"选择集含该 id ⇒ 勾选（FC-C41(2)）（{tag}）: {target_label!r}"
         R._teardown(engine2)
-    with open(os.path.join(EVIDENCE_BASE, _EVID_DIR, "g7testr7-render-manifest.json"),
+    with open(evidence.path(_EVID_DIR, "g7testr7-render-manifest.json"),
               "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupc-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -306,13 +312,13 @@ def test_r7_render_senate_vote_default_unchecked_and_toggle():
     assert all(r["capture_ok"] for r in rows), rows
 
 
-def test_r7_render_geometry_1280x720_and_larger():
+def test_r7_render_geometry_1280x720_and_larger(evidence):
     """FC-C43(5)：`senate_vote` 帧于 1280×720 与更大视口渲染成功、窗口/阶段根几何非零（非回归）。"""
     for (w, h, tag) in ((1440, 900, "1440x900"), (1280, 720, "1280x720")):
         store = R._senate_vote_store_with_long_proposal()[0]
         engine, _ = R._create_engine(store)
         name = f"group-c-g7testr7-geometry-{tag}.png"
-        cap = R._capture(engine, os.path.join(EVIDENCE_BASE, _EVID_DIR, name), w, h)
+        cap = R._capture(engine, evidence.path(_EVID_DIR, name), w, h)
         assert cap and cap not in ("timeout",), f"截图须成功（{tag}）: {cap}"
         window = engine.rootObjects()[0]
         assert (window.width() or 0) > 0 and (window.height() or 0) > 0, f"窗口几何须非零（{tag}）"
@@ -322,14 +328,14 @@ def test_r7_render_geometry_1280x720_and_larger():
     assert True
 
 
-def test_r7_render_live_headed_recheck_recorded():
+def test_r7_render_live_headed_recheck_recorded(evidence):
     """FC-C43(4) 有头/窗口化 live 复验如实登记：本 DA 运行环境为**无头 WSL**（无 DISPLAY；
     测试进程强制 offscreen）⇒ **NOT_APPLICABLE（不伪造）**；以离屏 RENDER_AUTOMATED 替代。
     注：「取消勾选 land 行」的有头复验待有头环境补做（离屏样本为 war 行）。"""
     display = os.environ.get("DISPLAY")
     plat = os.environ.get("QT_QPA_PLATFORM")
-    out = os.path.join(EVIDENCE_BASE, _EVID_DIR, "g7testr7-live-headed.runtime.json")
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    out = evidence.path(_EVID_DIR, "g7testr7-live-headed.runtime.json")
+    evidence.ensure_dir(_EVID_DIR)
     record = {
         "schema": "wpj-groupc-live-headed/v1",
         "requested": "有头/窗口化 live 复验（真实 app.py；非 offscreen；含取消勾选 land 行 + 战争行）",
@@ -445,7 +451,7 @@ def _jr1_new_session(store, state, viewer_id, n_props):
     return list(store.senateVetoCandidateIds)
 
 
-def test_jr1_data_three_session_chain_no_deadlock():
+def test_jr1_data_three_session_chain_no_deadlock(evidence):
     """WJR1-AC-03（DATA(PRODUCTION_CHAIN)，无新 fixture，route=DIRECT_PRODUCTION）：
     真 Store + 真 QML `SenateStage` 的**连续三会期**链（对照诊断 §5 死锁链）。
 
@@ -488,8 +494,8 @@ def test_jr1_data_three_session_chain_no_deadlock():
 
     # ---- 真 QML SenateStage（真实生产链渲染；会期键于首帧视图初始化）----
     engine, _ = R._create_engine(store)
-    R._capture(engine, os.path.join(
-        EVIDENCE_BASE, _EVID_DIR, "group-c-g7testr7-jr1-three-session-chain.png"), 1280, 720)
+    R._capture(engine, evidence.path(
+        _EVID_DIR, "group-c-g7testr7-jr1-three-session-chain.png"), 1280, 720)
     window = engine.rootObjects()[0]
     _root, stage_root = R._find_stage_root(window)
     assert stage_root is not None, "须定位 SenateStage 根（AC-03）"

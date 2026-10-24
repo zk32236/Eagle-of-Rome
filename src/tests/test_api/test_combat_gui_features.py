@@ -6,6 +6,7 @@ Feature Freeze Test — GUI combat_api 当前行为基线 (S1 冻结)
 """
 import json
 import os
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 from src.core.game_state import GameState
@@ -17,6 +18,7 @@ from src.core.entities.legion import Legion, LegionStatus
 from src.core.systems.war_system import WarSystem
 from src.core.systems.military_system import MilitarySystem
 from src.api import combat_api
+from src.tests._evidence_root import evidence_root
 
 
 class TestGUICombatFeatures(unittest.TestCase):
@@ -516,7 +518,9 @@ class TestGUICombatFeatures(unittest.TestCase):
 
     def test_combat_screenshot_same_state_chain(self):
         """same-state 全链（select → action → result → advance）DTO + 离屏截图。"""
-        os.makedirs(_SCREENSHOTS_DIR, exist_ok=True)
+        root = evidence_root(tempfile.mkdtemp(prefix="wp04-combat-"),
+                            namespace="wp04-combat")
+        shots = root.ensure_dir()
         with patch.object(combat_api.random, "randint", return_value=8):
             state = _build_combat_full_state()
             steps = {}
@@ -546,7 +550,7 @@ class TestGUICombatFeatures(unittest.TestCase):
         self.assertIsInstance(first["legion_numbers"], list)
 
         for name, data in steps.items():
-            json_path = os.path.join(_SCREENSHOTS_DIR, f"wp04-combat-{name}.dto.json")
+            json_path = os.path.join(shots, f"wp04-combat-{name}.dto.json")
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump({
                     "step": name,
@@ -558,7 +562,7 @@ class TestGUICombatFeatures(unittest.TestCase):
                     "resolved_war_ids": data.get("resolved_war_ids"),
                     "battle_results": data.get("battle_results"),
                 }, f, ensure_ascii=False, indent=2)
-            png_path = os.path.join(_SCREENSHOTS_DIR, f"wp04-combat-{name}.png")
+            png_path = os.path.join(shots, f"wp04-combat-{name}.png")
             _render_combat_qml_step(name, data, png_path)
 
 
@@ -566,8 +570,6 @@ _COMBAT_QML_PATH = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..",
                  "src", "ui", "gui", "qml", "stages", "CombatStage.qml")
 )
-
-_SCREENSHOTS_DIR = "/mnt/e/OpenClaw/Projects/EOR/workspace/EOR20260729-01_GUI-Alignment/WP-04/03-da-evidence/screenshots"
 
 
 def _read_combat_qml():

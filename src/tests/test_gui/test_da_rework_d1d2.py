@@ -204,6 +204,9 @@ def test_clos_01_every_effective_mask_label_has_a_declared_closure(monkeypatch):
 # T-MASK-1H-POP — 1H + 2AI masked population vote (AC-D1-1H-01/02)
 # ===========================================================================
 def _submit_1h(store, state):
+    # PC02-WITHDRAWAL (2026-10-23): 逐演员门前置 — 本轮 viewer（当前席位）先完成庆典。
+    # 只补前置，断言一律不动（takeovers==2 / 5 票 / phase_result / seatLifecycle 保持原样）。
+    state.set_batch_completed(store.viewerPlayerId, True)
     return store.submitPopulationVotes(_first_selections(state))
 
 

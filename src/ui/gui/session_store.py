@@ -3730,10 +3730,24 @@ class GuiSessionStore(QObject):
         }),
     }
 
+    #: W4-A1 / PC04-L1: the THIRD INDEPENDENT registry. It is strictly disjoint
+    #: from ``_LEASE_HELPERS`` (legacy four roots) and from
+    #: ``_PHASE_ROLE_LEASE_HELPERS`` (D4/D6 five roots) — new key, new table, no
+    #: merging and no wildcard. The reachable set is EXACTLY the frozen ``E_B``
+    #: four labels: it must NEVER contain ``open_market`` / ``retire_figure`` /
+    #: ``initialize_forum_turn`` / ``generate_*`` / ``check_province_unrest`` /
+    #: ``resolve_*`` / ``execute_land_acts`` / ``recover_continuation``.
+    _MARKET_ROUND_LEASE_HELPERS = {
+        "start_forum_market_round": frozenset({
+            "recruit_figure", "place_bid", "buy_land", "vote_triumph",
+        }),
+    }
+
     @classmethod
     def _helpers_for_owning_command(cls, command: Optional[str]) -> frozenset:
-        """FC-D46-01: the ONLY owning-command helper lookup. Exact legacy map
-        first, then the independent new-normal-root registry; a root in NEITHER
+        """FC-D46-01 / W4-A1: the ONLY owning-command helper lookup. Exact legacy
+        map first, then the independent new-normal-root registry, then the
+        independent PC04 market-round registry; a root in NONE OF THE THREE
         resolves to the empty set (unknown -> refuse, never a default union /
         wildcard). The legacy four roots keep their EXACT prior behaviour."""
         if command is None:
@@ -3741,8 +3755,10 @@ class GuiSessionStore(QObject):
         helpers = cls._LEASE_HELPERS.get(command)
         if helpers is not None:
             return helpers
-        return cls._PHASE_ROLE_LEASE_HELPERS.get(command, frozenset())
-
+        helpers = cls._PHASE_ROLE_LEASE_HELPERS.get(command)
+        if helpers is not None:
+            return helpers
+        return cls._MARKET_ROUND_LEASE_HELPERS.get(command, frozenset())
     def _begin_masked_seat_transition(self, command_id: str,
                                       lease_command: Optional[str] = None,
                                       payload: Any = None,

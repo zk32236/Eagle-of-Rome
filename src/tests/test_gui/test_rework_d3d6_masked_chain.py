@@ -136,6 +136,8 @@ def test_d5_chain_01_masked_handoff_first_publication_is_authoritative():
     expected = _authoritative(state)
     assert any(expected.values()), "fixture must expose a non-empty candidate set"
 
+    # PC02W TD-01 (2026-10-23): 本席位庆典前置（G1 per-actor gate），断言零变更。
+    state.set_batch_completed(store.viewerPlayerId, True)
     fb = store.submitPopulationVotes(_first_selections(state))
     assert fb["success"] is True, fb
     # A -> B handoff: the seat enters the opaque pending state (no pre-confirm
@@ -286,6 +288,8 @@ def test_r03_d5_failing_staging_keeps_mask_and_no_publication(monkeypatch):
 
     pubs = []
     store.populationViewChanged.connect(lambda: pubs.append(dict(store.populationView)))
+    # PC02W TD-01 (2026-10-23): 本席位庆典前置（G1 per-actor gate），断言零变更。
+    state.set_batch_completed(store.viewerPlayerId, True)
     fb = store.submitPopulationVotes(_first_selections(state))
     assert fb["success"] is True, fb
     # the A -> B handoff reaches the opaque pending state; the STAGING of B's DTOs
@@ -336,6 +340,8 @@ def test_r03_d5_secc_c_n_first_publication_matches_raw_oracle():
     oracle = _raw_candidate_oracle(state)
     assert any(oracle.values())
 
+    # PC02W TD-01 (2026-10-23): 本席位庆典前置（G1 per-actor gate），断言零变更。
+    state.set_batch_completed(store.viewerPlayerId, True)
     fb = store.submitPopulationVotes(_first_selections(state))
     assert fb["success"] is True, fb
     assert store.seatLifecycle == SEAT_MASKED_PENDING
@@ -385,6 +391,8 @@ def test_r03_d5_secc_c_b3_resolved_historical_projection():
     for _ in range(3):
         if store.seatLifecycle == SEAT_MASKED_PENDING:
             assert store.requestTakeover()["accepted"] is True
+        # PC02W TD-01 (2026-10-23): 逐席位庆典前置（G1 per-actor gate），断言零变更。
+        state.set_batch_completed(store.viewerPlayerId, True)
         fb = store.submitPopulationVotes(_first_selections(state))
         assert fb["success"] is True, fb
 

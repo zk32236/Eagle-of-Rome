@@ -32,10 +32,13 @@ PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-EVIDENCE_BASE = (
-    "/mnt/e/OpenClaw/Projects/EOR/workspace/EOR20260821-01 GUI-BETA-R1"
-    "/WP-J_Player-Visible-Feedback-and-Actionability/03-da-evidence/GroupC"
-)
+from src.tests._evidence_root import evidence_root  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def evidence(tmp_path_factory):
+    """W2a：证据写根由 helper 派生（默认 tmp 派生根；归档区在模块内不可达）。"""
+    return evidence_root(tmp_path_factory.mktemp("wpj-groupc"), namespace="wpj-groupc")
 
 
 @pytest.fixture(autouse=True)
@@ -198,9 +201,8 @@ def _sha256(path):
     return h.hexdigest()
 
 
-def _emit(slice_dir, name, capture, state_prep, phase, viewport):
-    out_dir = os.path.join(EVIDENCE_BASE, slice_dir)
-    os.makedirs(out_dir, exist_ok=True)
+def _emit(evidence, slice_dir, name, capture, state_prep, phase, viewport):
+    out_dir = evidence.ensure_dir(slice_dir)
     png = os.path.join(out_dir, name)
     meta = os.path.join(out_dir, name[:-4] + ".runtime.json")
     row = {
@@ -330,14 +332,14 @@ def _senate_store_with_long_text():
 # Group-C-1 render
 # ---------------------------------------------------------------------------
 
-def test_render_group_c1_featured_table_and_subphase_gain():
+def test_render_group_c1_featured_table_and_subphase_gain(evidence):
     rows = []
     for (w, h, tag) in ((1440, 900, "1440x900"), (1280, 720, "1280x720")):
         store, _state, _viewer = _population_store()
         engine, _ = _create_engine(store)
         name = f"group-c-1-population-featured-table-{tag}.png"
-        cap = _capture(engine, os.path.join(EVIDENCE_BASE, "Group-C-1", name), w, h)
-        rows.append(_emit("Group-C-1", name, cap,
+        cap = _capture(engine, evidence.path("Group-C-1", name), w, h)
+        rows.append(_emit(evidence, "Group-C-1", name, cap,
                           "create_gui_prototype_session(population)+selectPhase(population)",
                           "population", (w, h)))
         # 几何断言（同一窗口树）
@@ -359,7 +361,7 @@ def test_render_group_c1_featured_table_and_subphase_gain():
             assert len(feat) == 1, f"{office}: featured 恰 1（{tag}）"
             assert any(feat[0]["name"] in t for t in table_texts), f"{office}: featured 名须显示"
         _teardown(engine)
-    manifest = os.path.join(EVIDENCE_BASE, "Group-C-1", "population-featured-screenshots.manifest.json")
+    manifest = evidence.path("Group-C-1", "population-featured-screenshots.manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupc-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -371,7 +373,7 @@ def test_render_group_c1_featured_table_and_subphase_gain():
 # Group-C-2 render
 # ---------------------------------------------------------------------------
 
-def test_render_group_c2_nonwar_long_text_wrap():
+def test_render_group_c2_nonwar_long_text_wrap(evidence):
     rows = []
     for (w, h, tag) in ((1440, 900, "1440x900"), (1280, 720, "1280x720")):
         store, _state, _viewer, lengthened = _senate_store_with_long_text()
@@ -392,8 +394,8 @@ def test_render_group_c2_nonwar_long_text_wrap():
 
         engine, _ = _create_engine(store)
         name = f"group-c-2-nonwar-long-text-wrap-{tag}.png"
-        cap = _capture(engine, os.path.join(EVIDENCE_BASE, "Group-C-2", name), w, h)
-        rows.append(_emit("Group-C-2", name, cap,
+        cap = _capture(engine, evidence.path("Group-C-2", name), w, h)
+        rows.append(_emit(evidence, "Group-C-2", name, cap,
                           f"create_gui_prototype_session(senate)+selectPhase(senate)+long_{lengthened}_name",
                           "senate", (w, h)))
 
@@ -413,7 +415,7 @@ def test_render_group_c2_nonwar_long_text_wrap():
         assert title_item.property("truncated") is False, f"长标题须完整可见（ElideNone，{tag}）"
         assert title_item.height() >= 24, f"长标题须换行为多行（{tag}），height={title_item.height()}"
         _teardown(engine)
-    manifest = os.path.join(EVIDENCE_BASE, "Group-C-2", "nonwar-wrap-screenshots.manifest.json")
+    manifest = evidence.path("Group-C-2", "nonwar-wrap-screenshots.manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupc-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -548,7 +550,7 @@ def _senate_vote_store_with_long_proposal():
     return store, state, viewer, long_row.get("label"), "war_proposal"
 
 
-def test_render_group_c_senate_vote_long_proposal_wrap():
+def test_render_group_c_senate_vote_long_proposal_wrap(evidence):
     """RENDER_AUTOMATED（FC-C17）：senate_vote 步 Panel2 长提案行完整可见（无「…」），
     且换行为多行（行高内容驱动）。1280×720 及更大视口。"""
     rows = []
@@ -559,9 +561,9 @@ def test_render_group_c_senate_vote_long_proposal_wrap():
 
         engine, _ = _create_engine(store)
         name = f"group-c-senate-vote-long-proposal-{tag}.png"
-        cap = _capture(engine, os.path.join(EVIDENCE_BASE, "Group-C-Vote", name), w, h)
+        cap = _capture(engine, evidence.path("Group-C-Vote", name), w, h)
         rows.append(_emit(
-            "Group-C-Vote", name, cap,
+            evidence, "Group-C-Vote", name, cap,
             "create_gui_prototype_session(senate)+submitPopulationVotes+doSubmitSenateProposals"
             f"+long_{lengthened}_name",
             "senate_vote", (w, h),
@@ -583,7 +585,7 @@ def test_render_group_c_senate_vote_long_proposal_wrap():
             f"② 行卡高须内容驱动（{tag}），h={card.property('height') if card else None}"
         _teardown(engine)
 
-    manifest = os.path.join(EVIDENCE_BASE, "Group-C-Vote", "senate-vote-wrap-screenshots.manifest.json")
+    manifest = evidence.path("Group-C-Vote", "senate-vote-wrap-screenshots.manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupc-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -674,7 +676,7 @@ def _count_color_near(png_path, item, target_rgb, window=None, tol=10):
     return n
 
 
-def test_render_group_c_visualdelta_q1_vote_rows_bordered_card():
+def test_render_group_c_visualdelta_q1_vote_rows_bordered_card(evidence):
     """RENDER_AUTOMATED（FC-C18）：senate_vote 步「2 元老院表决」每行带边框卡
     （#FFF6E6 + border.width=1），与 ③ 保民官否决行同款。1280×720 及更大视口。"""
     rows = []
@@ -683,8 +685,8 @@ def test_render_group_c_visualdelta_q1_vote_rows_bordered_card():
         assert store.senateCurrentStep == "senate_vote"
         engine, _ = _create_engine(store)
         name = f"group-c-visualdelta-q1-vote-bordered-card-{tag}.png"
-        cap = _capture(engine, os.path.join(EVIDENCE_BASE, "Group-C-VisualDelta", name), w, h)
-        rows.append(_emit("Group-C-VisualDelta", name, cap,
+        cap = _capture(engine, evidence.path("Group-C-VisualDelta", name), w, h)
+        rows.append(_emit(evidence, "Group-C-VisualDelta", name, cap,
                           "create_gui_prototype_session(senate)+doSubmitSenateProposals",
                           "senate_vote", (w, h)))
         window = engine.rootObjects()[0]
@@ -708,12 +710,12 @@ def test_render_group_c_visualdelta_q1_vote_rows_bordered_card():
         assert target.property("truncated") is False, f"身份文本须完整可见（{tag}）"
         # 线条框：在卡屏幕矩形内采样边框色 #E0B56C 像素（渲染级线条框证据）
         border_px = _count_color_near(
-            os.path.join(EVIDENCE_BASE, "Group-C-VisualDelta", name),
+            evidence.path("Group-C-VisualDelta", name),
             card, (0xE0, 0xB5, 0x6C), window=window, tol=12)
         assert border_px and border_px > 0, \
             f"表决行卡须见边框线条（#E0B56C），px={border_px}（{tag}）"
         _teardown(engine)
-    manifest = os.path.join(EVIDENCE_BASE, "Group-C-VisualDelta", "visualdelta-q1-manifest.json")
+    manifest = evidence.path("Group-C-VisualDelta", "visualdelta-q1-manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupc-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -721,7 +723,7 @@ def test_render_group_c_visualdelta_q1_vote_rows_bordered_card():
     assert all(r["capture_ok"] for r in rows), rows
 
 
-def test_render_group_c_visualdelta_q2_table_header_best_candidate():
+def test_render_group_c_visualdelta_q2_table_header_best_candidate(evidence):
     """RENDER_AUTOMATED（FC-C19）：population 步信息表表头第 2 列 =「最佳候选人」，
     9 列几何不破。1280×720 及更大视口。"""
     rows = []
@@ -729,8 +731,8 @@ def test_render_group_c_visualdelta_q2_table_header_best_candidate():
         store, _state, _viewer = _population_store()
         engine, _ = _create_engine(store)
         name = f"group-c-visualdelta-q2-table-header-{tag}.png"
-        cap = _capture(engine, os.path.join(EVIDENCE_BASE, "Group-C-VisualDelta", name), w, h)
-        rows.append(_emit("Group-C-VisualDelta", name, cap,
+        cap = _capture(engine, evidence.path("Group-C-VisualDelta", name), w, h)
+        rows.append(_emit(evidence, "Group-C-VisualDelta", name, cap,
                           "create_gui_prototype_session(population)+selectPhase(population)",
                           "population", (w, h)))
         window = engine.rootObjects()[0]
@@ -743,7 +745,7 @@ def test_render_group_c_visualdelta_q2_table_header_best_candidate():
             assert col in texts, f"表头列「{col}」须保留（9 列几何不破，{tag}）"
         assert (table.property("width") or 0) > 0
         _teardown(engine)
-    manifest = os.path.join(EVIDENCE_BASE, "Group-C-VisualDelta", "visualdelta-q2-manifest.json")
+    manifest = evidence.path("Group-C-VisualDelta", "visualdelta-q2-manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupc-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -987,7 +989,7 @@ def _veto_checkbox_items(stage_root):
     return out
 
 
-def test_render_group_c_g7delta_q1_vote_indicator_text_gap_matches_tribune():
+def test_render_group_c_g7delta_q1_vote_indicator_text_gap_matches_tribune(evidence):
     """RENDER_AUTOMATED（R5 / FC-C36 承载重构后；原 FC-C22 间距一致性等价保留）：
     ② 输入态（`senate_vote`）行「指示器↔身份文本」可见间距与 ③（`tribune_veto`）行一致
     （|Δ| ≤ 1px）—— 二者现均为「text-less CheckBox + 同级 `Text`」于 `RowLayout{ spacing:6 }`
@@ -1000,8 +1002,8 @@ def test_render_group_c_g7delta_q1_vote_indicator_text_gap_matches_tribune():
         labels2 = {(r.get("label") or "") for r in (store2.senateSubmittedProposals or [])}
         engine2, _ = _create_engine(store2)
         name2 = f"group-c-g7delta-q1-vote-gap-panel2-{tag}.png"
-        cap2 = _capture(engine2, os.path.join(EVIDENCE_BASE, "Group-C-G7Delta", name2), w, h)
-        rows.append(_emit("Group-C-G7Delta", name2, cap2,
+        cap2 = _capture(engine2, evidence.path("Group-C-G7Delta", name2), w, h)
+        rows.append(_emit(evidence, "Group-C-G7Delta", name2, cap2,
                           "create_gui_prototype_session(senate)+doSubmitSenateProposals",
                           "senate_vote", (w, h)))
         window2 = engine2.rootObjects()[0]
@@ -1036,8 +1038,8 @@ def test_render_group_c_g7delta_q1_vote_indicator_text_gap_matches_tribune():
         store3, _s3, _v3, _ids3 = _senate_veto_store_with_selection()
         engine3, _ = _create_engine(store3)
         name3 = f"group-c-g7delta-q1-vote-gap-panel3-{tag}.png"
-        cap3 = _capture(engine3, os.path.join(EVIDENCE_BASE, "Group-C-G7Delta", name3), w, h)
-        rows.append(_emit("Group-C-G7Delta", name3, cap3,
+        cap3 = _capture(engine3, evidence.path("Group-C-G7Delta", name3), w, h)
+        rows.append(_emit(evidence, "Group-C-G7Delta", name3, cap3,
                           "create_gui_prototype_session(senate)+doSubmitSenateProposals+doSubmitSenateVotes",
                           "tribune_veto", (w, h)))
         window3 = engine3.rootObjects()[0]
@@ -1052,7 +1054,7 @@ def test_render_group_c_g7delta_q1_vote_indicator_text_gap_matches_tribune():
         assert abs(gap2 - gap3) <= tol, \
             f"②/③ 指示器↔身份文本间距须一致（FC-C36 同构，{tag}）: ②={gap2}, ③={gap3}"
         assert gap2 > 0, f"② 间距须 > 0（{tag}）"
-    manifest = os.path.join(EVIDENCE_BASE, "Group-C-G7Delta", "g7delta-q1-manifest.json")
+    manifest = evidence.path("Group-C-G7Delta", "g7delta-q1-manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupc-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -1060,7 +1062,7 @@ def test_render_group_c_g7delta_q1_vote_indicator_text_gap_matches_tribune():
     assert all(r["capture_ok"] for r in rows), rows
 
 
-def test_render_group_c_g7testr4_q3_veto_default_checkbox_no_selfdrawn():
+def test_render_group_c_g7testr4_q3_veto_default_checkbox_no_selfdrawn(evidence):
     """RENDER_AUTOMATED（FC-C31，R4 回退）：tribune_veto 步 ③ 保民官否决行勾选框 = **平台默认**
     指示器（无自绘 USS 框 / 无自绘叉）；勾选/未勾选双态均可渲染。1280×720 及更大视口。"""
     rows = []
@@ -1068,9 +1070,9 @@ def test_render_group_c_g7testr4_q3_veto_default_checkbox_no_selfdrawn():
         store, _state, _viewer, veto_ids = _senate_veto_store_with_selection()
         engine, _ = _create_engine(store)
         name = f"group-c-g7testr4-q3-veto-default-checkbox-{tag}.png"
-        png = os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, name)
+        png = evidence.path(_R4_EVID_DIR, name)
         cap = _capture(engine, png, w, h, setup=_setup_veto_selection(veto_ids[0]))
-        rows.append(_emit(_R4_EVID_DIR, name, cap,
+        rows.append(_emit(evidence, _R4_EVID_DIR, name, cap,
                           "create_gui_prototype_session(senate)+doSubmitSenateProposals"
                           "+doSubmitSenateVotes+veto_select_first",
                           "tribune_veto", (w, h)))
@@ -1085,7 +1087,7 @@ def test_render_group_c_g7testr4_q3_veto_default_checkbox_no_selfdrawn():
                 f"③ 指示器不得含自绘框（FC-C31，{tag}）: {_frame_rects(ind)!r}"
             assert ind.width() > 0 and ind.height() > 0, f"指示器须可见（{tag}）"
         _teardown(engine)
-    manifest = os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, "g7testr4-q3-manifest.json")
+    manifest = evidence.path(_R4_EVID_DIR, "g7testr4-q3-manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupc-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -1192,7 +1194,7 @@ def _visible_checkbox_indicators(stage_root):
     return out
 
 
-def test_render_group_c_g7testr4_q1_panel2_result_mark_inline_text():
+def test_render_group_c_g7testr4_q1_panel2_result_mark_inline_text(evidence):
     """RENDER_AUTOMATED（FC-C32，加固 (a)）：tribune_veto + results 步 ② 行最左端 = 行内独立
     **无框**结果字形（`senateResultMark(.result)`：rejected→红✗ / passed|vetoed→绿✓ / 缺失→空白）；
     无自绘框；色采样绿/红。1280×720 及更大视口。"""
@@ -1206,9 +1208,9 @@ def test_render_group_c_g7testr4_q1_panel2_result_mark_inline_text():
             labels = [l for l in by_label if l]
             engine, _ = _create_engine(store)
             name = f"group-c-g7testr4-q1-panel2-result-mark-{phase}-{tag}.png"
-            png = os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, name)
+            png = evidence.path(_R4_EVID_DIR, name)
             cap = _capture(engine, png, w, h)
-            rows.append(_emit(_R4_EVID_DIR, name, cap,
+            rows.append(_emit(evidence, _R4_EVID_DIR, name, cap,
                               "create_gui_prototype_session(senate)+doSubmitSenateProposals"
                               "+doSubmitSenateVotes" + ("+doSubmitSenateVetoes" if phase == "results" else ""),
                               phase, (w, h)))
@@ -1236,7 +1238,7 @@ def test_render_group_c_g7testr4_q1_panel2_result_mark_inline_text():
                 assert px and px > 0, \
                     f"② 结果字形须见 {'红' if exp == '\u2717' else '绿'}系像素（{tag}/{phase}）: {px}"
             _teardown(engine)
-    with open(os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, "g7testr4-q1-manifest.json"),
+    with open(evidence.path(_R4_EVID_DIR, "g7testr4-q1-manifest.json"),
               "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupc-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -1244,7 +1246,7 @@ def test_render_group_c_g7testr4_q1_panel2_result_mark_inline_text():
     assert all(r["capture_ok"] for r in rows), rows
 
 
-def test_render_group_c_g7testr4_no_selfdrawn_indicator_in_senate_rows():
+def test_render_group_c_g7testr4_no_selfdrawn_indicator_in_senate_rows(evidence):
     """RENDER_AUTOMATED（FC-C31/FC-C33，加固 (a)）：proposal / senate_vote / tribune_veto / results
     各步可见勾选框的 indicator 均**不含自绘框**（QQuickRectangle 归零）——回落平台默认样式。"""
     plan = (
@@ -1258,7 +1260,7 @@ def test_render_group_c_g7testr4_no_selfdrawn_indicator_in_senate_rows():
             store = mk()[0]
             engine, _ = _create_engine(store)
             name = f"group-c-g7testr4-no-selfdrawn-indicator-{phase}-{tag}.png"
-            cap = _capture(engine, os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, name), w, h)
+            cap = _capture(engine, evidence.path(_R4_EVID_DIR, name), w, h)
             assert cap and cap not in ("timeout",), f"截图须成功（{tag}/{phase}）: {cap}"
             window = engine.rootObjects()[0]
             _root_item, stage_root = _find_stage_root(window)
@@ -1277,7 +1279,7 @@ def test_render_group_c_g7testr4_no_selfdrawn_indicator_in_senate_rows():
     assert True
 
 
-def test_render_group_c_g7test2_q2_veto_results_red_mark():
+def test_render_group_c_g7test2_q2_veto_results_red_mark(evidence):
     """RENDER_AUTOMATED（FC-C26）：results 步 否决生效行显**红 ✗**（resultMark）；
     通过行显绿 ✓。1280×720 及更大视口。"""
     for (w, h, tag) in ((1440, 900, "1440x900"), (1280, 720, "1280x720")):
@@ -1286,9 +1288,9 @@ def test_render_group_c_g7test2_q2_veto_results_red_mark():
         assert any(res == "vetoed" for _l, res in results), f"须有 vetoed 行（{tag}）: {results}"
         engine, _ = _create_engine(store)
         name = f"group-c-g7test2-q2-results-red-mark-{tag}.png"
-        png = os.path.join(EVIDENCE_BASE, _EVID_DIR, name)
+        png = evidence.path(_EVID_DIR, name)
         cap = _capture(engine, png, w, h)
-        _emit(_EVID_DIR, name, cap,
+        _emit(evidence, _EVID_DIR, name, cap,
               "create_gui_prototype_session(senate)+doSubmitSenateProposals+doSubmitSenateVotes+doSubmitSenateVetoes",
               "results", (w, h))
         window = engine.rootObjects()[0]
@@ -1341,7 +1343,7 @@ def _border_width(rect):
     return None
 
 
-def test_render_group_c_g7testr4_indicator_matches_reference_default_checkbox():
+def test_render_group_c_g7testr4_indicator_matches_reference_default_checkbox(evidence):
     """RENDER_AUTOMATED（FC-C33(1)）：senate 勾选框 indicator 归属 = **平台默认样式**
     （与一个**参照默认 CheckBox** 同形：同类名 + 同尺寸；**不含** USS 规格 / 非自绘 Rectangle）；
     记录 `QQuickStyle.name()`。1280×720 及更大视口。"""
@@ -1352,9 +1354,9 @@ def test_render_group_c_g7testr4_indicator_matches_reference_default_checkbox():
         store = _senate_vote_store_with_long_proposal()[0]
         engine, _ = _create_engine(store)
         name = f"group-c-g7testr4-indicator-vs-reference-{tag}.png"
-        png = os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, name)
+        png = evidence.path(_R4_EVID_DIR, name)
         cap = _capture(engine, png, w, h)
-        rows.append(_emit(_R4_EVID_DIR, name, cap,
+        rows.append(_emit(evidence, _R4_EVID_DIR, name, cap,
                           "create_gui_prototype_session(senate)+doSubmitSenateProposals+long_war_proposal",
                           "senate_vote", (w, h)))
         assert cap and cap not in ("timeout",), f"截图须成功（{tag}）: {cap}"
@@ -1374,7 +1376,7 @@ def test_render_group_c_g7testr4_indicator_matches_reference_default_checkbox():
             checked += 1
         assert checked >= 1, f"须渲染勾选框（{tag}）"
         _teardown(engine)
-    with open(os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, "g7testr4-style-pin.runtime.json"),
+    with open(evidence.path(_R4_EVID_DIR, "g7testr4-style-pin.runtime.json"),
               "w", encoding="utf-8") as fh:
         json.dump({
             "schema": "wpj-groupc-style-pin/v1",
@@ -1387,7 +1389,7 @@ def test_render_group_c_g7testr4_indicator_matches_reference_default_checkbox():
     assert all(r["capture_ok"] for r in rows), rows
 
 
-def test_render_group_c_g7test2_style_recorded():
+def test_render_group_c_g7test2_style_recorded(evidence):
     """加固 (d)：记录运行期 `QQuickStyle.name()` + 字体（写入证据 runtime.json）。
     本切片以**等价显式框式规格**（②③ 显式方框，样式无关）替代全局样式钉定——
     实测全局钉定 `Basic` 会改变无关 GUI（RadioButton 文本承载）致人口面板测试回归（见报告）。"""
@@ -1396,8 +1398,8 @@ def test_render_group_c_g7test2_style_recorded():
     name = QQuickStyle.name()
     font_family = app.font().family() if app is not None else ""
     assert name is not None, "QQuickStyle.name() 须可读（加固 (d)）"
-    out = os.path.join(EVIDENCE_BASE, _EVID_DIR, "g7test2-style-pin.runtime.json")
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    out = evidence.path(_EVID_DIR, "g7test2-style-pin.runtime.json")
+    evidence.ensure_dir(_EVID_DIR)
     with open(out, "w", encoding="utf-8") as fh:
         json.dump({
             "schema": "wpj-groupc-style-pin/v1",
@@ -1541,7 +1543,7 @@ def _assert_uss_frame(ind, tag, png=None, window=None):
     return f
 
 
-def test_render_group_c_g7testr4_no_uss_frames_four_faces():
+def test_render_group_c_g7testr4_no_uss_frames_four_faces(evidence):
     """RENDER_AUTOMATED（FC-C31/FC-C33(1)）：proposal（①+战争卡）/ senate_vote（②）/ tribune_veto（③）
     可见勾选框之 indicator **不含自绘框**（QQuickRectangle 归零）⇒ 平台默认样式指示器。
     1280×720 及更大视口。"""
@@ -1557,9 +1559,9 @@ def test_render_group_c_g7testr4_no_uss_frames_four_faces():
             store = mk()[0]
             engine, _ = _create_engine(store)
             name = f"group-c-g7testr4-faces-{tag}-{vp}.png"
-            png = os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, name)
+            png = evidence.path(_R4_EVID_DIR, name)
             cap = _capture(engine, png, w, h)
-            rows.append(_emit(_R4_EVID_DIR, name, cap,
+            rows.append(_emit(evidence, _R4_EVID_DIR, name, cap,
                               "create_gui_prototype_session(senate)+selectPhase(senate)", tag, (w, h)))
             window = engine.rootObjects()[0]
             _root, stage_root = _find_stage_root(window)
@@ -1576,7 +1578,7 @@ def test_render_group_c_g7testr4_no_uss_frames_four_faces():
             _teardown(engine)
     assert faces.get("senate_vote", 0) >= 1 and faces.get("tribune_veto", 0) >= 1, faces
     assert faces.get("proposal", 0) >= 1, faces
-    manifest = os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, "g7testr4-faces-manifest.json")
+    manifest = evidence.path(_R4_EVID_DIR, "g7testr4-faces-manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupc-render-manifest/v1", "rows": rows, "faces": faces},
                   fh, ensure_ascii=False, indent=2)
@@ -1584,7 +1586,7 @@ def test_render_group_c_g7testr4_no_uss_frames_four_faces():
     assert all(r["capture_ok"] for r in rows), rows
 
 
-def test_render_group_c_g7testr4_warcard_default_checkbox_no_uss():
+def test_render_group_c_g7testr4_warcard_default_checkbox_no_uss(evidence):
     """RENDER_AUTOMATED（FC-C31/FC-C33(4)，含战争卡）：真实 F6 fixture 的 proposal step 渲染战争卡
     （WarProposalCard）——其行勾选框 indicator **不含自绘框**（回落平台默认指示器）。"""
     from src.tests.fixtures.wpgr6_fixtures import build_f6_base
@@ -1598,9 +1600,9 @@ def test_render_group_c_g7testr4_warcard_default_checkbox_no_uss():
         assert (store.senateWarCards or []), "F6 fixture 须产出 senate war cards"
         engine, _ = _create_engine(store)
         name = f"group-c-g7testr4-warcard-default-checkbox-{vp}.png"
-        png = os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, name)
+        png = evidence.path(_R4_EVID_DIR, name)
         cap = _capture(engine, png, w, h)
-        rows.append(_emit(_R4_EVID_DIR, name, cap,
+        rows.append(_emit(evidence, _R4_EVID_DIR, name, cap,
                           "build_f6_base()+GuiSessionStore.initialize+selectPhase(senate)",
                           "proposal", (w, h)))
         window = engine.rootObjects()[0]
@@ -1612,7 +1614,7 @@ def test_render_group_c_g7testr4_warcard_default_checkbox_no_uss():
             assert _frame_rects(ind) == [], \
                 f"战争卡指示器不得含自绘框（FC-C31，{vp}）: {_frame_rects(ind)!r}"
         _teardown(engine)
-    manifest = os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, "g7testr4-warcard-manifest.json")
+    manifest = evidence.path(_R4_EVID_DIR, "g7testr4-warcard-manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupc-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -1620,7 +1622,7 @@ def test_render_group_c_g7testr4_warcard_default_checkbox_no_uss():
     assert all(r["capture_ok"] for r in rows), rows
 
 
-def test_render_group_c_g7testr4_q1_contrast_vetoed_panel2_green_panel3_red():
+def test_render_group_c_g7testr4_q1_contrast_vetoed_panel2_green_panel3_red(evidence):
     """RENDER_AUTOMATED（FC-C33(2)，关键 Q1 对照）：构造「元老院通过后被保民官否决」的提案
     （`.result == "vetoed"`）⇒ 断言 **② 结果字形 ≠ ✗**（恰为绿 ✓）、**③ 生效后仍显红 ✗**；
     即 `vetoed` **不改写** ② 元老院结果。1280×720 及更大视口。"""
@@ -1632,9 +1634,9 @@ def test_render_group_c_g7testr4_q1_contrast_vetoed_panel2_green_panel3_red():
             f"须有 vetoed 提案（{vp}）: {[(l, r.get('result')) for l, r in by_label.items()]}"
         engine, _ = _create_engine(store)
         name = f"group-c-g7testr4-q1-contrast-vetoed-{vp}.png"
-        png = os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, name)
+        png = evidence.path(_R4_EVID_DIR, name)
         cap = _capture(engine, png, w, h)
-        rows.append(_emit(_R4_EVID_DIR, name, cap,
+        rows.append(_emit(evidence, _R4_EVID_DIR, name, cap,
                           "create_gui_prototype_session(senate)+doSubmitSenateProposals"
                           "+doSubmitSenateVotes+doSubmitSenateVetoes(veto_first)",
                           "results", (w, h)))
@@ -1668,7 +1670,7 @@ def test_render_group_c_g7testr4_q1_contrast_vetoed_panel2_green_panel3_red():
         px3 = _count_color_near(png, red_texts[0], _RED, window=window, tol=60)
         assert px3 and px3 > 0, f"③ 红 ✗ 须见红系像素（{vp}）: {px3}"
         _teardown(engine)
-    manifest = os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, "g7testr4-q1-contrast-manifest.json")
+    manifest = evidence.path(_R4_EVID_DIR, "g7testr4-q1-contrast-manifest.json")
     with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"schema": "wpj-groupc-render-manifest/v1", "rows": rows}, fh,
                   ensure_ascii=False, indent=2)
@@ -1676,14 +1678,14 @@ def test_render_group_c_g7testr4_q1_contrast_vetoed_panel2_green_panel3_red():
     assert all(r["capture_ok"] for r in rows), rows
 
 
-def test_render_group_c_g7testr4_geometry_1280x720_and_larger():
+def test_render_group_c_g7testr4_geometry_1280x720_and_larger(evidence):
     """RENDER_AUTOMATED（FC-C33(4)）：senate proposal 步于 1280×720 与更大视口渲染成功、
     窗口/阶段根几何非零（几何保真 & 非回归）。"""
     for (w, h, vp) in ((1440, 900, "1440x900"), (1280, 720, "1280x720")):
         store = _senate_proposal_store()[0]
         engine, _ = _create_engine(store)
         name = f"group-c-g7testr4-geometry-{vp}.png"
-        png = os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, name)
+        png = evidence.path(_R4_EVID_DIR, name)
         cap = _capture(engine, png, w, h)
         assert cap and cap not in ("timeout",), f"截图须成功（{vp}）: {cap}"
         window = engine.rootObjects()[0]
@@ -1694,15 +1696,15 @@ def test_render_group_c_g7testr4_geometry_1280x720_and_larger():
     assert True
 
 
-def test_render_group_c_g7testr4_pin_platform_default_runtime_json():
+def test_render_group_c_g7testr4_pin_platform_default_runtime_json(evidence):
     """FC-C33(1)：钉「平台默认指示器」入证据 runtime.json（QQuickStyle.name() + 字体 + 四面）。"""
     from PySide6.QtQuickControls2 import QQuickStyle
     app = _get_app()
     name = QQuickStyle.name()
     font_family = app.font().family() if app is not None else ""
     assert name is not None, "QQuickStyle.name() 须可读（FC-C33(1)）"
-    out = os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, "g7testr4-platform-default-pin.runtime.json")
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    out = evidence.path(_R4_EVID_DIR, "g7testr4-platform-default-pin.runtime.json")
+    evidence.ensure_dir(_R4_EVID_DIR)
     with open(out, "w", encoding="utf-8") as fh:
         json.dump({
             "schema": "wpj-groupc-platform-default-pin/v1",
@@ -1718,13 +1720,13 @@ def test_render_group_c_g7testr4_pin_platform_default_runtime_json():
         fh.write("\n")
 
 
-def test_render_group_c_g7testr4_live_headed_recheck():
+def test_render_group_c_g7testr4_live_headed_recheck(evidence):
     """FC-C33(4) 有头/窗口化 live 复验（真实 app.py；非 offscreen）——本 DA 运行环境为无头 WSL，
     无可用图形显示 ⇒ 如实登记 NOT_APPLICABLE（不伪造）；以离屏 RENDER_AUTOMATED 替代。"""
     display = os.environ.get("DISPLAY")
     plat = os.environ.get("QT_QPA_PLATFORM")
-    out = os.path.join(EVIDENCE_BASE, _R4_EVID_DIR, "g7testr4-live-headed.runtime.json")
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    out = evidence.path(_R4_EVID_DIR, "g7testr4-live-headed.runtime.json")
+    evidence.ensure_dir(_R4_EVID_DIR)
     record = {
         "schema": "wpj-groupc-live-headed/v1",
         "requested": "有头/窗口化 live 复验（真实 app.py；非 offscreen；含战争行勾选框）",

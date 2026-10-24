@@ -1657,6 +1657,8 @@ def test_v3_submit_population_votes_partial_map_normalizes_fixed_five(vote_state
 
     state = vote_state
     state.set_turn_order(["p1", "p2"])
+    # PC02-WITHDRAWAL (2026-10-23): 庆典前置 — 本座位先完成庆典才允许投票（G1）。
+    state.set_batch_completed("p1", True)
     # EOR-DEFECT-20260817-01 Fix B: 零候选人 office 的显式选择会被强制归一为 0（No-Candidate
     # Contract）。vote_state 默认仅 quaestor 有候选人；为使本测试继续验证「显式选择透传」语义，
     # 给 figure 1/3 添加官职历史使其成为 consul/praetor 的真实候选人（censor 仍零候选人）。
@@ -1711,6 +1713,8 @@ def test_v3_submit_population_votes_empty_map_all_abstain_and_complete(vote_stat
     assert [player.player_id for player in players] == ["p1", "p2"]
     assert all(player.player_type == PlayerType.HUMAN for player in players)
     state.set_turn_order(["p1", "p2"])
+    # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）
+    state.set_batch_completed("p1", True)
 
     result = session_api.submit_population_votes(state, "p1", {})
 
@@ -1763,6 +1767,8 @@ def test_v3_submit_population_votes_batch_failure_no_handoff_no_resolve(vote_sta
 
     state = vote_state
     state.set_turn_order(["p1", "p2"])
+    # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）
+    state.set_batch_completed("p1", True)
     backend_failure = {
         "success": False,
         "message": "backend rejected",
@@ -1789,6 +1795,8 @@ def test_v3_submit_population_votes_multi_human_handoff(vote_state):
     assert len(players) == 2
     assert [player.player_type for player in players] == [PlayerType.HUMAN, PlayerType.HUMAN]
     state.set_turn_order(["p1", "p2"])
+    # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）
+    state.set_batch_completed("p1", True)
 
     with patch.object(session_api, "resolve_population_slice", wraps=session_api.resolve_population_slice) as resolve_spy:
         result = session_api.submit_population_votes(state, "p1", {})
@@ -1815,6 +1823,8 @@ def test_v3_submit_population_votes_zero_candidate_office_forced_abstain(vote_st
 
     state = vote_state
     state.set_turn_order(["p1", "p2"])
+    # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）
+    state.set_batch_completed("p1", True)
 
     # 前置：确认 fixture 候选人形状（仅 quaestor 有候选人）
     cand_result = population_api.get_candidates(state)
@@ -1876,6 +1886,8 @@ def test_v3_submit_population_votes_zero_candidate_office_real_batch_success(vot
 
     state = vote_state
     state.set_turn_order(["p1", "p2"])
+    # PC02-WITHDRAWAL (2026-10-23): 庆典前置（本人）
+    state.set_batch_completed("p1", True)
 
     cand_result = population_api.get_candidates(state)
     assert cand_result["success"] is True
